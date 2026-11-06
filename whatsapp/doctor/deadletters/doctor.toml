@@ -1,0 +1,2 @@
+description = 'inbound dead letters (yellow with the count and the reasons)'
+run = '../check-deadletters.sh'

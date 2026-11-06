@@ -161,16 +161,12 @@
 //	                       inbound_liveness=stalled (HTTP status stays
 //	                       200) until inbound resumes. See src/liveness.js.
 //	WECOM_LIVENESS_RECONNECT
-//	                       "true" force-cycles the long connection while
-//	                       stalled (rate-limited; default false) — the
-//	                       only remediation available for a
-//	                       ready-but-dead WS, since WeCom has no history
-//	                       API to probe or backfill from.
-//	WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS
-//	                       Suppress a new forced reconnect after a provider
-//	                       outbound acknowledgement (default 600000 = 10min;
-//	                       0 disables suppression). At 3× the stall threshold,
-//	                       acks no longer suppress remediation.
+//	                       "true" enables bounded ping/pong probes while
+//	                       stalled, reconnecting only after probe failure.
+//	WECOM_LIVENESS_PONG_TIMEOUT_MS
+//	                       Pong deadline (default 10000).
+//	WECOM_PUBLISH_AUTH_WAIT_MS
+//	                       Wait for authentication before sending (45000).
 //	WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS
 //	                       Minimum time between cycles (default the greater
 //	                       of the stall threshold and 1800000 = 30min).
@@ -324,7 +320,8 @@ function loadConfig() {
     // 8/19 ready-but-dead WS sat silent 40 minutes with /healthz green.
     livenessStallAfterMs: intEnv0('WECOM_LIVENESS_STALL_AFTER_MS', 10 * 60 * 1000),
     livenessReconnect: getenv('WECOM_LIVENESS_RECONNECT') === 'true',
-    livenessOutboundAckFreshMs: intEnv0('WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS', 10 * 60 * 1000),
+    livenessPongTimeoutMs: intEnv('WECOM_LIVENESS_PONG_TIMEOUT_MS', 10000),
+    publishAuthWaitMs: intEnv('WECOM_PUBLISH_AUTH_WAIT_MS', 45000),
     livenessReconnectMinIntervalMs: intEnv('WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS',
       Math.max(intEnv0('WECOM_LIVENESS_STALL_AFTER_MS', 10 * 60 * 1000), 30 * 60 * 1000)),
     livenessTickMs: intEnv('WECOM_LIVENESS_TICK_MS', 30 * 1000),
@@ -529,6 +526,8 @@ async function main() {
   const wsClient = new WSClient(wsOptions);
   const connection = createOutboundConnection(wsClient, {
     drainTimeoutMs: cfg.reconnectDrainTimeoutMs,
+    authWaitMs: cfg.publishAuthWaitMs,
+    pongTimeoutMs: cfg.livenessPongTimeoutMs,
     log,
   });
 
@@ -629,15 +628,13 @@ async function main() {
   });
 
   // A due cycle waits for the whole publish and any retained upload.
-  // Uploads defer remediation until settled. Outbound acks suppress new
-  // cycles only below the hard ceiling of 3× the inbound stall threshold;
-  // inbound alarms remain useful because acks cannot prove push delivery.
+  // Uploads defer remediation. Quiet inbound still alarms; only a failed
+  // transport probe permits a reconnect.
   const liveness = createInboundLiveness({
     stallAfterMs: cfg.livenessStallAfterMs,
     reconnect: cfg.livenessReconnect ? connection.reconnect : null,
     reconnectDeferral: connection.reconnectDeferral,
-    lastOutboundAck: connection.lastAckAt,
-    outboundAckFreshMs: cfg.livenessOutboundAckFreshMs,
+    healthCheck: connection.healthCheck,
     reconnectMinIntervalMs: cfg.livenessReconnectMinIntervalMs,
     alarmRepeatMs: cfg.livenessAlarmRepeatMs,
     log,

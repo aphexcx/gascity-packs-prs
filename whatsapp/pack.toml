@@ -1,0 +1,47 @@
+# whatsapp — the box side of the shared Dynasty WhatsApp number for Gas City.
+#
+# WhatsApp is another door into a city's mayor, the way slack-full, the
+# Google Chat adapter and wecom are (design docs/design/whatsapp-adapter-20261103.md).
+# One Dynasty business number on Meta's Cloud API is held by the gateway
+# (whatsapp/gateway/, a Cloudflare Worker at whatsapp.dynasty.computer, the
+# key holder); this pack's adapter talks ONLY to that gateway over HTTPS
+# with the per-city credential `gc whatsapp enroll` writes. The box never
+# holds a Meta secret, and there is no public listener anywhere in the pack.
+#
+# Pack-shipped adapter (./adapter, Node.js, no runtime dependency):
+#
+#   - Inbound: polls the gateway inbox, journals each delivery write-ahead
+#     (<city>/.gc/whatsapp/inbound_journal.jsonl), POSTs it to
+#     /v0/city/{city}/extmsg/inbound, reads pending receipts back, and acks
+#     the gateway by delivery id only on gc's delivered word or on a dead
+#     letter. Routing to the mayor comes from city-fragment.toml.
+#   - Outbound: binds a Unix socket at $GC_SERVICE_SOCKET for /publish,
+#     /publish-update, /healthz and the verbs' endpoints; gc reverse-proxies
+#     /svc/whatsapp/* to it. Free-form inside the 24-hour window; the one
+#     update template outside it (gc whatsapp publish --update).
+#   - The window-keeper: reads the gateway's window clock and raises the
+#     daily update and the close ladder into the mayor's session, for
+#     consenting conversations only.
+#
+# The env (names only) lives in the per-city secrets file adapter/run.sh
+# sources. See README.md "Setup".
+
+[pack]
+name = "whatsapp"
+version = "0.0.1"
+schema = 2
+
+# NOTE: inbound routing needs [[extmsg.default_route]] in the CITY config —
+# pack.toml has no extmsg surface (unknown keys are fatal to the pack
+# parser). Add ./city-fragment.toml to city.toml's `include` list at setup.
+
+[[service]]
+name = "whatsapp"
+kind = "proxy_process"
+
+[service.publication]
+visibility = "private"
+
+[service.process]
+command = ["./adapter/run.sh"]
+health_path = "/healthz"

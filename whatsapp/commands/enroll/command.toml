@@ -1,0 +1,2 @@
+description = "Enroll this city with the Dynasty WhatsApp gateway on an enrollment code (writes the credential, 0600)"
+run = "../enroll.sh"

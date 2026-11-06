@@ -1,0 +1,612 @@
+==================================================================
+RED run 1 of 2: in place in the worktree, before any implementation (24 tests).
+$ cd whatsapp/adapter && /Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --test test/outbound.test.js test/media.test.js
+# node v24.21.0, 2026-11-04T18:32:26Z, src/{ledger,outbound,media}.js are throwing stubs
+✖ media saved with the webhook's mime and the sha256 checked (5.126417ms)
+✖ a sha256 mismatch is refused with a note and nothing is saved (2.072792ms)
+✖ a transcript inline for a voice note with a fake Scribe, cached beside the file (1.229875ms)
+✖ the degrade note without a key (1.077167ms)
+✖ a Scribe failure degrades to the saved-not-transcribed note (0.713791ms)
+✖ a quota breach rejects the save with the in-message note (1.359041ms)
+✖ the free-disk floor and the size cap reject the save with the in-message note (0.748875ms)
+✖ a re-hydrate of the same media reuses the file without a second download (0.5345ms)
+✖ a gateway failure never rejects: ok false with a one-line note (0.5185ms)
+✖ chunking at 4096 keeps a surrogate pair whole (0.4615ms)
+✖ chunking at 4096 prefers a newline past the midpoint (0.064125ms)
+✖ the same idempotency key yields one gateway send and the same receipt (6.687625ms)
+✖ a mid-chunk failure resumes at the failed chunk (1.553417ms)
+✖ window_closed maps to the permanent error with the hint naming the update verb (1.04925ms)
+✖ 403 not bound maps to permanent with reason not_bound; a 401 maps to auth (0.875042ms)
+✖ publish without session attribution is refused (1.25675ms)
+✖ sends to one wa_id are serialized: a second publish waits for every chunk of the first (0.947625ms)
+✖ a CLI publish records the outbound transcript through gc with the same idempotency key; gc's call-back is answered without a re-send (0.930833ms)
+✖ /publish-update refused when the window is open (409) (0.834917ms)
+✖ /publish-update refused when the text is empty (400) (1.154ms)
+✖ /publish-update journaled to updates.jsonl when sent (1.054959ms)
+✖ a template send leaves the window closed: a /publish right after it still maps to window_closed with the hint, and the owner's next inbound reopens it (0.957333ms)
+✖ the ledger opens the window only on an inbound (24 hours minus the 120-second margin), never on a send of any type (0.818375ms)
+✖ the gateway's window_closed closes the ledger's window until the next inbound (0.76225ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 0
+ℹ fail 24
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 67.231667
+
+✖ failing tests:
+
+test at test/media.test.js:93:1
+✖ media saved with the webhook's mime and the sha256 checked (5.126417ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:98:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/media.test.js:131:1
+✖ a sha256 mismatch is refused with a note and nothing is saved (2.072792ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:135:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:147:1
+✖ a transcript inline for a voice note with a fake Scribe, cached beside the file (1.229875ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:152:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:179:1
+✖ the degrade note without a key (1.077167ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:184:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:195:1
+✖ a Scribe failure degrades to the saved-not-transcribed note (0.713791ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:200:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:211:1
+✖ a quota breach rejects the save with the in-message note (1.359041ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:218:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:231:1
+✖ the free-disk floor and the size cap reject the save with the in-message note (0.748875ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:239:23)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:248:1
+✖ a re-hydrate of the same media reuses the file without a second download (0.5345ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:256:23)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:266:1
+✖ a gateway failure never rejects: ok false with a one-line note (0.5185ms)
+  Error: media.js not implemented
+      at createMedia (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/media.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/media.test.js:269:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:167:1
+✖ chunking at 4096 keeps a surrogate pair whole (0.4615ms)
+  Error: outbound.js not implemented
+      at chunkText (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/outbound.js:4:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:170:18)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+
+test at test/outbound.test.js:186:1
+✖ chunking at 4096 prefers a newline past the midpoint (0.064125ms)
+  Error: outbound.js not implemented
+      at chunkText (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/outbound.js:4:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:188:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/outbound.test.js:203:1
+✖ the same idempotency key yields one gateway send and the same receipt (6.687625ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:204:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:239:1
+✖ a mid-chunk failure resumes at the failed chunk (1.553417ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:240:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:266:1
+✖ window_closed maps to the permanent error with the hint naming the update verb (1.04925ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:267:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:280:1
+✖ 403 not bound maps to permanent with reason not_bound; a 401 maps to auth (0.875042ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:281:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:301:1
+✖ publish without session attribution is refused (1.25675ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:302:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:316:1
+✖ sends to one wa_id are serialized: a second publish waits for every chunk of the first (0.947625ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:317:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:333:1
+✖ a CLI publish records the outbound transcript through gc with the same idempotency key; gc's call-back is answered without a re-send (0.930833ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:334:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:369:1
+✖ /publish-update refused when the window is open (409) (0.834917ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:370:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:379:1
+✖ /publish-update refused when the text is empty (400) (1.154ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:380:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:388:1
+✖ /publish-update journaled to updates.jsonl when sent (1.054959ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:389:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:421:1
+✖ a template send leaves the window closed: a /publish right after it still maps to window_closed with the hint, and the owner's next inbound reopens it (0.957333ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:422:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:453:1
+✖ the ledger opens the window only on an inbound (24 hours minus the 120-second margin), never on a send of any type (0.818375ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:460:18)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:494:1
+✖ the gateway's window_closed closes the ledger's window until the next inbound (0.76225ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:3:9)
+      at make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:141:20)
+      at setup (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/outbound.test.js:495:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+exit=1
+
+==================================================================
+RED run 2 of 2: the FINAL test set (27 tests: the 24 of run 1 plus the update's transcript
+recording and the two logging-hygiene cases), in a scratch copy /tmp/wa-red-copy/adapter of
+whatsapp/adapter with src/{ledger,outbound,media}.js replaced by throwing stubs (so sibling lanes
+never import a stub from the worktree).
+$ cd /tmp/wa-red-copy/adapter && /Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --test test/outbound.test.js test/media.test.js
+# node v24.21.0, 2026-11-04T18:39:55Z
+✖ media saved with the webhook's mime and the sha256 checked (5.081375ms)
+✖ a sha256 mismatch is refused with a note and nothing is saved (2.01225ms)
+✖ a transcript inline for a voice note with a fake Scribe, cached beside the file (0.869333ms)
+✖ the degrade note without a key (1.689458ms)
+✖ a Scribe failure degrades to the saved-not-transcribed note (0.761875ms)
+✖ a quota breach rejects the save with the in-message note (1.274291ms)
+✖ the free-disk floor and the size cap reject the save with the in-message note (0.682334ms)
+✖ a re-hydrate of the same media reuses the file without a second download (0.475041ms)
+✖ nothing logged carries a phone number in clear, a wamid, a path, a transcript or the key (0.635ms)
+✖ a gateway failure never rejects: ok false with a one-line note (0.488583ms)
+✖ chunking at 4096 keeps a surrogate pair whole (0.464667ms)
+✖ chunking at 4096 prefers a newline past the midpoint (0.058458ms)
+✖ the same idempotency key yields one gateway send and the same receipt (6.611209ms)
+✖ a mid-chunk failure resumes at the failed chunk (1.664375ms)
+✖ window_closed maps to the permanent error with the hint naming the update verb (1.074875ms)
+✖ 403 not bound maps to permanent with reason not_bound; a 401 maps to auth (0.77975ms)
+✖ publish without session attribution is refused (1.150584ms)
+✖ sends to one wa_id are serialized: a second publish waits for every chunk of the first (0.857833ms)
+✖ a CLI publish records the outbound transcript through gc with the same idempotency key; gc's call-back is answered without a re-send (0.851875ms)
+✖ /publish-update refused when the window is open (409) (0.767ms)
+✖ /publish-update refused when the text is empty (400) (0.748208ms)
+✖ /publish-update journaled to updates.jsonl when sent (1.047917ms)
+✖ an update with a session records its outbound transcript through gc under the same key; the call-back never re-sends (0.730666ms)
+✖ a template send leaves the window closed: a /publish right after it still maps to window_closed with the hint, and the owner's next inbound reopens it (0.703625ms)
+✖ nothing logged carries message text, a phone number in clear or the credential (0.629875ms)
+✖ the ledger opens the window only on an inbound (24 hours minus the 120-second margin), never on a send of any type (0.391458ms)
+✖ the gateway's window_closed closes the ledger's window until the next inbound (0.606667ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 0
+ℹ fail 27
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 68.165
+
+✖ failing tests:
+
+test at test/media.test.js:93:1
+✖ media saved with the webhook's mime and the sha256 checked (5.081375ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:98:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/media.test.js:131:1
+✖ a sha256 mismatch is refused with a note and nothing is saved (2.01225ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:135:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:147:1
+✖ a transcript inline for a voice note with a fake Scribe, cached beside the file (0.869333ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:152:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:179:1
+✖ the degrade note without a key (1.689458ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:184:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:195:1
+✖ a Scribe failure degrades to the saved-not-transcribed note (0.761875ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:200:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:211:1
+✖ a quota breach rejects the save with the in-message note (1.274291ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:218:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:231:1
+✖ the free-disk floor and the size cap reject the save with the in-message note (0.682334ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:239:23)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:248:1
+✖ a re-hydrate of the same media reuses the file without a second download (0.475041ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:256:23)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:266:1
+✖ nothing logged carries a phone number in clear, a wamid, a path, a transcript or the key (0.635ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:273:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/media.test.js:289:1
+✖ a gateway failure never rejects: ok false with a one-line note (0.488583ms)
+  Error: media.js not implemented
+      at createMedia (file:///private/tmp/wa-red-copy/adapter/src/media.js:2:39)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/media.test.js:292:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:167:1
+✖ chunking at 4096 keeps a surrogate pair whole (0.464667ms)
+  Error: outbound.js not implemented
+      at chunkText (file:///private/tmp/wa-red-copy/adapter/src/outbound.js:3:37)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:170:18)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+
+test at test/outbound.test.js:186:1
+✖ chunking at 4096 prefers a newline past the midpoint (0.058458ms)
+  Error: outbound.js not implemented
+      at chunkText (file:///private/tmp/wa-red-copy/adapter/src/outbound.js:3:37)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:188:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/outbound.test.js:203:1
+✖ the same idempotency key yields one gateway send and the same receipt (6.611209ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:204:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:239:1
+✖ a mid-chunk failure resumes at the failed chunk (1.664375ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:240:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:266:1
+✖ window_closed maps to the permanent error with the hint naming the update verb (1.074875ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:267:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:280:1
+✖ 403 not bound maps to permanent with reason not_bound; a 401 maps to auth (0.77975ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:281:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:301:1
+✖ publish without session attribution is refused (1.150584ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:302:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:316:1
+✖ sends to one wa_id are serialized: a second publish waits for every chunk of the first (0.857833ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:317:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:333:1
+✖ a CLI publish records the outbound transcript through gc with the same idempotency key; gc's call-back is answered without a re-send (0.851875ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:334:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:369:1
+✖ /publish-update refused when the window is open (409) (0.767ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:370:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:379:1
+✖ /publish-update refused when the text is empty (400) (0.748208ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:380:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:388:1
+✖ /publish-update journaled to updates.jsonl when sent (1.047917ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:389:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:421:1
+✖ an update with a session records its outbound transcript through gc under the same key; the call-back never re-sends (0.730666ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:422:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:437:1
+✖ a template send leaves the window closed: a /publish right after it still maps to window_closed with the hint, and the owner's next inbound reopens it (0.703625ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:438:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:467:1
+✖ nothing logged carries message text, a phone number in clear or the credential (0.629875ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:469:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:490:1
+✖ the ledger opens the window only on an inbound (24 hours minus the 120-second margin), never on a send of any type (0.391458ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:497:18)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/outbound.test.js:531:1
+✖ the gateway's window_closed closes the ledger's window until the next inbound (0.606667ms)
+  Error: ledger.js not implemented
+      at createLedger (file:///private/tmp/wa-red-copy/adapter/src/ledger.js:2:40)
+      at make (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:141:20)
+      at setup (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:149:27)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red-copy/adapter/test/outbound.test.js:532:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+exit=1

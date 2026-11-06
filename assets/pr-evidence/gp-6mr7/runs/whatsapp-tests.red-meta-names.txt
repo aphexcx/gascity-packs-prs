@@ -1,0 +1,27 @@
+...F...................................                                  [100%]
+=================================== FAILURES ===================================
+_____________________ test_no_meta_secret_name_in_the_pack _____________________
+
+    def test_no_meta_secret_name_in_the_pack():
+        # The box never holds a Meta secret: no META_* name, no access token name,
+        # anywhere in the box side of the pack (whatsapp/gateway/ is the key holder).
+        offenders = []
+        for path in PACK.rglob('*'):
+            if not path.is_file() or 'gateway' in path.relative_to(PACK).parts[:1] or 'node_modules' in path.parts:
+                continue
+            if '__pycache__' in path.parts or path.suffix in {'.pyc', '.png', '.jpg', '.ogg'}:
+                continue
+            text = path.read_text(errors='replace')
+            if re.search(r'META_|ACCESS_TOKEN', text) and path.name != 'test_pack.py':
+                offenders.append(str(path.relative_to(PACK)))
+>       assert offenders == []
+E       AssertionError: assert ['docs/meta-setup.md'] == []
+E         
+E         Left contains one more item: 'docs/meta-setup.md'
+E         Use -v to get more diff
+
+whatsapp/tests/test_pack.py:94: AssertionError
+=========================== short test summary info ============================
+FAILED whatsapp/tests/test_pack.py::test_no_meta_secret_name_in_the_pack - As...
+1 failed, 38 passed in 12.80s
+rc=1

@@ -1,0 +1,2 @@
+description = "Resolve a terminal hold: --delivered (ack) or --dead (dead letter, then ack)"
+run = "../../resolve.sh"

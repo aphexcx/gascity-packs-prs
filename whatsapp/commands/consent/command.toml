@@ -1,0 +1,2 @@
+description = "Turn the window-keeper on or off for one owner's phone"
+run = "../consent.sh"

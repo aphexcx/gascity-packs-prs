@@ -1,0 +1,2 @@
+description = "Clear a restore gap and rebase the conversation's watermark to the gc store"
+run = "../../clear-gap.sh"

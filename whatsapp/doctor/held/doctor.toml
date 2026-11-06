@@ -1,0 +1,2 @@
+description = 'terminal holds waiting for gc whatsapp inbound resolve'
+run = '../check-held.sh'

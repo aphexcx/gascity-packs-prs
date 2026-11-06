@@ -22,6 +22,7 @@ function makeTracker(opts = {}) {
   const logs = [];
   const tracker = createInboundLiveness({
     stallAfterMs: 10_000,
+    healthCheck: async () => false,
     alarmRepeatMs: 60_000,
     now: clock.now,
     log: (...args) => logs.push(args.join(' ')),
@@ -32,53 +33,53 @@ function makeTracker(opts = {}) {
 
 const alarms = (logs) => logs.filter((l) => l.includes('INBOUND LIVENESS ALARM'));
 
-test('a zero stall threshold disables the watchdog entirely', () => {
+test('a zero stall threshold disables the watchdog entirely', async () => {
   const { tracker, clock, logs } = makeTracker({ opts: { stallAfterMs: 0 } });
   clock.advance(1_000_000_000);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(logs.length, 0);
   assert.equal(tracker.state().state, 'watchdog_off');
   assert.match(tracker.healthzDetail(), /inbound_liveness=watchdog_off/);
 });
 
-test('no alarm inside the threshold; one alarm past it; state flips to stalled', () => {
+test('no alarm inside the threshold; one alarm past it; state flips to stalled', async () => {
   const { tracker, clock, logs } = makeTracker();
   tracker.noteInbound();
   clock.advance(9_999);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(alarms(logs).length, 0);
   assert.equal(tracker.state().state, 'ok');
 
   clock.advance(2);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(alarms(logs).length, 1);
   assert.equal(tracker.state().state, 'stalled');
   assert.match(tracker.healthzDetail(), /inbound_liveness=stalled/);
   assert.match(tracker.healthzDetail(), /stalled_since=/);
 });
 
-test('a persisting stall re-alarms only on the repeat cadence', () => {
+test('a persisting stall re-alarms only on the repeat cadence', async () => {
   const { tracker, clock, logs } = makeTracker();
   tracker.noteInbound();
   clock.advance(10_001);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(alarms(logs).length, 1);
 
   // Ticks inside the repeat interval stay quiet (the stall persists).
   clock.advance(30_000);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(alarms(logs).length, 1);
 
   clock.advance(30_001);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(alarms(logs).length, 2);
 });
 
-test('inbound resumes: RECOVERED is logged, state clears, the next stall alarms afresh', () => {
+test('inbound resumes: RECOVERED is logged, state clears, the next stall alarms afresh', async () => {
   const { tracker, clock, logs } = makeTracker();
   tracker.noteInbound();
   clock.advance(10_001);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(tracker.state().state, 'stalled');
 
   tracker.noteInbound();
@@ -88,57 +89,57 @@ test('inbound resumes: RECOVERED is logged, state clears, the next stall alarms 
   // A fresh stall alarms immediately again — the repeat clamp must not
   // survive a recovery.
   clock.advance(10_001);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(alarms(logs).length, 2);
 });
 
-test('silence before process start never alarms early (idle anchors to startedAt)', () => {
+test('silence before process start never alarms early (idle anchors to startedAt)', async () => {
   const { tracker, clock, logs } = makeTracker();
   // No inbound ever. Idle counts from construction, not from epoch 0.
   clock.advance(9_999);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(alarms(logs).length, 0);
   clock.advance(2);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(alarms(logs).length, 1);
 });
 
-test('the reconnect remediation fires on stall, rate-limited, and re-fires after the floor', () => {
+test('the reconnect remediation fires on stall, rate-limited, and re-fires after the floor', async () => {
   let cycles = 0;
   const { tracker, clock } = makeTracker({
     opts: { reconnect: () => { cycles++; }, reconnectMinIntervalMs: 40_000 },
   });
   tracker.noteInbound();
   clock.advance(10_001);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(cycles, 1);
 
   clock.advance(39_000);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(cycles, 1); // inside the floor
 
   clock.advance(1_001);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(cycles, 2);
   assert.equal(tracker.state().reconnectsTotal, 2);
 });
 
-test('a throwing reconnect hook is caught and logged, never fatal', () => {
+test('a throwing reconnect hook is caught and logged, never fatal', async () => {
   const { tracker, clock, logs } = makeTracker({
     opts: { reconnect: () => { throw new Error('boom'); } },
   });
   tracker.noteInbound();
   clock.advance(10_001);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(logs.filter((l) => l.includes('reconnect hook failed: boom')).length, 1);
   assert.equal(tracker.state().state, 'stalled');
 });
 
-test('healthzDetail reports ok state with counters and last_inbound', () => {
+test('healthzDetail reports ok state with counters and last_inbound', async () => {
   const { tracker, clock } = makeTracker();
   tracker.noteInbound();
   clock.advance(5_000);
-  tracker.tick();
+  await tracker.tick();
   const detail = tracker.healthzDetail();
   assert.match(detail, /inbound_liveness=ok/);
   assert.match(detail, /frames=1/);
@@ -158,7 +159,7 @@ test('start()/stop() arm and clear the interval without leaking a live timer', a
 
 // jg-bw5gsw: a forced cycle tears down any media upload in flight, and a
 // quiet chat is exactly when files get sent — so the hook can be deferred.
-test('a deferred reconnect waits for the deferral to clear, logs once, and keeps the rate-limit window', () => {
+test('a deferred reconnect waits for the deferral to clear, logs once, and keeps the rate-limit window', async () => {
   let cycles = 0;
   let uploading = 'one media upload in flight';
   const { tracker, clock, logs } = makeTracker({
@@ -170,28 +171,61 @@ test('a deferred reconnect waits for the deferral to clear, logs once, and keeps
   });
   tracker.noteInbound();
   clock.advance(10_001);
-  tracker.tick();
+  await tracker.tick();
   clock.advance(30_000);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(cycles, 0);
   assert.equal(logs.filter((l) => l.includes('reconnect cycle deferred — one media upload in flight')).length, 1);
   assert.equal(tracker.state().reconnectsDeferredTotal, 1);
 
   uploading = null;
   clock.advance(1_000);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(cycles, 1, 'fires on the first tick after the deferral clears');
   assert.equal(tracker.state().reconnectsTotal, 1);
 });
 
-test('a throwing deferral check never blocks the remediation', () => {
+test('a throwing deferral check never blocks the remediation', async () => {
   let cycles = 0;
   const { tracker, clock, logs } = makeTracker({
     opts: { reconnect: () => { cycles++; }, reconnectDeferral: () => { throw new Error('nope'); } },
   });
   tracker.noteInbound();
   clock.advance(10_001);
-  tracker.tick();
+  await tracker.tick();
   assert.equal(cycles, 1);
   assert.equal(logs.filter((l) => l.includes('reconnect deferral check failed (cycling anyway): nope')).length, 1);
+});
+
+// A successful probe must protect quiet chat indefinitely, including beyond
+// the old 3x threshold. The alarm still identifies possible push failure.
+test('quiet transport with successful pongs alarms once and never reconnects', async () => {
+  let cycles = 0;
+  let probes = 0;
+  const { tracker, clock, logs } = makeTracker({ opts: {
+    healthCheck: async () => { probes++; return true; },
+    reconnect: () => { cycles++; }, reconnectMinIntervalMs: 1,
+  } });
+  clock.advance(10_001);
+  await tracker.tick();
+  clock.advance(30_000);
+  await tracker.tick();
+  assert.equal(probes, 2);
+  assert.equal(cycles, 0);
+  assert.equal(alarms(logs).length, 1);
+});
+
+test('stop cancels remediation from an outstanding failed probe', async () => {
+  let fail;
+  let cycles = 0;
+  const { tracker, clock } = makeTracker({ opts: {
+    healthCheck: () => new Promise((resolve) => { fail = resolve; }),
+    reconnect: () => { cycles++; },
+  } });
+  clock.advance(10_001);
+  const tick = tracker.tick();
+  tracker.stop();
+  fail(false);
+  await tick;
+  assert.equal(cycles, 0);
 });

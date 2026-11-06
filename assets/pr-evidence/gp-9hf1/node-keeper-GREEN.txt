@@ -1,0 +1,100 @@
+✔ (10a) no hours: the four nudges fire at the close minus 60, 30, 15 and 5 (06:58 07:28 07:43 07:53 for a close at 07:58), each once, is_bot true (568.733292ms)
+ℹ window_closes_at 2026-11-11 07:58:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:60 fired 2026-11-11 06:58:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:30 fired 2026-11-11 07:28:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:43:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+ℹ keeper:15550001111:2026-11-10:update fired 2026-11-10 10:00:00 America/Chicago
+ℹ keeper.json mode 600
+✔ (10b) an inbound between the 60 and the 30 cancels the old close, empties the fired set, and the new close fires 06:08 06:38 06:53 07:03 (537.036416ms)
+ℹ new window_closes_at 2026-11-12 07:08:00 America/Chicago
+ℹ keeper:15550001111:2026-11-12T13:08:00.000Z:60 fired 2026-11-12 06:08:00 America/Chicago
+ℹ keeper:15550001111:2026-11-12T13:08:00.000Z:30 fired 2026-11-12 06:38:00 America/Chicago
+ℹ keeper:15550001111:2026-11-12T13:08:00.000Z:15 fired 2026-11-12 06:53:00 America/Chicago
+ℹ keeper:15550001111:2026-11-12T13:08:00.000Z:5 fired 2026-11-12 07:03:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+✔ (10c) hours shift: close at 02:00 under Mon-Fri 09:00-18:00 fires 17:00 17:30 17:45 17:55 the day before, shifted text (593.738667ms)
+ℹ window_closes_at 2026-11-11 02:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T05:00:00.000Z:60 fired 2026-11-10 17:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T05:00:00.000Z:30 fired 2026-11-10 17:30:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T05:00:00.000Z:15 fired 2026-11-10 17:45:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T05:00:00.000Z:5 fired 2026-11-10 17:55:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-10 16:00:00 America/Sao_Paulo
+✔ (10c) hours unshifted: the owner wrote 09:30 Tue, close 09:28 Wed: the 60 and 30 drop, the 15 and 5 fire at 09:13 and 09:23 (533.300709ms)
+ℹ window_closes_at 2026-11-11 09:28:00 America/Sao_Paulo; 08:28 and 08:58 fall before the 09:00 open
+ℹ keeper:5511999990001:2026-11-11T12:28:00.000Z:15 fired 2026-11-11 09:13:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T12:28:00.000Z:5 fired 2026-11-11 09:23:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-10 16:00:00 America/Sao_Paulo
+✔ (10c) hours crossing midnight: 18:00-02:00 and a close at 03:00 fire 01:00 01:30 01:45 01:55 (663.198458ms)
+ℹ window_closes_at 2026-11-11 03:00:00 America/Sao_Paulo; close of business 02:00
+ℹ keeper:5511999990001:2026-11-11T06:00:00.000Z:60 fired 2026-11-11 01:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T06:00:00.000Z:30 fired 2026-11-11 01:30:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T06:00:00.000Z:15 fired 2026-11-11 01:45:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T06:00:00.000Z:5 fired 2026-11-11 01:55:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-11 00:00:00 America/Sao_Paulo
+✔ (10c) hours, no span before the close: a close on Saturday under Mon-Fri 09:00-18:00 raises no mark and counts one lapse (395.075708ms)
+ℹ window_closes_at 2026-11-14 19:58:00 America/Sao_Paulo; events 0; lapses 1
+✔ (10c) quiet rule: the business wrote 16:20 Fri after the 16:00 update, so no ladder mark that day (705.695042ms)
+ℹ keeper:5511999990001:2026-11-13T19:58:00.000Z:60 fired 2026-11-13 15:58:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-13:update fired 2026-11-13 16:00:00 America/Sao_Paulo
+ℹ new close 2026-11-14 16:18:00; ladder shifted at 2026-11-13 17:00:00, 2026-11-13 17:30:00, 2026-11-13 17:45:00, 2026-11-13 17:55:00; silent [{"mark":60,"why":"quiet"},{"mark":30,"why":"quiet"},{"mark":15,"why":"quiet"},{"mark":5,"why":"quiet"}]
+✔ (10d) no nudge after the close: one lapse, the next update says "Window closed since 07:58", a refused nudge is counted, no template sent (835.467167ms)
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+✔ (10d) a keeper down across the close raises no overdue nudge after it and counts one lapse (57.864792ms)
+ℹ back at 08:30 America/Chicago after the 07:58 close: events 0
+✔ (10e) no hours: the daily update fires once per local day at 10:00 in the recorded zone, else the city's (792.792125ms)
+ℹ keeper:15550001111:2026-11-10:update fired 2026-11-10 10:00:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-10 10:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11:update fired 2026-11-11 10:00:00 America/Sao_Paulo
+✔ (10e) hours: the daily update fires two hours before the close of business (16:00 under 09:00-18:00), clamped inside a short span, none on Sunday (876.827917ms)
+ℹ keeper:5511999990001:2026-11-13:update fired 2026-11-13 16:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-14:update fired 2026-11-14 10:00:00 America/Sao_Paulo
+✔ (10e) a SIGKILL between the update's state write and its post, then a restart the same day: the update is never raised twice (493.3275ms)
+ℹ child exit null signal SIGKILL 
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+✔ (10e) the update posted, then a SIGKILL and a restart the same day: not raised again (316.992125ms)
+ℹ keeper:15550001111:2026-11-10:update fired 2026-11-10 10:00:00 America/Chicago
+✔ (10f) a SIGKILL between the 30 and the 15 marks and a restart: the 15 and the 5 fire, the 60 and the 30 do not fire again (245.718833ms)
+ℹ child killed at 2026-11-11 07:35:00 America/Chicago: signal SIGKILL
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:60 fired 2026-11-11 06:58:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:30 fired 2026-11-11 07:28:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:43:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+✔ (10f) a SIGKILL between the 30's state write and its post: the 30 is lost and never raised twice; the 15 and the 5 fire after the restart (232.052417ms)
+ℹ child killed at 2026-11-11 07:28:00 America/Chicago: signal SIGKILL
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:43:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+✔ (10f) a keeper down across the 60, 30 and 15 marks fires only the latest overdue one on restart (with the true minutes left), then the 5 (78.734709ms)
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:50:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+✔ (10b) a failed window read after a delivery is logged, never throws, is retried at the next tick, and holds the ladder until the clock is fresh (172.337542ms)
+ℹ reads while failing: 240; log: keeper: window read failed, retried next tick: HTTP 503 from http://127.0.0.1:59298/v1/window: {"error":"down"}
+✔ (10g) without recorded consent: no event at all through a whole window and the next day's update hour (245.597959ms)
+ℹ events 0; keeper off/off
+✔ (10g) consent --off mid-window stops the remaining marks; --on resumes from the next mark (175.895417ms)
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:60 fired 2026-11-11 06:58:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:43:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+✔ (10h) a keeper event answered 500 is retried on the ladder in clock time (+1 s, +5 s) until delivered (61.149333ms)
+ℹ attempts at 2026-11-11 06:58:00, 2026-11-11 06:58:01, 2026-11-11 06:58:06 America/Chicago
+✔ (10h) an event answered no_route, answered 400 or dropped with no answer is counted on the keeper row and never re-raised for that mark (241.998292ms)
+ℹ undelivered (7 d) 3
+✔ (10h) a keeper event answered 500 every time is dropped after the ladder (1, 5, 15, 60 s) and counted (116.579958ms)
+ℹ attempts at 2026-11-10 10:00:00, 2026-11-10 10:00:01, 2026-11-10 10:00:06, 2026-11-10 10:00:21, 2026-11-10 10:01:21 America/Chicago
+✔ (zoned) business hours parse: day ranges, lists, midnight crossing, inherited days (0.188125ms)
+✔ (zoned) bad business hours and bad zones are refused with a clear message (1.63725ms)
+✔ (zoned) a wall time to an instant: plain, a DST gap moves forward, a DST fold takes the earlier (0.191875ms)
+ℹ America/Sao_Paulo {"year":2026,"month":11,"day":10} +1020 min -> 2026-11-10T20:00:00.000Z
+ℹ America/Chicago {"year":2026,"month":11,"day":10} +600 min -> 2026-11-10T16:00:00.000Z
+ℹ America/Chicago {"year":2026,"month":3,"day":8} +150 min -> 2026-03-08T08:30:00.000Z
+ℹ America/Chicago {"year":2026,"month":11,"day":1} +90 min -> 2026-11-01T06:30:00.000Z
+ℹ America/Sao_Paulo {"year":2026,"month":11,"day":10} +1560 min -> 2026-11-11T05:00:00.000Z
+ℹ tests 25
+ℹ suites 0
+ℹ pass 25
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9003.459834

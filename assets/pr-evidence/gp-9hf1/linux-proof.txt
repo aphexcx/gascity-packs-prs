@@ -1,0 +1,46 @@
+# The Linux arm64 proof of the whatsapp pack (gp-9hf1) at 2a80d925, 2026-11-04 20:5xZ, OrbStack on citadel.
+# Commands (from the lane worktree root):
+#   docker build -q -t gp-9hf1-linux-proof -f assets/pr-evidence/gp-9hf1/Dockerfile assets/pr-evidence/gp-9hf1
+#   docker run --name gp-9hf1-proof-6 --user node -v $PWD/whatsapp:/src/whatsapp:ro -v $PWD/assets/pr-evidence/gp-9hf1/linux-proof.sh:/proof-run.sh:ro gp-9hf1-linux-proof bash /proof-run.sh
+# The pack is mounted read-only and copied to /proof; no credential, gateway, gc or phone was used.
+#   (gc need not run here: the adapter suite, run.sh --deps-only and the doctor rows are the proof; a live round trip waits on bead D.)
+
+== host
+Linux 7.2.12-orbstack-00394-gbecdd6130068 aarch64
+Debian GNU/Linux 12 (bookworm)
+node v22.23.4; python 3.11.2; pytest pytest 7.2.1; jq jq-1.6; curl 7.88.1
+user node uid 1000
+
+== run.sh --deps-only (a fresh box, no env file)
+gc-whatsapp-adapter: dependencies ready (node v22.23.4; no packages to install)
+exit=0 in 18 ms
+
+== run.sh without its env file (supervised path)
+exit=1 (gc-whatsapp-adapter: env file not found at /tmp/no-such-secrets/env)
+
+== node --test 'test/*.test.js'
+ℹ tests 160
+ℹ suites 0
+ℹ pass 160
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+exit=0
+
+== python3 -m pytest whatsapp/tests -q
+..........................................                               [100%]
+42 passed in 11.30s
+exit=0
+
+== doctor rows on a clean env (fail closed) and on a fixture city
+env          exit=2  adapter env file missing or unreadable; set GC_WHATSAPP_ADAPTER_ENV or create the per-city whatsapp secrets/env file (gc whatsapp enroll writes the credential into it)
+dependencies exit=0  node 22.23.4; the adapter has no package dependency (plain fetch)
+runtime      exit=1  GC_SERVICE_SOCKET is unset; pass the running service socket path from its startup log to check /healthz
+gateway      exit=2  WHATSAPP_GATEWAY_URL is not set (the env file or the environment)
+deadletters  exit=0  no dead letters
+held         exit=0  no terminal holds
+restore      exit=0  no restore gap (0 watermark(s))
+probes       exit=0  no terminal-snapshot probe in the last 7 days
+keeper       exit=0  the window-keeper has no state yet
+docker exit=0

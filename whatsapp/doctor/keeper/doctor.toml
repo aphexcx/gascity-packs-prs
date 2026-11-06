@@ -1,0 +1,2 @@
+description = 'window-keeper: the window clock read in the last 5 minutes while the keeper is on; lapses, undelivered events and refused publishes in the last 7 days'
+run = '../check-keeper.sh'

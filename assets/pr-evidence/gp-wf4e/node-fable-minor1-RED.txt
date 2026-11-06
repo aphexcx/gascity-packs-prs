@@ -1,0 +1,28 @@
+✖ Fable read r1 MINOR 1 (inbound.js:50): an order moves the window ledger as the gateway counts it (its reading 7); a system notice does not (259.935834ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 349.305083
+
+✖ failing tests:
+
+test at test/gate.test.js:453:1
+✖ Fable read r1 MINOR 1 (inbound.js:50): an order moves the window ledger as the gateway counts it (its reading 7); a system notice does not (259.935834ms)
+  AssertionError [ERR_ASSERTION]: an order opens the window in the ledger, as at the gateway
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:461:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

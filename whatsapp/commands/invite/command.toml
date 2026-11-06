@@ -1,0 +1,2 @@
+description = "Mint a 6-digit WhatsApp invite code for an owner, with the window-keeper's consent, hours and time zone"
+run = "../invite.sh"

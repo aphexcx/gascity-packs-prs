@@ -1,0 +1,173 @@
+✖ gate r1 MAJOR 1 (inbound.js:420): a rollback detected while its head read is held stays detected however far acceptances advance that watermark meanwhile; B's in-doubt entry takes the marked path (2338.335375ms)
+✖ gate r1 MAJOR 1 (inbound.js:420): a rollback detected whose head read FAILS stays detected while acceptances advance that watermark; the gap is written with the head unknown (2314.64625ms)
+✖ gate r1 MAJOR 2: ONE classifier decides what a new rid is, fresh only on positive proof (the table) (0.677417ms)
+✖ gate r1 MAJOR 2: the classification rides IN the received line; the fold applies it from that one line, live and on replay (23.039ms)
+✖ gate r1 MAJOR 2 (inbound.js:284): a delivery older than the journal's genesis, a crash right after its received line, a restart: the in-doubt rule from zero, never a plain post (407.061417ms)
+✖ gate r1 MAJOR 2 (inbound.js:284): the same delivery when the append after its received line FAILS and the engine runs on: never a plain post (288.524333ms)
+✖ gate r1 MAJOR 2 (the same two writes): a delivery a lost journal dead-lettered, the append after its received line FAILS: dead and acked, never posted again (287.611583ms)
+✖ gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template's receipt (35.376833ms)
+✖ gate r1 MAJOR 3 (outbound.js:398): the reverse, a two-chunk text keyed K, then an update keyed K:1: the template is SENT, never answered with chunk 1's receipt (56.739416ms)
+✖ gate r1 MINOR (inbound.js:197): a join whose keeper bind fails is not retired: held at the gateway and in the journal across a restart, bound and acked once the keeper heals (110.729958ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 0
+ℹ fail 10
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5923.412625
+
+✖ failing tests:
+
+test at test/gate.test.js:188:1
+✖ gate r1 MAJOR 1 (inbound.js:420): a rollback detected while its head read is held stays detected however far acceptances advance that watermark meanwhile; B's in-doubt entry takes the marked path (2338.335375ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked duplicate: "delivered, the answer lost"
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:206:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:214:1
+✖ gate r1 MAJOR 1 (inbound.js:420): a rollback detected whose head read FAILS stays detected while acceptances advance that watermark; the gap is written with the head unknown (2314.64625ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked duplicate: "delivered, the answer lost"
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:228:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:237:1
+✖ gate r1 MAJOR 2: ONE classifier decides what a new rid is, fresh only on positive proof (the table) (0.677417ms)
+  AssertionError [ERR_ASSERTION]: one exported classifier decides a new rid
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:239:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:253:1
+✖ gate r1 MAJOR 2: the classification rides IN the received line; the fold applies it from that one line, live and on replay (23.039ms)
+  AssertionError [ERR_ASSERTION]: live: in doubt from its first step
+  + actual - expected
+  
+  + 'received'
+  - 'posted'
+  
+      at check (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:263:12)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:272:3)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'received',
+    expected: 'posted',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:297:1
+✖ gate r1 MAJOR 2 (inbound.js:284): a delivery older than the journal's genesis, a crash right after its received line, a restart: the in-doubt rule from zero, never a plain post (407.061417ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked repost: "posted by a journal that is gone"
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:308:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:313:1
+✖ gate r1 MAJOR 2 (inbound.js:284): the same delivery when the append after its received line FAILS and the engine runs on: never a plain post (288.524333ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked repost: "posted by a journal that is gone"
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:322:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:325:1
+✖ gate r1 MAJOR 2 (the same two writes): a delivery a lost journal dead-lettered, the append after its received line FAILS: dead and acked, never posted again (287.611583ms)
+  Error: never posted again stopped holding
+      at stays (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/fakes.js:40:37)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:339:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/gate.test.js:367:1
+✖ gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template's receipt (35.376833ms)
+  AssertionError [ERR_ASSERTION]: the text reached Meta (gateway keys ["K:0","K:0"])
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:375:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:381:1
+✖ gate r1 MAJOR 3 (outbound.js:398): the reverse, a two-chunk text keyed K, then an update keyed K:1: the template is SENT, never answered with chunk 1's receipt (56.739416ms)
+  AssertionError [ERR_ASSERTION]: the template reached Meta (gateway keys ["K:0","K:1","K:1"])
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:390:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:396:1
+✖ gate r1 MINOR (inbound.js:197): a join whose keeper bind fails is not retired: held at the gateway and in the journal across a restart, bound and acked once the keeper heals (110.729958ms)
+  Error: the join held at the gateway while its keeper bind is owed stopped holding
+      at stays (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/fakes.js:40:37)
+      at async TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:418:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)

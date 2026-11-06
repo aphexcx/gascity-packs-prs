@@ -371,6 +371,7 @@ for (const boundary of ['during retry backoff', 'before retry backoff', 'before 
     let reconnects = 0;
     const liveness = createInboundLiveness({
       stallAfterMs: 1,
+      healthCheck: async () => false,
       reconnect: () => { reconnects += 1; },
       reconnectDeferral: () => (uploader.inFlight() > 0 ? 'upload in flight' : null),
     });
@@ -397,7 +398,7 @@ for (const boundary of ['during retry backoff', 'before retry backoff', 'before 
     await advance(t, 1); // init acknowledged; chunk goes unanswered
     await advance(t, 1); // pending chunk still owns the slot and liveness deferral
     assert.deepEqual(cmds(transport), ['init', 'chunk0']);
-    liveness.tick();
+    await liveness.tick();
     assert.equal(reconnects, 0, 'the running upload defers a reconnect');
     const busy = probe();
     await busy.result;
@@ -419,7 +420,7 @@ for (const boundary of ['during retry backoff', 'before retry backoff', 'before 
       `media upload failed at chunk 1/1 after ${attempts}: the media upload exceeded its time budget`);
     assert.ok(logs.at(-1).startsWith(
       'media upload FAILED at chunk 1/1: 10 bytes, 1×512KiB chunks, 2 frames, 0 retries, '));
-    liveness.tick();
+    await liveness.tick();
     assert.equal(reconnects, 1, 'budget failure releases the liveness deferral');
 
     if (boundary === 'before reconnect') transport.reconnect();

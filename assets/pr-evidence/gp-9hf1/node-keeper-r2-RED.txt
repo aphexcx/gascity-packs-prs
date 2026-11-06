@@ -1,0 +1,267 @@
+✔ (10d) no nudge after the close: one lapse, the next update says "Window closed since 07:58", a refused nudge is counted, no template sent (1133.159125ms)
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+ℹ gateway calls by the keeper: window
+✖ (10b) a failed window read after a delivery is retried on the ladder (1, 5, 15, 60 s) in clock time, never every tick; keeper.json keeps the last good read and the error; the ladder holds until the clock is fresh (102.647875ms)
+ℹ 240 reads while failing, ms after 06:57:30: 250, 500, 750, 1000, 1250, 1500, ...; log: keeper: window read failed, retried next tick: HTTP 503 from http://127.0.0.1:53329/v1/window
+✖ (r2 M2) consent and hours name the phone by its digits ("+55 11 99999-0001" is 5511999990001); an unknown phone is refused 404, no row created (35.778791ms)
+✖ (r2 m3) a delivery noted while a window read is in flight owes the next read: the stale answer never clears it, and the old close raises no nudge (67.841ms)
+ℹ reads from 06:57:59: 2026-11-11 06:57:59
+✖ (r2 m4) a state write that fails before an event is raised undoes the record in memory: the nudge is raised at the first tick that can write it, never shown as fired while lost (38.372ms)
+✖ (r2 m5) a failed write in setConsent, setHours, bindInvite or recordInvite throws and leaves memory as the disk has it (53.628166ms)
+ℹ before {"wa":["on",null],"br":null,"pending":1}; after the failed writes {"wa":["off","Mon-Fri 09:00-18:00"],"br":true,"pending":1}
+✖ (r2 m6) bindInvite is idempotent: a second sight of the same join is a no-op true (consent --off stands), a code binds one phone only (66.144458ms)
+✖ (r2 m7) a keeper event answered pending is accepted (gc took it); partial, failed and no_route are counted undelivered (200.883375ms)
+ℹ undelivered: 60 delivery pending; 30 delivery partial; 15 delivery failed; 5 delivery no_route
+✖ (r2 m8) the quiet rule compares business days: under 18:00-02:00 the owner writing at 00:30 Wed (Tuesday's span, after Tuesday's update) does not silence Wednesday's marks (744.770583ms)
+ℹ new close 2026-11-12 00:28:00; ladder unshifted; silent [{"mark":60,"why":"quiet"},{"mark":30,"why":"quiet"}]
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-11 00:00:00 America/Sao_Paulo
+✖ (r2 n13) a window read whose last_inbound_at went BACK is ignored: the fired set stands and no mark is raised twice (122.018458ms)
+ℹ no "went back" log line
+✖ (r2 n14) consent --off while the day's update is being posted: the ladder does not run for that phone in the same pass (75.588667ms)
+✖ (keeper r2 m6) a kill between a join's received line and its keeper bind loses nothing: the restart binds the invite at startup, consent ON (8154.226167ms)
+✖ (keeper r2 M2, n10) /consent and /hours match a phone by its digits and answer its last four; an unknown phone is 404 and records nothing; hours "" clears (145.653334ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 1
+ℹ fail 12
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8353.272541
+
+✖ failing tests:
+
+test at test/keeper.test.js:730:1
+✖ (10b) a failed window read after a delivery is retried on the ladder (1, 5, 15, 60 s) in clock time, never every tick; keeper.json keeps the last good read and the error; the ladder holds until the clock is fresh (102.647875ms)
+  AssertionError [ERR_ASSERTION]: four reads in the minute, one per rung of the ladder, not one per tick (got 240)
+  
+  240 !== 4
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:753:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 240,
+    expected: 4,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:892:1
+✖ (r2 M2) consent and hours name the phone by its digits ("+55 11 99999-0001" is 5511999990001); an unknown phone is refused 404, no row created (35.778791ms)
+  AssertionError [ERR_ASSERTION]: the matched row's id
+  + actual - expected
+  
+  + undefined
+  - '5511999990001'
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:897:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: '5511999990001',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:921:1
+✖ (r2 m3) a delivery noted while a window read is in flight owes the next read: the stale answer never clears it, and the old close raises no nudge (67.841ms)
+  AssertionError [ERR_ASSERTION]: the delivery noted in flight is read at the next tick
+  + actual - expected
+  
+  + undefined
+  - 1794401879250
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:949:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 1794401879250,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:954:1
+✖ (r2 m4) a state write that fails before an event is raised undoes the record in memory: the nudge is raised at the first tick that can write it, never shown as fired while lost (38.372ms)
+  AssertionError [ERR_ASSERTION]: and not shown as fired
+  + actual - expected
+  
+  + [
+  +   60
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:972:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 60 ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:982:1
+✖ (r2 m5) a failed write in setConsent, setHours, bindInvite or recordInvite throws and leaves memory as the disk has it (53.628166ms)
+  AssertionError [ERR_ASSERTION]: memory unchanged
+  + actual - expected
+  
+    {
+  +   br: true,
+  -   br: null,
+      pending: 1,
+      wa: [
+  +     'off',
+  +     'Mon-Fri 09:00-18:00'
+  -     'on',
+  -     null
+      ]
+    }
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:1003:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { wa: [ 'off', 'Mon-Fri 09:00-18:00' ], br: true, pending: 1 },
+    expected: { wa: [ 'on', null ], br: null, pending: 1 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:1009:1
+✖ (r2 m6) bindInvite is idempotent: a second sight of the same join is a no-op true (consent --off stands), a code binds one phone only (66.144458ms)
+  AssertionError [ERR_ASSERTION]: the same join seen again: bound, nothing changed
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:1020:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:1028:1
+✖ (r2 m7) a keeper event answered pending is accepted (gc took it); partial, failed and no_route are counted undelivered (200.883375ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+  +   '60 delivery pending',
+      '30 delivery partial',
+      '15 delivery failed',
+      '5 delivery no_route'
+    ]
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:1044:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ '60 delivery pending', '30 delivery partial', '15 delivery failed', '5 delivery no_route' ],
+    expected: [ '30 delivery partial', '15 delivery failed', '5 delivery no_route' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:1048:1
+✖ (r2 m8) the quiet rule compares business days: under 18:00-02:00 the owner writing at 00:30 Wed (Tuesday's span, after Tuesday's update) does not silence Wednesday's marks (744.770583ms)
+  AssertionError [ERR_ASSERTION]: keeper:5511999990001:2026-11-12T03:28:00.000Z:60 raised exactly once (got 0)
+  
+  0 !== 1
+  
+      at assertFired (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:270:12)
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:1066:3)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:1077:1
+✖ (r2 n13) a window read whose last_inbound_at went BACK is ignored: the fired set stands and no mark is raised twice (122.018458ms)
+  AssertionError [ERR_ASSERTION]: the 60 raised once
+  
+  2 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:1098:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:1104:1
+✖ (r2 n14) consent --off while the day's update is being posted: the ladder does not run for that phone in the same pass (75.588667ms)
+  AssertionError [ERR_ASSERTION]: no nudge after --off in the same pass
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/keeper.test.js:1115:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/pipeline.test.js:198:1
+✖ (keeper r2 m6) a kill between a join's received line and its keeper bind loses nothing: the restart binds the invite at startup, consent ON (8154.226167ms)
+  Error: timed out waiting for the invite bound to the joined phone
+      at waitFor (file:///private/tmp/keeper-r2-red/adapter/test/fakes.js:29:38)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/pipeline.test.js:210:15)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/pipeline.test.js:227:1
+✖ (keeper r2 M2, n10) /consent and /hours match a phone by its digits and answer its last four; an unknown phone is 404 and records nothing; hours "" clears (145.653334ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - '0001'
+  
+      at TestContext.<anonymous> (file:///private/tmp/keeper-r2-red/adapter/test/pipeline.test.js:235:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: '0001',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

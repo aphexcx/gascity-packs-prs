@@ -1,0 +1,105 @@
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp consent <wa_id> --off' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp consent <wa_id> --on' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp hours <wa_id> --clear [--tz America/Sao_Paulo]' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp hours <wa_id> --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound clear-gap <wa_id>' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound resolve <rid> --dead' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound resolve <rid> --delivered' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp invite' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp invite --proactive-consent --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp publish --to <wa_id> --text "message"' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp publish --to <wa_id> --text-file <path>' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp publish --update' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp publish --update --to <wa_id> --text "today\'s update"' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp status' in A's help.md
+PASS whatsapp/template-fragments/whatsapp-v0.template.md: verb form 'gc whatsapp publish --to <wa_id> --text-file <path>' in A's help.md
+PASS whatsapp/template-fragments/whatsapp-v0.template.md: verb form 'gc whatsapp publish --update --to <wa_id> --text "today\'s update"' in A's help.md
+PASS whatsapp/docs/meta-setup.md: verb form 'gc whatsapp invite --proactive-consent' in A's help.md
+PASS whatsapp/docs/meta-setup.md: verb form 'gc whatsapp publish' in A's help.md
+PASS skill quotes the daily update (window open)
+PASS A's adapter source carries the daily update (window open): "[window-keeper] <wa_id>: daily update due. Send today's short business update with one acknowledgement ask. Window open, closes <time>."
+PASS skill quotes the daily update (window closed)
+PASS A's adapter source carries the daily update (window closed): 'Window closed since <time>'
+PASS skill quotes the nudge (unshifted)
+PASS A's adapter source carries the nudge (unshifted): '[window-keeper] <wa_id>: window closes in <N> minutes, nobody from the business has written since <time>. One short line asking anyone in the group to reply.'
+PASS skill quotes the nudge (shifted)
+PASS A's adapter source carries the nudge (shifted): 'window closes at <time>, after your hours; last chance before close of business in <N> minutes.'
+PASS skill quotes the redelivery marker
+PASS A's adapter source carries the redelivery marker: '[redelivery <wamid>: a first copy may have reached you; if you already answered it, do nothing]'
+PASS skill quotes the actor
+PASS A's adapter source carries the actor: 'Dynasty window-keeper'
+PASS skill quotes the reply line
+PASS A's adapter source carries the reply line: 'gc whatsapp publish --to <wa_id> --text-file <path>'
+PASS skill quotes the attachment line
+PASS A's adapter source carries the attachment line: 'saved to <path>; Read that path to view it'
+PASS skill quotes the voice transcript
+PASS A's adapter source carries the voice transcript: '[voice note transcript: <name>]'
+PASS skill quotes the reaction
+PASS A's adapter source carries the reaction: '[reaction <emoji> to <message id>]'
+PASS skill quotes the failed delivery
+PASS A's adapter source carries the failed delivery: '[delivery failed: <code> <title>]'
+PASS fragment quotes '[window-keeper] <wa_id>: daily update due.'
+PASS fragment quotes '[window-keeper] <wa_id>: window closes in <N> minutes,'
+PASS fragment quotes '[redelivery <wamid>:'
+PASS fragment quotes '[delivery failed:'
+PASS Afik's words quoted in the skill and the fragment
+PASS the keeper's one ask quoted in the skill and the fragment
+PASS citadel's records yield the Meta ids to look for (8, at least 7)
+PASS citadel's records yield the test number to look for (1, at least 1)
+PASS assets/pr-evidence/gp-6mr7/codex-quick-r1.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-quick-r2-prompt.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-quick-r2.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-quick-r3-prompt.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-round3-prompt.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-round3-r2-prompt.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-round3-r3-prompt.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-round3-r4-prompt.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-round3.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/fragparse.go: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/meta-pages-read.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/no-ai-slop.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/portuguese-read.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/red.py: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/codex-r1-usage-limit.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/codex-r2-usage-limit.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/fragparse.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/fragparse.r2.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/fragparse.r3.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/fragparse.red.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/red.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/red.r2.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/red.r3-fold.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/red.r3-known-prefold.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/red.r3-known-r3fold.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/red.r3-known.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/red.r3.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/test-gascity.0a9394a8.txt: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/test-gascity.8062fa2c.flake-under-codex-load.txt: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/test-gascity.c02dd3ed.txt: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r2-red.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r2.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-fold-red.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-fold.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-known-closed.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-known-r3fold-closed.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-known-r3fold-red.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-known-r3fold.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-known-red.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-known.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-prefold-misses.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3-red.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/verbs.r3.out: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/whatsapp-tests.0a9394a8.txt: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/whatsapp-tests.c02dd3ed.txt: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/whatsapp-tests.r2.txt: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/whatsapp-tests.r3.txt: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/runs/whatsapp-tests.red-meta-names.txt: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/self-review-r1.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/verbs.py: no Meta value from citadel's records
+PASS whatsapp/docs/README.md: no Meta value from citadel's records
+PASS whatsapp/docs/meta-setup.md: no Meta value from citadel's records
+PASS whatsapp/docs/owner-onboarding.md: no Meta value from citadel's records
+PASS whatsapp/skills/whatsapp/SKILL.md: no Meta value from citadel's records
+PASS whatsapp/template-fragments/whatsapp-v0.template.md: no Meta value from citadel's records
+rc=0

@@ -1,0 +1,11 @@
+verbs.py rc=1 on the mutated mirror; 8 FAIL lines:
+  FAIL whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound clear-gap <conversation>' in A's help.md
+  FAIL skill quotes the nudge (unshifted)
+  FAIL skill quotes the failed delivery
+  FAIL whatsapp/docs/meta-setup.md: no Meta id or 555 number (found 1)
+  FAIL whatsapp/docs/red-e164.md: no Meta id or 555 number (found 1)
+  FAIL whatsapp/docs/red-grouped.md: no Meta id or 555 number (found 1)
+  FAIL whatsapp/docs/red-parens.md: no Meta id or 555 number (found 1)
+  FAIL whatsapp/docs/red-touching.md: no Meta id or 555 number (found 1)
+RED OK
+rc=0

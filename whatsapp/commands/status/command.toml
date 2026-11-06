@@ -1,0 +1,2 @@
+description = "WhatsApp door status: enrollment, polls, windows, keeper, terminal holds, restore gaps, dead letters"
+run = "../status.sh"
