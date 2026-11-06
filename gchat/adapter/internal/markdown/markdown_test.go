@@ -507,3 +507,24 @@ func lengths(parts []string) []int {
 	}
 	return result
 }
+
+func TestStripHandle(t *testing.T) {
+	tests := []struct{ input, want string }{
+		{"mayor: hello", "hello"},
+		{"**mayor:** hello", "hello"},
+		{"**mayor**: hello\nsecond line", "hello\nsecond line"},
+		{"  Mayor: hello", "hello"},
+		{"sess-1: hello", "hello"},
+		{"other: hello", "other: hello"},
+		{"mayor hello", "mayor hello"},
+		{"mayor:", ""},
+		{"**bold** text", "**bold** text"},
+		{"", ""},
+		{"https://example.com", "https://example.com"},
+	}
+	for _, tc := range tests {
+		if got := StripHandle(tc.input, "mayor", "sess-1", ""); got != tc.want {
+			t.Errorf("StripHandle(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}

@@ -160,7 +160,10 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 	if requestID != "" {
 		call.RequestId(requestID)
 	}
-	if named {
+	// The fallback option only makes sense with a thread to reply to: Google
+	// refuses it on a top-level post ("does not specify which message to reply
+	// to", seen live), and a DM takes the thread without it.
+	if named && thread != "" {
 		call.MessageReplyOption("REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD")
 	}
 	var result *googlechat.Message
@@ -549,6 +552,20 @@ func (e localError) Unwrap() error { return e.error }
 // seconds and an HTTP date; malformed or past hints produce a zero delay.
 func Classify(err error) (kind string, retryAfter time.Duration) {
 	return classifyAt(err, time.Now())
+}
+
+// ResourceDenied reports a 403 that is about the resource, not the credential:
+// Google answers "permission denied ... or the resource doesn't exist" for a
+// space the user is not (yet) a joined member of, such as a direct message it
+// was invited to and never accepted. A missing scope says so explicitly
+// ("insufficient authentication scopes") and stays a credential problem.
+func ResourceDenied(err error) bool {
+	var apiErr *googleapi.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != http.StatusForbidden {
+		return false
+	}
+	message := strings.ToLower(apiErr.Message)
+	return !strings.Contains(message, "insufficient authentication scopes") && !strings.Contains(message, "not a member")
 }
 
 func classifyAt(err error, now time.Time) (kind string, retryAfter time.Duration) {

@@ -422,7 +422,7 @@ func TestOldMessageEditRecoveredFromSpaceEvents(t *testing.T) {
 	f.freeze(t)
 	f.pass(t, 1, 0)
 	turns := f.gc.Inbound()
-	if len(turns) != 2 || turns[1].ProviderMessageID != m.Name+"#updated#"+m.LastUpdateTime || !strings.Contains(turns[1].Text, "[catch-up]\nedited: changed") {
+	if len(turns) != 2 || turns[1].ProviderMessageID != m.Name+"#updated#"+m.LastUpdateTime || !strings.Contains(turns[1].Text, "[catch-up]\n[from: <users/456> | external | item gchat:"+m.Name+"]\nedited: changed") {
 		t.Fatalf("edit missing: %+v", turns)
 	}
 }
@@ -768,6 +768,39 @@ func TestLeftSpaceHoldsSavedHistoryUntilListedAgain(t *testing.T) {
 	}
 }
 
+// Google's generic 403 ("permission denied ... or the resource doesn't exist")
+// on one space, seen live for a direct message the identity was invited to and
+// never accepted, holds that space like a not-a-member answer: it must never
+// put the whole adapter into credential repair.
+func TestResourceDeniedSpaceIsHeldNotCredentials(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	f.addSpace("spaces/other", true)
+	f.addMessage("spaces/room", 0, frozen.Add(-time.Minute))
+	f.addMessage("spaces/other", 0, frozen.Add(-time.Minute))
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if strings.Contains(r.URL.Path, "spaces/room/") {
+			return &googleapi.Error{Code: 403, Message: "Permission denied to perform the requested action on the specified resource, or the resource doesn't exist."}
+		}
+		return nil
+	}
+	_, _, err := f.r.Pass(context.Background())
+	if err == nil || errors.Is(err, inbound.ErrCredentials) {
+		t.Fatalf("resource denial classified as credentials: %v", err)
+	}
+	if !strings.Contains(err.Error(), "permission denied (HTTP 403)") {
+		t.Fatalf("hold reason: %v", err)
+	}
+	if f.opts.Ledger.Counters["unavailable:spaces/room"] != 1 || f.opts.Ledger.Counters["credentials:spaces/room"] != 0 {
+		t.Fatalf("counters: %v", f.opts.Ledger.Counters)
+	}
+	// The other space is unaffected and delivered.
+	if got := f.gc.Inbound(); len(got) != 1 || !strings.HasPrefix(got[0].ProviderMessageID, "spaces/other/") {
+		t.Fatalf("other space: %+v", got)
+	}
+}
+
 func TestListedForbiddenSpaceStaysHeldAcrossFreezes(t *testing.T) {
 	f := setup(t)
 	f.pageSize = 2
@@ -862,7 +895,7 @@ func TestHistoryCredentialsHoldSavedPage(t *testing.T) {
 	f.freeze(t)
 	f.onRequest = func(r *http.Request) error {
 		if r.URL.Query().Get("pageToken") == "17" {
-			return &googleapi.Error{Code: 403, Message: "permission denied; private response"}
+			return &googleapi.Error{Code: 403, Message: "Request had insufficient authentication scopes.; private response"}
 		}
 		return nil
 	}

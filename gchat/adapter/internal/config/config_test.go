@@ -112,6 +112,38 @@ func TestMissingRequiredSecretNamesIt(t *testing.T) {
 	}
 }
 
+func TestKeyholderSourceNeedsSocketNotClientFile(t *testing.T) {
+	dir := t.TempDir()
+	env := filepath.Join(dir, "env")
+	base := "GCHAT_PROJECT_ID=proj\nGCHAT_PUBSUB_TOPIC=projects/proj/topics/t\nGCHAT_PUBSUB_SUBSCRIPTION=projects/proj/subscriptions/s\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL=http://127.0.0.1:1\n"
+	writeFixture(t, env, base+"GCHAT_TOKEN_SOURCE=keyholder\n")
+	_, err := Load(env, "", dir)
+	if err == nil || !contains(err.Error(), "GCHAT_KEYHOLDER_SOCKET") || contains(err.Error(), "GCHAT_OAUTH_CLIENT_FILE") {
+		t.Fatalf("want error naming only GCHAT_KEYHOLDER_SOCKET, got %v", err)
+	}
+	t.Setenv("GCHAT_PEOPLE_API_BASE", "")
+	writeFixture(t, env, base+"GCHAT_TOKEN_SOURCE=keyholder\nGCHAT_KEYHOLDER_SOCKET=/run/kh.sock\nGCHAT_PEOPLE_API_BASE=http://127.0.0.1:5\n")
+	c, err := Load(env, "", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Secrets.TokenSource != TokenSourceKeyholder || c.Secrets.KeyholderSocket != "/run/kh.sock" || c.Secrets.OAuthClientFile != "" {
+		t.Fatalf("secrets: %+v", c.Secrets)
+	}
+	if c.Endpoints.PeopleAPIBase != "http://127.0.0.1:5" {
+		t.Fatalf("people base: %s", c.Endpoints.PeopleAPIBase)
+	}
+	writeFixture(t, env, base+"GCHAT_TOKEN_SOURCE=vault\n")
+	if _, err := Load(env, "", dir); err == nil || !contains(err.Error(), "GCHAT_TOKEN_SOURCE") {
+		t.Fatalf("want an error naming GCHAT_TOKEN_SOURCE, got %v", err)
+	}
+	writeFixture(t, env, base+"GCHAT_OAUTH_CLIENT_FILE=/c.json\n")
+	c, err = Load(env, "", dir)
+	if err != nil || c.Secrets.TokenSource != TokenSourceOAuth {
+		t.Fatalf("default source: %+v %v", c.Secrets, err)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
 }
@@ -137,7 +169,7 @@ func configFixture(t *testing.T) (env, settings, dir string) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"GC_CITY_PATH", "GC_SERVICE_SOCKET", "GC_SERVICE_URL_PREFIX", "GCHAT_CHAT_API_BASE", "GCHAT_EVENTS_API_BASE", "GCHAT_PUBSUB_ENDPOINT", "GCHAT_OAUTH_AUTH_URL", "GCHAT_OAUTH_TOKEN_URL", "GCHAT_MEDIA_DIR", "GCHAT_UPLOAD_ROOT", "GCHAT_STATE_FILE"} {
+	for _, key := range []string{"GC_CITY_PATH", "GC_SERVICE_SOCKET", "GC_SERVICE_URL_PREFIX", "GCHAT_CHAT_API_BASE", "GCHAT_EVENTS_API_BASE", "GCHAT_PUBSUB_ENDPOINT", "GCHAT_OAUTH_AUTH_URL", "GCHAT_OAUTH_TOKEN_URL", "GCHAT_PEOPLE_API_BASE", "GCHAT_MEDIA_DIR", "GCHAT_UPLOAD_ROOT", "GCHAT_STATE_FILE"} {
 		t.Setenv(key, "")
 	}
 	env = filepath.Join(dir, "env")
@@ -175,9 +207,12 @@ func TestEmptySettingsDefaults(t *testing.T) {
 	wantEndpoints := Endpoints{
 		ChatAPIBase: "https://chat.googleapis.com", EventsAPIBase: "https://workspaceevents.googleapis.com",
 		OAuthAuthURL: "https://accounts.google.com/o/oauth2/auth", OAuthTokenURL: "https://oauth2.googleapis.com/token",
-		MediaDir: filepath.Join(city, ".gc/gchat-media/inbound"), UploadRoot: filepath.Join(city, ".gc/gchat-out"),
-		MediaMaxBytes: 209715200,
-		StateFile:     filepath.Join(dir, "..", "state.json"),
+		PeopleAPIBase: "https://people.googleapis.com",
+		MediaDir:      filepath.Join(city, ".gc/gchat-media/inbound"), UploadRoot: filepath.Join(city, ".gc/gchat-out"),
+		MediaMaxBytes:       209715200,
+		MediaMaxAttachments: 20,
+		MediaMaxTotalBytes:  2147483648,
+		StateFile:           filepath.Join(dir, "..", "state.json"),
 	}
 	if c.Endpoints != wantEndpoints {
 		t.Fatalf("endpoints: %+v, want %+v", c.Endpoints, wantEndpoints)
@@ -288,8 +323,8 @@ func TestEndpointAndServiceEnvironmentOverrides(t *testing.T) {
 	}
 	want := Endpoints{ChatAPIBase: values["GCHAT_CHAT_API_BASE"], EventsAPIBase: values["GCHAT_EVENTS_API_BASE"],
 		PubSubEndpoint: values["GCHAT_PUBSUB_ENDPOINT"], OAuthAuthURL: values["GCHAT_OAUTH_AUTH_URL"],
-		OAuthTokenURL: values["GCHAT_OAUTH_TOKEN_URL"], MediaDir: values["GCHAT_MEDIA_DIR"],
-		UploadRoot: values["GCHAT_UPLOAD_ROOT"], MediaMaxBytes: 1024, StateFile: values["GCHAT_STATE_FILE"]}
+		OAuthTokenURL: values["GCHAT_OAUTH_TOKEN_URL"], PeopleAPIBase: "https://people.googleapis.com", MediaDir: values["GCHAT_MEDIA_DIR"],
+		UploadRoot: values["GCHAT_UPLOAD_ROOT"], MediaMaxBytes: 1024, MediaMaxAttachments: 20, MediaMaxTotalBytes: 2147483648, StateFile: values["GCHAT_STATE_FILE"]}
 	if c.Endpoints != want || c.Secrets.ServiceSocket != values["GC_SERVICE_SOCKET"] || c.Secrets.ServiceURLPrefix != values["GC_SERVICE_URL_PREFIX"] {
 		t.Fatalf("overrides: %+v %+v", c.Endpoints, c.Secrets)
 	}
@@ -435,5 +470,50 @@ func TestMissingSettingsNamesFile(t *testing.T) {
 	_, err := Load(env, settings+".missing", dir)
 	if err == nil || !strings.Contains(err.Error(), settings+".missing") {
 		t.Fatalf("want missing settings file error, got %v", err)
+	}
+}
+
+func TestEndpointOverridesMustBeSecureOrLocal(t *testing.T) {
+	refused := []struct{ key, value string }{
+		{"GCHAT_CHAT_API_BASE", "http://chat.example.test"},
+		{"GCHAT_EVENTS_API_BASE", "http://events.example.test"},
+		{"GCHAT_OAUTH_AUTH_URL", "http://accounts.example.test/auth"},
+		{"GCHAT_OAUTH_TOKEN_URL", "http://accounts.example.test/token"},
+		{"GCHAT_PEOPLE_API_BASE", "http://people.example.test"},
+		{"GCHAT_CHAT_API_BASE", "ftp://chat.example.test"},
+		{"GCHAT_CHAT_API_BASE", "https://user:secret@chat.example.test"},
+		{"GCHAT_CHAT_API_BASE", "https://chat.example.test/?key=1"},
+		{"GCHAT_CHAT_API_BASE", "chat.example.test"},
+		{"GCHAT_PUBSUB_ENDPOINT", "pubsub.example.test:443"},
+		{"GCHAT_PUBSUB_ENDPOINT", "dns:///pubsub.example.test:443"},
+		{"GCHAT_PUBSUB_ENDPOINT", "127.0.0.1"},
+	}
+	for _, endpoint := range refused {
+		t.Run("refuse "+endpoint.key+"="+endpoint.value, func(t *testing.T) {
+			env, settings, dir := configFixture(t)
+			t.Setenv(endpoint.key, endpoint.value)
+			_, err := Load(env, settings, dir)
+			if err == nil || !strings.Contains(err.Error(), endpoint.key) {
+				t.Fatalf("accepted %s=%q: %v", endpoint.key, endpoint.value, err)
+			}
+		})
+	}
+	allowed := []struct{ key, value string }{
+		{"GCHAT_CHAT_API_BASE", "https://chat.example.test"},
+		{"GCHAT_CHAT_API_BASE", "http://127.0.0.1:8080"},
+		{"GCHAT_EVENTS_API_BASE", "http://localhost:8081"},
+		{"GCHAT_PEOPLE_API_BASE", "http://[::1]:8082"},
+		{"GCHAT_OAUTH_TOKEN_URL", "https://oauth.example.test/token"},
+		{"GCHAT_PUBSUB_ENDPOINT", "127.0.0.1:8085"},
+		{"GCHAT_PUBSUB_ENDPOINT", "localhost:8085"},
+	}
+	for _, endpoint := range allowed {
+		t.Run("allow "+endpoint.key+"="+endpoint.value, func(t *testing.T) {
+			env, settings, dir := configFixture(t)
+			t.Setenv(endpoint.key, endpoint.value)
+			if _, err := Load(env, settings, dir); err != nil {
+				t.Fatalf("refused %s=%q: %v", endpoint.key, endpoint.value, err)
+			}
+		})
 	}
 }

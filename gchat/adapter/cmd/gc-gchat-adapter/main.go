@@ -102,6 +102,10 @@ func runWithServe(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		if len(args) == 2 {
 			return checkAuth(ctx, cfg, tokenFile, stdout, stderr)
 		}
+		if cfg.Secrets.TokenSource == config.TokenSourceKeyholder {
+			fmt.Fprintf(stderr, "sign-in is managed by the key holder at %s (GCHAT_TOKEN_SOURCE=keyholder); enroll the identity there, then run gc gchat auth --check\n", cfg.Secrets.KeyholderSocket)
+			return 2
+		}
 		err = token.RunAuth(ctx, cfg.Secrets.OAuthClientFile, tokenFile, cfg.Endpoints, token.Scopes, stdout, open)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -139,6 +143,9 @@ func runWithServe(ctx context.Context, args []string, stdout, stderr io.Writer, 
 
 func checkAuth(ctx context.Context, cfg *config.Config, tokenFile string, stdout, stderr io.Writer) int {
 	source, err := token.New(cfg.Secrets.OAuthClientFile, tokenFile, cfg.Endpoints, token.Scopes)
+	if cfg.Secrets.TokenSource == config.TokenSourceKeyholder {
+		source, err = token.NewKeyholder(cfg.Secrets.KeyholderSocket, cfg.Endpoints, token.KeyholderScopes)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -157,6 +164,8 @@ func checkAuth(ctx context.Context, cfg *config.Config, tokenFile string, stdout
 	fmt.Fprintln(stdout, source.State())
 	if id := source.IdentityUserID(); id != "" {
 		fmt.Fprintf(stdout, "identity_user_id: %s\n", id)
+	} else if source.Managed() {
+		fmt.Fprintln(stdout, "identity_user_id: unknown (not in the Workspace directory yet; learned from the first outbound message)")
 	} else {
 		fmt.Fprintln(stdout, "identity_user_id: unknown (legacy token; run gc gchat auth)")
 	}

@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,16 +15,36 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// TokenSource names where the identity's access tokens come from.
+type TokenSource string
+
+const (
+	// TokenSourceOAuth is the default: a Desktop OAuth client and a token file
+	// written by gc gchat auth.
+	TokenSourceOAuth TokenSource = "oauth"
+	// TokenSourceKeyholder asks a key holder over a Unix socket for tokens
+	// (POST /v1/token {scopes}); the adapter never holds a refresh credential,
+	// and sign-in is managed outside it.
+	TokenSourceKeyholder TokenSource = "keyholder"
+)
+
 type Secrets struct {
-	ProjectID        string // GCHAT_PROJECT_ID
-	Topic            string // GCHAT_PUBSUB_TOPIC  projects/<id>/topics/<name>
-	Subscription     string // GCHAT_PUBSUB_SUBSCRIPTION
-	OAuthClientFile  string // GCHAT_OAUTH_CLIENT_FILE
-	TokenFile        string // GCHAT_TOKEN_FILE, default <secrets dir>/token.json
-	CityName         string // GC_CITY_NAME
-	GCAPIBase        string // GC_API_BASE_URL
-	ServiceSocket    string // GC_SERVICE_SOCKET (set by gc)
-	ServiceURLPrefix string // GC_SERVICE_URL_PREFIX (set by gc)
+	ProjectID        string      // GCHAT_PROJECT_ID
+	Topic            string      // GCHAT_PUBSUB_TOPIC  projects/<id>/topics/<name>
+	Subscription     string      // GCHAT_PUBSUB_SUBSCRIPTION
+	TokenSource      TokenSource // GCHAT_TOKEN_SOURCE, default oauth
+	KeyholderSocket  string      // GCHAT_KEYHOLDER_SOCKET, required for the keyholder source
+	OAuthClientFile  string      // GCHAT_OAUTH_CLIENT_FILE, required for the oauth source
+	TokenFile        string      // GCHAT_TOKEN_FILE, default <secrets dir>/token.json
+	CityName         string      // GC_CITY_NAME
+	GCAPIBase        string      // GC_API_BASE_URL
+	ServiceSocket    string      // GC_SERVICE_SOCKET (set by gc)
+	ServiceURLPrefix string      // GC_SERVICE_URL_PREFIX (set by gc)
+	// Provenance: who counts as an owner (addresses or users/<id>, comma
+	// separated) and the organization's mail domain. Optional; see the
+	// provenance package. Not secrets, but written by the same hand.
+	Owners             []string // GCHAT_OWNERS
+	OrganizationDomain string   // GCHAT_ORGANIZATION_DOMAIN
 }
 
 // Endpoints holds effective values: named process environment overrides, then
@@ -33,10 +55,16 @@ type Endpoints struct {
 	PubSubEndpoint string // GCHAT_PUBSUB_ENDPOINT,  default "" (library default); host:port for the fake, insecure
 	OAuthAuthURL   string // GCHAT_OAUTH_AUTH_URL,   default https://accounts.google.com/o/oauth2/auth
 	OAuthTokenURL  string // GCHAT_OAUTH_TOKEN_URL,  default https://oauth2.googleapis.com/token
+	PeopleAPIBase  string // GCHAT_PEOPLE_API_BASE,  default https://people.googleapis.com; the keyholder source learns its Chat identity here
 	MediaDir       string // GCHAT_MEDIA_DIR,        default <city>/.gc/gchat-media/inbound
 	UploadRoot     string // GCHAT_UPLOAD_ROOT,      default <city>/.gc/gchat-out
 	MediaMaxBytes  int64  // media.max_bytes,        default 209715200
-	StateFile      string // GCHAT_STATE_FILE,       default <secrets dir>/../state.json
+	// Per message and for the whole store: a space member chooses how many
+	// files a message carries and how large they are, so the count is bounded
+	// separately from the per-file limit and the store has one quota.
+	MediaMaxAttachments int    // media.max_attachments, default 20
+	MediaMaxTotalBytes  int64  // media.max_total_bytes, default 2147483648
+	StateFile           string // GCHAT_STATE_FILE,     default <secrets dir>/../state.json
 }
 
 type WakePolicy string
@@ -58,9 +86,11 @@ type Space struct {
 }
 
 type Media struct {
-	InboundDir string `toml:"inbound_dir,omitempty"`
-	UploadRoot string `toml:"upload_root,omitempty"`
-	MaxBytes   int64  `toml:"max_bytes,omitzero"`
+	InboundDir     string `toml:"inbound_dir,omitempty"`
+	UploadRoot     string `toml:"upload_root,omitempty"`
+	MaxBytes       int64  `toml:"max_bytes,omitzero"`
+	MaxAttachments int    `toml:"max_attachments,omitzero"`
+	MaxTotalBytes  int64  `toml:"max_total_bytes,omitzero"`
 }
 
 type Settings struct {
@@ -87,13 +117,24 @@ type Config struct {
 // overrides taking precedence. gc's service coordinates remain process-only.
 func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	values, err := readEnv(envFile)
-	required := []string{"GCHAT_PROJECT_ID", "GCHAT_PUBSUB_TOPIC", "GCHAT_PUBSUB_SUBSCRIPTION", "GCHAT_OAUTH_CLIENT_FILE", "GC_CITY_NAME", "GC_API_BASE_URL"}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w; required keys: %s", err, strings.Join(required, ", "))
+			return nil, fmt.Errorf("%w; required keys: %s", err, RequiredKeys)
 		}
 		return nil, err
 	}
+	source := TokenSource(strings.TrimSpace(values["GCHAT_TOKEN_SOURCE"]))
+	required := []string{"GCHAT_PROJECT_ID", "GCHAT_PUBSUB_TOPIC", "GCHAT_PUBSUB_SUBSCRIPTION"}
+	switch source {
+	case "", TokenSourceOAuth:
+		source = TokenSourceOAuth
+		required = append(required, "GCHAT_OAUTH_CLIENT_FILE")
+	case TokenSourceKeyholder:
+		required = append(required, "GCHAT_KEYHOLDER_SOCKET")
+	default:
+		return nil, fmt.Errorf("secrets %s: GCHAT_TOKEN_SOURCE must be oauth or keyholder, not %q", envFile, source)
+	}
+	required = append(required, "GC_CITY_NAME", "GC_API_BASE_URL")
 	var missing []string
 	for _, key := range required {
 		if strings.TrimSpace(values[key]) == "" {
@@ -106,9 +147,11 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	c := &Config{SecretsDir: secretsDir}
 	c.Secrets = Secrets{
 		ProjectID: values["GCHAT_PROJECT_ID"], Topic: values["GCHAT_PUBSUB_TOPIC"],
-		Subscription: values["GCHAT_PUBSUB_SUBSCRIPTION"], OAuthClientFile: values["GCHAT_OAUTH_CLIENT_FILE"],
+		Subscription: values["GCHAT_PUBSUB_SUBSCRIPTION"], TokenSource: source,
+		KeyholderSocket: values["GCHAT_KEYHOLDER_SOCKET"], OAuthClientFile: values["GCHAT_OAUTH_CLIENT_FILE"],
 		TokenFile: values["GCHAT_TOKEN_FILE"], CityName: values["GC_CITY_NAME"], GCAPIBase: values["GC_API_BASE_URL"],
 		ServiceSocket: os.Getenv("GC_SERVICE_SOCKET"), ServiceURLPrefix: os.Getenv("GC_SERVICE_URL_PREFIX"),
+		Owners: splitList(values["GCHAT_OWNERS"]), OrganizationDomain: strings.ToLower(strings.TrimSpace(values["GCHAT_ORGANIZATION_DOMAIN"])),
 	}
 	if c.Secrets.TokenFile == "" {
 		c.Secrets.TokenFile = "token.json"
@@ -130,11 +173,19 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	if metadata.IsDefined("media", "max_bytes") {
 		mediaMaxBytes = c.Settings.Media.MaxBytes
 	}
+	mediaMaxAttachments := 20
+	if metadata.IsDefined("media", "max_attachments") {
+		mediaMaxAttachments = c.Settings.Media.MaxAttachments
+	}
+	mediaMaxTotalBytes := int64(2147483648)
+	if metadata.IsDefined("media", "max_total_bytes") {
+		mediaMaxTotalBytes = c.Settings.Media.MaxTotalBytes
+	}
 	catchupBudget := 50
 	if metadata.IsDefined("catchup_budget") {
 		catchupBudget = c.Settings.CatchupBudget
 	}
-	if err := c.validateSettings(mediaMaxBytes, catchupBudget); err != nil {
+	if err := c.validateSettings(mediaMaxBytes, mediaMaxAttachments, mediaMaxTotalBytes, catchupBudget); err != nil {
 		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
 	}
 	city, err := cityPath(secretsDir)
@@ -169,15 +220,84 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 		PubSubEndpoint: endpoint("GCHAT_PUBSUB_ENDPOINT", ""),
 		OAuthAuthURL:   endpoint("GCHAT_OAUTH_AUTH_URL", authURL),
 		OAuthTokenURL:  endpoint("GCHAT_OAUTH_TOKEN_URL", tokenURL),
+		PeopleAPIBase:  endpoint("GCHAT_PEOPLE_API_BASE", "https://people.googleapis.com"),
 		MediaDir:       endpoint("GCHAT_MEDIA_DIR", mediaDir), UploadRoot: endpoint("GCHAT_UPLOAD_ROOT", uploadRoot),
-		MediaMaxBytes: mediaMaxBytes,
-		StateFile:     endpoint("GCHAT_STATE_FILE", filepath.Join(secretsDir, "..", "state.json")),
+		MediaMaxBytes: mediaMaxBytes, MediaMaxAttachments: mediaMaxAttachments, MediaMaxTotalBytes: mediaMaxTotalBytes,
+		StateFile: endpoint("GCHAT_STATE_FILE", filepath.Join(secretsDir, "..", "state.json")),
+	}
+	if err := c.Endpoints.validate(); err != nil {
+		return nil, fmt.Errorf("secrets %s: %w", envFile, err)
 	}
 	if endpoint("GCHAT_STATE_FILE", "") != "" && !filepath.IsAbs(c.Endpoints.StateFile) {
 		c.Endpoints.StateFile = filepath.Join(filepath.Dir(envFile), c.Endpoints.StateFile)
 	}
 	return c, nil
 }
+
+// validate refuses an endpoint override that would put a credential or an
+// unauthenticated event stream where the operator did not mean it. The
+// defaults are Google's own https endpoints; an override exists for tests and
+// private deployments, so plaintext is allowed only on this machine, where the
+// in-memory fake runs, and the unauthenticated Pub/Sub transport only there.
+func (e Endpoints) validate() error {
+	for _, endpoint := range []struct{ key, value string }{
+		{"GCHAT_CHAT_API_BASE", e.ChatAPIBase},
+		{"GCHAT_EVENTS_API_BASE", e.EventsAPIBase},
+		{"GCHAT_OAUTH_AUTH_URL", e.OAuthAuthURL},
+		{"GCHAT_OAUTH_TOKEN_URL", e.OAuthTokenURL},
+		{"GCHAT_PEOPLE_API_BASE", e.PeopleAPIBase},
+	} {
+		if err := validateEndpointURL(endpoint.key, endpoint.value); err != nil {
+			return err
+		}
+	}
+	if e.PubSubEndpoint != "" {
+		host, _, err := net.SplitHostPort(e.PubSubEndpoint)
+		if err != nil {
+			return fmt.Errorf("GCHAT_PUBSUB_ENDPOINT must be host:port, not %q", e.PubSubEndpoint)
+		}
+		if !loopback(host) {
+			return fmt.Errorf("GCHAT_PUBSUB_ENDPOINT may only name this machine (127.0.0.1, ::1 or localhost); its transport is unauthenticated, so %q would take events from anyone", e.PubSubEndpoint)
+		}
+	}
+	return nil
+}
+
+// validateEndpointURL requires https, or plaintext on loopback: the Chat base
+// carries the identity's bearer token, the token URL the OAuth client secret,
+// and the events base decides where subscribed Chat events are delivered.
+func validateEndpointURL(key, raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", key, err)
+	}
+	switch {
+	case parsed.Host == "":
+		return fmt.Errorf("%s must be an absolute https:// URL, not %q", key, raw)
+	case parsed.User != nil:
+		return fmt.Errorf("%s must not carry credentials, not %q", key, raw)
+	case parsed.RawQuery != "" || parsed.Fragment != "":
+		return fmt.Errorf("%s must be a bare base URL, not %q", key, raw)
+	case parsed.Scheme == "https", parsed.Scheme == "http" && loopback(parsed.Hostname()):
+		return nil
+	default:
+		return fmt.Errorf("%s must use https (plain http only on this machine), not %q", key, raw)
+	}
+}
+
+// loopback reports whether a host names this machine.
+func loopback(host string) bool {
+	name := strings.ToLower(strings.Trim(host, "[]"))
+	if name == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(name)
+	return ip != nil && ip.IsLoopback()
+}
+
+// RequiredKeys is the secrets contract in one line, for messages printed
+// before the file can be read.
+const RequiredKeys = "GCHAT_PROJECT_ID, GCHAT_PUBSUB_TOPIC, GCHAT_PUBSUB_SUBSCRIPTION, GC_CITY_NAME, GC_API_BASE_URL, and GCHAT_OAUTH_CLIENT_FILE (or GCHAT_TOKEN_SOURCE=keyholder with GCHAT_KEYHOLDER_SOCKET)"
 
 // Wake returns a space override, then Settings.Defaults.Wake, then WakeAll.
 func (c *Config) Wake(spaceID string) WakePolicy {
@@ -224,7 +344,7 @@ func (c *Config) Identity() Identity {
 	return c.Identities()[0]
 }
 
-func (c *Config) validateSettings(mediaMaxBytes int64, catchupBudget int) error {
+func (c *Config) validateSettings(mediaMaxBytes int64, mediaMaxAttachments int, mediaMaxTotalBytes int64, catchupBudget int) error {
 	validWake := func(wake WakePolicy) bool { return wake == WakeAll || wake == WakeMentions }
 	if c.Settings.Defaults.Wake != "" && !validWake(c.Settings.Defaults.Wake) {
 		return fmt.Errorf("defaults.wake must be all or mentions")
@@ -247,6 +367,12 @@ func (c *Config) validateSettings(mediaMaxBytes int64, catchupBudget int) error 
 	}
 	if mediaMaxBytes <= 0 {
 		return fmt.Errorf("media.max_bytes must be positive")
+	}
+	if mediaMaxAttachments <= 0 {
+		return fmt.Errorf("media.max_attachments must be positive")
+	}
+	if mediaMaxTotalBytes <= 0 {
+		return fmt.Errorf("media.max_total_bytes must be positive")
 	}
 	if catchupBudget <= 0 {
 		return fmt.Errorf("catchup_budget must be positive")
@@ -314,4 +440,15 @@ func cityPath(secretsDir string) (string, error) {
 		path = filepath.Dir(path)
 	}
 	return path, nil
+}
+
+// splitList is a comma-separated list, trimmed, without empties.
+func splitList(value string) []string {
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }

@@ -72,9 +72,15 @@ func TestEnvFileEndpointOverrides(t *testing.T) {
 		}
 	}
 	check()
-	for key, value := range values {
-		values[key] = value + "-process"
-		t.Setenv(key, values[key])
+	// Process values win over the env file. Each stays a well-formed URL: the
+	// loader now refuses an override that is not https or on this machine.
+	process := map[string]string{
+		"GCHAT_CHAT_API_BASE": "http://127.0.0.1:11", "GCHAT_EVENTS_API_BASE": "http://127.0.0.1:12", "GCHAT_PUBSUB_ENDPOINT": "127.0.0.1:13",
+		"GCHAT_MEDIA_DIR": "/tmp/process-media", "GCHAT_UPLOAD_ROOT": "/tmp/process-upload", "GCHAT_STATE_FILE": "/tmp/process-state.json",
+	}
+	for key, value := range process {
+		values[key] = value
+		t.Setenv(key, value)
 	}
 	check()
 }

@@ -37,6 +37,39 @@ this Workspace deployment. Consent requests `chat.messages`,
 The last scope supplies the identity's numeric user ID at sign-in, allowing
 inbound delivery before the first outbound message.
 
+## Managed credentials (a key holder)
+
+A headless machine can use desktop consent with a browser elsewhere and a
+secure loopback callback tunnel or operator-assisted relay; see boxboxbox's
+[Google onboarding skill](../../skills/google-onboarding/SKILL.md). A browser's
+localhost is not the remote box. When another process on the machine already
+holds a credential for the identity, such as boxboxbox's key holder (a service
+account with domain-wide delegation, serving one Workspace user over a Unix
+socket), the adapter can take its tokens from there instead:
+
+```sh
+GCHAT_TOKEN_SOURCE=keyholder
+GCHAT_KEYHOLDER_SOCKET=/run/boxboxbox-keyholder/keyholder.sock
+```
+
+replaces `GCHAT_OAUTH_CLIENT_FILE` and the token file. The key holder must
+answer `POST /v1/token {"scopes": [...]}` with `{"access_token", "expires_at"}`
+(milliseconds since the epoch) or `{"error": "<code>", "detail": ...}`, and
+`GET /v1/info` with `{"subject": "<address>"}`. The adapter asks it for
+`KeyholderScopes` (`adapter/internal/token/scopes.go`): the Chat and Pub/Sub
+scopes without `openid`, plus `directory.readonly`, which finds the identity's
+own Chat id in the Workspace directory (without it, the id is learned from the
+first outbound message). `gc gchat auth` then
+belongs to the key holder's enrollment (on boxboxbox, `boxboxbox-google
+enroll`), and `auth --check` asks the key holder for a token. A permanent
+refusal (`delegation_not_authorized`, `subject_not_found`) is `needs-sign-in`
+with the usual notice, retried every 30 seconds without a restart; a Chat
+refusal of a token the key holder still mints (Chat app not configured, Chat
+off for the user, a new user with no conversation yet) stays `initializing`
+with one `chat-access` notice and keeps retrying. The Pub/Sub topic,
+subscription and grants in the checklist above are still needed; boxboxbox's
+key holder creates them.
+
 ## Install
 
 Requirements: gc with schema-2 packs, `proxy_process` services and the extmsg
@@ -96,9 +129,29 @@ GCHAT_OAUTH_CLIENT_FILE=/absolute/path/client.json
 GCHAT_TOKEN_FILE=token.json
 GC_CITY_NAME=examplecity
 GC_API_BASE_URL=http://127.0.0.1:8372
+GCHAT_OWNERS=robert@example.com,cfo@example.com
+GCHAT_ORGANIZATION_DOMAIN=example.com
 ```
 
-All keys except `GCHAT_TOKEN_FILE` are required. The token defaults to
+The last two are optional and drive the provenance frame, the first line of
+every turn: `[from: Alice Example <alice@example.com> | organization | item
+gchat:spaces/AAA/messages/BBB]`. The item is the message's own resource
+name: what the agent passes to `boxboxbox-google mail --for` so the key
+holder can verify who asked at the source.
+`GCHAT_OWNERS` lists owners by address or Chat id (`users/123`);
+`GCHAT_ORGANIZATION_DOMAIN` makes senders with that mail domain the
+organization. Addresses come from the Workspace directory (People API,
+`directory.readonly`, which the key holder source requests); a desktop
+sign-in has no directory scope, so the frame shows the Chat id and the
+organization is the Workspace domain the identity's own messages belong to,
+learned from the first one it sends. Bots and deleted users are always
+external. Invisible characters are removed from the text and counted in a
+trailing `[N hidden characters removed]` line; `gc gchat read` history
+returns the text without the frame.
+
+All keys except `GCHAT_TOKEN_FILE` are required, with `GCHAT_OAUTH_CLIENT_FILE`
+replaced by `GCHAT_TOKEN_SOURCE=keyholder` and `GCHAT_KEYHOLDER_SOCKET` for
+managed credentials. The token defaults to
 `token.json` relative to the secrets directory; `auth` writes it atomically.
 Keep values literal `KEY=VALUE`, with optional single or double quotes. Use
 full paths rather than shell expansion, and put comments on separate lines.
@@ -131,6 +184,8 @@ wake = "mentions"
 inbound_dir = "/absolute/path/examplecity/.gc/gchat-media/inbound"
 upload_root = "/absolute/path/examplecity/.gc/gchat-out"
 max_bytes = 209715200
+max_attachments = 20
+max_total_bytes = 2147483648
 ```
 
 Configure one identity. Its name is gc's `account_id`; omit `token_file` to use
@@ -139,15 +194,27 @@ to `default` and the agent to `mayor`. Settings reload on change after validatio
 Media defaults to the city paths shown above; uploads must be inside
 `upload_root`, without symlinks, and at most 200 MB. Inbound attachment text
 includes its local path and MIME type, or an unavailable reason; Drive
-attachments remain links. The root-level `catchup_budget` setting defaults to
+attachments remain links. One message carries at most `max_attachments` (20)
+downloaded files, and the store under `inbound_dir` is capped at
+`max_total_bytes` (2 GiB); past either bound the attachment is reported
+unavailable instead of stored. Nothing is deleted to make room, and nothing
+expires: a path the agent was handed keeps working until someone removes it,
+so a full store needs a decision, not a background sweep. The root-level `catchup_budget` setting defaults to
 50 records per space per pass; it is a budget, not a truncation limit.
 
 Optional endpoint/path overrides for tests and private deployments:
 `GCHAT_CHAT_API_BASE`, `GCHAT_EVENTS_API_BASE`, `GCHAT_PUBSUB_ENDPOINT`,
-`GCHAT_OAUTH_AUTH_URL`, `GCHAT_OAUTH_TOKEN_URL`, `GCHAT_MEDIA_DIR`,
-`GCHAT_UPLOAD_ROOT`, `GCHAT_STATE_FILE`. Export overrides in the service process;
-OAuth URLs can also be read from the env file by standalone auth. The Pub/Sub
-endpoint override uses an insecure connection intended for an in-memory fake.
+`GCHAT_OAUTH_AUTH_URL`, `GCHAT_OAUTH_TOKEN_URL`, `GCHAT_PEOPLE_API_BASE`,
+`GCHAT_MEDIA_DIR`, `GCHAT_UPLOAD_ROOT`, `GCHAT_STATE_FILE`. Export overrides in the service process;
+OAuth URLs can also be read from the env file by standalone auth.
+
+The five URL overrides must be `https`, or plain `http` on this machine
+(`127.0.0.1`, `::1`, `localhost`), with no credentials and no query. The Chat
+base carries the identity's bearer token and the token URL the OAuth client
+secret, so a plaintext host leaks a credential rather than reaching a mirror:
+the adapter refuses to start and names the key. `GCHAT_PUBSUB_ENDPOINT` is an
+unauthenticated `host:port` and is refused off this machine for the same
+reason — events would arrive from anyone. Both exist for the in-memory fakes.
 A relative `GCHAT_STATE_FILE` resolves beside the env file, consistently for
 the service and offline recovery commands.
 

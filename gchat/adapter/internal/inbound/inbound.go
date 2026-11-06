@@ -22,6 +22,9 @@ import (
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/media"
+	"gchat-adapter/internal/principal"
+	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
@@ -37,12 +40,21 @@ type Options struct {
 	GC             *gcclient.Client
 	Chat           *chat.Client
 	IdentityUserID string
-	Logger         puller.Logger
+	// Principals writes who is speaking as each turn's first line; nil means
+	// no owners, no organization, no directory: everyone is external until
+	// the identity's own Workspace domain is learned from its own messages.
+	Principals *principal.Resolver
+	Logger     puller.Logger
 	// Save optionally replaces Ledger.Save. It runs with LedgerMu held and must
 	// durably save the supplied snapshot without retaining or modifying it.
 	Save func(*ledger.Ledger) error
 	// RetryDelay defaults to one second; retries back off exponentially.
 	RetryDelay time.Duration
+	// SpaceJoined is told, outside the ledger lock, when the identity's own
+	// membership in a space it did not know is observed. The app then sweeps
+	// that space's history from the join time: Google's all-spaces subscription
+	// does not deliver a newly joined space's messages at once (seen live).
+	SpaceJoined func(space string)
 	// PendingDeadline bounds receipt polling from ChangeState.Created. The
 	// default is one hour, matching gc's receipt retention period.
 	PendingDeadline time.Duration
@@ -59,6 +71,9 @@ type Processor struct {
 var ErrCredentials = errors.New("inbound: credentials unavailable")
 
 func New(opts Options) (*Processor, error) {
+	if opts.Principals == nil {
+		opts.Principals = principal.New(principal.Options{})
+	}
 	if opts.Config == nil || opts.Ledger == nil || opts.LedgerMu == nil || opts.GC == nil || opts.Chat == nil || (opts.Save == nil && opts.LedgerPath == "") {
 		return nil, errors.New("inbound: config, clients, ledger, shared mutex and persistence are required")
 	}
@@ -353,11 +368,23 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 		if c.Kind == "membership.deleted" || m.Member == nil || m.Member.Name != p.identity() || (m.State != "" && m.State != "JOINED") {
 			return nil
 		}
-		return p.update(func(l *ledger.Ledger) {
+		// History before the join is not the identity's to read into the
+		// city: both cursors start at the join time (now, if Google omits it).
+		joined := p.opts.Now().UTC()
+		if t, err := time.Parse(time.RFC3339Nano, m.CreateTime); err == nil {
+			joined = t.UTC()
+		}
+		added := false
+		err := p.update(func(l *ledger.Ledger) {
 			if l.Spaces[c.Space] == nil {
-				l.Spaces[c.Space] = &ledger.SpaceState{Wake: string(p.opts.Config.Wake(c.Space))}
+				l.Spaces[c.Space] = &ledger.SpaceState{Wake: string(p.opts.Config.Wake(c.Space)), MessageCursor: joined, EventCursor: joined}
+				added = true
 			}
 		})
+		if err == nil && added && p.opts.SpaceJoined != nil {
+			p.opts.SpaceJoined(c.Space)
+		}
+		return err
 	case strings.HasPrefix(c.Kind, "reaction."):
 		return p.reaction(ctx, c, catchUp)
 	default:
@@ -368,17 +395,17 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 var errSpaceUnavailable = errors.New("inbound: space type unavailable")
 
 func unavailableSpace(err error) bool {
-	// A classified not-a-member 403 is unavailable; other 401/403 responses
-	// hold for credential or scope repair.
+	// A not-a-member or resource-level 403 is unavailable; a 401 or a scope
+	// 403 holds for credential repair.
 	kind, _ := chat.Classify(err)
-	return errors.Is(err, errSpaceUnavailable) || kind == "not_found" || permanentLookupFailure(err)
+	return errors.Is(err, errSpaceUnavailable) || kind == "not_found" || chat.ResourceDenied(err) || permanentLookupFailure(err)
 }
 
 func unavailableParent(err error) bool {
-	// Only a not-a-member 403 proves the parent inaccessible; a scope 403
-	// holds for credential repair just like 401.
+	// A not-a-member or resource-level 403 proves the parent inaccessible; a
+	// scope 403 holds for credential repair just like 401.
 	kind, _ := chat.Classify(err)
-	return kind == "not_found" || permanentLookupFailure(err)
+	return kind == "not_found" || chat.ResourceDenied(err) || permanentLookupFailure(err)
 }
 
 func permanentLookupFailure(err error) bool {
@@ -390,7 +417,7 @@ func permanentLookupFailure(err error) bool {
 func lookupError(lookup string, err error) error {
 	kind, _ := chat.Classify(err)
 	cause := classifiedLookupError{cause: err}
-	if kind == "auth" {
+	if kind == "auth" && !chat.ResourceDenied(err) {
 		return fmt.Errorf("inbound: %s lookup failed: %w: %w", lookup, cause, ErrCredentials)
 	}
 	return fmt.Errorf("inbound: %s lookup failed: %w", lookup, cause)
@@ -511,9 +538,19 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if c.Kind == "message.deleted" {
 		state.Deleted = true
 	}
+	// The identity's own messages tell which Workspace domain is the
+	// organization; a sender in it is a colleague even without an address.
+	learnedDomain := ""
+	if state.Mine && m.Sender != nil && m.Sender.DomainId != "" && m.Sender.DomainId != l.IdentityDomainID {
+		learnedDomain = m.Sender.DomainId
+	}
+	speaker := p.opts.Principals.Speaker(ctx, m.Sender, l.IdentityDomainID)
+	// The message's own name is the item the key holder can verify at the
+	// source when the agent acts on it (boxboxbox-google mail --for).
+	speaker.Item = provenance.ChatItem(m.Name)
 	// Deleting a never-observed message still needs a tombstone, but no turn.
 	if c.Kind == "message.deleted" && previous == nil {
-		return p.record(c, id, wire.InboundMessage{}, &state, nil, "local", catchUp)
+		return p.record(c, id, wire.InboundMessage{}, &state, nil, "local", catchUp, learnedDomain)
 	}
 	forwarded := false
 	for _, change := range l.Changes {
@@ -532,23 +569,29 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if err != nil {
 		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
-			w.Text = renderMentions(m)
+			w.Text = provenance.Render(speaker, renderMentions(m))
 			reason := local
 			if reason == "" {
 				reason = retainedReason("space unavailable", err)
 			}
-			return p.record(c, id, w, &state, nil, reason, catchUp)
+			return p.record(c, id, w, &state, nil, reason, catchUp, learnedDomain)
 		}
 		return lookupError("space", err)
 	}
 	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
 	w.Text = renderMentions(m)
+	framed := false
 	if c.Kind == "message.deleted" && !state.Mine {
 		w.Text = "deleted"
+		// Google reports a deletion without its sender; the original turn
+		// carries both the actor and the frame.
 		if base != nil {
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(base.Event), &original) == nil {
 				w.Actor = original.Actor
+				if line, ok := provenance.FrameOf(original.Text); ok {
+					w.Text, framed = line+"\ndeleted", true
+				}
 			}
 		}
 	} else if local == "" && !forwarded && s.Kind != "dm" && s.Wake == "mentions" && !mentions(m, p.identity()) {
@@ -560,10 +603,13 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if c.Kind == "message.updated" && id != m.Name {
 		w.Text = "edited: " + w.Text
 	}
+	if !framed {
+		w.Text = provenance.Render(speaker, w.Text)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := p.record(c, id, w, &state, s, local, catchUp); err != nil {
+	if err := p.record(c, id, w, &state, s, local, catchUp, learnedDomain); err != nil {
 		return err
 	}
 	return p.resume(ctx, id)
@@ -581,14 +627,15 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		return p.resume(ctx, id)
 	}
 	parent := strings.Split(r.Name, "/reactions/")[0]
+	speaker := p.opts.Principals.Speaker(ctx, r.User, l.IdentityDomainID)
 	state := l.Messages[parent]
 	if state == nil {
 		m, err := p.opts.Chat.GetMessage(ctx, parent)
 		if err != nil {
 			if unavailableParent(err) {
 				w := p.envelope(id, c.Space, "", r.User, "")
-				w.Text = reactionText(r, action, parent)
-				return p.record(c, id, w, nil, nil, retainedReason("parent unavailable", err), catchUp)
+				w.Text = provenance.Render(speaker, reactionText(r, action, parent))
+				return p.record(c, id, w, nil, nil, retainedReason("parent unavailable", err), catchUp, "")
 			}
 			return lookupError("reaction parent", err)
 		}
@@ -601,17 +648,17 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	if err != nil {
 		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", r.User, state.Thread)
-			w.Text = reactionText(r, action, parent)
+			w.Text = provenance.Render(speaker, reactionText(r, action, parent))
 			reason := "local"
 			if state.Mine {
 				reason = retainedReason("space unavailable", err)
 			}
-			return p.record(c, id, w, state, nil, reason, catchUp)
+			return p.record(c, id, w, state, nil, reason, catchUp, "")
 		}
 		return lookupError("space", err)
 	}
 	w := p.envelope(id, c.Space, s.Kind, r.User, state.Thread)
-	w.Text = reactionText(r, action, parent)
+	w.Text = provenance.Render(speaker, reactionText(r, action, parent))
 	if action == "deleted" && r.User == nil {
 		if created := l.Changes[r.Name+"#created"]; created != nil {
 			var original wire.InboundMessage
@@ -625,7 +672,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	if !state.Mine {
 		local = "local"
 	}
-	if err := p.record(c, id, w, state, s, local, catchUp); err != nil {
+	if err := p.record(c, id, w, state, s, local, catchUp, ""); err != nil {
 		return err
 	}
 	return p.resume(ctx, id)
@@ -658,7 +705,7 @@ func (p *Processor) envelope(id, space, kind string, user *api.User, thread stri
 // record persists a change and fills an empty space Wake from config. Once
 // persisted, later config default changes no longer reach that space; a spaces
 // reset must clear or replace its stored Wake to inherit a new default.
-func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string, catchUp bool) error {
+func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string, catchUp bool, learnedDomain string) error {
 	if catchUp {
 		w.Text = "[catch-up]\n" + w.Text
 	}
@@ -680,6 +727,9 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			status = "committed"
 		}
 		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local, CatchUp: catchUp}
+		if learnedDomain != "" {
+			l.IdentityDomainID = learnedDomain
+		}
 		if unavailable {
 			l.Counters["unavailable:"+c.Space]++
 		}
@@ -980,6 +1030,15 @@ func NormalizeContent(ctx context.Context, client *chat.Client, endpoints config
 
 func appendAttachments(ctx context.Context, client *chat.Client, endpoints config.Endpoints, m *api.Message, w *wire.InboundMessage) {
 	used := map[string]bool{}
+	// The store has one quota for every file kept, and a message is capped by
+	// count as well as by bytes: a sender chooses both. A file that would
+	// cross the quota is refused, never at the cost of one already kept — the
+	// agent may still be reading it.
+	stored, err := media.Usage(endpoints.MediaDir)
+	if err != nil {
+		stored = 0
+	}
+	downloads := 0
 	for i, a := range m.Attachment {
 		if a == nil {
 			continue
@@ -988,12 +1047,16 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 		if name == "" {
 			name = fmt.Sprintf("attachment-%d", i+1)
 		}
-		item := wire.Attachment{ProviderID: a.Name, MIMEType: attachmentMIMEType(a)}
+		item := wire.Attachment{ProviderID: a.Name, MIMEType: a.ContentType}
 		reason := ""
 		switch {
 		case a.DriveDataRef != nil && a.DriveDataRef.DriveFileId != "":
 			item.URL = "https://drive.google.com/file/d/" + url.PathEscape(a.DriveDataRef.DriveFileId) + "/view"
 		case a.AttachmentDataRef != nil && a.AttachmentDataRef.ResourceName != "":
+			if endpoints.MediaMaxAttachments > 0 && downloads >= endpoints.MediaMaxAttachments {
+				reason = "attachment limit reached"
+				break
+			}
 			if filepath.Base(name) != name || name == "." || name == ".." || strings.ContainsAny(name, "\\\x00") {
 				reason = "invalid filename"
 				break
@@ -1019,11 +1082,29 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 			if _, err := os.Lstat(dest); !errors.Is(err, os.ErrNotExist) {
 				dest = filepath.Join(dir, rand.Text()+"-"+filename)
 			}
-			_, err = client.DownloadMedia(ctx, a.AttachmentDataRef.ResourceName, dest, endpoints.MediaMaxBytes)
+			limit := endpoints.MediaMaxBytes
+			quotaBound := false
+			if endpoints.MediaMaxTotalBytes > 0 {
+				remaining := endpoints.MediaMaxTotalBytes - stored
+				if remaining <= 0 {
+					reason = "storage quota reached"
+					break
+				}
+				if limit <= 0 || remaining < limit {
+					limit = remaining
+					quotaBound = true
+				}
+			}
+			written, err := client.DownloadMedia(ctx, a.AttachmentDataRef.ResourceName, dest, limit)
 			if err != nil {
 				reason = mediaReason(err)
+				if quotaBound && strings.Contains(err.Error(), "byte limit") {
+					reason = "storage quota reached"
+				}
 			} else {
 				item.URL = (&url.URL{Scheme: "file", Path: dest}).String()
+				stored += written
+				downloads++
 			}
 		default:
 			reason = "attachment data unavailable"
@@ -1032,10 +1113,7 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 		if reason != "" {
 			line += " unavailable: " + reason
 		} else {
-			if a.ContentType != "" {
-				line += " (" + a.ContentType + ")"
-			}
-			line += " " + item.URL
+			line += " (" + a.ContentType + ") " + item.URL
 		}
 		if w.Text != "" {
 			w.Text += "\n"
@@ -1043,20 +1121,6 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 		w.Text += line
 		w.Attachments = append(w.Attachments, item)
 	}
-}
-
-// attachmentMIMEType never returns an empty value: gc's inbound schema requires
-// mime_type on every attachment, and Chat omits contentType for Drive links
-// (driveDataRef) and occasionally for uploads. A Drive link whose real type is
-// unknown without a Drive API call carries Google's generic Drive file type.
-func attachmentMIMEType(a *api.Attachment) string {
-	if a.ContentType != "" {
-		return a.ContentType
-	}
-	if a.DriveDataRef != nil && a.DriveDataRef.DriveFileId != "" {
-		return "application/vnd.google-apps.file"
-	}
-	return "application/octet-stream"
 }
 
 func mediaReason(err error) string {

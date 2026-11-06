@@ -671,6 +671,12 @@ func (r *Runner) holdAccess(name string, p progress, cause error) error {
 	}
 	key, sentinel, first := "unavailable:", errSpaceUnavailable, p.Unavailable == ""
 	retrying := p.RetryUnavailable
+	// A 403 about this one space (a pending invitation, a space the identity
+	// cannot read) holds the space, not the credential.
+	if chat.ResourceDenied(cause) {
+		kind = "unavailable"
+		summary = strings.Replace(summary, "auth", "permission denied", 1)
+	}
 	if kind == "auth" {
 		key, sentinel, first = "credentials:", inbound.ErrCredentials, p.Credentials == ""
 		p.Credentials = summary

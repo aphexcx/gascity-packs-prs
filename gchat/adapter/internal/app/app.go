@@ -34,6 +34,9 @@ type Options struct {
 	Notify func(context.Context, string, string) error
 	// RetryDelay is for inbound's bounded delivery retries; zero keeps its 1s default.
 	RetryDelay time.Duration
+	// KeyholderRetry shortens how often a managed credential re-asks a refusing
+	// key holder; zero keeps the 30s default. Tests set it.
+	KeyholderRetry time.Duration
 }
 
 var errIdentityChanged = errors.New("app: observed identity changed; rebuilding client")
@@ -56,6 +59,7 @@ type application struct {
 	healthyGeneration  atomic.Bool
 	restartDelay       time.Duration // owned by the run loop
 	resume             chan struct{}
+	spaceJoined        chan struct{}
 	notices            chan notification
 	noticeMu           sync.Mutex
 	notified           map[string]bool
@@ -86,7 +90,7 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if err := lock.RecordSocket(cfg.Secrets.ServiceSocket); err != nil {
 		return err
 	}
-	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
+	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), spaceJoined: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
 	a.stateLock = lock
 	a.l.SetSaveGuard(a.checkStateLock)
 	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
@@ -280,10 +284,11 @@ func (a *application) run(ctx context.Context) error {
 		return err
 	}
 	a.s.SetConfig(*a.cfg)
-	source, err := token.New(a.cfg.Secrets.OAuthClientFile, a.cfg.Identity().TokenFile, a.cfg.Endpoints, token.Scopes)
+	source, err := NewSource(a.cfg)
 	if err != nil {
 		return err
 	}
+	source.SetRetryInterval(a.opts.KeyholderRetry)
 	reload := make(chan struct{}, 1)
 	stopWatch := watchToken(ctx, source, reload)
 	defer func() { stopWatch() }()
@@ -421,7 +426,17 @@ func (a *application) run(ctx context.Context) error {
 			} else if !credentialsError(err) {
 				lastCredentialFailure = time.Time{}
 			}
-			if source.State() != token.Ready || bounded {
+			if bounded && source.Managed() {
+				// The key holder still mints, so the credential is not the
+				// problem: Chat refuses this user (no Chat app configured, Chat
+				// off for the user, or a brand-new user with no conversation
+				// yet). Nothing to sign in to; keep retrying, and say so once.
+				a.health("initializing", "Chat refuses the key holder's token; check the Chat API configuration and the user's Chat access, or send the user a first message; retrying")
+				a.log.Warn("chat refuses the managed credential; retrying", "cause", safeReason("repeated credential rejection", err))
+				a.notice("chat-access")
+				retryTimer = time.NewTimer(a.nextRestartDelay())
+				retry = retryTimer.C
+			} else if source.State() != token.Ready || bounded {
 				credentialHold = true
 				reason := "credential rejected; run gc gchat auth"
 				if bounded {
@@ -458,7 +473,7 @@ func (a *application) run(ctx context.Context) error {
 						}
 						stopGeneration()
 						if next.Identity().TokenFile != a.cfg.Identity().TokenFile {
-							fresh, tokenErr := token.New(next.Secrets.OAuthClientFile, next.Identity().TokenFile, next.Endpoints, token.Scopes)
+							fresh, tokenErr := NewSource(next)
 							if tokenErr != nil {
 								a.log.Warn("settings credential rejected; keeping previous settings", "operation", "settings_reload")
 								start()
@@ -530,6 +545,15 @@ func (a *application) ensureRegistered(ctx context.Context, registered *atomic.B
 	return nil
 }
 
+// NewSource builds the identity's token source: the key holder named in the
+// secrets, or the desktop OAuth client and token file.
+func NewSource(cfg *config.Config) (*token.Source, error) {
+	if cfg.Secrets.TokenSource == config.TokenSourceKeyholder {
+		return token.NewKeyholder(cfg.Secrets.KeyholderSocket, cfg.Endpoints, token.KeyholderScopes)
+	}
+	return token.New(cfg.Secrets.OAuthClientFile, cfg.Identity().TokenFile, cfg.Endpoints, token.Scopes)
+}
+
 func watchToken(ctx context.Context, source *token.Source, reload chan struct{}) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -547,6 +571,8 @@ func (a *application) loadSettings() (*config.Config, error) {
 	next := *a.cfg
 	next.Settings = loaded.Settings
 	next.Endpoints.MediaMaxBytes = loaded.Endpoints.MediaMaxBytes
+	next.Endpoints.MediaMaxAttachments = loaded.Endpoints.MediaMaxAttachments
+	next.Endpoints.MediaMaxTotalBytes = loaded.Endpoints.MediaMaxTotalBytes
 	if loaded.Settings.Media.InboundDir != a.cfg.Settings.Media.InboundDir {
 		next.Endpoints.MediaDir = loaded.Endpoints.MediaDir
 	}

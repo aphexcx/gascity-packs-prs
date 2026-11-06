@@ -585,3 +585,72 @@ func TestHTTPErrorSafeUsefulSummary(t *testing.T) {
 		}
 	}
 }
+
+// gc 1.5 answers inbound synchronously with its routing result and keeps no
+// receipts; the client maps that shape onto the delivery statuses the rest of
+// the adapter understands.
+func TestInboundSynchronousGC15Shape(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"no target", `{"Message":{"provider_message_id":"m"},"Binding":null,"GroupRoute":{"Match":"no_group","TargetSessionID":"","UpdateCursor":false},"TranscriptEntry":null,"TargetSessionID":"","TargetAgentName":""}`, "no_route"},
+		{"routed to an agent", `{"Message":{"provider_message_id":"m"},"Binding":null,"TranscriptEntry":null,"TargetSessionID":"","TargetAgentName":"mayor"}`, "delivered"},
+		{"routed to a session", `{"Message":{"provider_message_id":"m"},"Binding":{"Agent":"mayor"},"TranscriptEntry":{"id":"t1"},"TargetSessionID":"s1","TargetAgentName":"mayor"}`, "delivered"},
+		{"newer delivery shape wins", `{"delivery":{"status":"pending","receipt_id":"r1"},"Message":{"x":1},"TargetAgentName":"mayor"}`, "pending"},
+		{"unrecognized", `{"ok":true}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v0/city/examplecity/extmsg/inbound" || r.Header.Get(wire.RequestHeader) == "" {
+					http.Error(w, "unexpected", http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			got, err := New(srv.URL, "examplecity").Inbound(context.Background(), inbound("m"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Delivery.Status != tc.want {
+				t.Fatalf("status = %q, want %q", got.Delivery.Status, tc.want)
+			}
+			if tc.name == "newer delivery shape wins" && got.Delivery.ReceiptID != "r1" {
+				t.Fatalf("receipt lost: %+v", got)
+			}
+		})
+	}
+}
+
+// gc 1.5 rejects reply_instructions as an unknown property (before it even
+// resolves the city); the client registers again without them.
+func TestRegisterFallsBackWithoutReplyInstructions(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(data))
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(data), "reply_instructions") {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"type":"urn:gascity:error:validation-failed","title":"Validation Failed","status":422,"detail":"validation failed: body.reply_instructions: unexpected property","code":"validation-failed"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"status":"registered"}`))
+	}))
+	defer srv.Close()
+	if err := New(srv.URL, "examplecity").Register(context.Background(), registration("http://127.0.0.1:1/svc/gchat")); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 2 || !strings.Contains(bodies[0], "reply_instructions") || strings.Contains(bodies[1], "reply_instructions") || !strings.Contains(bodies[1], `"SupportsAttachments":true`) {
+		t.Fatalf("bodies: %q", bodies)
+	}
+	// Any other 422 is the caller's problem, not a shape to retry.
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"detail":"validation failed: body.provider: required"}`))
+	}))
+	defer other.Close()
+	if err := New(other.URL, "examplecity").Register(context.Background(), registration("http://127.0.0.1:1/svc/gchat")); err == nil {
+		t.Fatal("unrelated validation error swallowed")
+	}
+}

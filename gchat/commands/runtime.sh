@@ -17,7 +17,7 @@ gchat_load_env() {
         env_file=${HOME:?HOME is not set; set GC_GCHAT_ADAPTER_ENV or GC_SERVICE_SECRETS_DIR}/.config/gc-gchat-adapter/env
     fi
     if [ ! -f "$env_file" ]; then
-        printf '%s\n' "Missing secrets file: $env_file; required keys: GCHAT_PROJECT_ID, GCHAT_PUBSUB_TOPIC, GCHAT_PUBSUB_SUBSCRIPTION, GCHAT_OAUTH_CLIENT_FILE, GC_CITY_NAME, GC_API_BASE_URL" >&2
+        printf '%s\n' "Missing secrets file: $env_file; required keys: GCHAT_PROJECT_ID, GCHAT_PUBSUB_TOPIC, GCHAT_PUBSUB_SUBSCRIPTION, GC_CITY_NAME, GC_API_BASE_URL, and GCHAT_OAUTH_CLIENT_FILE (or GCHAT_TOKEN_SOURCE=keyholder with GCHAT_KEYHOLDER_SOCKET)" >&2
         exit 1
     fi
     env_file=$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")

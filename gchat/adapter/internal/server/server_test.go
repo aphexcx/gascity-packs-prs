@@ -29,6 +29,7 @@ import (
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
@@ -831,6 +832,10 @@ func TestReadNormalizesMentionsAndMediaLikeInbound(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := f.gc.Inbound()[0]
+	// The turn carries the provenance frame; history is the message itself.
+	if line, ok := provenance.FrameOf(want.Text); ok {
+		want.Text = strings.TrimPrefix(want.Text, line+"\n")
+	}
 	code, raw, _ := f.call(t, "/read?space=spaces/room", nil)
 	got := decode[[]wire.InboundMessage](t, raw)
 	if code != 200 || len(got) != 1 {

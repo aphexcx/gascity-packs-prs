@@ -17,6 +17,7 @@ import (
 	"gchat-adapter/internal/events"
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/inbound"
+	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/token"
 
@@ -69,7 +70,14 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		return err
 	}
 	a.manager.Store(m)
-	proc, err := inbound.New(inbound.Options{Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Logger: a.log, RetryDelay: a.opts.RetryDelay})
+	// Addresses come from the Workspace directory, which only the key holder's
+	// scopes cover; a desktop sign-in shows Chat ids instead.
+	var lookup principal.Lookup
+	if a.cfg.Secrets.TokenSource == config.TokenSourceKeyholder {
+		lookup = principal.DirectoryLookup(hc, a.cfg.Endpoints.PeopleAPIBase)
+	}
+	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup})
+	proc, err := inbound.New(inbound.Options{Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }})
 	if err != nil {
 		return err
 	}
@@ -271,6 +279,16 @@ func (a *application) catchup(ctx context.Context, r *catchup.Runner, m *events.
 		case <-m.RecoveryNeeded():
 			caught.Store(false)
 			a.health("catching-up", "subscription recovered; recovering history")
+			if err := a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
+				return err
+			}
+			pass = a.frozenHistory()
+			caught.Store(!pass)
+		case <-a.spaceJoined:
+			// The identity was added to a space. Its first messages may reach
+			// the subscription late or not at all, so read them from history.
+			caught.Store(false)
+			a.health("catching-up", "joined a space; reading its history")
 			if err := a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
 				return err
 			}

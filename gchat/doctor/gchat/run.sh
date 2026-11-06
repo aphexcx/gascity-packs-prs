@@ -9,7 +9,9 @@ trap 'if [ "$?" -ne 0 ]; then exit 2; fi' 0
 . "$GC_PACK_DIR/commands/common.sh"
 
 gchat_load_env
-for key in GCHAT_PROJECT_ID GCHAT_PUBSUB_TOPIC GCHAT_PUBSUB_SUBSCRIPTION GCHAT_OAUTH_CLIENT_FILE GC_CITY_NAME GC_API_BASE_URL; do
+credential=GCHAT_OAUTH_CLIENT_FILE
+[ "${GCHAT_TOKEN_SOURCE:-oauth}" = keyholder ] && credential=GCHAT_KEYHOLDER_SOCKET
+for key in GCHAT_PROJECT_ID GCHAT_PUBSUB_TOPIC GCHAT_PUBSUB_SUBSCRIPTION "$credential" GC_CITY_NAME GC_API_BASE_URL; do
     value=$(printenv "$key" || :)
     [ -n "$value" ] || gchat_die "secrets $env_file: missing required key $key"
 done

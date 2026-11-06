@@ -696,3 +696,36 @@ func splitPoints(text string) []splitPoint {
 	}
 	return points
 }
+
+// StripHandle drops a leading "handle:" (optionally bold, as gc's reply
+// reminder suggests) when the handle is one of handles. gc asks agents to lead
+// a reply with their handle so shared rooms show who spoke; in Chat the
+// speaker is already the identity's own user, so the prefix is noise.
+func StripHandle(text string, handles ...string) string {
+	rest := strings.TrimLeft(text, " \t\r\n")
+	rest = strings.TrimLeft(rest, "*")
+	end := 0
+	for end < len(rest) {
+		c := rest[end]
+		if c == '_' || c == '.' || c == '-' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+			end++
+			continue
+		}
+		break
+	}
+	if end == 0 {
+		return text
+	}
+	name, after := rest[:end], rest[end:]
+	after = strings.TrimLeft(after, "*")
+	if !strings.HasPrefix(after, ":") {
+		return text
+	}
+	for _, h := range handles {
+		if h != "" && strings.EqualFold(h, name) {
+			after = strings.TrimLeft(after[1:], "*")
+			return strings.TrimLeft(after, " \t")
+		}
+	}
+	return text
+}

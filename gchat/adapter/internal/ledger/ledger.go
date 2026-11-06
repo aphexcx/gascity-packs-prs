@@ -40,18 +40,21 @@ func (e *RecoveryError) Unwrap() error        { return e.Err }
 type Ledger struct {
 	saveGuard func() error
 
-	Version        int                      `json:"version"`
-	IdentityUserID string                   `json:"identity_user_id,omitempty"`
-	IdentitySeed   string                   `json:"identity_seed,omitempty"`
-	Subscription   SubscriptionState        `json:"subscription"`
-	Spaces         map[string]*SpaceState   `json:"spaces"`
-	Transport      TransportDedup           `json:"transport"`
-	Messages       map[string]*MessageState `json:"messages"`
-	Changes        map[string]*ChangeState  `json:"changes"`
-	Sends          map[string]*SendState    `json:"sends"`
-	Unresolved     map[string]*ChangeState  `json:"unresolved"`
-	Quarantine     []QuarantinedEvent       `json:"quarantine"`
-	Counters       map[string]int64         `json:"counters"`
+	Version        int    `json:"version"`
+	IdentityUserID string `json:"identity_user_id,omitempty"`
+	IdentitySeed   string `json:"identity_seed,omitempty"`
+	// IdentityDomainID is the Workspace domain the identity belongs to, as Chat
+	// reports it on the identity's own messages; senders in it are the organization.
+	IdentityDomainID string                   `json:"identity_domain_id,omitempty"`
+	Subscription     SubscriptionState        `json:"subscription"`
+	Spaces           map[string]*SpaceState   `json:"spaces"`
+	Transport        TransportDedup           `json:"transport"`
+	Messages         map[string]*MessageState `json:"messages"`
+	Changes          map[string]*ChangeState  `json:"changes"`
+	Sends            map[string]*SendState    `json:"sends"`
+	Unresolved       map[string]*ChangeState  `json:"unresolved"`
+	Quarantine       []QuarantinedEvent       `json:"quarantine"`
+	Counters         map[string]int64         `json:"counters"`
 }
 
 type SubscriptionState struct {

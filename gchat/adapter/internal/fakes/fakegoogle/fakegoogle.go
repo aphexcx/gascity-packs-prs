@@ -50,6 +50,8 @@ type Server struct {
 	Subscriptions              map[string]*events.Subscription
 	SpaceEvents                map[string][]*chat.SpaceEvent
 	Media                      map[string][]byte
+	// People maps users/<id> to the address the directory (People API) answers.
+	People map[string]string
 	// MaxUploadBytes lowers the normal 200 MiB limit for small boundary tests.
 	MaxUploadBytes int64
 
@@ -88,7 +90,7 @@ func New(t testing.TB, publisher *pubsub.Publisher) *Server {
 	s := &Server{t: t, publisher: publisher, Now: time.Now, PageSize: 100,
 		Spaces: map[string]*chat.Space{}, Messages: map[string]*chat.Message{},
 		Reactions: map[string]*chat.Reaction{}, Subscriptions: map[string]*events.Subscription{},
-		SpaceEvents: map[string][]*chat.SpaceEvent{}, Media: map[string][]byte{},
+		SpaceEvents: map[string][]*chat.SpaceEvent{}, Media: map[string][]byte{}, People: map[string]string{},
 		operations: map[string]*operation{}, requests: map[string]string{}, lastWrite: map[string]time.Time{}, uploads: map[string]*resumableUpload{}}
 	s.http = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -189,6 +191,19 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write(data)
+	case strings.HasPrefix(path, "people/") && r.Method == http.MethodGet:
+		for _, src := range r.URL.Query()["sources"] {
+			if src != "READ_SOURCE_TYPE_PROFILE" && src != "READ_SOURCE_TYPE_CONTACT" && src != "READ_SOURCE_TYPE_DOMAIN_CONTACT" {
+				s.fail(w, 400, "INVALID_ARGUMENT", "Invalid value at 'sources' (type.googleapis.com/google.people.v1.ReadSourceType), \""+src+"\"")
+				return
+			}
+		}
+		address, ok := s.People["users/"+strings.TrimPrefix(path, "people/")]
+		if !ok {
+			s.fail(w, 404, "NOT_FOUND", "person not found")
+			return
+		}
+		s.respond(w, r, 200, map[string]any{"emailAddresses": []map[string]any{{"value": address, "metadata": map[string]any{"primary": true}}}})
 	case path == "spaces" && r.Method == http.MethodGet:
 		spaces := make([]*chat.Space, 0, len(s.Spaces))
 		for _, v := range s.Spaces {
@@ -649,6 +664,11 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, space str
 	}
 	if reply != "" && room.SpaceType != "SPACE" {
 		s.fail(w, 400, "INVALID_ARGUMENT", "reply option requires a named space")
+		return
+	}
+	if reply != "" && reply != "MESSAGE_REPLY_OPTION_UNSPECIFIED" && message.Thread == nil {
+		// Google's live answer to a reply option without a thread.
+		s.fail(w, 400, "INVALID_ARGUMENT", "The request does not specify which message to reply to.")
 		return
 	}
 	if s.EnforceRate && s.now().Sub(s.lastWrite[space]) < time.Second {

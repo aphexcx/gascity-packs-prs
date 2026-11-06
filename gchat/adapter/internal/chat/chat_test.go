@@ -1099,3 +1099,26 @@ func TestDeleteReactionRechecksIdentityAfterPacing(t *testing.T) {
 		t.Fatalf("conflicted=%v deletes=%d err=%v", conflicted, deletes, err)
 	}
 }
+
+// A top-level post into a named space carries no thread and therefore no
+// reply option: Google refuses the option without a thread (seen live), and
+// the fake now does too.
+func TestCreateMessageTopLevelInNamedSpace(t *testing.T) {
+	g := fakegoogle.New(t, nil)
+	g.Configure(func(s *fakegoogle.Server) {
+		s.Spaces["spaces/room"] = &googlechat.Space{Name: "spaces/room", SpaceType: "SPACE"}
+	})
+	c, err := New(t.Context(), http.DefaultClient, config.Endpoints{ChatAPIBase: g.URL()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, thread, err := c.CreateMessage(t.Context(), "spaces/room", "new topic", "", "req-top", true)
+	if err != nil || name == "" || !strings.HasPrefix(thread, "spaces/room/threads/") {
+		t.Fatalf("top-level post: %q %q %v", name, thread, err)
+	}
+	// A reply keeps the fallback option and lands in the thread.
+	name2, thread2, err := c.CreateMessage(t.Context(), "spaces/room", "reply", thread, "req-reply", true)
+	if err != nil || name2 == "" || thread2 != thread {
+		t.Fatalf("threaded reply: %q %q %v", name2, thread2, err)
+	}
+}

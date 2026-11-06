@@ -144,7 +144,7 @@ func TestRealGCContract(t *testing.T) {
 		t.Fatalf("production inbound mapping: %v %v", outcome, err)
 	}
 	change := state.Changes[fixture.Name]
-	if change == nil || change.Status != "committed" || change.ReceiptID == "" {
+	if change == nil || change.Status != "committed" || change.Reason != "no_route" {
 		t.Fatalf("no_route not committed: %+v", change)
 	}
 	mapped := decode[wire.InboundMessage](t, []byte(change.Event))
@@ -152,19 +152,24 @@ func TestRealGCContract(t *testing.T) {
 	if conversation.Kind != "room" || conversation.ScopeID != "examplecity" {
 		t.Fatalf("mapped conversation: %+v", conversation)
 	}
-	receipt, err := client.Receipt(t.Context(), change.ReceiptID)
-	if err != nil || receipt.State != "concluded" || receipt.Delivery.Status != "no_route" {
-		t.Fatalf("inbound receipt: %+v %v", receipt, err)
+	if change.ReceiptID == "" {
+		// gc 1.5 concludes inbound synchronously and keeps no receipts.
+		t.Log("inbound: production mapper/client accepted; gc answered synchronously with no_route")
+	} else {
+		receipt, err := client.Receipt(t.Context(), change.ReceiptID)
+		if err != nil || receipt.State != "concluded" || receipt.Delivery.Status != "no_route" {
+			t.Fatalf("inbound receipt: %+v %v", receipt, err)
+		}
+		// A real unknown receipt must remain an unresolved delivery obligation.
+		state.Changes["unknown"] = &ledger.ChangeState{ID: "unknown", Status: "pending", ReceiptID: "absent-receipt", Created: time.Now()}
+		if err := processor.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if state.Changes["unknown"].Status != "unresolved" {
+			t.Fatalf("unknown receipt lost: %+v", state.Changes["unknown"])
+		}
+		t.Log("inbound: production mapper/client accepted; no_route concluded; unknown receipt retained unresolved")
 	}
-	// A real unknown receipt must remain an unresolved delivery obligation.
-	state.Changes["unknown"] = &ledger.ChangeState{ID: "unknown", Status: "pending", ReceiptID: "absent-receipt", Created: time.Now()}
-	if err := processor.Poll(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if state.Changes["unknown"].Status != "unresolved" {
-		t.Fatalf("unknown receipt lost: %+v", state.Changes["unknown"])
-	}
-	t.Log("inbound: production mapper/client accepted; no_route concluded; unknown receipt retained unresolved")
 
 	// A real session under the isolated fake runtime survives reconciliation.
 	gc.request(t, http.MethodPost, "/v0/city/examplecity/sessions", map[string]string{

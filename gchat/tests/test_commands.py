@@ -235,7 +235,9 @@ class ProxyCommandsTest(ProxyFixture):
         result = self.run_command("upload", "--conversation-id", "spaces/AAAA", "--file", str(file),
                                   "--body", "caption", "--idempotency-key", "upload-example")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.requests[-1][3]["path"], str(file))
+        # The wrapper sends the physical path: the service checks it against
+        # its upload root without following symlinks.
+        self.assertEqual(self.requests[-1][3]["path"], os.path.realpath(file))
         self.assertEqual(self.requests[-1][3]["idempotency_key"], "upload-example")
 
     def test_react_read_spaces_resolve_and_state_routes(self):

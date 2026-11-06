@@ -135,6 +135,8 @@ func (a *application) notice(kind string, details ...string) {
 	message := "Subscription reconciliation failed; inspect gc gchat status and the README Google-side setup checklist (enabled APIs and topic Publisher IAM)."
 	if kind == "credentials" {
 		message = "Google Chat credentials are missing or revoked; run gc gchat auth. Events remain at Google."
+	} else if kind == "chat-access" {
+		message = "Google Chat refuses the Workspace user's token (HTTP 401/403) although the key holder mints it. Check that the Chat API is configured for the project and Chat is on for the user, or send the user a first direct message; the adapter keeps retrying. Events remain at Google."
 	} else if len(details) > 0 {
 		message = details[0] + ". " + message
 	}

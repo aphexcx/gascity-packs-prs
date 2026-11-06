@@ -29,6 +29,7 @@ import (
 	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/markdown"
+	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/wire"
 	"github.com/BurntSushi/toml"
 	api "google.golang.org/api/chat/v1"
@@ -529,7 +530,10 @@ func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *led
 			}
 			return nil
 		}
-		parts := markdown.Split(markdown.ToChat(p.Text), 32000)
+		// gc's reply reminder leads with the agent's handle; the speaker in
+		// Chat is already the identity, so the prefix is dropped.
+		cfg := s.configuration()
+		parts := markdown.Split(markdown.ToChat(markdown.StripHandle(p.Text, cfg.Identity().Agent, p.SessionID)), 32000)
 		if len(parts) == 0 {
 			parts = []string{""}
 		}
@@ -1334,6 +1338,11 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
 			if change.CatchUp {
 				saved.Text = strings.TrimPrefix(saved.Text, "[catch-up]\n")
+			}
+			// History is the message as Chat has it: the provenance frame is
+			// the turn's, not the text's. Invisible characters stay removed.
+			if line, ok := provenance.FrameOf(saved.Text); ok {
+				saved.Text = strings.TrimPrefix(saved.Text, line+"\n")
 			}
 			if change.Kind == "message.updated" && id != m.Name {
 				saved.Text = strings.TrimPrefix(saved.Text, "edited: ")

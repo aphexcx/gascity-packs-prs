@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -450,4 +451,67 @@ func launcherFixture(t *testing.T) (dir, script string) {
 		t.Fatal(err)
 	}
 	return
+}
+
+// keyholderFixture is a secrets file for the managed source: a key holder on a
+// Unix socket that mints, and no OAuth client at all.
+func keyholderFixture(t *testing.T, refuse string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "gchat-kh-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "kh.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/info" {
+			_, _ = w.Write([]byte(`{"subject":"agent1@example.com"}`))
+			return
+		}
+		if refuse != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"` + refuse + `","detail":"scripted"}`))
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"access_token":"example","expires_at":%d}`, time.Now().Add(time.Hour).UnixMilli())
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	env := filepath.Join(t.TempDir(), "secrets", "env")
+	writeFile(t, env, "GCHAT_PROJECT_ID=example\nGCHAT_PUBSUB_TOPIC=projects/example/topics/chat\nGCHAT_PUBSUB_SUBSCRIPTION=projects/example/subscriptions/chat\nGCHAT_TOKEN_SOURCE=keyholder\nGCHAT_KEYHOLDER_SOCKET="+socket+"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL="+fakegc.New(t).URL()+"\nGCHAT_PEOPLE_API_BASE=http://127.0.0.1:1\n")
+	t.Setenv("GCHAT_CHAT_API_BASE", "http://127.0.0.1:1")
+	t.Setenv("GCHAT_PEOPLE_API_BASE", "")
+	return env
+}
+
+func TestAuthWithKeyholderSource(t *testing.T) {
+	t.Run("check mints through the key holder", func(t *testing.T) {
+		env := keyholderFixture(t, "")
+		var stdout, stderr bytes.Buffer
+		code := run(t.Context(), []string{"auth", "--check"}, &stdout, &stderr, envAt(env), func(string) error { t.Error("check opened browser"); return nil })
+		if code != 0 || !strings.Contains(stdout.String(), "ready\n") || !strings.Contains(stdout.String(), "identity_user_id: unknown (not in the Workspace directory yet") || stderr.Len() != 0 {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, &stdout, &stderr)
+		}
+	})
+	t.Run("check reports a refusal as needs-sign-in", func(t *testing.T) {
+		env := keyholderFixture(t, "delegation_not_authorized")
+		var stdout, stderr bytes.Buffer
+		code := run(t.Context(), []string{"auth", "--check"}, &stdout, &stderr, envAt(env), nil)
+		if code != 1 || !strings.Contains(stdout.String(), "needs-sign-in") || !strings.Contains(stdout.String(), "delegation_not_authorized") {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, &stdout, &stderr)
+		}
+	})
+	t.Run("sign-in is refused and points at the key holder", func(t *testing.T) {
+		env := keyholderFixture(t, "")
+		var stdout, stderr bytes.Buffer
+		code := run(t.Context(), []string{"auth"}, &stdout, &stderr, envAt(env), func(string) error { t.Error("managed auth opened browser"); return nil })
+		if code != 2 || !strings.Contains(stderr.String(), "managed by the key holder") || stdout.Len() != 0 {
+			t.Fatalf("code=%d stdout=%q stderr=%q", code, &stdout, &stderr)
+		}
+	})
 }

@@ -56,6 +56,11 @@ type Source struct {
 	now            func() time.Time
 	refreshDelay   time.Duration
 	validateFn     func(context.Context, *http.Client) error
+	// A managed Source (NewKeyholder) mints through a key holder instead of
+	// refreshing a stored credential, and learns its identity with identify.
+	mint     func(context.Context) (*oauth2.Token, error)
+	identify func(context.Context, *oauth2.Token) (string, error)
+	managed  bool
 }
 
 // New loads the credential files without retaining a lifecycle context. Watch's
@@ -209,7 +214,7 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 			return &copy, nil
 		}
 		s.mu.Unlock()
-		if current == nil || state == NeedsSignIn {
+		if state == NeedsSignIn || (current == nil && s.mint == nil) {
 			return nil, ErrNeedsSignIn
 		}
 		tok, err := s.refresh(ctx, current)
@@ -227,6 +232,9 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 			s.current, s.state = tok, Ready
 		}
 		s.mu.Unlock()
+		if err == nil {
+			s.learnIdentity(ctx, tok)
+		}
 		if err != nil {
 			// Public callers may put this error in a status or health response.
 			// Keep actionable sentinels, but never return an endpoint's body,
@@ -239,6 +247,9 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 			case errors.Is(err, context.DeadlineExceeded):
 				return nil, context.DeadlineExceeded
 			default:
+				if s.managed {
+					return nil, fmt.Errorf("key holder token failed: %s", sanitizedCause(err))
+				}
 				return nil, fmt.Errorf("OAuth refresh failed: %s", sanitizedCause(err))
 			}
 		}
@@ -253,6 +264,10 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 // or a new file revision resets the backoff.
 // Both paths retain the previous token and its state until validation succeeds.
 func (s *Source) Watch(ctx context.Context, onReload func()) {
+	if s.managed {
+		s.watchKeyholder(ctx, onReload)
+		return
+	}
 	ticker := time.NewTicker(s.watchInterval)
 	defer ticker.Stop()
 	for {
@@ -349,14 +364,18 @@ func (s *Source) refresh(ctx context.Context, current *oauth2.Token) (*oauth2.To
 		copy := *current
 		return &copy, nil
 	}
-	if current.RefreshToken == "" {
+	if s.mint == nil && current.RefreshToken == "" {
 		return nil, ErrNeedsSignIn
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	ts := s.config.TokenSource(ctx, current)
+	next := s.mint
+	if next == nil {
+		ts := s.config.TokenSource(ctx, current)
+		next = func(context.Context) (*oauth2.Token, error) { return ts.Token() }
+	}
 	for attempt := 0; ; attempt++ {
-		tok, err := ts.Token()
+		tok, err := next(ctx)
 		if err == nil {
 			return tok, nil
 		}
@@ -405,6 +424,12 @@ func transient(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, ErrNeedsSignIn) ||
 		errors.Is(err, errMalformedJSON) || errors.Is(err, errInvalidCredential) {
 		return false
+	}
+	var kerr keyholderError
+	if errors.As(err, &kerr) {
+		// The key holder's 5xx means its own upstream is unreachable; its 4xx
+		// codes that are not permanent (bad request shapes aside) still are.
+		return kerr.status >= 500 || kerr.status == http.StatusTooManyRequests || kerr.status == http.StatusRequestTimeout
 	}
 	var fileError *os.PathError
 	var syntaxError *json.SyntaxError
@@ -479,6 +504,10 @@ func sanitizedCause(err error) string {
 	var validation validationError
 	if errors.As(err, &validation) {
 		return validation.Error()
+	}
+	var kerr keyholderError
+	if errors.As(err, &kerr) {
+		return kerr.Error()
 	}
 	if errors.Is(err, errMalformedJSON) {
 		return errMalformedJSON.Error()

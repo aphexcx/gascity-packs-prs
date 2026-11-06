@@ -181,14 +181,49 @@ func validationDetail(err error) string {
 	return ""
 }
 
+// Register announces the adapter. gc 1.5 validates the body before it looks
+// at the city and does not know reply_instructions; the registration is then
+// resent without them, and sessions get gc's own generic reply reminder.
 func (c *Client) Register(ctx context.Context, reg wire.Registration) error {
-	return c.call(ctx, http.MethodPost, "adapters", reg, nil)
+	err := c.call(ctx, http.MethodPost, "adapters", reg, nil)
+	var httpErr *HTTPError
+	if reg.ReplyInstructions != "" && errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnprocessableEntity && strings.Contains(httpErr.Body, "reply_instructions") {
+		reg.ReplyInstructions = ""
+		return c.call(ctx, http.MethodPost, "adapters", reg, nil)
+	}
+	return err
 }
 
+// Inbound posts a message and reads gc's delivery outcome. A newer gc answers
+// {"delivery": {"status", "receipt_id"}}; gc 1.5 answers synchronously with
+// the routing result itself (PascalCase: Message, Binding, TargetSessionID,
+// TargetAgentName, TranscriptEntry), which is mapped to delivered when a
+// target was chosen and no_route otherwise. Nothing is pending in that shape.
 func (c *Client) Inbound(ctx context.Context, m wire.InboundMessage) (wire.InboundResponse, error) {
+	var raw struct {
+		Delivery *struct {
+			Status    string `json:"status"`
+			ReceiptID string `json:"receipt_id"`
+		} `json:"delivery"`
+		Message         json.RawMessage `json:"Message"`
+		TargetSessionID string          `json:"TargetSessionID"`
+		TargetAgentName string          `json:"TargetAgentName"`
+		TranscriptEntry json.RawMessage `json:"TranscriptEntry"`
+	}
 	var result wire.InboundResponse
-	err := c.call(ctx, http.MethodPost, "inbound", wire.InboundEnvelope{Message: m}, &result)
-	return result, err
+	if err := c.call(ctx, http.MethodPost, "inbound", wire.InboundEnvelope{Message: m}, &raw); err != nil {
+		return result, err
+	}
+	switch {
+	case raw.Delivery != nil:
+		result.Delivery.Status, result.Delivery.ReceiptID = raw.Delivery.Status, raw.Delivery.ReceiptID
+	case len(raw.Message) > 0:
+		result.Delivery.Status = "no_route"
+		if raw.TargetSessionID != "" || raw.TargetAgentName != "" || (len(raw.TranscriptEntry) > 0 && string(raw.TranscriptEntry) != "null") {
+			result.Delivery.Status = "delivered"
+		}
+	}
+	return result, nil
 }
 
 func (c *Client) Receipt(ctx context.Context, id string) (wire.ReceiptResponse, error) {

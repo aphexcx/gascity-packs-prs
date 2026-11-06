@@ -28,7 +28,9 @@ if [ "$body_set" = true ] && [ -n "$body_file" ]; then gchat_die 'pass --body OR
 if [ "$mode" != upload ] && [ "$body_set" = false ] && [ -z "$body_file" ]; then gchat_die '--body or --body-file is required'; fi
 if [ "$mode" = upload ]; then
     [ -n "$file" ] && [ -f "$file" ] || gchat_die 'upload requires --file pointing to a regular file'
-    file=$(cd "$(dirname "$file")" && pwd)/$(basename "$file")
+    # Physical path: the service checks the file against its upload root
+    # without following symlinks, and a home directory may be one.
+    file=$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")
 elif [ -n "$file" ]; then
     gchat_die '--file is only supported by upload'
 fi
