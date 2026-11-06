@@ -124,12 +124,24 @@ export async function startFakeGateway({ clock } = {}) {
     ackMaxIds: Infinity, // a batch over this answers 413
   };
 
-  g.addDelivery = ({ kind = 'message', wa_id, profile_name = 'Owner', message }) => {
+  // A delivery in the gateway contract v1 (PR 73's inbox: wa_id is the
+  // owner's key) unless conversation_id is given: then in PR 76's inbox shape
+  // (gateway.ts inbox(): wa_id the number or null, user_id, username, and the
+  // owner's stable conversation_id), and the fake keys the owner (bound, its
+  // window, a send's `to`) by that conversation_id, as the gateway does.
+  g.addDelivery = ({ kind = 'message', wa_id, profile_name = 'Owner', message, conversation_id, user_id = null, username = null }) => {
     const id = g.nextId++;
-    const delivery = { id, received_at: Math.floor(now() / 1000), kind, wa_id: String(wa_id), profile_name: kind === 'status' ? null : profile_name, message };
+    const v2 = conversation_id !== undefined;
+    const delivery = v2
+      ? {
+        id, received_at: Math.floor(now() / 1000), kind, wa_id: wa_id == null ? null : String(wa_id), user_id, username,
+        conversation_id, profile_name: kind === 'status' ? null : profile_name, message,
+      }
+      : { id, received_at: Math.floor(now() / 1000), kind, wa_id: String(wa_id), profile_name: kind === 'status' ? null : profile_name, message };
+    const owner = String(v2 ? conversation_id : wa_id);
     g.deliveries.set(id, delivery);
-    g.bound.add(String(wa_id));
-    if (kind === 'message' || kind === 'joined') g.lastInbound.set(String(wa_id), Number(message?.timestamp) * 1000 || now());
+    g.bound.add(owner);
+    if (kind === 'message' || kind === 'joined') g.lastInbound.set(owner, Number(message?.timestamp) * 1000 || now());
     return id;
   };
   g.addText = (wa_id, wamid, body, extra = {}) => g.addDelivery({
