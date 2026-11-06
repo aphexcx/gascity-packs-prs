@@ -4,7 +4,7 @@
 # Mints a 6-digit invite code at the gateway (24 hours, one live code per
 # city) and prints the two lines the owner is told. The three flags are the
 # window-keeper's onboarding fields, recorded against the code and bound to
-# the phone when it joins; the keeper stays OFF for that phone without
+# the owner's conversation when it joins; the keeper stays OFF for it without
 # --proactive-consent.
 set -eu
 WA_VERB=invite

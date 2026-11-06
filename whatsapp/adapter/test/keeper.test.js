@@ -255,6 +255,7 @@ async function harness(t, { tz = CHI, windowReadMs, format = 'iso' } = {}) {
     dir, stateDir, clock, setClock, gw, attempts, answers, duringPost, logs, make, start, run, child,
     disk: () => JSON.parse(fs.readFileSync(path.join(stateDir, 'keeper.json'), 'utf8')),
     inbound: (id, last) => lastInbound.set(id, last),
+    unlist: (id) => lastInbound.delete(id), // the gateway's window stops listing it (an unbind)
     count: (id) => attempts.filter((a) => a.id === id).length,
     // The marks raised for one close, in order of first attempt.
     marks: (wa, close) => [...new Set(attempts.filter((a) => a.id.startsWith(`keeper:${wa}:${iso(close)}:`)).map((a) => a.id))]
@@ -592,6 +593,31 @@ test('(10e) no hours: the daily update fires once per local day at 10:00 in the 
     { id: updateId(BR, '2026-11-10'), wall: '2026-11-10T10:00:00-03:00', text: openText(BR, '14:58') },
     { id: updateId(BR, '2026-11-11'), wall: '2026-11-11T10:00:00-03:00', text: closedText(BR, '14:58') },
   ]);
+});
+
+// gp-g02t (the Opus read r1's CRITICAL 1, the mayor's (A)): a conversation the gateway's
+// window no longer lists (its owner unbound) raises nothing: its id may be a phone number a
+// later owner shows, and an event there would prompt the mayor to send to it. The last good
+// read's ids are kept in keeper.json, so a restart before any read raises nothing either.
+test('gp-g02t: a conversation the last good window read no longer lists (its owner unbound) raises nothing, and after a restart before any good read still nothing', async (t) => {
+  const h = await harness(t, { tz: CHI, windowReadMs: HOUR });
+  h.inbound(WA, at('2026-11-10T08:00:00-06:00'));
+  h.inbound(BR, at('2026-11-10T08:00:00-06:00'));
+  h.setClock(at('2026-11-10T08:00:00-06:00'));
+  const keeper = await h.start();
+  keeper.setConsent(WA, true);
+  keeper.setConsent(BR, true);
+  h.unlist(WA); // WA's owner unbound at the gateway: the next read lists only BR
+  await h.run(keeper, at('2026-11-10T12:00:00-06:00'));
+  h.gw.failReads = true; // the restart reads nothing: the last good read on disk decides
+  const later = h.make();
+  await h.run(later, at('2026-11-11T10:30:00-06:00'));
+  assert.deepEqual(
+    { wa: h.attempts.filter((a) => a.id.startsWith(`keeper:${WA}:`)).map((a) => a.id), br: h.updates(BR).map((a) => a.id) },
+    { wa: [], br: [updateId(BR, '2026-11-10'), updateId(BR, '2026-11-11')] },
+    'nothing for the unlisted conversation; the listed one raises its updates as before',
+  );
+  assert.deepEqual([later.status().conversations[WA].listed, later.status().conversations[BR].listed], [false, true]);
 });
 
 test('(10e) hours: the daily update fires two hours before the close of business (16:00 under 09:00-18:00), clamped inside a short span, none on Sunday', async (t) => {

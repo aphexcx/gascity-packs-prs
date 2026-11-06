@@ -24,7 +24,8 @@ const MEDIA_TYPES = new Set(['image', 'document', 'audio', 'video', 'sticker']);
 // keeper's bind and the media directory.
 //   - PR 76's gateway gives every delivery the field: the owner's
 //     conversation_id, fixed at the bind and never changed (a number change
-//     keeps it; a recycled number never shares it). A delivery that names it
+//     keeps it; two owners bound at once never share it, even on a recycled
+//     number). A delivery that names it
 //     null or empty has no owner: no key, left unacknowledged.
 //   - The gateway contract v1 (PR 73) has no such field: its wa_id is that
 //     contract's one owner key. The boxes run it until the gateway's deploy,

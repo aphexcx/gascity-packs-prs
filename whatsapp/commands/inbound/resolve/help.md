@@ -17,6 +17,6 @@ look at the mayor's session, then decide:
 - `--dead`: it was not taken. A dead letter under reason `held_terminal` with
   the envelope, then the ack.
 
-The verb prints the phone's last four digits, the receipt id and the time,
+The verb prints the conversation's last four digits, the receipt id and the time,
 never the text, before it acts. The ack is owed until the gateway confirms it
 (`gc whatsapp status` shows acks owed).

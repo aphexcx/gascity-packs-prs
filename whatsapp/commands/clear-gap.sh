@@ -21,7 +21,10 @@ case "$conversation_id" in
   ''|-*) wa_usage_error "usage: gc whatsapp inbound clear-gap <conversation_id>" ;;
 esac
 
-wa_call POST /inbound/clear-gap "$(jq -n --arg id "$conversation_id" '{conversation_id: $id}')"
+# The id goes under both names: conversation_id for this pack's adapter, wa_id
+# for an adapter process still running the PR 74 code until its restart after a
+# pack roll (gp-g02t).
+wa_call POST /inbound/clear-gap "$(jq -n --arg id "$conversation_id" '{conversation_id: $id, wa_id: $id}')"
 if [ "$WA_STATUS" -ge 400 ] 2>/dev/null; then
   wa_die "adapter answered HTTP $WA_STATUS: $(wa_error_of "$WA_BODY")"
 fi

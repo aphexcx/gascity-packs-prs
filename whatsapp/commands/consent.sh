@@ -28,12 +28,15 @@ done
 [ -n "$conversation_id" ] || wa_usage_error "usage: gc whatsapp consent <conversation_id> --off|--on"
 [ -n "$on" ] || wa_usage_error "--off or --on is required"
 
-wa_call POST /consent "$(jq -n --arg id "$conversation_id" --argjson on "$on" '{conversation_id: $id, on: $on}')"
+# The id goes under both names: conversation_id for this pack's adapter, wa_id
+# for an adapter process still running the PR 74 code until its restart after a
+# pack roll (gp-g02t). The answer's last four come under either name too.
+wa_call POST /consent "$(jq -n --arg id "$conversation_id" --argjson on "$on" '{conversation_id: $id, wa_id: $id, on: $on}')"
 if [ "$WA_STATUS" -ge 400 ] 2>/dev/null; then
   wa_die "adapter answered HTTP $WA_STATUS: $(wa_error_of "$WA_BODY")"
 fi
 # The conversation the adapter matched, never the input as typed.
-last4=$(printf '%s' "$WA_BODY" | jq -r '.conversation_last4 // empty')
+last4=$(printf '%s' "$WA_BODY" | jq -r '.conversation_last4 // .wa_id_last4 // empty')
 [ -n "$last4" ] || wa_die "adapter answered HTTP $WA_STATUS without the matched conversation; nothing confirmed"
 if [ "$on" = true ]; then
   echo "Window-keeper ON for ...$last4 (from the next mark)."

@@ -16,9 +16,14 @@ import { readLines } from './journal.js';
 
 export const DEAD_LETTER_DIR = 'inbound_dead_letter';
 
+// Every id the gateway gives keeps its name: a number's digits, a user id's
+// letters, digits and periods (US.ENT.A123 and US.ENTA123 are two owners;
+// codex self-review r1 MINOR 2). Anything else is dropped, and a leading
+// period is escaped, so the name never leaves the directory or hides.
 export function safeConversationId(conversationId) {
-  const kept = String(conversationId ?? '').replace(/[^0-9A-Za-z_-]/g, '');
-  return kept || 'unknown';
+  const kept = String(conversationId ?? '').replace(/[^0-9A-Za-z_.-]/g, '');
+  if (!kept) return 'unknown';
+  return kept.startsWith('.') ? `_${kept}` : kept;
 }
 
 export function createDeadLetters({ stateDir }) {

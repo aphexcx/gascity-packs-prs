@@ -38,13 +38,26 @@
 // A lost progress write is therefore safe: the retry re-asks the gateway
 // under the same chunk key and gets the same answer.
 //
-// THE RECIPIENT. Every send names the owner by its conversation id, the key
-// the inbound side files the owner's messages under (render.js
-// conversationOf: PR 76's conversation_id, a phone number or a WhatsApp user
-// id); the gateway resolves it to the owner's current user id. An id the
-// gateway finds naming two owners (409 ambiguous_recipient, PR 76's rule R1)
-// is the permanent gateway_refused with metadata.gateway_error
-// ambiguous_recipient and the gateway's hint, never resent: see failure().
+// THE RECIPIENT (gp-g02t; the mayor's (A), 12:05Z 11/6). A reply names its
+// conversation, the key the inbound side files the owner under (render.js
+// conversationOf). A conversation id that is a phone number names its owner
+// alone only while that owner is bound and no other owner of the city shows
+// the number, since PR 76's send resolves `to` by conversation_id, user_id or
+// a shown number. So each publish and each update reads GET /v1/window once
+// and sends to the user id of the entry whose conversation_id is the
+// conversation (the design of record: every send goes to a user id):
+//   - no such entry (the owner unbound, or not a conversation id at all):
+//     not_bound, nothing sent;
+//   - an entry whose user_id is null (an owner PR 73 bound by number alone):
+//     not_bound, nothing sent;
+//   - an entry with no user_id field (PR 73's gateway): the conversation id,
+//     that contract's owner key.
+// The gateway key stays bound to the conversation id. A number change that
+// lands between the read and the send answers 403 not_bound; a retry under
+// the same key reads the window again. An id the gateway still finds naming
+// two owners (409 ambiguous_recipient, PR 76's rule R1) is the permanent
+// gateway_refused with metadata.gateway_error ambiguous_recipient and the
+// gateway's hint, never resent: see failure().
 //
 // THE CLI'S TRANSCRIPT. gc records the outbound transcript for its own
 // publishes (HandleOutbound, step 6). A CLI publish reaches this adapter
@@ -253,22 +266,26 @@ export function createPublisher({
         + `An actual update goes as the approved template: gc whatsapp publish --update --to ${conversationId} --text "<the update>". `
         + 'Otherwise wait for the owner\'s next message; this reply can then be retried with the same idempotency key.';
     } else if (err?.status === 409 && err.json?.error === 'ambiguous_recipient') {
-      // PR 76's rule R1 (gp-0g2s): the id names two owners of this city and
-      // the gateway sent nothing. Since gp-g02t the id is the conversation's
-      // own conversation_id, so this happens when that id is a phone number
-      // another owner of the city now shows (a recycled number). The
-      // conversation still means its own owner, the one keyed by the id (the
-      // gateway's answer names that owner's user id), but the refusal stands
-      // (gateway_refused, the ambiguity named; the mayor's word on gp-szj9,
-      // 00:34Z 11/5): a resend is the mayor's decision, named in gp-g02t's
-      // READY, not this adapter's.
+      // PR 76's rule R1 (gp-0g2s): `to` names two owners of this city and the
+      // gateway sent nothing. Since gp-g02t a send names the owner's user id
+      // from the window (THE RECIPIENT), which names one owner, so this is a
+      // guard for a `to` that is still a phone number (a PR 73 window). It is
+      // refused, never resent (gateway_refused, the ambiguity named).
       gatewayError = 'ambiguous_recipient';
       const gatewayHint = typeof err.json.hint === 'string' && err.json.hint ? ` (the gateway's hint: "${err.json.hint}")` : '';
       hint = `The gateway found two owners of this city answering to this conversation's id (a phone number another owner of this city now shows: a recycled number) and sent nothing${gatewayHint}. `
         + 'This adapter does not resend.';
     } else if (err?.status === 403) {
       reason = 'not_bound';
-      hint = 'This conversation is not bound to this city at the gateway; the owner joins by texting a code from gc whatsapp invite to the Dynasty number.';
+      if (err.recipient === 'not_listed') {
+        hint = `The gateway lists no owner of this city under ${conversationId} (unbound, or not a conversation id): nothing was sent. `
+          + 'Name the conversation id gc shows (whatsapp/<conversation_id>); an unbound owner joins again with a code from gc whatsapp invite.';
+      } else if (err.recipient === 'no_user_id') {
+        hint = 'This owner was bound by its phone number alone (PR 73) and has no WhatsApp user id, so nothing can be sent to it: '
+          + 'unbind it and give it a new invite code (the gateway README, Deploy step 7).';
+      } else {
+        hint = 'This conversation is not bound to this city at the gateway; the owner joins by texting a code from gc whatsapp invite to the Dynasty number.';
+      }
     } else if (err?.status === 401 || err?.auth) {
       kind = 'auth';
       reason = 'not_enrolled';
@@ -299,11 +316,39 @@ export function createPublisher({
     const metadata = { reason, chunks: String(chunks), chunks_delivered: String(delivered) };
     if (gatewayError) metadata.gateway_error = gatewayError;
     if (hint) metadata.hint = hint;
-    if (Number.isInteger(err?.status)) metadata.gateway_status = String(err.status);
+    if (err?.recipient) metadata.recipient = err.recipient; // refused here: the gateway answered nothing
+    else if (Number.isInteger(err?.status)) metadata.gateway_status = String(err.status);
     return {
       status: 200,
       json: { conversation, delivered: false, failure_kind: kind, idempotency_key: key, error: hint || reason, metadata },
     };
+  }
+
+  // THE RECIPIENT AT SEND TIME (header). One GET /v1/window; the entry whose
+  // conversation_id is the conversation names the owner.
+  async function recipientFor(conversationId) {
+    const answer = await gateway.window();
+    const entries = Array.isArray(answer?.windows) ? answer.windows : [];
+    const entry = entries.find((w) => isObject(w) && String(w.conversation_id) === conversationId);
+    if (!entry) return { refused: 'not_listed' };
+    if (!Object.hasOwn(entry, 'user_id')) return { to: conversationId }; // PR 73's window: its owner key
+    const userId = typeof entry.user_id === 'string' ? entry.user_id.trim() : '';
+    return userId ? { to: userId } : { refused: 'no_user_id' };
+  }
+
+  // Resolves the recipient, then sends to it; a failed read or a refusal is
+  // gc's receipt (failure()), and nothing is sent.
+  async function toOwner(context, send) {
+    let resolved;
+    try {
+      resolved = await recipientFor(context.conversationId);
+    } catch (err) {
+      return failure(err, context);
+    }
+    if (resolved.refused) {
+      return failure(Object.assign(new Error('no recipient'), { status: 403, recipient: resolved.refused }), context);
+    }
+    return send(resolved.to);
   }
 
   // Runs one key's work once: a concurrent call with the same key awaits
@@ -325,7 +370,7 @@ export function createPublisher({
     }
   }
 
-  async function sendChunks({ key, conversationId, text, textSha, conversation }) {
+  async function sendChunks({ key, conversationId, to, text, textSha, conversation }) {
     const chunks = chunkText(text);
     let entry = progress.get(key);
     if (entry?.receipt) return { status: 200, json: entry.receipt };
@@ -335,7 +380,7 @@ export function createPublisher({
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer;
       try {
-        answer = await gateway.send({ to: conversationId, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] });
+        answer = await gateway.send({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] });
         if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
@@ -436,7 +481,10 @@ export function createPublisher({
       }
 
       const answer = await once(key, { conversationId, textSha, endpoint: 'publish' }, conversation,
-        () => chain(conversationId, () => sendChunks({ key, conversationId, text: pub.text, textSha, conversation })));
+        () => chain(conversationId, () => toOwner(
+          { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
+          (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation }),
+        )));
       return cli ? withTranscript(answer, { key, sessionId, conversationId, text: pub.text }) : answer;
     } catch (err) {
       log(`publish failed inside the adapter: ${err?.message ?? err}`);
@@ -444,13 +492,13 @@ export function createPublisher({
     }
   }
 
-  async function sendUpdate({ key, to, text, textSha, conversation }) {
+  async function sendUpdate({ key, to, recipient, text, textSha, conversation }) {
     const existing = progress.get(key);
     if (existing?.receipt) return { status: 200, json: existing.receipt };
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
     let answer;
     try {
-      answer = await gateway.send({ to, idempotency_key: templateKey(key, to, template), type: 'template', template });
+      answer = await gateway.send({ to: recipient, idempotency_key: templateKey(key, to, template), type: 'template', template });
       if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
     } catch (err) {
       return failure(err, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
@@ -523,7 +571,9 @@ export function createPublisher({
         }
       }
 
-      if (!inflight.has(key) && ledger?.windowOpen?.(to)) {
+      // The recipient first (an unbound owner's conversation is not_bound,
+      // whatever the box's ledger says of its window), then the window.
+      const windowOpen = () => {
         const closes = ledger.windowClosesAt(to);
         return {
           status: 409,
@@ -535,10 +585,12 @@ export function createPublisher({
             metadata: { reason: 'window_open', window_closes_at: new Date(closes).toISOString() },
           },
         };
-      }
-
+      };
       const answer = await once(key, { conversationId: to, textSha, endpoint: 'update' }, conversation,
-        () => chain(to, () => sendUpdate({ key, to, text, textSha, conversation })));
+        () => chain(to, () => toOwner(
+          { conversationId: to, conversation, key, chunks: 1, delivered: 0 },
+          (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation })),
+        )));
       return sessionId ? withTranscript(answer, { key, sessionId, conversationId: to, text: updateTranscriptText(text) }) : answer;
     } catch (err) {
       log(`publish-update failed inside the adapter: ${err?.message ?? err}`);

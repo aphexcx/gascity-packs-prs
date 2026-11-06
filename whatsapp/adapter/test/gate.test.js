@@ -526,8 +526,10 @@ test('Opus read r2 MAJOR 1 (outbound.js:116-117): a caller key the store forgot,
 // number's NEW owner's messages sat in the OLD owner's conversation and the
 // mayor's reply there named the number (the round's self-review r1 MAJOR).
 // Since gp-g02t every delivery is filed under its conversation_id
-// (render.js conversationOf), so the new owner's conversation is its own and
-// the reply names the new owner's id: the second test below.
+// (render.js conversationOf), so the new owner's conversation is its own, and
+// every send goes to the user id the window gives for the conversation (the
+// mayor's (A)): the box's own sends meet no 409, and the mapping is a guard
+// (the first test below; the second shows the newcomer's reply reaching it).
 
 const A_USER = 'US.ownerA2'; // owner A's current user_id, after A's number change
 const B_USER = 'US.ownerB1'; // owner B's user_id, also B's conversation_id at the gateway
@@ -542,17 +544,19 @@ const refusal = (answer) => ({
 });
 const AMBIGUOUS = { delivered: false, kind: 'permanent', reason: 'gateway_refused', error: 'ambiguous_recipient', status: '409' };
 
-test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a text or an update to a number naming two owners is refused once, gateway_refused with the ambiguity named; never a second send, no window read, nothing sent', async (t) => {
+test('ADDENDUM 1, the 409 guard (gp-g02t): where the window names no user id (PR 73\'s shape) the send names the number; a 409 ambiguous_recipient there is refused once, gateway_refused with the ambiguity named; never a second send, nothing sent', async (t) => {
+  // Since gp-g02t a PR 76 window gives the owner's user id and the send goes
+  // to it (conversation.test.js, the recipient M2), so the box's own sends
+  // meet no 409; the mapping stays as a guard, pinned here.
   const s = await publisherWorld(t);
-  s.gw.userIds.set(A, A_USER);
   s.gw.ambiguous.add(A);
   s.gw.lastInbound.set(A, s.clock.now());
   const reply = await s.publish(`${'a'.repeat(4096)}the tail`, 'K');
   const update = await s.update('Weekly numbers are in.', 'U');
   assert.deepEqual(
     { reply: refusal(reply), update: refusal(update), tos: sendTos(s), windowReads: windowReads(s) },
-    { reply: AMBIGUOUS, update: AMBIGUOUS, tos: [A, A], windowReads: 0 },
-    `each refused once at the number, never resent (${JSON.stringify(reply.json)})`,
+    { reply: AMBIGUOUS, update: AMBIGUOUS, tos: [A, A], windowReads: 2 },
+    `each refused once at the number, never resent; one window read per call (${JSON.stringify(reply.json)})`,
   );
   for (const answer of [reply, update]) {
     assert.match(answer.json.metadata.hint, /two owners of this city answering to this conversation's id .*the gateway's hint: "send to the owner's current id".*does not resend/);

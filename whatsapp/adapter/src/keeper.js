@@ -87,6 +87,10 @@ const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 const tag = (conversationId) => `…${String(conversationId).slice(-4)}`;
 const blank = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim());
 const digitsOf = (conversationId) => String(conversationId ?? '').replace(/\D/g, '');
+// A phone number as an operator types it: digits and phone punctuation only.
+const PHONE_TYPED = /^[+\d\s().-]+$/;
+// A conversation id as the gateway gives one: a number, or a user id.
+const ID_SHAPED = /^[A-Za-z0-9._-]{1,200}$/;
 // A refusal the internal listener answers with its own status (index.js).
 const refusal = (status, message) => Object.assign(new Error(message), { status });
 
@@ -118,11 +122,13 @@ function normalizeRow(raw) {
 }
 
 // window_read_ok_at: the last good GET /v1/window (the doctor row reads it);
-// window_read_error(_at): the last failure since, cleared by a good read.
+// window_read_error(_at): the last failure since, cleared by a good read;
+// window_ids: the conversation ids that read listed (null until one is
+// recorded), so a restart knows them before its first read (gp-g02t).
 // An invite stays after its bind, as {..., bound_to, bound_at}, so a second
 // sight of the same join is a no-op; prune drops it after 30 days.
 const emptyState = () => ({
-  version: 1, conversations: {}, invites: {}, window_read_ok_at: null, window_read_error: null, window_read_error_at: null,
+  version: 1, conversations: {}, invites: {}, window_read_ok_at: null, window_read_error: null, window_read_error_at: null, window_ids: null,
 });
 // A good read that changes nothing else is written at most once a minute
 // (windowStampMs; the doctor row turns red after 5 minutes without one).
@@ -172,7 +178,13 @@ export function createKeeper({
   let readFailures = 0;
   let readRetryAt = -Infinity;
   let savedOkAt = state.window_read_ok_at;
-  let lastWindowIds = new Map(); // the last good read's conversations, digits -> id
+  // The last good read's conversation ids (null: no read recorded yet, as in
+  // a keeper.json written before gp-g02t). A row the last good read did not
+  // list raises nothing (the Opus read r1's CRITICAL 1, the mayor's (A)): its
+  // owner is unbound at the gateway, and its id may be a phone number a later
+  // owner shows, so an event there would prompt the mayor to send to it.
+  let lastWindowIds = state.window_ids === null ? null : new Set(state.window_ids);
+  const listed = (id) => lastWindowIds === null || lastWindowIds.has(id);
   let raiseFailLogAt = -Infinity;
   const loggedOnce = new Set();
   const retries = []; // events waiting on the ladder (memory only: a kill loses them, never repeats them)
@@ -205,6 +217,7 @@ export function createKeeper({
       if (typeof raw.window_read_ok_at === 'number') s.window_read_ok_at = raw.window_read_ok_at;
       if (typeof raw.window_read_error === 'string') s.window_read_error = raw.window_read_error;
       if (typeof raw.window_read_error_at === 'number') s.window_read_error_at = raw.window_read_error_at;
+      if (Array.isArray(raw.window_ids)) s.window_ids = raw.window_ids.filter((id) => typeof id === 'string');
       return s;
     } catch (err) {
       // Never guess at a damaged record: set it aside and start with every
@@ -294,20 +307,30 @@ export function createKeeper({
     return state.conversations[id];
   }
 
-  // The operator's verbs name a conversation as typed ("+55 11 99999-0001",
-  // or a user id "US.1349..."); a row is keyed by the gateway's
-  // conversation_id (its GET /v1/window entry, the conversation gc shows).
-  // The digits must match a row, or a conversation of the last good window
-  // read; a verb never creates a row for a conversation the keeper does not
-  // know (consent --off on a mistyped number must not answer OK while the
-  // real one stays ON). Returns the row's id.
-  function knownConversation(conversationId) {
-    const digits = digitsOf(conversationId);
-    if (!digits) throw refusal(400, 'the conversation id has no digits: give the id gc shows for the conversation (whatsapp/<conversation_id>)');
-    if (Object.hasOwn(state.conversations, digits)) return digits;
-    const id = Object.keys(state.conversations).find((key) => digitsOf(key) === digits) ?? lastWindowIds.get(digits);
-    if (id !== undefined) return id;
-    throw refusal(404, `no conversation ending ${digits.slice(-4)} is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded`);
+  // The operator's verbs name a conversation by the id gc shows
+  // (whatsapp/<conversation_id>): a row is keyed by the gateway's
+  // conversation_id (its GET /v1/window entry). A user id matches only whole
+  // and exact: one may hold letters (the gateway's BSUID pattern: two
+  // capitals, a period, up to 128 alphanumerics), so two user ids can share
+  // every digit and one can have none (gp-g02t, codex self-review r1 MAJOR 1).
+  // A number may be typed in any form ("+55 11 99999-0001"): text of digits
+  // and phone punctuation alone matches the conversation whose id is exactly
+  // its digits, which no user id is. The candidates are the keeper's rows and
+  // the conversations of the last good window read; a verb never creates a
+  // row for a conversation the keeper does not know (consent --off on a
+  // mistyped number must not answer OK while the real one stays ON). Returns
+  // the row's id.
+  function knownConversation(typed) {
+    const text = String(typed ?? '').trim();
+    const phoneTyped = PHONE_TYPED.test(text) && /\d/.test(text);
+    if (!phoneTyped && !ID_SHAPED.test(text)) {
+      throw refusal(400, 'not a conversation id: give the id gc shows for the conversation (whatsapp/<conversation_id>), or the owner\'s number in any form');
+    }
+    const known = new Set([...Object.keys(state.conversations), ...(lastWindowIds ?? [])]);
+    if (known.has(text)) return text;
+    const digits = phoneTyped ? digitsOf(text) : '';
+    if (digits && known.has(digits)) return digits;
+    throw refusal(404, `no conversation ending ${(digits || text).slice(-4)} is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded`);
   }
 
   const zoneOf = (r) => r.tz || homeZone;
@@ -378,15 +401,17 @@ export function createKeeper({
     state.window_read_error = null;
     state.window_read_error_at = null;
     let dirty = false;
-    const ids = new Map();
+    const ids = new Set();
     for (const w of Array.isArray(answer?.windows) ? answer.windows : []) {
       if (blank(w?.conversation_id)) continue;
       const id = String(w.conversation_id);
-      ids.set(digitsOf(id), id);
+      ids.add(id);
       if (applyWindow(id, parseInstant(w.last_inbound_at), parseInstant(w.window_closes_at), t)) dirty = true;
     }
+    const listChanged = state.window_ids === null || state.window_ids.length !== ids.size || state.window_ids.some((id) => !ids.has(id));
     lastWindowIds = ids;
-    if (dirty || hadError || !(t - savedOkAt < stampEvery)) persist();
+    state.window_ids = [...ids];
+    if (dirty || hadError || listChanged || !(t - savedOkAt < stampEvery)) persist();
   }
 
   function applyWindow(conversationId, last, close, t) {
@@ -692,6 +717,7 @@ export function createKeeper({
     for (const job of due) {
       const r = state.conversations[job.conversationId];
       if (!r || r.consent !== true) continue; // consent withdrawn: dropped
+      if (!listed(job.conversationId)) continue; // unbound at the gateway: dropped
       if (job.kind === 'nudge' && (r.window_closes_at !== job.close || t >= job.close)) {
         // A nudge never goes out after its close, nor after the business wrote.
         if (r.window_closes_at === job.close) undelivered(job, 'the window closed before the retry');
@@ -709,6 +735,7 @@ export function createKeeper({
     await retryDue(t);
     for (const [conversationId, r] of Object.entries(state.conversations)) {
       if (r.consent !== true) continue; // (e) OFF without recorded consent: no event at all
+      if (!listed(conversationId)) continue; // the last good read does not list it: no event (gp-g02t)
       try {
         const slot = dueUpdate(r, t);
         if (slot) await raiseUpdate(conversationId, r, slot, t);
@@ -841,6 +868,7 @@ export function createKeeper({
         conversations[conversationId] = {
           keeper: r.consent === true ? 'on' : 'off',
           consent: r.consent,
+          listed: listed(conversationId),
           consent_at: iso(r.consent_at),
           hours: r.hours,
           tz: r.tz,

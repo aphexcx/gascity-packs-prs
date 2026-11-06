@@ -481,7 +481,7 @@ def test_clear_gap_prints_the_gap_and_the_head(fake):
     result = verb('clear-gap.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url)
     assert result.returncode == 0, result.stderr
     assert 'sequence 9' in result.stdout and 'rebased to the store head now: sequence 4' in result.stdout
-    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234'}
+    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234', 'wa_id': '5511900001234'}
 
 
 def test_clear_gap_and_status_read_a_head_never_got_as_unknown(fake):
@@ -516,7 +516,7 @@ def test_invite_consent_hours(fake):
     # The verb sends the number as typed and prints the conversation the adapter matched.
     off = verb('consent.sh', '+55 11 90000-9999', '--off', WHATSAPP_ADAPTER_URL=adapter.url)
     assert off.returncode == 0, off.stderr
-    assert adapter.requests[-1][2] == {'conversation_id': '+55 11 90000-9999', 'on': False}
+    assert adapter.requests[-1][2] == {'conversation_id': '+55 11 90000-9999', 'wa_id': '+55 11 90000-9999', 'on': False}
     assert 'OFF for ...1234' in off.stdout and '9999' not in off.stdout
     hours = verb('hours.sh', '5511900001234', '--hours', 'Mon-Sat 18:00-02:00', '--tz', 'America/Chicago',
                  WHATSAPP_ADAPTER_URL=adapter.url)
@@ -524,15 +524,30 @@ def test_invite_consent_hours(fake):
     assert 'Hours recorded for ...1234: Mon-Sat 18:00-02:00 (America/Chicago).' in hours.stdout
 
 
+def test_verbs_against_an_adapter_still_running_the_pr74_code(fake):
+    # gp-g02t: after a pack roll the verbs can be newer than the running adapter process: it reads
+    # wa_id and answers wa_id_last4. The verbs send both names and read either answer key.
+    adapter = fake({'POST /consent': (200, {'ok': True, 'consent': True, 'wa_id_last4': '0001'}),
+                    'GET /status': (200, {'inbound': {'held': [{'ref': 'm-0123456789', 'wa_id_last4': '0001', 'receipt_id': 'r', 'held_at': NOW_MS}]}}),
+                    'POST /inbound/resolve': (200, {'ok': True})})
+    on = verb('consent.sh', '5511900000001', '--on', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert on.returncode == 0, on.stderr
+    assert 'ON for ...0001' in on.stdout
+    assert adapter.requests[-1][2]['wa_id'] == '5511900000001'
+    resolved = verb('resolve.sh', 'm-0123456789', '--dead', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert resolved.returncode == 0, resolved.stderr
+    assert 'conversation ...0001' in resolved.stdout and 'null' not in resolved.stdout
+
+
 def test_hours_clear(fake):
     adapter = fake({'POST /hours': (200, {'ok': True, 'conversation_last4': '1234', 'hours': None})})
     cleared = verb('hours.sh', '5511900001234', '--clear', WHATSAPP_ADAPTER_URL=adapter.url)
     assert cleared.returncode == 0, cleared.stderr
-    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234', 'hours': ''}
+    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234', 'wa_id': '5511900001234', 'hours': ''}
     assert 'Hours cleared for ...1234 (the recorded zone kept).' in cleared.stdout
     with_zone = verb('hours.sh', '5511900001234', '--clear', '--tz', 'America/Sao_Paulo', WHATSAPP_ADAPTER_URL=adapter.url)
     assert with_zone.returncode == 0, with_zone.stderr
-    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234', 'hours': '', 'tz': 'America/Sao_Paulo'}
+    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234', 'wa_id': '5511900001234', 'hours': '', 'tz': 'America/Sao_Paulo'}
     assert verb('hours.sh', '5511900001234', '--clear', '--hours', 'Mon 09:00-10:00', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
     assert verb('hours.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
 

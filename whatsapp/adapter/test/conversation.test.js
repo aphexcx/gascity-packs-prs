@@ -17,7 +17,7 @@
 //   2. a wa_id changed between two deliveries of one conversation_id: one gc
 //      conversation, one ordered chain, one watermark;
 //   3. a recycled number under two conversation_ids: two gc conversations,
-//      and the mayor's reply in each reaches its own owner.
+//      and the mayor's reply in the newcomer's reaches the newcomer.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -171,6 +171,106 @@ test('shape 3 (a recycled number): owner B on the number owner A was bound by ne
   const answer = await reply(r, B_USER, 'B: your order 4471 ships tomorrow', 'k-RB1');
   assert.equal(answer.json.delivered, true, JSON.stringify(answer.json));
   assert.deepEqual(r.gw.sends.map((s) => s.to), [B_USER], 'B\'s reply goes to B\'s id, never the number A was bound by');
+});
+
+// --- the recipient: the owner's user id, from the gateway's window at send time ---------
+// A conversation_id that is a phone number P names its owner A alone only while A is bound
+// and no other owner of the city shows P; PR 76's send resolves `to` by conversation_id,
+// user_id or a shown number (gateway.ts send). So the box sends to the user id of the
+// window entry whose conversation_id is the conversation, and to nobody when there is none
+// (the Opus read r1's CRITICAL 1 and MAJOR 2; the mayor's (A), 12:05Z 11/6).
+
+const refusedReason = (answer) => answer.json.metadata?.reason;
+
+test('the recipient (C1): owner A is unbound and B shows A\'s number now: the mayor\'s reply and update in A\'s conversation reach nobody, never B', async (t) => {
+  const r = await setup(t);
+  const a = ownerText(r, { conversation: P, number: P, user: A_USER, wamid: 'wamid.C1A', body: 'A, before the unbind', profile: 'Ana' });
+  const b = ownerText(r, { conversation: B_USER, number: P, user: B_USER, wamid: 'wamid.C1B', body: 'B, on A\'s old number', profile: 'Bruno' });
+  r.gw.shows.set(P, B_USER); // B's newest pairing is with P
+  r.start();
+  await acked(r, a);
+  await acked(r, b);
+  r.gw.bound.delete(P); // the operator unbinds A: the window stops listing P
+  const answer = await reply(r, P, 'Ana: your refund went out', 'k-C1');
+  const tpl = await update(r, P, 'Ana: the refund is in your account', 'u-C1');
+  assert.deepEqual(
+    { reply: [answer.json.delivered, refusedReason(answer)], update: [tpl.json.delivered, refusedReason(tpl)], sends: r.gw.sends.map((s) => [s.to, s.owner]) },
+    { reply: [false, 'not_bound'], update: [false, 'not_bound'], sends: [] },
+    JSON.stringify({ reply: answer.json, update: tpl.json }),
+  );
+});
+
+test('the recipient (M2): owner A is still bound and B shows A\'s number: the mayor\'s reply and update in A\'s conversation reach A\'s user id, never refused 409', async (t) => {
+  const r = await setup(t);
+  const a = ownerText(r, { conversation: P, number: P2, user: A_USER, wamid: 'wamid.M2A', body: 'A, from the new number', profile: 'Ana' });
+  const b = ownerText(r, { conversation: B_USER, number: P, user: B_USER, wamid: 'wamid.M2B', body: 'B, on A\'s old number', profile: 'Bruno' });
+  r.gw.shows.set(P, B_USER);
+  r.gw.shows.set(P2, P);
+  r.start();
+  await acked(r, a);
+  await acked(r, b);
+  const answer = await reply(r, P, 'Ana: your order ships today', 'k-M2');
+  r.clock.advance(2 * 24 * 3600 * 1000); // two days on: A's window is closed, the update is due
+  const tpl = await update(r, P, 'Ana: the invoice is in the portal', 'u-M2');
+  assert.deepEqual(
+    { reply: answer.json.delivered, update: tpl.json.delivered, sends: r.gw.sends.map((s) => [s.type, s.to, s.owner]) },
+    { reply: true, update: true, sends: [['text', A_USER, P], ['template', A_USER, P]] },
+    JSON.stringify({ reply: answer.json, update: tpl.json }),
+  );
+});
+
+test('the recipient: `--to` naming a number that is no conversation id (one an owner shows) is refused with a hint naming the conversation id, and nothing is sent', async (t) => {
+  const r = await setup(t);
+  const a = ownerText(r, { conversation: P, number: P2, user: A_USER, wamid: 'wamid.NA', body: 'A, from the new number', profile: 'Ana' });
+  r.gw.shows.set(P2, P);
+  r.start();
+  await acked(r, a);
+  const tpl = await update(r, P2, 'Ana: the invoice is in the portal', 'u-N');
+  assert.deepEqual([tpl.json.delivered, refusedReason(tpl), r.gw.sends.length], [false, 'not_bound', 0], JSON.stringify(tpl.json));
+  assert.match(tpl.json.metadata.hint, /conversation id gc shows/);
+});
+
+test('the recipient: an owner PR 73 bound by number alone (PR 76\'s window lists it with user_id null) is not bound, and nothing is sent', async (t) => {
+  const r = await setup(t);
+  const q = ownerText(r, { conversation: Q, number: Q, user: null, wamid: 'wamid.Q1', body: 'a PR 73 owner', profile: 'Quim' });
+  r.start();
+  await acked(r, q);
+  const answer = await reply(r, Q, 'hello', 'k-Q');
+  assert.deepEqual([answer.json.delivered, refusedReason(answer), r.gw.sends.length], [false, 'not_bound', 0], JSON.stringify(answer.json));
+});
+
+// --- the keeper's verbs name a conversation by its whole id ---------------------------
+// A user id may hold letters (gateway/src/meta.ts BSUID: two capitals, a period, up to 128
+// alphanumerics), so two user ids can share every digit, and one can have none (codex
+// self-review r1 MAJOR 1). A number typed in any form still finds a number's conversation.
+
+test('the keeper\'s verbs match a user-id conversation whole: consent for one never changes another with the same digits; an id with no digits is found; a typed number never matches a user id', async (t) => {
+  const r = await setup(t);
+  const ids = ['US.ownerA1', 'US.ownerB1', 'US.Alice'];
+  ids.forEach((id, i) => ownerText(r, { conversation: id, user: id, wamid: `wamid.K${i}`, body: 'hi' }));
+  const phoneOwner = r.gw.addText(P, 'wamid.KP', 'hi'); // a PR 73 owner keyed by its number
+  r.start();
+  await acked(r, phoneOwner);
+  const rows = async () => (await adapterRequest(r.socket, 'GET', '/status')).json.keeper.conversations;
+  // Pumped: a window read that fails under host load retries on the clock's ladder (1, 5, 15, 60 s).
+  await r.pumpUntil(async () => Object.keys((await rows()) ?? {}).length === 4, { what: 'the keeper read all four conversations' });
+  const consent = (id, on) => adapterRequest(r.socket, 'POST', '/consent', { conversation_id: id, on });
+  const onB = await consent('US.ownerB1', true);
+  const onAlice = await consent('US.Alice', true);
+  const onTyped = await consent('+55 11 90000-0001', true);
+  const digitsOnly = await consent('1', false);
+  const after = await rows();
+  assert.deepEqual(
+    {
+      answers: [onB.status, onAlice.status, onTyped.status, digitsOnly.status],
+      consent: Object.fromEntries(Object.entries(after).map(([id, row]) => [id, row.consent === true])),
+    },
+    {
+      answers: [200, 200, 200, 404],
+      consent: { 'US.ownerA1': false, 'US.ownerB1': true, 'US.Alice': true, [P]: true },
+    },
+    JSON.stringify({ onB: onB.json, onAlice: onAlice.json, digitsOnly: digitsOnly.json }),
+  );
 });
 
 // --- the journal format: the PR 74 adapter's lines are tolerated, not migrated ----------

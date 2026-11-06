@@ -151,3 +151,14 @@ test('the dead-letter store writes one line per rid and indexes the files at sta
   assert.equal((fs.statSync(file).mode & 0o777).toString(8), '600');
   assert.equal((fs.statSync(path.dirname(file)).mode & 0o777).toString(8), '700');
 });
+
+test('gp-g02t: each owner\'s dead letters keep its own file: two user ids that differ only by a period never share one; a name never hides or leaves the directory', () => {
+  const dir = tempDir();
+  const d = createDeadLetters({ stateDir: dir });
+  d.write('US.ENT.A123', { rid: 'ra', reason: 'in_doubt' });
+  d.write('US.ENTA123', { rid: 'rb', reason: 'in_doubt' });
+  d.write('../..', { rid: 'rc', reason: 'in_doubt' });
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'inbound_dead_letter')).sort(), ['US.ENT.A123.jsonl', 'US.ENTA123.jsonl', '_.....jsonl']);
+  const again = createDeadLetters({ stateDir: dir });
+  assert.deepEqual(['ra', 'rb', 'rc'].map((rid) => again.has(rid)), [true, true, true]);
+});

@@ -32,16 +32,19 @@ while [ "$#" -gt 0 ]; do
 done
 usage='usage: gc whatsapp hours <conversation_id> --hours "Mon-Fri 09:00-18:00" --tz <IANA zone> | --clear [--tz <IANA zone>]'
 [ -n "$conversation_id" ] || wa_usage_error "$usage"
+# The id goes under both names: conversation_id for this pack's adapter, wa_id
+# for an adapter process still running the PR 74 code until its restart after a
+# pack roll (gp-g02t). The answer's last four come under either name too.
 if [ "$clear" = true ]; then
   [ -z "$hours" ] || wa_usage_error "--clear and --hours are exclusive"
   if [ "$tz_given" = true ]; then
-    body=$(jq -n --arg id "$conversation_id" --arg tz "$tz" '{conversation_id: $id, hours: "", tz: $tz}')
+    body=$(jq -n --arg id "$conversation_id" --arg tz "$tz" '{conversation_id: $id, wa_id: $id, hours: "", tz: $tz}')
   else
-    body=$(jq -n --arg id "$conversation_id" '{conversation_id: $id, hours: ""}')
+    body=$(jq -n --arg id "$conversation_id" '{conversation_id: $id, wa_id: $id, hours: ""}')
   fi
 else
   [ -n "$hours" ] && [ -n "$tz" ] || wa_usage_error "$usage"
-  body=$(jq -n --arg id "$conversation_id" --arg hours "$hours" --arg tz "$tz" '{conversation_id: $id, hours: $hours, tz: $tz}')
+  body=$(jq -n --arg id "$conversation_id" --arg hours "$hours" --arg tz "$tz" '{conversation_id: $id, wa_id: $id, hours: $hours, tz: $tz}')
 fi
 
 wa_call POST /hours "$body"
@@ -49,7 +52,7 @@ if [ "$WA_STATUS" -ge 400 ] 2>/dev/null; then
   wa_die "adapter answered HTTP $WA_STATUS: $(wa_error_of "$WA_BODY")"
 fi
 # The conversation the adapter matched, never the input as typed.
-last4=$(printf '%s' "$WA_BODY" | jq -r '.conversation_last4 // empty')
+last4=$(printf '%s' "$WA_BODY" | jq -r '.conversation_last4 // .wa_id_last4 // empty')
 [ -n "$last4" ] || wa_die "adapter answered HTTP $WA_STATUS without the matched conversation; nothing confirmed"
 if [ "$clear" = true ] && [ "$tz_given" = true ]; then
   echo "Hours cleared for ...$last4 (zone ${tz:-cleared})."

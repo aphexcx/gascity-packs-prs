@@ -25,7 +25,7 @@ printf '%s' "$WA_BODY" | jq -r '
   "Entries:       \(.inbound.entries | to_entries | map("\(.key) \(.value)") | join(", ") | if . == "" then "none" else . end); acks owed \(.inbound.acks_owed)\(if (.inbound.binds_owed // 0) > 0 then " (\(.inbound.binds_owed) held for a keeper bind)" else "" end)",
   "Dead letters:  \(.inbound.dead_letters)",
   "Terminal holds: \(.inbound.held | length)",
-  (.inbound.held[] | "  \(.ref)  conversation ...\(.conversation_last4)  receipt \(.receipt_id)  since \(.held_at | t)  (gc whatsapp inbound resolve <ref> --delivered|--dead)"),
+  (.inbound.held[] | "  \(.ref)  conversation ...\(.conversation_last4 // .wa_id_last4)  receipt \(.receipt_id)  since \(.held_at | t)  (gc whatsapp inbound resolve <ref> --delivered|--dead)"),
   "Restore gaps:  \(.inbound.gaps | length)",
   (.inbound.gaps[] | "  \(.conversation_id)  journal watermark \(.watermark_sequence) not in the gc store (store head \(.head_sequence // "unknown"))  (gc whatsapp inbound clear-gap <conversation_id>)"),
   # The keeper reads GET /v1/window once a minute; while a read is failing

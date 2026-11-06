@@ -79,8 +79,9 @@ on gc's **delivered** word the ack to the gateway by delivery id →
 
 **The owner's key (gp-g02t).** Each delivery belongs to the owner the
 gateway names by its `conversation_id` (PR 76's inbox): fixed when the owner
-binds, the same after a number change, never shared by two owners after a
-recycled number. The `received` line records it, and every later step reads
+binds (the owner's user id; for an owner PR 73 bound, its number), the same
+after a number change, and never shared by two owners, a recycled number
+included. The `received` line records it, and every later step reads
 it from there: the gc conversation (`whatsapp/<conversation_id>`) and the
 actor, the per-owner chain, the watermark, the lookup and the paste probe, the
 dead letter, the window ledger, the keeper's bind and the media directory.
@@ -154,13 +155,17 @@ whole text>:<n>`, so a retry resumes at the failed chunk; an update goes under
 parameters>`, a namespace no text chunk shares. A key reused for another
 owner or another message is therefore another gateway key, even once the
 adapter's own record of the key (7 days or 1,024 keys) is gone and the
-gateway's (30 days) is not. Every send names the owner by its conversation
-id, which the gateway resolves to the owner's current user id. An id the
-gateway finds naming two owners of the city (a conversation keyed by a phone
-number another owner now shows, after a recycle: 409 `ambiguous_recipient`,
-nothing sent) is gc's permanent publish error, `metadata.reason
-gateway_refused` with `metadata.gateway_error ambiguous_recipient` and a hint
-naming the ambiguity, never resent. WhatsApp's 24-hour window (24 h after the owner's last message, minus a
+gateway's (30 days) is not. **The recipient** (gp-g02t): each publish and
+each update reads the gateway's `GET /v1/window` once and sends to the user id
+of the entry whose `conversation_id` is the conversation, never to a number (a
+number may name another owner once its owner is unbound or it is recycled). A
+conversation the window no longer lists (its owner unbound, or not a
+conversation id at all), or lists with no user id (an owner PR 73 bound by
+number alone), is gc's permanent publish error `metadata.reason not_bound`
+with `metadata.recipient` saying why, and nothing is sent. PR 73's window has
+no user ids; there the send names the conversation id itself. A 409
+`ambiguous_recipient` (nothing sent) is `metadata.reason gateway_refused` with
+`metadata.gateway_error ambiguous_recipient` and a hint, never resent. WhatsApp's 24-hour window (24 h after the owner's last message, minus a
 120-second margin) is the gateway's to enforce: a free-form send outside it
 answers gc's permanent publish error with `metadata.reason window_closed` and
 a hint naming the update verb. `gc whatsapp publish --update --to <conversation_id>
@@ -182,8 +187,10 @@ daily update (two hours before close of business, or at
 minutes before the window closes, kept inside the business's hours. State in
 `<city>/.gc/whatsapp/keeper.json`, written before each event; a failed window
 read is retried on the ladder (1, 5, 15, 60 s) and the last good read is
-stamped in the file for the doctor row. The `consent` and `hours` verbs take
-a joined conversation's id in any form and print the last four digits the
+stamped in the file for the doctor row, with the conversations it listed: a
+conversation the last good read did not list (its owner unbound) raises
+nothing. The `consent` and `hours` verbs take a joined conversation's id (a
+user id whole, a number in any form) and print the last four digits the
 adapter matched. The mayor never replies to a keeper event; it publishes a real
 update or nothing.
 
