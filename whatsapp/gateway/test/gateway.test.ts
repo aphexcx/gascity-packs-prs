@@ -24,6 +24,7 @@ import {
   textAs,
   textPayload,
   uniq,
+  userOf,
 } from "./harness.js";
 
 const CLOSE = DAY - 120; // the window's length after the margin
@@ -134,13 +135,13 @@ describe("Meta side: routing by phone", () => {
     expect(used?.used_at).toBe(t.clock.now);
     const welcome = t.graph.sends();
     expect(welcome).toHaveLength(1);
-    expect(welcome[0]!.body).toMatchObject({ to: wa, type: "text", text: { body: "You're connected to Hou Dynasty's mayor. Say hi." } });
+    expect(welcome[0]!.body).toMatchObject({ recipient: userOf(wa), type: "text", text: { body: "You're connected to Hou Dynasty's mayor. Say hi." } });
     // The code is spent: a second phone texting it is a stranger, who hears the canned line and
     // never a welcome.
     const other = phone();
     await t.say(other, code);
     expect((await t.inbox(city)).body.deliveries).toHaveLength(1);
-    expect(t.graph.sends().filter((c) => c.body?.to === other).map((c) => c.body?.text.body)).toEqual([
+    expect(t.graph.sends().filter((c) => c.body?.recipient === userOf(other)).map((c) => c.body?.text.body)).toEqual([
       "This number serves Dynasty cities. Ask your city for an invite code.",
     ]);
   });
@@ -156,7 +157,7 @@ describe("Meta side: routing by phone", () => {
     value.messages.push(JSON.parse(JSON.stringify(value.messages[0])));
     expect((await t.webhook(payload)).status).toBe(200);
     expect((await t.inbox(city)).body.deliveries).toHaveLength(1);
-    expect(t.graph.sends().filter((c) => c.body?.to === wa)).toHaveLength(1);
+    expect(t.graph.sends().filter((c) => c.body?.recipient === userOf(wa))).toHaveLength(1);
   });
 
   it("an unknown sender gets the canned line once and silence on the next message within 7 days", async () => {
@@ -166,12 +167,12 @@ describe("Meta side: routing by phone", () => {
     await t.say(stranger, "anyone?");
     t.clock.now += 6 * DAY;
     await t.say(stranger, "still there?");
-    const lines = t.graph.sends().filter((c) => c.body?.to === stranger);
+    const lines = t.graph.sends().filter((c) => c.body?.recipient === userOf(stranger));
     expect(lines).toHaveLength(1);
     expect(lines[0]!.body?.text.body).toBe("This number serves Dynasty cities. Ask your city for an invite code.");
     t.clock.now += DAY + 1;
     await t.say(stranger, "a week later");
-    expect(t.graph.sends().filter((c) => c.body?.to === stranger)).toHaveLength(2);
+    expect(t.graph.sends().filter((c) => c.body?.recipient === userOf(stranger))).toHaveLength(2);
   });
 
   it("a Meta redelivery of the same wamid yields one delivery", async () => {
@@ -232,16 +233,16 @@ describe("Meta side: routing by phone", () => {
     const first = value.messages[0];
     for (let i = 1; i < 99; i++) value.messages.push({ ...first, id: `wamid.${uniq()}`, text: { body: `b${i}` } });
     const inviteWamid = `wamid.${uniq()}`;
-    value.messages.push({ ...first, from: stranger, id: inviteWamid, text: { body: code } });
-    value.contacts.push({ profile: { name: "New Owner" }, wa_id: stranger });
-    const welcomesBefore = t.graph.sends().filter((c) => c.body?.to === stranger).length;
+    value.messages.push({ ...first, from: stranger, from_user_id: userOf(stranger), id: inviteWamid, text: { body: code } });
+    value.contacts.push({ profile: { name: "New Owner" }, wa_id: stranger, user_id: userOf(stranger) });
+    const welcomesBefore = t.graph.sends().filter((c) => c.body?.recipient === userOf(stranger)).length;
     flaky.arm(1); // the first batch commits, the second fails
     expect((await t.webhook(payload)).status).toBe(500);
-    const boundAfterFailure = await env.DB.prepare("SELECT city_id FROM phones WHERE wa_id = ?").bind(stranger).first();
+    const boundAfterFailure = await env.DB.prepare("SELECT city_id FROM phones WHERE user_id = ?").bind(userOf(stranger)).first();
     expect(boundAfterFailure).toBeNull();
     const codeAfterFailure = await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(code).first<{ used_at: number | null }>();
     expect(codeAfterFailure?.used_at).toBeNull();
-    expect(t.graph.sends().filter((c) => c.body?.to === stranger)).toHaveLength(welcomesBefore);
+    expect(t.graph.sends().filter((c) => c.body?.recipient === userOf(stranger))).toHaveLength(welcomesBefore);
 
     expect((await t.webhook(payload)).status).toBe(200);
     const all = (await t.inbox(city, "?limit=200")).body.deliveries.concat(
@@ -256,7 +257,7 @@ describe("Meta side: routing by phone", () => {
     );
     const usedNow = await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(code).first<{ used_at: number | null }>();
     expect(usedNow?.used_at).toBe(t.clock.now);
-    expect(t.graph.sends().filter((c) => c.body?.to === stranger)).toHaveLength(welcomesBefore + 1);
+    expect(t.graph.sends().filter((c) => c.body?.recipient === userOf(stranger))).toHaveLength(welcomesBefore + 1);
   });
 
   it("a webhook whose D1 write fails answers 500 with nothing stored, and its redelivery yields one row", async () => {
@@ -291,7 +292,7 @@ describe("Meta side: routing by phone", () => {
     t.graph.failNext({ status: 500, body: { error: { code: 1, message: "An unknown error occurred" } } });
     const first = await t.say(wa, code);
     expect(first.res.status).toBe(200);
-    const bound = await env.DB.prepare("SELECT city_id FROM phones WHERE wa_id = ?").bind(wa).first<{ city_id: string }>();
+    const bound = await env.DB.prepare("SELECT city_id FROM phones WHERE user_id = ?").bind(userOf(wa)).first<{ city_id: string }>();
     expect(bound?.city_id).toBe(city.id);
     const again = await t.say(wa, code, { wamid: first.wamid });
     expect(again.res.status).toBe(200);
@@ -310,7 +311,7 @@ describe("Meta side: routing by phone", () => {
     const wa = await t.join(a);
     const codeB = await t.invite(b);
     await t.say(wa, codeB);
-    const bound = await env.DB.prepare("SELECT city_id FROM phones WHERE wa_id = ?").bind(wa).first<{ city_id: string }>();
+    const bound = await env.DB.prepare("SELECT city_id FROM phones WHERE user_id = ?").bind(userOf(wa)).first<{ city_id: string }>();
     expect(bound?.city_id).toBe(a.id);
     expect((await t.inbox(b)).body.deliveries).toHaveLength(0);
     const live = await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(codeB).first<{ used_at: number | null }>();
@@ -408,7 +409,7 @@ describe("Meta side: invite-code edges", () => {
     ] as const) {
       expect((await t.say(wa, text, { wamid })).res.status).toBe(200);
     }
-    expect(await env.DB.prepare("SELECT code_attempts FROM unknown_senders WHERE sender_key = ?").bind(wa).first()).toEqual({ code_attempts: 2 });
+    expect(await env.DB.prepare("SELECT code_attempts FROM unknown_senders WHERE sender_key = ?").bind(userOf(wa)).first()).toEqual({ code_attempts: 2 });
     await t.say(wa, code);
     expect((await t.inbox(city)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
   });
@@ -473,7 +474,7 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     expect(held.map((d: any) => d.kind)).toEqual(["joined", "message"]);
     expect((await t.ack(a, held.map((d: any) => d.id))).status).toBe(200);
     // README, "Unbind an owner"; then the phone joins city B by B's invite code.
-    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(wa).run();
+    await t.unbind(wa);
     t.clock.now += HOUR;
     await t.join(b, wa);
     t.clock.now += HOUR;
@@ -492,9 +493,9 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     const t = setup({ db: flaky.db });
     const first = await t.enrollCity();
     const second = await t.enrollCity();
-    // Known by phone and BSUID: the text names both (Meta's shape), the image the number alone.
+    // Known by phone and BSUID: the text names both (Meta's shape), the image the phone's user id.
     const wa = phone();
-    const user = bsuid();
+    const user = userOf(wa);
     await t.joinAs(first, { wa, user });
     t.clock.now = T0 + HOUR;
     const text = textAs({ wa, user }, "for the first city's mayor", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
@@ -505,7 +506,9 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     const image = mediaPayload("image", wa, mediaId, { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
     flaky.arm(0);
     expect((await t.webhook(image)).status).toBe(500);
-    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1 OR user_id = ?2").bind(wa, user).run();
+    // README, "Unbind an owner": it records the owner's user id, so what the owner wrote before
+    // the unbind is the unbound binding's, never the next one's.
+    await t.unbind(user);
     t.clock.now = T0 + 2 * HOUR;
     await t.joinAs(second, { wa, user });
     t.clock.now = T0 + 3 * HOUR;
@@ -523,7 +526,7 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     expect((await t.inbox(second)).body.deliveries.some((d: any) => d.message?.id === now.wamid)).toBe(true);
   });
 
-  it("the same for another person who binds the number next (today's shape, the number alone), and for a stranger's text sent before it joined (self-review r1 S1b)", async () => {
+  it("the same for another person who binds the number next (under their own user id), and for a stranger's text sent before it joined (self-review r1 S1b)", async () => {
     const flaky = flakyDb();
     const t = setup({ db: flaky.db });
     const first = await t.enrollCity();
@@ -533,14 +536,16 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     const before = textPayload(wa, "A's words for city one", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR, name: "A" });
     flaky.arm(0);
     expect((await t.webhook(before)).status).toBe(500);
-    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(wa).run();
-    // Someone else, still a stranger, writes; the write fails; then they join the second city.
+    await t.unbind(wa);
+    // Someone else, on the recycled number under their own user id, still a stranger, writes; the
+    // write fails; then they join the second city.
+    const b = bsuid();
     t.clock.now = T0 + 2 * HOUR;
-    const hello = textPayload(wa, "hello, who is this?", { wamid: `wamid.${uniq()}`, ts: T0 + 2 * HOUR, name: "B" });
+    const hello = textAs({ wa, user: b }, "hello, who is this?", { wamid: `wamid.${uniq()}`, ts: T0 + 2 * HOUR, name: "B" });
     flaky.arm(0);
     expect((await t.webhook(hello)).status).toBe(500);
     t.clock.now = T0 + 3 * HOUR;
-    await t.join(second, wa);
+    await t.joinAs(second, { wa, user: b });
     t.clock.now = T0 + 4 * HOUR;
     const calls = t.graph.sends().length;
     expect((await t.webhook(before)).status).toBe(200);
@@ -556,7 +561,8 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     const wa = await t.join(a);
     const said = await t.say(wa, "still held for A");
     const payload = textPayload(wa, "still held for A", { wamid: said.wamid, ts: t.clock.now });
-    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(wa).run();
+    await t.unbind(wa);
+    t.clock.now += HOUR;
     await t.join(b, wa);
     expect((await t.webhook(payload)).status).toBe(200);
     expect((await t.inbox(a)).body.deliveries.filter((d: any) => d.message?.id === said.wamid)).toHaveLength(1);
@@ -740,7 +746,7 @@ describe("City side: the inbox, the hold and the ack by id", () => {
     const report = await t.gateway.maintain();
     expect(report.bodies_expired).toBeGreaterThanOrEqual(2);
     expect((await t.inbox(city)).body.deliveries).toEqual([]);
-    const kept = await env.DB.prepare("SELECT city_id FROM phones WHERE wa_id = ?").bind(wa).first<{ city_id: string }>();
+    const kept = await env.DB.prepare("SELECT city_id FROM phones WHERE user_id = ?").bind(userOf(wa)).first<{ city_id: string }>();
     expect(kept?.city_id).toBe(city.id);
     const bodies = await env.DB.prepare("SELECT COUNT(*) AS n FROM deliveries WHERE city_id = ? AND body IS NOT NULL").bind(city.id).first<{ n: number }>();
     expect(bodies?.n).toBe(0);
@@ -989,7 +995,7 @@ describe("City side: the 24-hour window", () => {
     expect(w.map((x) => x.conversation_id).sort()).toEqual([silent, wa].sort());
     expect(w.some((x) => x.conversation_id === waB)).toBe(false);
     expect(w.find((x) => x.conversation_id === silent)).toEqual({ conversation_id: silent, user_id: null, last_inbound_at: null, window_closes_at: null });
-    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, user_id: null, last_inbound_at: T0, window_closes_at: T0 + CLOSE });
+    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, user_id: userOf(wa), last_inbound_at: T0, window_closes_at: T0 + CLOSE });
 
     t.clock.now = T0 + 2 * HOUR;
     const sends = [
@@ -1004,7 +1010,7 @@ describe("City side: the 24-hour window", () => {
     t.clock.now = T0 + 3 * HOUR;
     await t.say(wa, "the owner again", { ts: T0 + 3 * HOUR });
     w = await read();
-    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, user_id: null, last_inbound_at: T0 + 3 * HOUR, window_closes_at: T0 + 3 * HOUR + CLOSE });
+    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, user_id: userOf(wa), last_inbound_at: T0 + 3 * HOUR, window_closes_at: T0 + 3 * HOUR + CLOSE });
   });
 
   it("an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement)", async () => {
@@ -1123,9 +1129,12 @@ describe("Credentials and enrollment", () => {
     const t = setup();
     expect((await t.call("POST", "/v1/admin/enroll-codes", { body: { city_name: "x" } })).status).toBe(401);
     expect((await t.call("POST", "/v1/admin/enroll-codes", { token: "wrong", body: { city_name: "x" } })).status).toBe(401);
+    expect((await t.call("POST", "/v1/admin/unbind", { body: { id: "x" } })).status).toBe(401);
+    expect((await t.call("POST", "/v1/admin/unbind", { token: "wrong", body: { id: "x" } })).status).toBe(401);
     const unset = setup({ config: { adminToken: "" } });
     expect((await unset.call("GET", "/v1/admin/cities", { token: "" })).status).toBe(401);
     expect((await unset.call("GET", "/v1/admin/cities", { headers: { authorization: "Bearer " } })).status).toBe(401);
+    expect((await unset.call("POST", "/v1/admin/unbind", { headers: { authorization: "Bearer " }, body: { id: "x" } })).status).toBe(401);
     const minted = await t.admin("POST", "/v1/admin/enroll-codes", { city_name: "Nationwide EMS" });
     expect(minted.status).toBe(200);
     expect(minted.body.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$/);

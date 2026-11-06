@@ -47,6 +47,31 @@ export function bsuid(): string {
   return `US.${String(n[0]).padStart(10, "0")}${String(n[1]).padStart(10, "0")}`;
 }
 
+const usersByPhone = new Map<string, string>();
+
+/**
+ * The user id Meta names the person on this phone by: one per phone, the same for every payload
+ * of a test file. Since early April 2026 Meta puts it on every message ("BSUID will be assigned
+ * to the user_id parameter and appear in all messages webhooks"; the design note, section 2), so
+ * the payload builders below that take a number carry it too. numberOnly() strips it.
+ */
+export function userOf(wa: string): string {
+  let user = usersByPhone.get(wa);
+  if (!user) {
+    user = bsuid();
+    usersByPhone.set(wa, user);
+  }
+  return user;
+}
+
+/** Meta's shape since April 2026 on a payload built from a number-only fixture: the sender's user id beside its number. */
+function withUser(p: any, from: string) {
+  const value = p.entry[0].changes[0].value;
+  value.contacts[0].user_id = userOf(from);
+  value.messages[0].from_user_id = userOf(from);
+  return p;
+}
+
 /** The ids a payload names its WhatsApp user by; one left out is deleted, as Meta omits it. */
 export interface Ids {
   wa?: string | null;
@@ -181,7 +206,7 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
-/** Meta's text fixture, re-addressed. */
+/** Meta's text fixture, re-addressed, with the phone's user id (userOf). */
 export function textPayload(from: string, text: string, o: InboundOpts & { wamid: string; ts: number }) {
   const p = clone(textFixture) as any;
   const value = p.entry[0].changes[0].value;
@@ -190,25 +215,27 @@ export function textPayload(from: string, text: string, o: InboundOpts & { wamid
   value.contacts[0].profile.name = o.name ?? "Owner Name";
   Object.assign(value.messages[0], { from, id: o.wamid, timestamp: String(o.ts) });
   value.messages[0].text.body = text;
-  return p;
+  return withUser(p, from);
 }
 
+/** Meta's reaction fixture, re-addressed, with the phone's user id (userOf). */
 export function reactionPayload(from: string, target: string, o: { wamid: string; ts: number }) {
   const p = clone(reactionFixture) as any;
   const value = p.entry[0].changes[0].value;
   value.contacts[0].wa_id = from;
   Object.assign(value.messages[0], { from, id: o.wamid, timestamp: String(o.ts) });
   value.messages[0].reaction.message_id = target;
-  return p;
+  return withUser(p, from);
 }
 
+/** Meta's image or audio fixture, re-addressed, with the phone's user id (userOf). */
 export function mediaPayload(kind: "image" | "audio", from: string, mediaId: string, o: { wamid: string; ts: number }) {
   const p = clone(kind === "image" ? imageFixture : audioFixture) as any;
   const value = p.entry[0].changes[0].value;
   value.contacts[0].wa_id = from;
   Object.assign(value.messages[0], { from, id: o.wamid, timestamp: String(o.ts) });
   value.messages[0][kind].id = mediaId;
-  return p;
+  return withUser(p, from);
 }
 
 export function statusPayload(wamid: string, status: string, recipient: string, ts: number) {

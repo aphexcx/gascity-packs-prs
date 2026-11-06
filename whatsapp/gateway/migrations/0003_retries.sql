@@ -1,6 +1,7 @@
--- whatsapp-gateway, schema v3 (gp-0g2s): Meta's retries. Meta redelivers a webhook it did not see
--- answered 200 for up to 7 days, in any order, and the gateway drops a message Meta stamped more
--- than 8 days ago (TOMBSTONE_SECONDS). Three rules hold across that horizon.
+-- whatsapp-gateway, schema v3 (gp-0g2s; re-cut in place by gp-lv49 to the design of record,
+-- whatsapp/docs/design-bsuid-pairing-and-spans.md, section 5): Meta's retries, and routing by the
+-- user id. Meta redelivers a webhook it did not see answered 200 for up to 7 days, in any order,
+-- and the gateway drops a message Meta stamped more than 8 days ago (TOMBSTONE_SECONDS).
 
 -- 1. A wamid is one row whichever city holds it. The dedup key loses city_id, so a retry that
 --    arrives after the phone moved to another city (the operator's unbind, then a new invite) is
@@ -13,34 +14,49 @@
 CREATE UNIQUE INDEX deliveries_wamid_once ON deliveries(wamid, status);
 DROP INDEX deliveries_once;
 
--- 2. Who held an id when Meta stamped a message. A message routes to the binding that held its
---    sender's id at the stamp, or to nobody: never to a binding that took the id later (a later
---    holder of a recycled number, or the same person bound again in another city after an
---    unbind). A current id is held from bound_stamp, or, for a wa_id the row took later, from
---    wa_since. bound_stamp is NULL on a row bound before this migration: held from the start, as
---    before. wa_since is also where the owner's number starts when a number change gave the row
---    none (Meta shared none, or another row held it), and rule 2's strip keeps it when it takes
---    the row's number: a later notice's old number is the owner's from there, never from the bind.
---    A row with neither a wa_id nor a wa_since was never given a number, so the number its notice
---    names is no previous holding of it (gp-w376).
+-- 2. Who a message is from: the binding answering to its sender's user id when Meta stamped it,
+--    never a number (design note, section 2). A binding answers to the user id it was bound by
+--    and to each id a number change's notice links to it, from its invite text (bound_stamp) or
+--    that id's last unbind, whichever is later, until the notice that replaces the id. NULL
+--    bound_stamp: a row bound before this migration, by PR 73's code, by its number alone; it
+--    holds no user id, so no message routes to it (the mayor unbinds and re-invites each such
+--    owner at the deploy, the design note's question 1 (a)).
 ALTER TABLE phones ADD COLUMN bound_stamp INTEGER; -- Meta's stamp of the binding's invite text
-ALTER TABLE phones ADD COLUMN wa_since INTEGER;    -- Meta's stamp of the later message or number change that brought the owner to its number; NULL: the invite text's
 
---    A previous id, one a number change replaced, is held from since until changed_at. A
---    message Meta stamped in that span and retried after the change routes to the owner under
---    its old ids, while its binding stands, or to nobody. No message can use it past
---    changed_at + 8 days: an alias routes only what Meta stamped at or before changed_at, and a
---    message stamped longer ago than 8 days is dropped. The cron deletes it then (expires_at).
---    One id can be held by two bindings in turn; each change is its own row.
-CREATE TABLE phone_aliases (
-  id TEXT NOT NULL,              -- the previous wa_id or user_id
-  conversation_id TEXT NOT NULL, -- the owner it named
-  bound_wamid TEXT NOT NULL,     -- the owner's binding: a later binding under the same key is another owner
-  since INTEGER NOT NULL,        -- Meta's stamp from which the binding held it
-  changed_at INTEGER NOT NULL,   -- Meta's stamp of the change that replaced it
-  expires_at INTEGER NOT NULL,   -- changed_at + 8 days
-  PRIMARY KEY (id, bound_wamid, changed_at)
+--    A number change's notice, as a link from the user id it replaces to the one Meta gave in its
+--    place. Links are recorded in any order of arrival: one whose old id a binding answers to
+--    re-keys that binding (phones.user_id) to the end of its chain; one no binding reaches yet
+--    waits. A replay changes nothing (one link per old id), and a link to an id another binding
+--    answers to is never recorded. Kept 8 days from the notice's stamp: no message the old id
+--    may route (one Meta stamped at or before the notice) can pass the stale filter later.
+CREATE TABLE links (
+  old_id TEXT NOT NULL PRIMARY KEY, -- the user id the change replaced (system.previous_user_id)
+  new_id TEXT NOT NULL,             -- the user id Meta gave in its place (system.user_id)
+  stamp INTEGER NOT NULL            -- Meta's stamp of the notice
 );
+CREATE INDEX links_new ON links(new_id);
+
+--    The operator's unbind (POST /v1/admin/unbind) records every user id the binding answered to
+--    in the last 8 days: its current one and each its links reached. A message stamped at or
+--    before an id's last unbind is the unbound binding's: it reaches no city, binds nothing and
+--    is counted, and no later binding answers to the id at that stamp. Kept 8 days.
+CREATE TABLE unbinds (
+  user_id TEXT NOT NULL,
+  unbound_at INTEGER NOT NULL,      -- the gateway's clock at the unbind
+  PRIMARY KEY (user_id, unbound_at)
+);
+
+--    Each phone number's newest pairing with a user id: the high-water mark. It decides only
+--    which binding shows the number (the admin view, a delivery that omits it, a send's `to`
+--    naming it), never a route. Any message naming the number beside a user id moves it unless
+--    Meta stamped the message below it; a notice moves its new number to the new id and clears
+--    its old number (user_id NULL). A mark naming no binding is deleted 8 days after its stamp.
+CREATE TABLE marks (
+  number TEXT NOT NULL PRIMARY KEY,
+  user_id TEXT,                     -- NULL: a notice cleared it
+  stamp INTEGER NOT NULL            -- Meta's stamp of the pairing
+);
+CREATE INDEX marks_user ON marks(user_id);
 
 -- 3. Every wrong-code text a stranger's attempt count has seen, by wamid, so a Meta redelivery of
 --    any of them is never a second attempt. Before this, only the last one was remembered
