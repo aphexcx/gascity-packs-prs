@@ -1,0 +1,25 @@
+gp-g02t DESIGN QUESTION (PR 76 round 2; work continues on the rest while you decide).
+
+STATE: 4 commits on af7e2d9b, not pushed (f19daa2b RED, 3bd03d79 the adapter on conversation_id, 2790ffaf the entry test, dc376d24 README). The three shapes RED 6/6 at af7e2d9b -> GREEN 6/6 (make_red.py). Self-review r1: codex (hub) BLOCK on 1 MAJOR + 4 MINOR; a fresh Opus reader BLOCK on 1 CRITICAL + 2 MAJOR. Codex's MAJOR is fixed RED-first: the keeper matched a typed id by its digits, so consent for US.ownerB1 switched US.ownerA1 (a BSUID may hold letters, gateway meta.ts:20). The four MINORs are mechanical, and I'm folding them now.
+
+THE QUESTION. The Opus reader's CRITICAL and MAJORs share one root, and fixing them reverses your gp-szj9 word.
+
+The root: a conversation_id that is a phone number P names its owner A uniquely only while A is bound and no other owner of the city shows P. The gateway's send resolves `to` as conversation_id OR user_id OR a number an owner shows (gateway.ts:1028-1030). The adapter sends `to: <conversation_id>`, as it did at af7e2d9b. So:
+ (C1) A is unbound, and B (same city, joined on recycled P, so keyed by B_USER) shows P. `to=P` now names B alone: the mayor's reply or update in A's old conversation reaches B. The keeper keeps raising "[window-keeper] P: ..." for A's row after the gateway stops listing it, so the mayor is prompted to send there. Reproduced by the reader (the gateway's SQL in sqlite; a keeper scratch test). At af7e2d9b B was filed under P too, so the mix was "consistent". Since this round P means A only.
+ (M2) While A is still bound, `to=P` names A and B, so every reply and update to A answers 409 and is refused for good. Since this round the conversation means exactly the keyed owner, so the reason for refusing (the conversation might mean either) is gone.
+ (M3) A gateway rule, not the adapter: when A is unbound BEFORE B binds, B's key is P (gateway.ts:715-716: no row holds P), so B lands in gc conversation whatsapp/P with A's history (transcript context, media directory, keeper row). That contradicts "a recycled number never shares a conversation" in my README text.
+
+RECOMMENDED (A), adapter only, no gateway routing change: resolve the recipient at send time.
+ - One fresh GET /v1/window per publish or update. Find the entry whose conversation_id equals the conversation and send `to` = its user_id (the design note's "every send goes to a user id").
+ - No entry: refuse not_bound locally and send nothing (C1: A gone, never B).
+ - Entry with user_id null (a PR 73 row): not_bound. A window with no user_id field (PR 73's gateway): `to` = conversation_id, as today.
+ - The gateway key stays bound to the conversation id.
+ - The keeper raises nothing for a row absent from the last good read.
+ This retires the 409 for the box's own sends, since a user id names one owner, so your gp-szj9 ruling (refuse after 409, never resend) has no case left. The 409 mapping stays as a guard.
+ - Side effect: `publish --to <a number that is not a conversation id>` is refused with a hint to name the id gc shows. That also closes the reader's NOTE 9: a split CLI transcript and a skipped window-open guard.
+ - Limit: a number change landing between the window read and the send answers 403 not_bound (permanent). A retry re-resolves.
+ For M3, docs-only now ("a later owner may be keyed by an unbound owner's number and land in that gc conversation"), with a separate gateway bead if you want new bindings keyed by the user id when the number was an unbound owner's key in the last N days.
+
+(B) Keep sending to the conversation_id. State C1 and M2 as limits in the README and the READY, and leave the recipient for its own bead.
+
+I'll build (A) on your yes. Until then I'm folding the MINORs: dead-letter names keep the period; rule 7 and the skill's failed-status line; the CHANGELOG field claim; the verbs send both field names for a running old adapter.

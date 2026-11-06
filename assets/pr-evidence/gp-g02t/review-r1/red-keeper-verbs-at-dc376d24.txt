@@ -1,0 +1,46 @@
+✖ the keeper's verbs match a user-id conversation whole: consent for one never changes another with the same digits; an id with no digits is found; a typed number never matches a user id (409.340917ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 528.459125
+
+✖ failing tests:
+
+test at test/conversation.test.js:181:1
+✖ the keeper's verbs match a user-id conversation whole: consent for one never changes another with the same digits; an id with no digits is found; a typed number never matches a user id (409.340917ms)
+  AssertionError [ERR_ASSERTION]: {"onB":{"ok":true,"consent":true,"conversation_last4":"erA1"},"onAlice":{"error":"the conversation id has no digits: give the id gc shows for the conversation (whatsapp/<conversation_id>)"},"digitsOnly":{"ok":true,"consent":false,"conversation_last4":"erA1"}}
+  + actual - expected
+  
+    {
+      answers: [
+        200,
+  +     400,
+        200,
+        200,
+  -     404
+      ],
+      consent: {
+        '5511900000001': true,
+  +     'US.Alice': false,
+  -     'US.Alice': true,
+        'US.ownerA1': false,
+  +     'US.ownerB1': false
+  -     'US.ownerB1': true
+      }
+    }
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/conversation.test.js:196:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { answers: [ 200, 400, 200, 200 ], consent: { 'US.ownerA1': false, 'US.ownerB1': false, 'US.Alice': false, '5511900000001': true } },
+    expected: { answers: [ 200, 200, 200, 404 ], consent: { 'US.ownerA1': false, 'US.ownerB1': true, 'US.Alice': true, '5511900000001': true } },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

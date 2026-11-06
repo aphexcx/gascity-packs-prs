@@ -1,0 +1,135 @@
+✖ shape 1 (a NULL wa_id): a message from an owner the gateway knows by user id alone is acknowledged, filed under its conversation_id with that id as the actor, and opens the window the mayor's reply and update read (20017.621167ms)
+✖ shape 1 (a NULL wa_id): a join from an owner known by user id alone binds the invite's keeper fields to its conversation_id and is acknowledged (20201.32725ms)
+✖ shape 2 (a number change): two deliveries of one conversation_id from two numbers land in ONE gc conversation, in order on one chain, under one watermark (259.820458ms)
+✖ shape 3 (a recycled number): owner B on the number owner A was bound by never shares A's gc conversation; the mayor's reply and update in B's conversation go to B's id (283.195959ms)
+✖ the journal: a received line the PR 74 adapter wrote (wa_id only, its gc conversation) is read as that conversation; its acceptance raises that conversation's watermark and counts in the boundary of the owner's next delivery; its ack goes with no second post (227.912875ms)
+✖ the contract: a PR 73 delivery (no conversation_id field) is filed under its wa_id; a delivery naming conversation_id null is left unacknowledged and never filed under its wa_id (20286.669959ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 0
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 61398.995709
+
+✖ failing tests:
+
+test at test/conversation.test.js:66:1
+✖ shape 1 (a NULL wa_id): a message from an owner the gateway knows by user id alone is acknowledged, filed under its conversation_id with that id as the actor, and opens the window the mayor's reply and update read (20017.621167ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/fakes.js:31:38)
+      at async TestContext.<anonymous> (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/conversation.test.js:70:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/conversation.test.js:90:1
+✖ shape 1 (a NULL wa_id): a join from an owner known by user id alone binds the invite's keeper fields to its conversation_id and is acknowledged (20201.32725ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/fakes.js:31:38)
+      at async TestContext.<anonymous> (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/conversation.test.js:98:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/conversation.test.js:110:1
+✖ shape 2 (a number change): two deliveries of one conversation_id from two numbers land in ONE gc conversation, in order on one chain, under one watermark (259.820458ms)
+  Error: A2 waits behind A1: one owner, one chain stopped holding
+      at stays (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/fakes.js:40:37)
+      at async TestContext.<anonymous> (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/conversation.test.js:118:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/conversation.test.js:146:1
+✖ shape 3 (a recycled number): owner B on the number owner A was bound by never shares A's gc conversation; the mayor's reply and update in B's conversation go to B's id (283.195959ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+      actors: {
+        A: {
+          display_name: 'Ana',
+  +       id: '5511900000077',
+  -       id: '5511900000001',
+          is_bot: false
+        },
+        B: {
+          display_name: 'Bruno',
+  +       id: '5511900000001',
+  -       id: 'US.70412958836127405533',
+          is_bot: false
+        }
+      },
+      filed: {
+  +     A: '5511900000077',
+  +     B: '5511900000001'
+  -     A: '5511900000001',
+  -     B: 'US.70412958836127405533'
+      },
+      inA: [
+  -     'wamid.RA1'
+  -   ],
+  -   inB: [
+        'wamid.RB1'
+      ],
+  +   inB: [],
+      underTheNumbers: [
+  +     1
+  -     0
+      ]
+    }
+  
+      at TestContext.<anonymous> (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/conversation.test.js:153:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { filed: { A: '5511900000077', B: '5511900000001' }, actors: { A: [Object], B: [Object] }, inA: [ 'wamid.RB1' ], inB: [], underTheNumbers: [ 1 ] },
+    expected: { filed: { A: '5511900000001', B: 'US.70412958836127405533' }, actors: { A: [Object], B: [Object] }, inA: [ 'wamid.RA1' ], inB: [ 'wamid.RB1' ], underTheNumbers: [ 0 ] },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/conversation.test.js:178:1
+✖ the journal: a received line the PR 74 adapter wrote (wa_id only, its gc conversation) is read as that conversation; its acceptance raises that conversation's watermark and counts in the boundary of the owner's next delivery; its ack goes with no second post (227.912875ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   newBoundary: 0,
+  +   newFiled: '5511900000077',
+  -   newBoundary: 1,
+  -   newFiled: '5511900000001',
+      oldPosts: 0,
+      records: [
+        [
+          1,
+          'wamid.OLD'
+        ],
+  -     [
+  -       2,
+  -       'wamid.NEW'
+  -     ]
+      ],
+      startWatermark: '5511900000001'
+    }
+  
+      at TestContext.<anonymous> (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/conversation.test.js:210:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { oldPosts: 0, newFiled: '5511900000077', newBoundary: 0, records: [ [Array] ], startWatermark: '5511900000001' },
+    expected: { oldPosts: 0, newFiled: '5511900000001', newBoundary: 1, records: [ [Array], [Array] ], startWatermark: '5511900000001' },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/conversation.test.js:230:1
+✖ the contract: a PR 73 delivery (no conversation_id field) is filed under its wa_id; a delivery naming conversation_id null is left unacknowledged and never filed under its wa_id (20286.669959ms)
+  Error: timed out waiting for the refusal logged
+      at waitFor (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/fakes.js:31:38)
+      at async TestContext.<anonymous> (file:///private/tmp/gp-g02t/make-red-1/tree-base/whatsapp/adapter/test/conversation.test.js:237:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+exit 1

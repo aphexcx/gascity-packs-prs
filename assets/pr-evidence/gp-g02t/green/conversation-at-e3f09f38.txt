@@ -1,0 +1,21 @@
+✔ shape 1 (a NULL wa_id): a message from an owner the gateway knows by user id alone is acknowledged, filed under its conversation_id with that id as the actor, and opens the window the mayor's reply and update read (262.712ms)
+✔ shape 1 (a NULL wa_id): a join from an owner known by user id alone binds the invite's keeper fields to its conversation_id and is acknowledged (279.25075ms)
+✔ shape 2 (a number change): two deliveries of one conversation_id from two numbers land in ONE gc conversation, in order on one chain, under one watermark (695.091833ms)
+✔ shape 3 (a recycled number): owner B on the number owner A was bound by never shares A's gc conversation; the mayor's reply and update in B's conversation go to B's id (323.201334ms)
+✔ the recipient (C1): owner A is unbound and B shows A's number now: the mayor's reply and update in A's conversation reach nobody, never B (280.22625ms)
+✔ the recipient (M2): owner A is still bound and B shows A's number: the mayor's reply and update in A's conversation reach A's user id, never refused 409 (382.756541ms)
+✔ the recipient: `--to` naming a number that is no conversation id (one an owner shows) is refused with a hint naming the conversation id, and nothing is sent (236.316708ms)
+✔ the recipient: an owner PR 73 bound by number alone (PR 76's window lists it with user_id null) is not bound, and nothing is sent (237.5845ms)
+✔ the keeper's verbs match a user-id conversation whole: consent for one never changes another with the same digits; an id with no digits is found; a typed number never matches a user id (422.64125ms)
+✔ the journal: a received line the PR 74 adapter wrote (wa_id only, its gc conversation) is read as that conversation; its acceptance raises that conversation's watermark and counts in the boundary of the owner's next delivery; its ack goes with no second post (242.022042ms)
+✔ the contract: a PR 73 delivery (no conversation_id field) is filed under its wa_id; a delivery naming conversation_id null is left unacknowledged and never filed under its wa_id (627.8415ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4098.750667
+
+exit 0

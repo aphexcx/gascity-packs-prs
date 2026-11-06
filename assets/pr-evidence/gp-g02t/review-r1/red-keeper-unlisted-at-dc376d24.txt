@@ -1,0 +1,40 @@
+✖ gp-g02t: a conversation the last good window read no longer lists (its owner unbound) raises nothing, and after a restart before any good read still nothing (23021.302417ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 23142.216084
+
+✖ failing tests:
+
+test at test/keeper.test.js:602:1
+✖ gp-g02t: a conversation the last good window read no longer lists (its owner unbound) raises nothing, and after a restart before any good read still nothing (23021.302417ms)
+  AssertionError [ERR_ASSERTION]: nothing for the unlisted conversation; the listed one raises its updates as before
+  + actual - expected
+  
+    {
+      br: [
+        'keeper:5511999990001:2026-11-10:update',
+        'keeper:5511999990001:2026-11-11:update'
+      ],
+  +   wa: [
+  +     'keeper:15550001111:2026-11-10:update',
+  +     'keeper:15550001111:2026-11-11:update'
+  +   ]
+  -   wa: []
+    }
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:615:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { wa: [ 'keeper:15550001111:2026-11-10:update', 'keeper:15550001111:2026-11-11:update' ], br: [ 'keeper:5511999990001:2026-11-10:update', 'keeper:5511999990001:2026-11-11:update' ] },
+    expected: { wa: [], br: [ 'keeper:5511999990001:2026-11-10:update', 'keeper:5511999990001:2026-11-11:update' ] },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
