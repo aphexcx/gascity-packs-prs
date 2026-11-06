@@ -29,7 +29,7 @@ if [ "$WA_STATUS" -ge 400 ] 2>/dev/null; then
   wa_die "adapter answered HTTP $WA_STATUS: $(wa_error_of "$WA_BODY")"
 fi
 printf '%s' "$WA_BODY" | jq -r '
-  "Gap cleared for ...\(.gap.conversation_id | tostring | .[-4:]):",
+  "Gap cleared for ...\(.gap.conversation_id | tostring | gsub("[^0-9A-Za-z]"; "") | .[-4:]):",
   "  journal watermark: sequence \(.gap.watermark_sequence), accepted \(.gap.watermark_accepted_at // "?")",
   "  gc store head:     sequence \(.gap.head_sequence // "unknown") at \(.gap.head_created_at // "-") when found",
   (if .head then "  watermark rebased to the store head now: sequence \(.head.sequence) (\(.head.created_at))"

@@ -20,7 +20,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --on) on=true; shift ;;
     --off) on=false; shift ;;
-    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     -*) wa_usage_error "unknown flag $1" ;;
     *) [ -z "$conversation_id" ] || wa_usage_error "one conversation id only"; conversation_id="$1"; shift ;;
   esac

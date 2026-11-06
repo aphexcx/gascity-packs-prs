@@ -184,8 +184,9 @@ enough), or leave it off to keep the zone already recorded:
 gc whatsapp hours <conversation_id> --clear [--tz America/Sao_Paulo]
 ```
 
-Both verbs take the conversation id in any form and print the last four
-digits they matched. Check those digits against the conversation.
+Both verbs take the conversation id: a user id exactly as gc shows it, or an
+older owner's phone number in any form. They print the last four letters or
+digits of the conversation they matched. Check those against the conversation.
 
 ## Files, voice notes, reactions
 
