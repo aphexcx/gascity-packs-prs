@@ -289,6 +289,70 @@ export function changeAs(
   return p;
 }
 
+/** Meta's image fixture, re-addressed to these ids (either may be absent, as in Meta's BSUID payloads). */
+export function imageAs(ids: Ids, mediaId: string, o: { wamid: string; ts: number }) {
+  const p = clone(imageFixture) as any;
+  const value = p.entry[0].changes[0].value;
+  const contact = value.contacts[0];
+  const m = value.messages[0];
+  if (ids.wa) {
+    contact.wa_id = ids.wa;
+    m.from = ids.wa;
+  } else {
+    delete contact.wa_id;
+    delete m.from;
+  }
+  if (ids.user) {
+    contact.user_id = ids.user;
+    m.from_user_id = ids.user;
+  } else {
+    delete contact.user_id;
+    delete m.from_user_id;
+  }
+  Object.assign(m, { id: o.wamid, timestamp: String(o.ts) });
+  m.image.id = mediaId;
+  return p;
+}
+
+/**
+ * The same payload as a message naming no user id: every from_user_id and contacts user_id
+ * dropped, and on a number-change notice its system.user_id and system.previous_user_id. This is
+ * the shape the design note's acceptance tests call number-only (design-bsuid-pairing-and-spans.md
+ * section 4): a message Meta has not sent since early April 2026, kept as the hostile form.
+ */
+export function numberOnly<T>(payload: T): T {
+  const p = clone(payload) as any;
+  for (const entry of p.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const value = change.value ?? {};
+      for (const c of value.contacts ?? []) delete c.user_id;
+      for (const m of value.messages ?? []) {
+        delete m.from_user_id;
+        if (m.system) {
+          delete m.system.user_id;
+          delete m.system.previous_user_id;
+        }
+      }
+    }
+  }
+  return p;
+}
+
+/**
+ * An owner row as PR 73's gateway (schema v1, then 0002) leaves one: bound by its phone number
+ * alone, with no user_id. The code of this branch binds no such row, so a test that needs one
+ * writes it straight to D1, as the deployed gateway would have.
+ */
+export async function legacyBind(db: D1Database, cityId: string, wa: string, at = T0): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO phones (conversation_id, wa_id, user_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at)
+       VALUES (?1, ?1, NULL, ?2, 'Legacy Owner', ?3, ?4, ?3)`,
+    )
+    .bind(wa, cityId, at, `wamid.LEGACY${uniq()}`)
+    .run();
+}
+
 export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database } = {}) {
   const clock = { now: T0 };
   const graph = fakeGraph();
@@ -395,6 +459,25 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
     call("POST", "/v1/send", { token: city.token, body });
   const window = (city: City) => call("GET", "/v1/window", { token: city.token });
 
+  /**
+   * The operator's unbind, as the README's runbook gives it at this head: POST /v1/admin/unbind
+   * (the write that records every id the binding answered to, gp-lv49). Where that route does not
+   * exist (404 not_found, PR 76's draft at e39c0b90), the runbook is the raw DELETE of
+   * README :565 there, and the test runs that instead. Any other answer fails the test.
+   */
+  async function unbind(id: string): Promise<{ route: "admin" | "raw-delete" }> {
+    const r = await admin("POST", "/v1/admin/unbind", { id });
+    if (r.status === 200) return { route: "admin" };
+    if (r.status !== 404 || r.body?.error !== "not_found") throw new Error(`unbind answered ${r.status}`);
+    await deps.db.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1 OR user_id = ?1").bind(id).run();
+    return { route: "raw-delete" };
+  }
+
+  /** A counter's value (0 when it was never bumped). */
+  async function stat(name: string): Promise<number> {
+    return (await deps.db.prepare("SELECT value FROM stats WHERE name = ?").bind(name).first<{ value: number }>())?.value ?? 0;
+  }
+
   /** Every held delivery of the city, oldest first, read straight from D1. */
   async function held(city: City) {
     const { results } = await deps.db
@@ -426,5 +509,7 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
     send,
     window,
     held,
+    unbind,
+    stat,
   };
 }
