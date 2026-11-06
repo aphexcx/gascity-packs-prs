@@ -271,6 +271,8 @@ test('the keeper\'s verbs match a user-id conversation whole: consent for one ne
     },
     JSON.stringify({ onB: onB.json, onAlice: onAlice.json, digitsOnly: digitsOnly.json }),
   );
+  // One label everywhere: an id's last four letters or digits (ledger.js lastFour).
+  assert.deepEqual([onB.json.conversation_last4, onAlice.json.conversation_last4, onTyped.json.conversation_last4], ['erB1', 'lice', '0001']);
 });
 
 // --- the journal format: the PR 74 adapter's lines are tolerated, not migrated ----------

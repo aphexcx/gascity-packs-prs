@@ -12,6 +12,7 @@
 // transcript record of the message it reports on.
 
 import { conversationRef } from './gc.js';
+import { lastFour } from './ledger.js';
 
 const MEDIA_TYPES = new Set(['image', 'document', 'audio', 'video', 'sticker']);
 
@@ -56,12 +57,9 @@ export function providerMessageId(delivery) {
 export const ridFor = (pmid) => `whatsapp:dynasty:${pmid}`;
 export const pmidOfRid = (rid) => String(rid).replace(/^whatsapp:dynasty:/, '');
 
-// Logs and operator surfaces show an id's last four digits, never the id: a
-// conversation_id is a phone number or a WhatsApp user id.
-export function lastFour(id) {
-  const digits = String(id ?? '').replace(/\D/g, '');
-  return digits.slice(-4) || '????';
-}
+// Logs and operator surfaces show an id's last four letters or digits, never
+// the id (ledger.js lastFour, the one rule).
+export { lastFour };
 
 export function statusOf(delivery) {
   return String(delivery?.message?.status ?? '').trim();

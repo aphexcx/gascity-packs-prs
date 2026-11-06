@@ -5,8 +5,8 @@
 # on the owner's word the moment it is given: the keeper then raises no
 # event for that conversation (no daily update, no close ladder). The
 # conversation id is the one gc shows (whatsapp/<conversation_id>: the
-# owner's phone number, or a WhatsApp user id for an owner who joined
-# without one), typed in any form (+55 11 ...); one that has not joined is
+# owner's WhatsApp user id, given whole, or for an owner bound before user
+# ids its phone number, typed in any form); one that has not joined is
 # refused.
 set -eu
 WA_VERB=consent

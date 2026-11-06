@@ -139,12 +139,16 @@ async function world(t: T, cKind: CKind) {
   const c = bsuid();
   if (cKind === "with a user id") await t.joinAs(w, { wa: p, user: c });
   else await legacyBind(t.deps.db, w.id, p);
-  const cKey = p; // README rule 1: the binding text's number, which no other binding is keyed by
+  // README rule 1 (gp-g02t): a binding is keyed by its user id; PR 73's row by its number.
+  const cKey = cKind === "with a user id" ? c : p;
+  const cRow = await rowOf(t, cKey);
+  // A real row to compare against: C's "unchanged" checks are never null against null.
+  expect(cRow).toMatchObject({ conversation_id: cKey, user_id: cKind === "with a user id" ? c : null, city_id: w.id });
   const a = bsuid();
   await t.joinAs(x, { user: a });
   const b = bsuid();
   await t.joinAs(y, { user: b });
-  return { x, y, w, p, c, cKey, a, b, cRow: await rowOf(t, cKey), cities: { x, y, w } };
+  return { x, y, w, p, c, cKey, a, b, cRow, cities: { x, y, w } };
 }
 
 function* permutations<V>(items: V[]): Generator<V[]> {

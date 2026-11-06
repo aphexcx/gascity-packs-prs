@@ -268,9 +268,11 @@ export function createPublisher({
     } else if (err?.status === 409 && err.json?.error === 'ambiguous_recipient') {
       // PR 76's rule R1 (gp-0g2s): `to` names two owners of this city and the
       // gateway sent nothing. Since gp-g02t a send names the owner's user id
-      // from the window (THE RECIPIENT), which names one owner, so this is a
-      // guard for a `to` that is still a phone number (a PR 73 window). It is
-      // refused, never resent (gateway_refused, the ambiguity named).
+      // from the window (THE RECIPIENT), which names one owner. A `to` is a
+      // phone number only when the window read came from PR 73's gateway and
+      // the send reached PR 76's, in the minutes of the deploy: this is the
+      // guard for that. Refused, never resent (gateway_refused, the ambiguity
+      // named).
       gatewayError = 'ambiguous_recipient';
       const gatewayHint = typeof err.json.hint === 'string' && err.json.hint ? ` (the gateway's hint: "${err.json.hint}")` : '';
       hint = `The gateway found two owners of this city answering to this conversation's id (a phone number another owner of this city now shows: a recycled number) and sent nothing${gatewayHint}. `

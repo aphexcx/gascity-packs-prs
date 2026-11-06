@@ -63,9 +63,13 @@ export function writeFileAtomic(file, data, { mode = 0o600, dirMode = 0o700 } = 
   } catch { /* a directory fsync is not supported everywhere */ }
 }
 
-export function lastFour(conversationId) {
-  const digits = String(conversationId ?? '').replace(/\D/g, '');
-  return digits.slice(-4) || '????';
+// THE ONE LABEL of an id on every log line and operator surface (gp-g02t,
+// codex self-review r2): its last four letters or digits. A conversation id
+// is a phone number or a WhatsApp user id, which may hold letters; the verbs'
+// confirmations, status, the doctor and the logs all show the same four.
+export function lastFour(id) {
+  const kept = String(id ?? '').replace(/[^0-9A-Za-z]/g, '');
+  return kept.slice(-4) || '????';
 }
 
 // toMs reads an instant as epoch milliseconds: a number (seconds when it is

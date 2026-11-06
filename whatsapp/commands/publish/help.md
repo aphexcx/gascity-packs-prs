@@ -13,9 +13,10 @@ gc whatsapp publish --update --to <conversation_id> --text "today's update"
 ## Flags
 
 - `--to` (required): the conversation id gc shows in the paste
-  (`whatsapp/<conversation_id>`): the phone number the owner joined from, or
-  a WhatsApp user id when they joined without showing a number or with one
-  already taken. It stays the same when the owner changes numbers.
+  (`whatsapp/<conversation_id>`): the owner's WhatsApp user id, or, for an
+  owner bound before user ids (PR 73), the phone number it joined from. It
+  stays the same when the owner changes numbers. A phone number that is not
+  the conversation id is refused: the send names nobody by a number.
 - `--text-file`: a file holding the message; preferred, since reply text
   with quotes or code is unsafe to put on a command line.
 - `--text`: an inline message (simple strings only).

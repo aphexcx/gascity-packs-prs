@@ -31,7 +31,7 @@ import { createGcClient } from './gc.js';
 import { createInbound } from './inbound.js';
 import { openJournal } from './journal.js';
 import { createKeeper } from './keeper.js';
-import { createLedger } from './ledger.js';
+import { createLedger, lastFour } from './ledger.js';
 import { createMedia, describeAttachments } from './media.js';
 import { createPublisher, outboundChunkChars } from './outbound.js';
 
@@ -161,7 +161,7 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
       const req = parseJSON(body);
       if (!req?.conversation_id || typeof req.on !== 'boolean') return { status: 400, json: { error: 'conversation_id and on (boolean) are required' } };
       const id = keeper.setConsent(String(req.conversation_id), req.on);
-      return { status: 200, json: { ok: true, consent: req.on, conversation_last4: String(id).slice(-4) } };
+      return { status: 200, json: { ok: true, consent: req.on, conversation_last4: lastFour(id) } };
     },
     // hours "" clears the recorded hours (tz may then be omitted: the
     // recorded zone is kept; tz "" clears it too).
@@ -172,7 +172,7 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
       if (req.tz !== undefined && typeof req.tz !== 'string') return { status: 400, json: { error: 'tz must be a string' } };
       if (hours && !req.tz?.trim()) return { status: 400, json: { error: 'tz is required with hours' } };
       const id = keeper.setHours(String(req.conversation_id), hours, req.tz);
-      return { status: 200, json: { ok: true, conversation_last4: String(id).slice(-4), hours: hours || null } };
+      return { status: 200, json: { ok: true, conversation_last4: lastFour(id), hours: hours || null } };
     },
   };
 

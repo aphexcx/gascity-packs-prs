@@ -327,8 +327,9 @@ An owner may join and write with a WhatsApp username: the gateway knows them by 
 - **409 `ambiguous_recipient` on a send** (gp-0g2s). `owner_user_id` is the current user_id of
   the owner `to` names by its conversation_id (gp-w376), null when it has none; `GET /v1/window`
   gives the same id. See "Business-scoped user ids", rule 7. The pack's adapter sends to that
-  window's user id for the conversation, never to a number (gp-g02t), so it meets a 409 only on
-  PR 73's gateway, whose window gives no user id; it refuses it and does not resend.
+  window's user id for the conversation, never to a number (gp-g02t). It can meet a 409 only when
+  its window read came from PR 73's gateway (no user ids: it names the conversation id) and the
+  send reached this one, in the minutes of the deploy; it refuses it and does not resend.
 - **Meta is answered after the commit.** The gateway answers Meta 200 only after every D1 write
   for the payload has committed. A failed write answers 500 with nothing acknowledged, and Meta
   redelivers.

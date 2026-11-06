@@ -17,8 +17,9 @@ hour of the business's day and the nudges run at any hour. The recorded zone
 stays unless `--tz` is given (`--tz ""` clears it too).
 
 The conversation id is the one gc shows (`whatsapp/<conversation_id>`): the
-phone number the owner joined from, or a WhatsApp user id (`US.1349...`). A
-user id must be given whole, exactly as gc shows it; a phone number may be
-typed in any form (`+55 11 99999-0001`). It must be a conversation that has
+owner's WhatsApp user id (`US.1349...`), or, for an owner bound before user ids
+(PR 73), the phone number it joined from. A user id must be given whole,
+exactly as gc shows it; a phone number may be typed in any form
+(`+55 11 99999-0001`). It must be a conversation that has
 joined. The verb prints the last four digits of the conversation the adapter
 matched; an unknown one is refused and nothing is recorded.

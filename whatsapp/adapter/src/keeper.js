@@ -37,6 +37,7 @@ import path from 'node:path';
 
 import { killPoint } from './clock.js';
 import { conversationRef } from './gc.js';
+import { lastFour } from './ledger.js';
 import { isRetryableAnswer, ladderDelay, ladderMs } from './http.js';
 import { verdictOf } from './inbound.js';
 import {
@@ -84,7 +85,7 @@ export function parseInstant(value) {
 
 const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 // Logs name a conversation by its last four digits only.
-const tag = (conversationId) => `…${String(conversationId).slice(-4)}`;
+const tag = (conversationId) => `…${lastFour(conversationId)}`;
 const blank = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim());
 const digitsOf = (conversationId) => String(conversationId ?? '').replace(/\D/g, '');
 // A phone number as an operator types it: digits and phone punctuation only.

@@ -20,7 +20,8 @@ function finish(code, message) {
   process.exitCode = code;
 }
 
-const last4 = (id) => String(id ?? '').replace(/\D/g, '').slice(-4) || '????';
+// An id's last four letters or digits (the adapter's ledger.js lastFour, the one rule).
+const last4 = (id) => String(id ?? '').replace(/[^0-9A-Za-z]/g, '').slice(-4) || '????';
 // The adapter's ref for an entry (inbound.js ref): a wamid encodes the phone, so never the rid.
 const ref = (rid) => `m-${createHash('sha256').update(String(rid)).digest('hex').slice(0, 10)}`;
 

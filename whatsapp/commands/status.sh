@@ -19,7 +19,7 @@ wa_call GET /status
 [ "$WA_STATUS" = 200 ] || wa_die "adapter answered HTTP $WA_STATUS to /status"
 printf '%s' "$WA_BODY" | jq -r '
   def t: if . == null then "-" elif type == "number" then (. / 1000 | floor | todate) else (tostring | sub("\\.[0-9]+Z$"; "Z")) end;
-  def last4: tostring | gsub("[^0-9]"; "") | .[-4:];
+  def last4: tostring | gsub("[^0-9A-Za-z]"; "") | .[-4:];
   "Enrolled:      \(if .health.gateway_auth == "ok" then "yes" else .health.gateway_auth end)",
   "Last poll:     \(.inbound.last_poll_at | t)\(if (.inbound.last_poll_error // "") != "" then " (error: \(.inbound.last_poll_error))" else "" end)",
   "Entries:       \(.inbound.entries | to_entries | map("\(.key) \(.value)") | join(", ") | if . == "" then "none" else . end); acks owed \(.inbound.acks_owed)\(if (.inbound.binds_owed // 0) > 0 then " (\(.inbound.binds_owed) held for a keeper bind)" else "" end)",
