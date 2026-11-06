@@ -576,7 +576,8 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   `DELETE FROM phones`. The route deletes the binding and, in the same write, records for 8 days
   every user id the owner answered to: its current one, and each one a number change linked to it
   (`unbinds`). That record is what keeps the owner's earlier messages out of its next city (the
-  design note's T8).
+  design note's T8). It covers every id a number change links to a recorded one, in either
+  direction, whenever that notice lands, after the unbind included.
 
   No unbinding is needed for a recycled number. When Meta names that phone beside a different
   user_id, the new person is a stranger who joins by an invite code under their user_id, and the

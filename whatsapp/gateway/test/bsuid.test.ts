@@ -1651,6 +1651,74 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHERE city_id = ?").bind(y.id).first()).toEqual({ n: 0 });
   });
 
+  it("a notice routes by its previous_user_id alone, never by a contacts entry matched by its old number (codex self-review r2, finding 1)", async () => {
+    const t = setup();
+    const w = await t.enrollCity();
+    const x = await t.enrollCity();
+    const p = phone();
+    const c = bsuid();
+    await t.joinAs(w, { wa: p, user: c }); // C holds P in W
+    const a = bsuid();
+    await t.joinAs(x, { user: a }); // A in X
+    for (const withPrevious of [true, false]) {
+      const n = changeAs("user_changed_number", { from: p, previousUser: a, newUser: bsuid(), newWa: phone() }, { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+      const value = n.entry[0].changes[0].value;
+      value.contacts = [{ profile: { name: "C" }, wa_id: p, user_id: c }]; // another holder's entry for the old number
+      if (!withPrevious) delete value.messages[0].system.previous_user_id;
+      expect((await t.webhook(n)).status).toBe(200);
+      const wamid = value.messages[0].id;
+      expect((await t.inbox(w)).body.deliveries.some((d: any) => d.message?.id === wamid)).toBe(false);
+      expect((await t.inbox(x)).body.deliveries.some((d: any) => d.message?.id === wamid)).toBe(withPrevious);
+    }
+  });
+
+  it("an unbind covers the earlier ids a late notice links to the unbound id: an invite text the owner sent under its earlier id binds nothing (codex self-review r2, finding 2)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const y = await t.enrollCity();
+    const [a, b] = [bsuid(), bsuid()];
+    const kx = await t.invite(x);
+    const invite = textAs({ user: a }, kx, { wamid: `wamid.${uniq()}`, ts: T0 + 60 });
+    const change = changeAs("user_changed_user_id", { previousUser: a, newUser: b }, { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    for (const [m, at] of [[invite, T0 + 60], [change, T0 + HOUR]] as const) {
+      t.clock.now = at;
+      flaky.arm(0);
+      expect((await t.webhook(m)).status).toBe(500);
+    }
+    t.clock.now = T0 + 2 * HOUR;
+    await t.joinAs(y, { user: b }); // under b, a stranger's until the notice lands (point 7)
+    t.clock.now = T0 + 3 * HOUR;
+    await t.unbind(b);
+    t.clock.now = T0 + 4 * HOUR;
+    for (const m of [change, invite]) expect((await t.webhook(m)).status).toBe(200);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHERE city_id = ?").bind(x.id).first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(kx).first()).toEqual({ used_at: null });
+  });
+
+  it("a re-key never follows a link stamped at or before its old id's unbind: a retired id reissued to another binding does not carry it on to the first owner's new id (codex self-review r2, finding 3)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const z = await t.enrollCity();
+    const [a, a2, b] = [bsuid(), bsuid(), bsuid()];
+    await t.joinAs(x, { user: a }); // A in X
+    await t.joinAs(z, { user: b }); // B in Z
+    t.clock.now = T0 + HOUR;
+    const aChange = changeAs("user_changed_user_id", { previousUser: a, newUser: a2 }, { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    flaky.arm(0);
+    expect((await t.webhook(aChange)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    await t.unbind(a);
+    t.clock.now = T0 + 3 * HOUR;
+    expect((await t.webhook(changeAs("user_changed_user_id", { previousUser: b, newUser: a }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
+    t.clock.now = T0 + 4 * HOUR;
+    expect((await t.webhook(aChange)).status).toBe(200);
+    expect((await t.window(z)).body.windows.map((w: any) => w.user_id)).toEqual([a]);
+    const mine = await t.sayAs({ user: a2 }, "A, under its own new id");
+    expect((await t.inbox(z)).body.deliveries.some((d: any) => d.message?.id === mine.wamid)).toBe(false);
+  });
+
   it("a notice naming no id at all (no `from`, no previous_user_id) is counted too, in notices_without_previous_id and unrouted_messages (fresh review r1, F3)", async () => {
     const t = setup();
     await t.enrollCity();

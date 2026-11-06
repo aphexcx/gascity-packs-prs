@@ -243,11 +243,12 @@ function parseTo(v: unknown): string {
 }
 
 /**
- * The ids a message names its sender by. A number-change notice carries no from_user_id: it is
- * routed by its previous user_id, the one the gateway knows the owner by.
+ * The ids a message names its sender by. A number-change notice is routed by its previous user_id
+ * alone: never by a contacts entry the parse matched by its old number, which can be the number's
+ * next holder (the codex self-review r2, finding 1).
  */
 function senderOf(m: InboundMessage): { wa: string | null; user: string | null } {
-  return { wa: m.from, user: m.fromUserId ?? m.change?.previousUserId ?? null };
+  return { wa: m.from, user: m.change ? m.change.previousUserId : m.fromUserId };
 }
 
 /*
@@ -279,8 +280,22 @@ const walkFrom = (id: string) =>
      WHERE NOT EXISTS (SELECT 1 FROM phones h WHERE h.user_id = walk.id))`;
 /** The binding the user id answers to now, at any stamp: the one it is, or its chain ends at. */
 const holder = (id: string) => `(${walkFrom(id)} SELECT p.conversation_id FROM walk JOIN phones p ON p.user_id = walk.id LIMIT 1)`;
-/** The gateway's clock at the id's last unbind, or NULL (unbinds are kept 8 days). */
-const unboundAt = (id: string) => `(SELECT MAX(unbound_at) FROM unbinds WHERE user_id = ${id})`;
+/**
+ * The unbind floor of a user id: the gateway's clock at the last unbind of any id linked to it,
+ * in either direction (its link component), or NULL. One fragment, read by every decision that
+ * asks whether the owner behind an id was unbound: the route, the stranger test and the re-key.
+ * An unbind records the ids its binding answered to; a notice that lands after it, linking an
+ * earlier or a later id to one of them, joins that id to the record's component, so what the
+ * owner wrote under any of its ids before the unbind reaches no city and binds nothing (point 2;
+ * the codex self-review r1 finding 1 and r2 findings 2 and 3). Two people share a component only
+ * if Meta reissues a retired user id; the floor then fails closed for both.
+ */
+const floorOf = (id: string) =>
+  `(WITH RECURSIVE comp(id) AS (
+      SELECT ${id}
+      UNION
+      SELECT CASE WHEN l.old_id = comp.id THEN l.new_id ELSE l.old_id END FROM comp JOIN links l ON l.old_id = comp.id OR l.new_id = comp.id)
+    SELECT MAX(u.unbound_at) FROM comp JOIN unbinds u ON u.user_id = comp.id)`;
 /**
  * The binding a message routes to: the one answering to its user id at Meta's stamp, or NULL. The
  * stamp is at or after the binding's invite text and after the id's last unbind, and at or before
@@ -289,7 +304,7 @@ const unboundAt = (id: string) => `(SELECT MAX(unbound_at) FROM unbinds WHERE us
 const route = (id: string, stamp: string) =>
   `(${walkFrom(id)} SELECT p.conversation_id FROM walk JOIN phones p ON p.user_id = walk.id
      WHERE (walk.until IS NULL OR ${stamp} <= walk.until) AND ${stamp} >= COALESCE(p.bound_stamp, 0)
-       AND ${stamp} > COALESCE(${unboundAt(id)}, -1)
+       AND ${stamp} > COALESCE(${floorOf(id)}, -1)
      LIMIT 1)`;
 /**
  * A stranger: a user id no binding answers to, writing after the id's last unbind. Its live code
@@ -298,38 +313,27 @@ const route = (id: string, stamp: string) =>
  * before the id's unbind) is no stranger's: it reaches no city, binds nothing and is counted.
  */
 const stranger = (id: string, stamp: string) =>
-  `(${id} IS NOT NULL AND ${holder(id)} IS NULL AND ${stamp} > COALESCE(${unboundAt(id)}, -1))`;
+  `(${id} IS NOT NULL AND ${holder(id)} IS NULL AND ${stamp} > COALESCE(${floorOf(id)}, -1))`;
 /**
  * The re-key, for the binding whose current user id is ?1: along the links from it, to the newest
  * id no other binding answers to, the one with no further link to follow. A link is reached when
  * its old id becomes a binding's, by the notice that links to it or by a bind under it, and both
  * run this one statement (point 2). No depth limit, as walkFrom; a chain that loops has no end,
- * and the binding keeps its id.
+ * and the binding keeps its id. It follows only a link Meta stamped after the unbind floor of the
+ * binding's id: a notice from before an unbind is the unbound owner's, never the binding's that
+ * holds the id now (the codex self-review r2, finding 3).
  */
 const REKEY = `UPDATE phones SET user_id = COALESCE((
      WITH RECURSIVE fwd(id) AS (
        SELECT ?1
        UNION
        SELECT l.new_id FROM fwd JOIN links l ON l.old_id = fwd.id
-       WHERE NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
+       WHERE l.stamp > COALESCE(${floorOf("?1")}, -1) AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
      SELECT f.id FROM fwd f
-     WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.old_id = f.id AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
+     WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.old_id = f.id AND l.stamp > COALESCE(${floorOf("?1")}, -1)
+                         AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
      LIMIT 1), ?1)
    WHERE user_id = ?1`;
-/**
- * A notice's link that lands after an unbind: the unbound binding answered to the link's new id
- * from the notice's stamp until its unbind, so every unbind record of the old id at or after the
- * notice's stamp extends along the chain (to each id whose own link came before that unbind). What
- * the owner wrote under the new id while bound then binds nothing and reaches no city (point 2: an
- * unbind records every id its binding answered to; the codex self-review r1, finding 1).
- */
-const EXTEND_UNBINDS = `INSERT OR IGNORE INTO unbinds (user_id, unbound_at)
-   WITH RECURSIVE reach(id, at) AS (
-     SELECT l.new_id, u.unbound_at FROM links l JOIN unbinds u ON u.user_id = l.old_id
-     WHERE l.old_id = ?1 AND l.stamp <= u.unbound_at
-     UNION
-     SELECT l.new_id, reach.at FROM reach JOIN links l ON l.old_id = reach.id WHERE l.stamp <= reach.at)
-   SELECT id, at FROM reach`;
 /** The number a binding shows (the admin view, a delivery omitting it): its id's newest mark. */
 const shownNumber = (row: string) =>
   `(CASE WHEN ${row}.user_id IS NULL THEN ${row}.wa_id
@@ -816,9 +820,6 @@ export function createGateway(deps: Deps) {
           // newest id no other binding answers to. A link waiting for its old id's own notice is
           // reached when that one lands, by this same statement.
           push(db.prepare(REKEY).bind(previousUserId));
-          // A link whose old id an unbind recorded after the notice's stamp: the record extends
-          // along it.
-          push(db.prepare(EXTEND_UNBINDS).bind(previousUserId));
         }
         // The mark: the new number shows the new id from the notice's stamp, the old number shows
         // nobody, each unless Meta already paired it later (point 4).

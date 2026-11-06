@@ -1035,7 +1035,9 @@ describe("City side: the 24-hour window", () => {
     const m = payload.entry[0].changes[0].value.messages[0];
     delete m.text;
     m.type = "system";
-    m.system = { body: "User changed number", type: "user_changed_number" };
+    // A notice routes by its previous user id alone (gp-lv49): this one names the owner's.
+    delete m.from_user_id;
+    m.system = { body: "User changed number", type: "user_changed_number", previous_user_id: userOf(wa), user_id: bsuid() };
     await t.webhook(payload);
     expect((await t.inbox(city)).body.deliveries.some((d: any) => d.message?.type === "system")).toBe(true);
     expect((await t.window(city)).body.windows[0].last_inbound_at).toBe(T0);
