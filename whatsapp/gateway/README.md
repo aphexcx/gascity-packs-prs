@@ -30,7 +30,7 @@ A city box never holds a Meta secret. It holds one gateway credential, minted at
 | `wrangler.toml` | The Worker: name, custom domain, the D1 binding `DB`, the daily cron, the vars. It names no account id and no database id. |
 | `migrations/0001_init.sql` | The schema: cities, credentials, enroll_codes, invite_codes, phones, deliveries, media, sends, orphan_statuses, unknown_senders, stats. |
 | `migrations/0002_bsuid.sql` | Business-scoped user ids (gp-ac0u): phones keyed by `conversation_id` with `wa_id`, `user_id` and `username`; the ids on deliveries, sends and orphan statuses; strangers keyed by `sender_key`. |
-| `migrations/0003_retries.sql` | Meta's retries (gp-0g2s): the deliveries dedup key without the city; who held an id when (`phones.bound_stamp`, `phones.wa_since`, and `phone_aliases` for an owner's ids from before a number change); `code_attempt_wamids` (every counted wrong-code text, seeded from `unknown_senders.last_code_wamid`, gp-w376). |
+| `migrations/0003_retries.sql` | Meta's retries (gp-0g2s; re-cut in place by gp-lv49 to the design of record): the deliveries dedup key without the city; `phones.bound_stamp`; `links` (each number change, old user id to new), `unbinds` (the user ids an unbind recorded) and `marks` (each number's newest pairing with a user id); `code_attempt_wamids` (every counted wrong-code text, seeded from `unknown_senders.last_code_wamid`, gp-w376). |
 | `src/index.ts` | The Worker entry: env to gateway, the cron to `maintain()`. |
 | `src/gateway.ts` | The routes, the webhook plan and its one D1 transaction, enrollment, the inbox and ack, send, read, window, media, the operator routes, the cron. |
 | `src/meta.ts` | The Cloud API wire: the signature, the payload parse, the send bodies, the Graph calls. |
@@ -86,7 +86,7 @@ changes a route or a field.
    |---|---|---|
    | 400 | `bad_request` | A malformed send. |
    | 400 | `text_too_long` | Text over 4096 characters (code points); the box chunks. |
-   | 403 | `not_bound` | `to` is not bound to this city. |
+   | 403 | `not_bound` | `to` names no owner of this city, or one with no user_id ("Business-scoped user ids", rule 7). |
    | 409 | `ambiguous_recipient` (with `hint` and `owner_user_id`) | `to` names two owners of this city: one owner's `conversation_id`, kept from a phone number it no longer holds, and another owner's current wa_id (a recycled number). Nothing is sent and the key is not spent. Resend to `owner_user_id`: the current user_id of the owner whose `conversation_id` is `to`, or null when it has none (then `GET /v1/window`). Added by gp-0g2s, `owner_user_id` by gp-w376; see "Business-scoped user ids", rule 7. |
    | 422 | `window_closed` | A text or a reaction outside the window: the gateway's own check, or Meta's 131047. |
    | 409 | `in_flight` | Another request with the same `idempotency_key` is still at Meta (claimed under 60 s ago). Retry it. |
@@ -162,122 +162,104 @@ What the gateway does:
    to the binding text's wa_id. It is the user_id instead when Meta shared no phone, or when that
    phone number is already another owner's `conversation_id` (a recycled number). It never changes
    after that. Every owner bound before this change keeps its wa_id as its key, so no box sees a
-   new conversation. The row also holds the ids Meta names the owner by now, `wa_id` and `user_id`,
-   each unique where present.
-2. **Routing.** A message routes to the row holding its user_id. Failing that, it routes to the row
-   holding its wa_id, unless that row's user_id is a different one. A phone number that Meta
-   reports beside another user's id belongs to someone else now (a recycled number), and the
-   gateway acts on that in three ways:
-   - The new holder's messages are a stranger's: they hear the canned line, and they can join any
-     city with an invite code.
-   - The row that held the number **loses it**. Its city's sends then go to its user_id, never to
-     the new holder.
-3. **One owner, two ids.** An id the owner row lacks is filled the first time a message carries it
-   beside the other, unless another row already holds it. That never makes a second row. A
-   delivery carries the owner row's id for any id the message omits. An owner known by phone keeps
-   its `wa_id` on every delivery even when Meta names them by user_id alone.
-4. **The window** is the owner row's, so it moves on a message from either id.
+   new conversation. The row also holds the user_id Meta names the owner by now, unique. It holds
+   no phone number: the number an owner shows is its mark (rule 3). A row PR 73 bound by its
+   number alone holds that number in `wa_id` and no user_id (rule 2).
+2. **Routing: by the user id, never the number** (gp-lv49; the design of record,
+   `whatsapp/docs/design-bsuid-pairing-and-spans.md`). Since early April 2026 Meta puts the
+   sender's user id on every message. A message goes to the binding that answers to its user id
+   at the moment Meta stamped it, or to no city:
+   - A binding answers to the user id it was bound by, and to each user id a chain of
+     number-change notices links to it (rule 5). It answers to an id from its own invite text, or
+     from that id's last unbind if that is later, until the notice that replaced the id.
+   - **A message naming no user id reaches no city** and binds nothing, whatever number it names.
+     A number can change hands without the gateway seeing it, and the pairing that would say so may
+     still be in flight. Such a message hears nothing, because the gateway sends only to user ids,
+     and it is counted as `unrouted_messages`.
+   - **No adoption.** A user id no binding answers to is a stranger's. Its live invite code binds;
+     any other text, a six-digit typo included, hears the canned line and reaches no city. A row
+     never gains or swaps a user id, except by a notice's link.
+   - **A known user id's message that no span holds** reaches no city, hears nothing and is counted
+     as `unrouted_messages`, once for each delivery Meta makes of it. That is a message stamped
+     before its binding's invite text, after the notice that replaced its id, or at or before the
+     id's unbind.
+   - **A recycled number.** A phone number Meta pairs with another user id is someone else's now.
+     The newcomer's messages are a stranger's: they hear the canned line, and the newcomer can join
+     any city with an invite code. The number's mark moves to the newcomer (rule 3), so the old
+     owner stops showing it, and the old owner's city still reaches the old owner at its user id.
+   - An owner PR 73 bound by its number alone has no user id. Nothing routes to it, and nothing can
+     be sent to it. The mayor unbinds and re-invites each such owner at the deploy (Deploy, step 7).
+3. **The number an owner shows: the mark.** Each phone number has one high-water mark, its newest
+   pairing with a user id (`marks`). Any message naming the number beside a user id moves the mark
+   to that id, whoever sent it (an owner, a stranger, a code text), unless Meta stamped the message
+   below the mark. A number-change notice moves its new number to the new id and clears its old
+   number. An owner shows the number whose mark names its current user id. The mark decides only
+   that: the admin listing's last four digits, the `wa_id` a delivery carries when the message omits
+   it, and which owner a send's `to` names by a number (rule 7). It never routes a message. An
+   owner known by its user id alone shows no number until Meta pairs one with it.
+4. **The window** is the owner row's, so it moves on any message routed to the owner, under its
+   current user id or a previous one, and never back.
 5. **Number changes.** The notice is delivered to the owner's city as kind `message` with
    `message.type` `system`, the shape every system notice already has. It moves no window and is
-   never answered. It also **re-keys** the owner: `user_id` becomes the new id, and `wa_id` becomes
-   the new phone, or NULL when none is shared, because the old number is no longer the owner's.
-   If another row holds the new phone, the re-key goes as follows:
-   - A row that holds it beside another user_id loses it to the owner, as in rule 2.
-   - A row that holds it with no user_id (bound before Meta sent user ids) keeps it, and the
-     owner's `wa_id` stays NULL.
+   never answered. It is routed by its `previous_user_id`, as any message is by its user id. It
+   also becomes a **link** from the previous user id to the new one (`links`):
+   - **Links are recorded in any order of arrival.** A link whose old id a binding answers to
+     re-keys that binding: its `user_id` becomes the newest id along the chain of links. A link
+     whose old id no binding reaches yet waits, for 8 days, for the notice that reaches it. Two
+     notices Meta delivers in reverse leave the owner on the newest id.
+   - **A replay changes nothing.** There is one link per old id.
+   - **One id, one binding.** A link to a user id another binding answers to is never recorded,
+     and the two bindings stay as they are (see the known limit below).
+   - **A notice naming no `previous_user_id`** (Meta omits it when the old id is unavailable) links
+     nothing and reaches no city. It is counted as `notices_without_previous_id` and as
+     `unrouted_messages`. The owner keeps its old id and needs a new invite.
+   - The notice moves the marks (rule 3): its new number shows the new id, and its old number
+     shows nobody.
 
-   The `conversation_id` stays. The owner's next message, under its new ids, therefore continues
-   the same conversation.
+   The `conversation_id` stays. The owner's next message, under its new id, therefore continues the
+   same conversation.
 
-   **Who held the id when Meta stamped the message** (gp-0g2s). Meta retries a webhook for up to
-   7 days (an assumption, see "The horizon" below), so a message can arrive after the ids it names
-   have moved. The gateway therefore
-   routes by who held the sender's id at the moment Meta stamped the message, not by who holds it
-   now. Each id is held by one binding (an owner row) over a span of Meta's time:
-   - **A current user_id** is held from the binding's own invite text (`bound_stamp`).
-   - **A current wa_id** is held from the invite text too. When the number came later, it is
-     held from that message (`wa_since`): a message carrying it beside the user_id, or a number
-     change.
-   - **A previous id**, one a number change replaced, is held from its start until that change
-     (`phone_aliases`). The change records the ids the row held and the ones the notice names. A
-     number the row had already lost to its next holder (rule 2) was still the owner's until the
-     change.
-   - **A previous number starts where the owner came to it** (gp-w376). That is the bind that
-     gave the row the number, the later message that showed it beside the user_id and filled it,
-     or the number change that brought the owner to it (`wa_since`). A change writes it even when
-     the row takes no number, because Meta shared none or another row holds it. Rule 2's strip
-     keeps it when it takes the row's number. A number that came after the bind never reaches
-     back to the bind, when it may have been anyone's: a phone-only message stamped before then
-     goes to nobody, and no city is granted its media.
-   - **A number the records never gave the owner is no previous holding of it** (gp-w376). Say
-     another row held the number at every message that showed it beside the owner's user_id (a
-     phone-only owner, whom rule 2 never strips), or no message ever showed it, and then the
-     owner's notice names it as its old number. The gateway records no previous holding for it.
-     While the other row stands, what that row sent stays its own. Once an operator unbinds it,
-     such a message goes to nobody, and never to the owner.
-
-   A message routes to the one binding whose span holds its stamp, or to nobody:
-   - **A previous holding routes to its binding.** If one holds the stamp, the message goes to
-     its binding while that binding stands. Once an operator has unbound it, the message goes
-     nowhere, even when someone else holds the number now or later binds under the same key.
-     This is how Meta's retry of a message the owner sent before a number change reaches the
-     owner's conversation under the old ids. When two owners each held the same number in turn,
-     the message goes to the one that held it at the stamp.
-   - **Two spans holding one stamp go to nobody.** That happens only when the records disagree:
-     a number's next holder showed it before the old owner's change notice landed.
-   - **A binding newer than the message never takes it.** This covers the next holder of a
-     recycled number, and the same person bound again in another city after an unbind. A message
-     Meta stamped while the number was free is a stranger's.
-   - **Which id is matched.** It is the user_id when the message names one, and the wa_id only
-     when it names none, as in rule 2.
-   - **A known sender's message that no span holds is dropped.** It goes to no city, hears no
-     canned line and is counted as `unrouted_messages`, once for each delivery Meta makes of it.
+   **Meta's retries** (gp-0g2s). Meta retries a webhook for up to 7 days, in any order, so a
+   message can arrive after the notice that replaced the user id it names. The gateway routes by
+   the binding that answered to the id at the moment Meta stamped the message (rule 2), not by
+   who answers to it now:
+   - **A retry under a previous user id reaches the owner** while its binding stands: the old id was
+     the binding's until the notice. Once an operator has unbound the owner, it goes nowhere.
    - **A routed retry is the owner's message.** It is delivered and moves the owner's window. It
-     counts no code attempt, binds nothing and changes none of the owner's ids or names. It never
-     takes the old number from whoever holds it now.
-   - **A notice that arrives late or twice names nobody** once its old ids have moved, so it
-     changes nothing.
-   - **A pairing that is history takes no number.** Rule 2 takes a number from a row only when
-     the row held it at the message's stamp and the message's user_id is a current one. A late
-     retry takes nothing, nor does a retry naming a previous user_id, nor a change notice's own
-     old ids.
-   - **The horizon is 8 days** (`TOMBSTONE_SECONDS`) from the change Meta stamped. Meta retries a
-     webhook for up to 7 days, and the gateway drops any message stamped more than 8 days ago, so
-     no message a previous holding may route can arrive later. The daily cron then deletes it.
-     **The 7 days is an assumption.** No Meta page in this tree (`test/fixtures/SOURCES.md`)
-     states the retry window. The horizon's safety does not rest on it: the stale filter drops
-     whatever is stamped more than 8 days ago, whatever Meta does. A longer window would only drop
-     more, and each drop is counted as `stale_messages`.
+     counts no code attempt, binds nothing and changes none of the owner's ids or names.
+   - **A notice that arrives late or twice** links what it links once, and changes nothing more.
+   - **The horizon is 8 days** (`TOMBSTONE_SECONDS`). Meta retries a webhook for up to 7 days
+     ("Webhook delivery failure", developers.facebook.com/docs/whatsapp/cloud-api/guides/set-up-webhooks,
+     read 2026-11-06), and the gateway drops any message stamped more than 8 days ago, so no message a
+     link, an unbind or a mark may decide can arrive later. The daily cron then deletes it. The
+     horizon's safety does not rest on Meta's window: the stale filter drops whatever is stamped more
+     than 8 days ago, whatever Meta does. A longer window would only drop more, and each drop is
+     counted as `stale_messages`.
    - **Meta stamps every message.** One without a stamp is read as stamped on its arrival, so a
-     previous holding never routes it.
-   - **The 5,000-held cap.** It is read before the write, from the cities of the payload's current
-     owners. A retry that a previous holding routes is not counted there. That is a bounded
-     overshoot: the retries are what the owner sent before the change.
+     previous user id never routes it.
+   - **The 5,000-held cap.** It is read before the write, from the cities of the owners whose
+     current user id the payload names. A retry under a previous user id is not counted there. That
+     is a bounded overshoot: the retries are what the owner sent before the change.
 
-   **A known limit.** Meta does not promise webhook order. Say a notice's first delivery fails, and
-   the owner writes under the new ids before Meta's retry. That message is a stranger's: it hears
-   the canned line and is not delivered. Once the notice lands, the owner's next message reaches
-   their city. An invite code texted in that window binds a second owner row.
-
-   **A second known limit** (gp-w376's self-review). Take an owner known by user_id alone, whose
-   phone the records never showed before its notice. It gets no previous holding of the number the
-   notice names: the notice's own message is the first to show it. So a retry of what that owner
-   sent from the number before the change, in today's shape (the number alone), is a stranger's.
-   It hears the canned line at that number and is not delivered.
-6. **Strangers** are keyed by their user_id when Meta sends one, else their wa_id. This covers the
-   canned line once per 7 days and the 5 code attempts a day. The key does not change when Meta
-   starts sharing the stranger's phone, which the canned line itself causes.
-7. **Sends.** `POST /v1/send`'s `to` names one of the city's owners by its `conversation_id`, its
-   `wa_id` or its `user_id`. The gateway sends `to` to Meta exactly as given (a user_id byte for
-   byte in `recipient`) while it is one of the owner's current ids. A `conversation_id` the owner
-   no longer answers to, its phone number before a number change, goes to the owner's current id
-   instead, never to a number that may be someone else's now. The gateway's own welcome and canned
-   line go to the wa_id when Meta shared one, else the user_id.
+   **A known limit** (the design note's question 2, answer (a)). Meta does not promise webhook
+   order. Say a notice's first delivery fails, and the owner writes under the new id before Meta's
+   retry. That message is a stranger's: it hears the canned line and is not delivered. Once the
+   notice lands, the owner's next message reaches their city. An invite code texted in that window
+   binds a second owner row, and the notice then links nothing.
+6. **Strangers** are keyed by their user_id. This covers the canned line once per 7 days and the 5
+   code attempts a day. A message naming no user id hears nothing and counts no attempt.
+7. **Sends go to a user id** (gp-lv49; the design note's point 3). `POST /v1/send`'s `to` names one
+   of the city's owners by its `conversation_id`, its current `user_id`, or a number it shows (rule
+   3). Whatever `to` named, the gateway sends to the owner's current user_id, byte for byte in
+   Meta's `recipient`: a number can change hands without the gateway seeing it, and a user id
+   cannot. The gateway's own welcome and canned line go to the user id too. An owner with no
+   user_id (PR 73's binding by number alone) has no address, and a send to it answers
+   `403 not_bound`.
 
    **A `to` naming two owners is refused** (gp-0g2s; the mayor's rule R1, 22:39Z 11/4). Say owner
    A binds on phone P, so A's `conversation_id` is P. A then changes number, and owner B joins
    the same city on the recycled P, keyed by B's user_id. Now `to: P` is both A's conversation and
-   B's current number. The box may mean either, and a guess would hand one owner's message to the
+   the number B shows. The box may mean either, and a guess would hand one owner's message to the
    other. So the gateway answers `409 {error: "ambiguous_recipient", hint: "send to the owner's
    current id", owner_user_id}`. It sends nothing and spends no key. `owner_user_id` is the current
    user_id of the owner whose `conversation_id` is `to`, the owner the box files under it, or null
@@ -287,9 +269,9 @@ What the gateway does:
    not the other owner, not an id the gateway has already replaced. The box resends to
    `owner_user_id` at once. The same id is the `user_id` of the owner's entry in `GET /v1/window`,
    which stays the fallback. Do not take it from the newest delivery: right after a number change
-   that delivery is the notice itself, which still carries the old id. A repeat of a key Meta already took still
-   answers its first `message_id`, because it makes no new call. In another city, P names only
-   that city's owner, so it is no ambiguity.
+   that delivery is the notice itself, which still carries the old id. A repeat of a key Meta
+   already took still answers its first `message_id`, because it makes no new call. In another
+   city, P names only that city's owner, so it is no ambiguity.
 8. **Authentication templates.** One-tap, zero-tap and copy-code authentication templates cannot be
    sent to a user_id. Meta refuses them with code 131062, and the gateway answers `502 meta_error`
    with `meta_code` 131062, freeing the key. The one template here (`dynasty_update`, utility) is
@@ -299,10 +281,11 @@ Contract v1, additive only (nothing renamed, nothing removed, no kind added):
 
 | Where | Added |
 |---|---|
-| `GET /v1/inbox`, each delivery | `user_id`, `username`, `conversation_id`: null when unknown. `conversation_id` is the owner's key: the field a box files a delivery under, the same for every delivery of one owner whichever ids it carries. On a message or joined delivery, `wa_id` and `user_id` are the owner row's when the message omits them, so `wa_id` is null only for an owner whose phone the gateway has never been shown. A status carries the recipient's ids as Meta sent them, and its `username` when Meta sends one (delivered, read). |
+| `GET /v1/inbox`, each delivery | `user_id`, `username`, `conversation_id`: null when unknown. `conversation_id` is the owner's key: the field a box files a delivery under, the same for every delivery of one owner whichever ids it carries. On a message or joined delivery, `user_id` is the one the message names (a notice's previous user_id), and `wa_id` is the number it names, or, when it names none, the number the owner shows (rule 3; null when it shows none). A status carries the recipient's ids as Meta sent them, and its `username` when Meta sends one (delivered, read). |
 | `GET /v1/window`, each window | `user_id` (null when unknown). `conversation_id` is the owner's key. |
-| `POST /v1/send` | `to` also takes a user_id (`^[A-Z]{2}\.(ENT\.)?[A-Za-z0-9]{1,128}$`) or an owner's `conversation_id`. A malformed one answers 400 `bad_request`; one that is no owner of this city answers 403 `not_bound`; one that names two owners of this city answers 409 `ambiguous_recipient` with a `hint` and `owner_user_id`, the current user_id of the owner `to` is the conversation_id of (gp-0g2s, gp-w376, rule 7). |
-| `GET /v1/admin/cities` | `phones_last4` holds `"id"` for an owner Meta shares no phone number of. No part of a user_id ever appears. |
+| `POST /v1/send` | `to` also takes a user_id (`^[A-Z]{2}\.(ENT\.)?[A-Za-z0-9]{1,128}$`), an owner's `conversation_id`, or a number an owner shows (rule 3). Whatever it names, the send goes to the owner's current user_id, in Meta's `recipient` (rule 7). A malformed one answers 400 `bad_request`; one that is no owner of this city, or one with no user_id, answers 403 `not_bound`; one that names two owners of this city answers 409 `ambiguous_recipient` with a `hint` and `owner_user_id`, the current user_id of the owner `to` is the conversation_id of (gp-0g2s, gp-w376, rule 7). |
+| `GET /v1/admin/cities` | `phones_last4` holds the last four digits of the number each owner shows (rule 3), or `"id"` for an owner that shows none. No part of a user_id ever appears. The counters add `notices_without_previous_id` (rule 5). |
+| `POST /v1/admin/unbind` (operator side, gp-lv49) | `{id}` under the admin token: unbinds every owner `id` names (its `conversation_id`, its current `user_id`, or the number a PR 73 binding holds), recording every user_id it answered to, and answers `{unbound: <n>}`. It replaces the raw `DELETE` the runbook gave ("Unbind an owner"). A malformed body answers 400 `bad_request`. |
 
 An owner may join and write with a WhatsApp username: the gateway knows them by their user_id.
 
@@ -320,9 +303,10 @@ An owner may join and write with a WhatsApp username: the gateway knows them by 
   the phone joins another city, and then Meta retries one of its earlier messages. If the first
   city stored the message, the retry is still the first city's row, held or acknowledged. The
   dedup key is `(wamid, status)`, with no city in it, and a media grant follows the city that
-  holds the message's wamid. If no city stored it (its first delivery failed), it goes nowhere,
-  because the new binding holds only what Meta stamped after it ("Business-scoped user ids", rule
-  5). Either way the new city gets no delivery and no access to its media.
+  holds the message's wamid. If no city stored it (its first delivery failed), it goes nowhere: the
+  unbind recorded the owner's user ids, and a message Meta stamped before the unbind reaches no
+  city, the new one included ("Business-scoped user ids", rule 2, and "Unbind an owner"). Either
+  way the new city gets no delivery and no access to its media.
 - **409 `ambiguous_recipient` on a send** (gp-0g2s). Resend to `owner_user_id`, the current
   user_id of the owner `to` names by its conversation_id (gp-w376). When it is null, take the
   owner's current id from `GET /v1/window`. See "Business-scoped user ids", rule 7.
@@ -418,12 +402,15 @@ Never Robert's account or his domain.
 
    (`assets/pr-evidence/gp-ac0u/deploy-gap.txt` runs the old code on the new schema.)
 
-   0003 (Meta's retries, gp-0g2s) rebuilds the deliveries dedup key as `(wamid, status)`. It adds
-   two tables and two phones columns that the old code never reads, so an owner the old code
-   binds in the gap holds its ids from the start, as before. It adds nothing to the gap above:
-   `assets/pr-evidence/gp-0g2s/deploy-gap.txt` runs the deployed code (PR 73) on 0001, 0002 and
-   0003. The rebuild fails only where two cities already hold one wamid. Only the misroute 0003
-   fixes could have written such a pair, and the deployed D1 holds no deliveries.
+   0003 (Meta's retries, gp-0g2s; re-cut in place by gp-lv49) rebuilds the deliveries dedup key
+   as `(wamid, status)`. It adds `phones.bound_stamp` and four tables (`links`, `unbinds`, `marks`,
+   `code_attempt_wamids`) that the old code never reads. It adds nothing to the gap above:
+   `assets/pr-evidence/gp-lv49/deploy-gap.txt` runs the deployed code (PR 73) on 0001, 0002 and
+   0003 as re-cut. The rebuild fails only where two cities already hold one wamid. Only the
+   misroute 0003 fixes could have written such a pair, and the deployed D1 holds no deliveries.
+   0003 was edited in place because no remote D1 has applied it: main had only 0001. Confirm that
+   before step 3 with `$PNPM exec wrangler d1 migrations list whatsapp-gateway --remote`, which
+   must list 0002 and 0003 as not yet applied.
 
    0003 also carries each stranger's last counted code text (`unknown_senders.last_code_wamid`)
    into `code_attempt_wamids` (gp-w376). A code text the old code counted, and Meta redelivers
@@ -459,6 +446,21 @@ Never Robert's account or his domain.
    ```
 
    It must answer `{"ok":true,"pending_total":0,"last_webhook_at":null}`.
+7. **Re-invite the owners PR 73 bound by number alone** (the design note's question 1, answer
+   (a); gp-lv49). Such an owner holds no user id, so from this deploy on nothing reaches it and
+   nothing can be sent to it. Its own messages, which carry its user id, are a stranger's: they
+   hear the canned line. List them:
+
+   ```sh
+   $PNPM exec wrangler d1 execute whatsapp-gateway --remote \
+     --command "SELECT conversation_id, city_id FROM phones WHERE user_id IS NULL"
+   ```
+
+   Unbind each by its `conversation_id` with `POST /v1/admin/unbind` (Operator runbook), then ask
+   its city for a new invite code (`gc whatsapp invite`) and give it to the owner. The owner's
+   code text binds it again, by its user id. When Meta shows the same number beside that text, the
+   new binding is keyed by that number again (rule 1), so the box keeps the conversation. The Fable
+   reads of 11/5 found none; recount at the deploy.
 
 The test-number to production-number switch is one `wrangler secret put META_PHONE_NUMBER_ID`.
 Every box's gc account id is the stable alias `dynasty`, so no conversation identity changes.
@@ -529,13 +531,16 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   curl -s https://whatsapp.dynasty.computer/v1/admin/cities -H "Authorization: Bearer $ADMIN_TOKEN"
   ```
 
-  Each city carries its owner count (`phones`), the last four digits of each owner's phone (`id`
-  for an owner Meta shares no phone of), its held deliveries and its live credentials. The
-  gateway's counters follow: dropped_wrong_number, orphaned_statuses, stale_messages,
-  welcome_failed, canned_failed and unrouted_messages (a known sender's message that no binding
-  held when Meta stamped it). The webhook log line counts the same per payload (`unrouted`). Both
-  count deliveries: a message Meta delivers twice counts twice, and a payload that answered 500
-  writes no log line. No phone number and no user_id appears in clear.
+  Each city carries its owner count (`phones`), the last four digits of the number each owner
+  shows ("Business-scoped user ids", rule 3; `id` for an owner that shows none), its held
+  deliveries and its live credentials. The gateway's counters follow: dropped_wrong_number,
+  orphaned_statuses, stale_messages, welcome_failed, canned_failed, unrouted_messages (a message
+  that reached no city and is no stranger's: one naming no user id, a known id's message no span
+  held, a notice no binding answers to) and notices_without_previous_id (a number change Meta sent
+  without the old id: that owner needs a new invite). The webhook log line counts unrouted
+  messages per payload (`unrouted`). Both count deliveries: a message Meta delivers twice counts
+  twice, and a payload that answered 500 writes no log line. No phone number and no user_id
+  appears in clear.
 - **Revoke a city's credential** (the box gets 401 on its next call):
 
   ```sh
@@ -559,21 +564,33 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   The new city is fresh, so no row collides. The box re-reads every held delivery from
   `after=0`.
 - **Unbind an owner** (so it can join another city by a new invite code), by any id it is known
-  by:
+  by: its `conversation_id`, its current `user_id`, or the number a PR 73 binding holds:
 
   ```sh
-  DELETE FROM phones WHERE conversation_id = '<id>' OR wa_id = '<digits>' OR user_id = '<user id>'
+  curl -s -X POST https://whatsapp.dynasty.computer/v1/admin/unbind \
+    -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+    -d '{"id":"<id>"}'
   ```
 
-  No unbinding is needed for a recycled number. When Meta names that phone beside a different
-  user_id, the old owner loses the number, and the new person joins by an invite code under their
-  user_id.
+  It answers `{"unbound":<n>}`, 0 when no owner has that id. Never unbind with a raw
+  `DELETE FROM phones`. The route deletes the binding and, in the same write, records for 8 days
+  every user id the owner answered to: its current one, and each one a number change linked to it
+  (`unbinds`). That record is what keeps the owner's earlier messages out of its next city (the
+  design note's T8).
 
-  After an unbind, nothing the owner sent before it reaches the next city. A message the first
-  city stored stays that city's row. One it never stored goes nowhere, because the next binding,
-  whoever it is, holds only what Meta stamped after its own invite text, and the owner's previous
-  ids name nobody once its binding is gone. Such a retry is counted as `unrouted_messages`. The
-  cron deletes the owner's previous ids within 8 days.
+  No unbinding is needed for a recycled number. When Meta names that phone beside a different
+  user_id, the new person is a stranger who joins by an invite code under their user_id, and the
+  old owner's city still reaches the old owner at its user id.
+
+  After an unbind, nothing the owner sent before it reaches any city, the next one included. A
+  message the first city stored stays that city's row. One it never stored goes nowhere: Meta
+  stamped it at or before the unbind, under an id the unbind recorded, so it reaches no city and
+  binds nothing, even when its text is another city's live invite code. It is counted as
+  `unrouted_messages`. What the owner writes after the unbind is a stranger's until it joins a city
+  by a new code, which it can do at once. The cron deletes the record after 8 days, when no such
+  message can arrive. The record compares Meta's stamp of a message with the gateway's clock at
+  the unbind, so an owner's code text sent in the same second as its unbind binds nothing; the
+  owner sends it again.
 
 ## Data, retention, logs
 
@@ -587,17 +604,22 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   are ever stored: `GET /v1/media/<id>` streams Meta's bytes through.
 - **Strangers.** An unknown sender's row (last canned reply, code attempts) is pruned after 7 days.
   The wamid of each counted code text is kept for 8 days, with no id beside it.
-- **Previous ids.** When a number changes, the ids it replaces are kept for 8 days from the
-  change, as previous holdings of the owner (`phone_aliases`). They hold the previous wa_id and
-  user_id, and the cron deletes them at the end of that time. An owner row also keeps Meta's stamp
-  of its invite text and of the message or number change that brought it to its number
-  (`bound_stamp`, `wa_since`), until an operator unbinds it.
+- **Number changes and unbinds.** A number change's link (the old user id, the new one, Meta's
+  stamp) is kept 8 days from that stamp (`links`). An unbind's record (each user id the owner
+  answered to, and the time) is kept 8 days from the unbind (`unbinds`). The cron deletes both at
+  the end of that time. An owner row keeps Meta's stamp of its invite text (`bound_stamp`) until an
+  operator unbinds it.
+- **Marks.** Each phone number's newest pairing with a user id, and Meta's stamp of it (`marks`).
+  A mark naming an owner's current user id is the number that owner shows, kept while it does. Any
+  other mark (a stranger's number, an unbound owner's, one a notice cleared) is deleted 8 days
+  after its stamp. A stranger's number beside its user id is kept nowhere else.
 - **Orphan statuses** (a status no send has recorded) are pruned after one day. The gateway's own
   welcome and canned lines leave theirs there.
 - **Codes and keys.** Spent and expired invite codes are pruned 7 days after expiry, enrollment
   codes 30 days after, and send idempotency keys after 30 days.
-- **Owners** (the phones table: the ids, the last username and profile name Meta showed) are kept
-  until an operator unbinds them. A username the owner later drops stays until then.
+- **Owners** (the phones table: the user id, the last username and profile name Meta showed, and
+  for a PR 73 binding its number) are kept until an operator unbinds them. A username the owner
+  later drops stays until then.
 - **Logs** carry fixed event names and counts only. No log line ever carries a body, a phone
   number, a user_id, a username, a profile name, a code, a token, a secret or an error's message.
   Three tests check every line against those values:
