@@ -229,7 +229,7 @@ if [ -n "$media" ]; then
 elif [ -n "$idempotency_key" ]; then
   # Keyed text: the adapter resumes a same-key retry after the chunks it
   # already delivered and refuses one whose last chunk went unacknowledged.
-  echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without duplicating it)" >&2
+  echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without repeating acknowledged chunks)" >&2
 fi
 
 # Capture status and body separately so the adapter's JSON error payload
@@ -276,9 +276,15 @@ if [ "$status" -ge 400 ] 2>/dev/null; then
     fi
   else
     case "$failure_kind" in
+      retryable)
+        echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume at the first unacknowledged chunk; a lost acknowledgement may repeat that chunk, but acknowledged chunks are skipped" >&2
+        ;;
+      journal_unavailable)
+        echo "gc wecom publish: restore journal capacity/durability, then retry with the same idempotency key" >&2
+        ;;
       not_sent)
         if [ -n "$idempotency_key" ]; then
-          echo "gc wecom publish: the failed chunk was not written; retry with --idempotency-key $idempotency_key (safe — it resumes without repeating delivered chunks)" >&2
+          echo "gc wecom publish: this request did not write the failed chunk; retry with --idempotency-key $idempotency_key to resume after acknowledged chunks" >&2
         else
           echo "gc wecom publish: nothing was written; retrying is safe" >&2
         fi
@@ -302,6 +308,10 @@ if [ "$status" -ge 400 ] 2>/dev/null; then
 fi
 
 [ -n "$payload" ] && echo "$payload"
+replayed=$(printf '%s' "$payload" | jq -rs 'last | .delivered == true and .replayed == true' 2>/dev/null || true)
+if [ "$replayed" = "true" ]; then
+  echo "gc wecom publish: already delivered under this key, nothing resent" >&2
+fi
 # Surface a transcript-recording miss without failing the (delivered)
 # publish — the adapter reports it in-band on media sends.
 note=$(printf '%s' "$payload" | jq -r '.transcript_note // empty' 2>/dev/null || true)

@@ -2,7 +2,7 @@
 // No credentials or external services: each child gets a fresh environment.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import fs from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'node:module';
@@ -23,6 +23,7 @@ const remediationEnv = {
   WECOM_LIVENESS_TICK_MS: '20',
   WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS: '10000',
   WECOM_RECONNECT_DRAIN_TIMEOUT_MS: '2000',
+  WECOM_LIVENESS_PONG_TIMEOUT_MS: '100',
 };
 const textPublish = (key = 'text-key', text = 'hello') => ({
   conversation: { conversation_id: 'local-user' }, text, idempotency_key: key,
@@ -129,7 +130,7 @@ function startAdapter(t, { port, extraEnv = {} }) {
 }
 
 test('remediation waits for an in-flight publish acknowledgement, then reconnects exactly once', async (t) => {
-  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg', { autoPong: false });
   const adapter = startAdapter(t, { ...server, extraEnv: remediationEnv });
   await adapter.waitForLog('wecom long connection authenticated');
   const result = adapter.request('/publish', textPublish());
@@ -184,79 +185,81 @@ test('first authentication clears a startup stall and grants a full inbound grac
   assert.ok(Date.now() - acknowledgedAt >= 1000, 'the grace period starts at authentication');
 });
 
-test('close before ack returns delivery_unknown without replaying any chunk after authentication', async (t) => {
-  const server = await stubServer(t, (frame, connection) => {
-    if (frame.cmd === 'aibot_send_msg'
-      && connection.frames.filter((f) => f.cmd === 'aibot_send_msg').length === 2) {
-      connection.socket.terminate();
-      return false;
-    }
+for (const dropAt of [1, 2]) {
+  test(`keyed text reconnect retry resumes at unacknowledged chunk ${dropAt}`, async (t) => {
+    let attempts = 0;
+    const server = await stubServer(t, (frame, connection) => {
+      if (frame.cmd === 'aibot_send_msg' && ++attempts === dropAt) {
+        connection.socket.terminate();
+        return false;
+      }
+    });
+    const adapter = startAdapter(t, server);
+    await adapter.waitForLog('wecom long connection authenticated');
+    const request = textPublish('multi-chunk', 'a'.repeat(3800) + 'last');
+    const response = await adapter.request('/publish', request);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.failure_kind, 'retryable');
+    assert.equal(response.body.retry_safe, true);
+    assert.equal(response.body.chunk, dropAt);
+    assert.equal(response.body.chunks_delivered, dropAt - 1);
+    // Retry immediately, during the SDK reconnect; no frame may precede auth.
+    const retry = await adapter.request('/publish', request);
+    assert.equal(retry.status, 200);
+    assert.equal(retry.body.delivered, true);
+    assert.equal(retry.body.delivery_outcome, 'retried-unacked-chunks');
+    assert.equal(sends(server).length, 3);
+    assert.equal(sends(server).filter((f) => f.body.markdown.content.startsWith('a')).length, dropAt === 1 ? 2 : 1);
+    const replay = await adapter.request('/publish', request);
+    assert.equal(replay.status, 200);
+    assert.deepEqual(replay.body, { ...retry.body, replayed: true });
+    assert.equal(sends(server).length, 3);
   });
-  const adapter = startAdapter(t, server);
-  await adapter.waitForLog('wecom long connection authenticated');
-  const request = textPublish('multi-chunk', 'a'.repeat(3800) + 'b'.repeat(3800) + 'last');
-  const response = await adapter.request('/publish', request);
-  assert.equal(response.status, 502);
-  assert.equal(response.body.delivered, false);
-  assert.equal(response.body.failure_kind, 'delivery_unknown');
-  assert.equal(response.body.chunk, 2);
-  assert.equal(response.body.chunks_delivered, 1);
-  await adapter.waitForLog('wecom long connection authenticated', 2);
-  const refused = await adapter.request('/publish', request);
-  assert.equal(refused.status, 409);
-  assert.equal(refused.body.failure_kind, 'delivery_unknown');
-  assert.equal(sends(server).length, 2);
-  for (const frame of sends(server)) {
-    assert.match(frame.headers.req_id, /^aibot_send_msg_\d+_[a-f0-9]{8}$/);
-  }
-});
+}
 
-test('fresh outbound ack suppresses cycles until it expires; inbound alarms remain', async (t) => {
+test('quiet healthy socket beyond 3x threshold logs once and never reconnects', async (t) => {
   const server = await stubServer(t);
   const adapter = startAdapter(t, { ...server, extraEnv: {
-    ...remediationEnv,
-    WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS: '2000',
-    WECOM_LIVENESS_ALARM_REPEAT_MS: '100',
+    ...remediationEnv, WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS: '200',
   } });
   await adapter.waitForLog('wecom long connection authenticated');
-  assert.equal((await adapter.request('/publish', textPublish())).body.delivered, true);
-  await adapter.waitForLog('INBOUND LIVENESS ALARM', 2);
-  assert.equal(server.connections.length, 1);
-  assert.doesNotMatch(adapter.logs(), /forcing a WS reconnect/);
-  await adapter.waitForLog('wecom long connection authenticated', 2);
-  await delay(100);
-  assert.equal(server.connections.length, 2, 'reconnect cadence still applies');
-});
-
-test('inbound silence at 3× the stall threshold cycles despite fresh outbound acks', async (t) => {
-  const server = await stubServer(t);
-  const adapter = startAdapter(t, { ...server, extraEnv: {
-    ...remediationEnv, WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS: '60000',
-  } });
-  await adapter.waitForLog('wecom long connection authenticated');
-  const authenticatedAt = Date.now();
-  assert.equal((await adapter.request('/publish', textPublish())).body.delivered, true);
   await adapter.waitForLog('INBOUND LIVENESS ALARM');
+  await delay(2300);
   assert.equal(server.connections.length, 1);
-  assert.doesNotMatch(adapter.logs(), /forcing a WS reconnect/);
-  await adapter.waitForLog('wecom long connection authenticated', 2);
-  assert.ok(Date.now() - authenticatedAt >= 2700, 'suppression lasts until the hard ceiling');
-  assert.ok(Date.now() - authenticatedAt < 4500, 'fresh acks cannot mask dead pushes');
+  assert.equal(adapter.logs().split('INBOUND LIVENESS ALARM').length - 1, 1);
+  assert.doesNotMatch(adapter.logs(), /health check failed/);
 });
 
-test('zero outbound-ack freshness disables suppression through production env parsing', async (t) => {
-  const server = await stubServer(t);
-  const adapter = startAdapter(t, { ...server, extraEnv: {
-    ...remediationEnv, WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS: '0',
-  } });
-  await adapter.waitForLog('wecom long connection authenticated');
-  const authenticatedAt = Date.now();
-  assert.equal((await adapter.request('/publish', textPublish())).body.delivered, true);
+test('pong timeout reconnects a silent socket', async (t) => {
+  const server = await stubServer(t, undefined, { autoPong: false });
+  const adapter = startAdapter(t, { ...server, extraEnv: remediationEnv });
   await adapter.waitForLog('wecom long connection authenticated', 2);
-  assert.ok(Date.now() - authenticatedAt < 2400, 'must cycle before the 3000 ms hard ceiling');
+  assert.match(adapter.logs(), /ping\/pong health check failed/);
+  assert.equal(server.connections.length, 2);
 });
 
-test('provider rejection is not retried and its ack suppresses a quiet-inbound cycle', async (t) => {
+test('publish waits for subscription acknowledgement and times out without writing', async (t) => {
+  let subscription;
+  const server = await stubServer(t, (frame, connection) => {
+    if (frame.cmd === 'aibot_subscribe') { subscription = { frame, connection }; return false; }
+  });
+  const adapter = startAdapter(t, { ...server, extraEnv: { WECOM_PUBLISH_AUTH_WAIT_MS: '200' } });
+  await waitFor(() => subscription, 'subscription');
+  const request = textPublish();
+  const failed = await adapter.request('/publish', request);
+  assert.equal(failed.status, 503);
+  assert.equal(failed.body.failure_kind, 'not_sent');
+  assert.equal(failed.body.delivery_outcome, 'nothing-written');
+  assert.equal(sends(server).length, 0);
+  const retry = adapter.request('/publish', request);
+  await delay(50);
+  assert.equal(sends(server).length, 0);
+  acknowledge(subscription.connection, subscription.frame);
+  assert.equal((await retry).body.delivered, true);
+  assert.equal(sends(server).length, 1);
+});
+
+test('provider rejection is not retried and a healthy pong prevents a quiet-inbound cycle', async (t) => {
   const server = await stubServer(t, (frame, connection) => {
     if (frame.cmd === 'aibot_send_msg') {
       connection.socket.send(JSON.stringify({ headers: frame.headers, errcode: 40001, errmsg: 'test refusal' }));
@@ -264,7 +267,7 @@ test('provider rejection is not retried and its ack suppresses a quiet-inbound c
     }
   });
   const adapter = startAdapter(t, { ...server, extraEnv: {
-    ...remediationEnv, WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS: '10000',
+    ...remediationEnv,
   } });
   await adapter.waitForLog('wecom long connection authenticated');
   const response = await adapter.request('/publish', textPublish());
@@ -304,8 +307,8 @@ for (const lostType of ['file', 'markdown']) {
   });
 }
 
-test('the drain deadline closes a hung send with 502 delivery_unknown and no retry', async (t) => {
-  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
+test('the drain deadline closes a hung send and leaves its keyed text retryable', async (t) => {
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg', { autoPong: false });
   const adapter = startAdapter(t, { ...server, extraEnv: {
     ...remediationEnv, WECOM_RECONNECT_DRAIN_TIMEOUT_MS: '100',
   } });
@@ -314,8 +317,8 @@ test('the drain deadline closes a hung send with 502 delivery_unknown and no ret
   await adapter.waitForLog('waiting up to 100 ms');
   const waitingAt = Date.now();
   const response = await result;
-  assert.equal(response.status, 502);
-  assert.equal(response.body.failure_kind, 'delivery_unknown');
+  assert.equal(response.status, 503);
+  assert.equal(response.body.failure_kind, 'retryable');
   assert.ok(Date.now() - waitingAt < 1000, 'does not wait for the 5 s SDK ack timeout');
   await adapter.waitForLog('wecom long connection authenticated', 2);
   assert.equal(sends(server).length, 1);
@@ -367,7 +370,7 @@ test('close waits for the SDK receiver to finish a compressed inbound frame', as
 });
 
 test('SIGTERM stops admission, drains an acknowledged publish, and exits cleanly', async (t) => {
-  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg', { autoPong: false });
   const adapter = startAdapter(t, server);
   await adapter.waitForLog('wecom long connection authenticated');
   const result = adapter.request('/publish', textPublish());
@@ -415,7 +418,7 @@ test('SIGTERM keeps gc media receipt callbacks open while refusing new publishes
     gc.closeAllConnections();
     await new Promise((resolve) => gc.close(resolve));
   });
-  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg', { autoPong: false });
   const adapter = startAdapter(t, { ...server, extraEnv: {
     GC_API_BASE_URL: `http://127.0.0.1:${gc.address().port}`,
     WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS: 'true',
@@ -469,7 +472,7 @@ test('SIGTERM keeps gc media receipt callbacks open while refusing new publishes
 });
 
 test('SIGTERM with an unacked publish returns 502 and exits after the bounded drain', async (t) => {
-  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg', { autoPong: false });
   const adapter = startAdapter(t, server);
   await adapter.waitForLog('wecom long connection authenticated');
   const result = adapter.request('/publish', textPublish());
@@ -481,8 +484,8 @@ test('SIGTERM with an unacked publish returns 502 and exits after the bounded dr
   assert.equal(late.status, 503);
   assert.equal(late.body.failure_kind, 'not_sent');
   const response = await result;
-  assert.equal(response.status, 502);
-  assert.equal(response.body.failure_kind, 'delivery_unknown');
+  assert.equal(response.status, 503);
+  assert.equal(response.body.failure_kind, 'retryable');
   assert.deepEqual(await adapter.exited, [0, null]);
   const elapsed = Date.now() - shutdownAt;
   assert.ok(elapsed >= 1200 && elapsed < 1800, `shutdown took ${elapsed} ms`);
@@ -504,7 +507,7 @@ test('shutdown awaits a late inbound delivery after the outbound drain stops the
     gc.closeAllConnections();
     await new Promise((resolve) => gc.close(resolve));
   });
-  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg', { autoPong: false });
   const adapter = startAdapter(t, { ...server, extraEnv: {
     GC_API_BASE_URL: `http://127.0.0.1:${gc.address().port}`,
   } });
@@ -552,7 +555,7 @@ for (const respond of [true, false]) {
       gc.closeAllConnections();
       await new Promise((resolve) => gc.close(resolve));
     });
-    const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
+    const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg', { autoPong: false });
     const adapter = startAdapter(t, { ...server, extraEnv: {
       GC_API_BASE_URL: `http://127.0.0.1:${gc.address().port}`,
     } });
@@ -572,8 +575,8 @@ for (const respond of [true, false]) {
     await waitFor(() => inboundResponse, 'inbound flush request');
     assert.match(inboundBody, /buffered before shutdown/);
     const response = await publish;
-    assert.equal(response.status, 502);
-    assert.equal(response.body.failure_kind, 'delivery_unknown');
+    assert.equal(response.status, 503);
+    assert.equal(response.body.failure_kind, 'retryable');
     assert.equal(adapter.child.exitCode, null, 'shutdown still awaits the inbound flush');
     if (respond) {
       inboundResponse.writeHead(200, { 'Content-Type': 'application/json' })
@@ -600,7 +603,7 @@ for (const engine of ['adapter', 'sdk']) {
     const chunks = [];
     const server = await stubServer(t, (frame) => {
       if (frame.cmd === 'aibot_upload_media_chunk') { chunks.push(frame); return false; }
-    });
+    }, { autoPong: false });
     const adapter = startAdapter(t, { ...server, extraEnv: {
       ...remediationEnv,
       WECOM_UPLOAD_ENGINE: engine,
@@ -632,7 +635,7 @@ test('an upload admitted during a publish drain is protected beyond that drain d
   const server = await stubServer(t, (frame) => {
     if (frame.cmd === 'aibot_upload_media_chunk') { chunk = frame; return false; }
     return frame.cmd !== 'aibot_send_msg';
-  });
+  }, { autoPong: false });
   const adapter = startAdapter(t, { ...server, extraEnv: {
     ...remediationEnv, WECOM_RECONNECT_DRAIN_TIMEOUT_MS: '400',
   } });
@@ -648,7 +651,140 @@ test('an upload admitted during a publish drain is protected beyond that drain d
   assert.doesNotMatch(adapter.logs(), /WebSocket connection manually closed/);
   acknowledge(server.connections[0], chunk);
   assert.equal((await upload).body.uploaded, true);
-  assert.equal((await publish).body.failure_kind, 'delivery_unknown');
+  assert.equal((await publish).body.failure_kind, 'retryable');
   await adapter.waitForLog('wecom long connection authenticated', 2);
   assert.equal(sends(server).length, 1);
+});
+
+test('process restart after a dropped chunk resumes the durable suffix', async (t) => {
+  let dropped = false;
+  const server = await stubServer(t, (frame, connection) => {
+    if (frame.cmd === 'aibot_send_msg' && frame.body.markdown.content === 'last' && !dropped) {
+      dropped = true;
+      connection.socket.terminate();
+      return false;
+    }
+  });
+  const before = startAdapter(t, server);
+  await before.waitForLog('wecom long connection authenticated');
+  const body = textPublish('crash-key', 'a'.repeat(3800) + 'last');
+  const failed = await before.request('/publish', body);
+  assert.equal(failed.body.failure_kind, 'retryable');
+  before.child.kill('SIGKILL');
+  await before.exited;
+  const after = startAdapter(t, { ...server, extraEnv: { WECOM_MEDIA_DIR: path.join(before.dir, 'media') } });
+  await after.waitForLog('wecom long connection authenticated');
+  const resumed = await after.request('/publish', body);
+  assert.equal(resumed.status, 200);
+  assert.equal(resumed.body.delivery_outcome, 'retried-unacked-chunks');
+  assert.equal(sends(server).length, 3);
+  assert.equal(sends(server)[2].body.markdown.content, 'last');
+  const replay = await after.request('/publish', body);
+  assert.equal(replay.status, 200);
+  assert.deepEqual(replay.body, { ...resumed.body, replayed: true });
+  assert.equal(sends(server).length, 3);
+});
+
+test('a failed-probe drain cannot close a healthy SDK replacement socket', async () => {
+  const client = new EventEmitter();
+  client.isConnected = true;
+  client.wsManager = { ws: {} };
+  let closes = 0;
+  client.disconnect = () => { closes++; client.emit('disconnected'); };
+  client.connect = () => {};
+  const connection = createOutboundConnection(client);
+  client.emit('authenticated');
+  let settle;
+  const activity = connection.trackActivity(() => new Promise((resolve) => { settle = resolve; }));
+  const reconnect = connection.reconnect();
+  client.emit('disconnected');
+  client.wsManager.ws = {};
+  client.emit('authenticated');
+  settle();
+  await activity;
+  await reconnect;
+  assert.equal(closes, 0, 'the natural reconnect already restored transport health');
+});
+
+test('queued publishes share the authentication deadline measured from arrival', async (t) => {
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_subscribe');
+  const adapter = startAdapter(t, { ...server, extraEnv: { WECOM_PUBLISH_AUTH_WAIT_MS: '200' } });
+  await waitFor(() => frames(server, 'aibot_subscribe').length === 1, 'subscription');
+  const started = Date.now();
+  const replies = await Promise.all(Array.from({ length: 6 }, (_, i) => adapter.request('/publish', textPublish(`queued-${i}`))));
+  assert.ok(Date.now() - started < 700, 'six queued requests must not each wait another 200 ms');
+  for (const reply of replies) {
+    assert.equal(reply.status, 503);
+    assert.equal(reply.body.delivery_outcome, 'nothing-written');
+  }
+  assert.equal(sends(server).length, 0);
+});
+
+test('a replacement between failed probe and reconnect admission is left healthy', async () => {
+  const client = new EventEmitter();
+  const oldSocket = new EventEmitter();
+  oldSocket.ping = (_, callback) => callback();
+  client.wsManager = { ws: oldSocket };
+  client.isConnected = true;
+  let closes = 0;
+  client.disconnect = () => { closes++; client.emit('disconnected'); };
+  client.connect = () => {};
+  const connection = createOutboundConnection(client);
+  client.emit('authenticated');
+  const probe = connection.healthCheck();
+  oldSocket.emit('error', new Error('probe failed'));
+  client.wsManager.ws = {};
+  client.emit('authenticated');
+  assert.equal(await probe, false);
+  await connection.reconnect();
+  assert.equal(closes, 0);
+});
+
+for (const initiallyReady of [false, true]) {
+  test(`expired auth admission never sends (${initiallyReady ? 'ready promise delayed' : 'late authenticated event'})`, async () => {
+    let clock = 0;
+    const client = new EventEmitter();
+    client.isConnected = initiallyReady;
+    let frames = 0;
+    client.sendMessage = async () => { frames++; return {}; };
+    const connection = createOutboundConnection(client, { now: () => clock, authWaitMs: 1000 });
+    if (initiallyReady) client.emit('authenticated');
+    const sending = connection.sendMessage('u', { msgtype: 'markdown', markdown: { content: 'hello' } });
+    // Advance wall time without running timers: a late event or microtask
+    // must not win merely because the scheduled deadline callback is overdue.
+    clock = 1001;
+    if (!initiallyReady) { client.isConnected = true; client.emit('authenticated'); }
+    await assert.rejects(sending, /WebSocket not connected/);
+    assert.equal(frames, 0);
+  });
+}
+
+// Scaled wall-clock counterpart to the exact 40 s / 45 s virtual-time test:
+// exercise HTTP -> publisher -> connection -> SDK -> WebSocket with slow acks.
+test('an admitted keyless HTTP publish streams three chunks beyond its arrival deadline', async (t) => {
+  let subscription;
+  const server = await stubServer(t, (frame, connection) => {
+    if (frame.cmd === 'aibot_subscribe') {
+      subscription = { frame, connection };
+      return false;
+    }
+    if (frame.cmd === 'aibot_send_msg') {
+      setTimeout(() => acknowledge(connection, frame), 120);
+      return false;
+    }
+  });
+  const adapter = startAdapter(t, { ...server, extraEnv: { WECOM_PUBLISH_AUTH_WAIT_MS: '500' } });
+  await waitFor(() => subscription, 'subscription');
+  const text = 'a'.repeat(7600) + 'last';
+  const started = Date.now();
+  const publishing = adapter.request('/publish', { conversation: { conversation_id: 'local-user' }, text });
+  await delay(350);
+  assert.equal(sends(server).length, 0);
+  acknowledge(subscription.connection, subscription.frame);
+  const response = await publishing;
+  assert.equal(response.status, 200);
+  assert.equal(response.body.delivered, true);
+  assert.ok(Date.now() - started > 500);
+  assert.equal(sends(server).length, 3);
+  assert.equal(sends(server).map((f) => f.body.markdown.content).join(''), text);
 });

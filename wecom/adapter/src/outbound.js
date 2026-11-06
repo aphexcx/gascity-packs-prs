@@ -213,23 +213,11 @@ export class JournalUnavailableError extends Error {}
 // see handlePublishMedia), which is what keeps the full-rewrite persist
 // below cheap enough to run per stage latch.
 //
-// TEXT entries (endpoint 'publish', jg-qx7fek) are guests in the media
-// journal, and the guarantees are exactly these:
-//   - a text entry expires `textTtlMs` (default 24 h) after its last
-//     update: it is ignored by get() and dropped on load and on every
-//     write. Text entries never settle, so without the expiry an
-//     unacknowledged chunk would hold its slot forever.
-//   - a text write is ifRoom: it NEVER displaces another entry. At the
-//     cap (or the byte cap) it is skipped, logged once until a text
-//     write fits again, and the send goes ahead with in-memory
-//     protection only. So text traffic can never evict a media receipt —
-//     or any other entry.
-//   - a MEDIA write at the cap still prunes by the policy above; text
-//     entries never settle, so they go only in its last-resort step.
-//   - cadence: one write per successful text publish (before its first
-//     chunk; the drop of the delivered key rides the next write), and a
-//     failed publish adds one, made at once, so its outcome is on disk
-//     before the caller is answered (see handlePublish).
+// Text checkpoints expire after 24 h. They persist before the first send
+// and after each acknowledgement, including the final one. Writes are
+// critical: no capacity/durability means no new send. Other writes cannot
+// evict a checkpoint during its retention window. Legacy ambiguous text
+// entries still refuse retries; they lack per-chunk acknowledgement state.
 //
 // filePath null keeps the journal in memory only (tests).
 export function createAttemptJournal({
@@ -348,24 +336,24 @@ export function createAttemptJournal({
         // Every media key the backup cannot prove past its sends (no
         // receipt and no callback receipt, both written after the last
         // send) is delivery-unknown: refused for blind retry, the side this
-        // journal always errs on. Text entries are left alone: their first
-        // write already records every chunk as attempted, which hydrates
-        // as a refusal on its own.
+        // journal always errs on. Legacy text entries already hydrate as a refusal. Checkpointed
+        // text may have lost an acknowledgement in the missing generation,
+        // so it also fails closed instead of replaying that chunk.
         let marked = 0;
         for (const e of entries.values()) {
-          if (e.endpoint === 'publish' || e.receipt || e.callbackReceipt || e.deliveryUnknown) continue;
+          if ((e.endpoint === 'publish' && !e.textCheckpoint) || e.receipt || e.callbackReceipt || e.deliveryUnknown) continue;
           e.deliveryUnknown = true;
           marked += 1;
         }
         if (marked > 0) {
           log(`outbound attempt journal: the backup generation is one write behind the lost main file — `
-            + `${marked} media key(s) it cannot prove past their sends are delivery-unknown (refused for retry, never re-sent)`);
+            + `${marked} key(s) it cannot prove past their sends are delivery-unknown (refused for retry, never re-sent)`);
         }
       }
     } else if (sawCorrupt) {
       degraded = true;
       log('outbound attempt journal: no valid generation survives its corruption — DEGRADED; '
-        + 'media publishing fails closed until the quarantined journal files are inspected and removed');
+        + 'media and keyed text publishing fail closed until the quarantined journal files are inspected and removed');
     } else {
       // Nothing to load and nothing newly corrupt: a previous startup may
       // have quarantined every generation. Its block was in memory only,
@@ -380,7 +368,7 @@ export function createAttemptJournal({
         degraded = true;
         log(`outbound attempt journal: no generation to load but ${remaining.length} quarantined file(s) remain `
           + `(${remaining.join(', ')}) — still DEGRADED from an earlier startup's corruption; `
-          + 'media publishing fails closed until the quarantined journal files are inspected and removed');
+          + 'media and keyed text publishing fail closed until the quarantined journal files are inspected and removed');
       }
     }
   }
@@ -436,9 +424,8 @@ export function createAttemptJournal({
     // be established — callers must stop the send; critical:false logs,
     // rolls the in-memory mutation back, and returns false.
     //
-    // ifRoom (text writes): never displace another entry — when the
-    // write would exceed the cap or the byte cap, skip it (logged once
-    // until a text write fits again) and return false.
+    // ifRoom (text writes): reclaim oldest settled media receipts only.
+    // Pending media and retained text checkpoints must never be displaced.
     record(key, patch, { critical = true, ifRoom = false } = {}) {
       const fail = (err) => {
         const wrapped = new JournalUnavailableError(
@@ -451,43 +438,48 @@ export function createAttemptJournal({
       };
       if (degraded) return fail(new Error('journal is degraded (quarantined corrupt state on startup)'));
       dropExpiredText();
-      const hadKey = entries.has(key);
+      // Rollback must preserve recency as well as contents: appending
+      // reclaimed receipts would make newer receipts the next victims.
+      const previousEntries = new Map(entries);
+      const rollback = () => {
+        entries.clear();
+        for (const [k, v] of previousEntries) entries.set(k, v);
+      };
       const prev = entries.get(key);
       const merged = { ...(prev ?? {}), ...patch, updatedAt: now() };
       entries.delete(key); // re-insert so Map order tracks recency
       entries.set(key, merged);
-      const pruned = [];
       // Retention policy (round-2 findings 7, 12): bound BOTH the entry
       // count and the total serialized bytes. Per-entry size is already
       // bounded (capped key, hashed caption), so the byte cap is a
       // belt-and-suspenders guard against a pathological in-cap burst.
       // Drop the oldest SETTLED entry first; only when nothing is settled
       // drop the oldest of all — that entry loses its delivery-unknown
-      // protection, so say so. An ifRoom write drops nothing.
+      // protection, so say so. Text writes never take that last resort.
       const overBytes = () =>
         Buffer.byteLength(JSON.stringify({ version: 2, entries: Object.fromEntries(entries) })) > maxBytes;
-      const overCap = () => entries.size > cap || (entries.size > 1 && overBytes());
-      // ifRoom checks the byte cap even for a lone entry: skipping it is
-      // free, whereas the prune loop below must keep at least one.
-      if (ifRoom && (entries.size > cap || overBytes())) {
-        entries.delete(key);
-        if (hadKey) entries.set(key, prev);
-        if (!textSkipLogged) {
-          textSkipLogged = true;
-          log('outbound attempt journal full: a text send is not journaled (no entry is displaced for it; its retry protection does not survive a restart)');
-        }
-        return false;
-      }
+      const overCap = () => entries.size > cap || ((ifRoom || entries.size > 1) && overBytes());
       while (overCap()) {
         let dropped = null;
         for (const [k, e] of entries) {
-          if (e.receipt) { dropped = k; break; }
+          if (k !== key && e.endpoint !== 'publish' && !e.textCheckpoint && e.receipt) { dropped = k; break; }
         }
         if (dropped === null) {
-          dropped = entries.keys().next().value;
+          if (ifRoom) {
+            rollback();
+            if (!textSkipLogged) {
+              textSkipLogged = true;
+              log('outbound attempt journal full: no settled media receipt can make room for a text checkpoint; pending entries and retained text are protected');
+            }
+            return false;
+          }
+          dropped = [...entries].find(([k, e]) => k !== key && !e.textCheckpoint)?.[0] ?? null;
+          if (dropped === null) {
+            rollback();
+            return fail(new Error('journal capacity is reserved by retained text checkpoints'));
+          }
           log('outbound attempt journal at capacity with nothing settled: dropping unresolved entry for a key (its restart-resume protection is lost)');
         }
-        pruned.push([dropped, entries.get(dropped)]);
         entries.delete(dropped);
       }
       try {
@@ -496,11 +488,7 @@ export function createAttemptJournal({
         // Roll back: the caller aborts on a critical failure, and a later
         // successful persist must not resurrect this patch as if the
         // aborted action had happened.
-        entries.delete(key);
-        if (hadKey) entries.set(key, prev);
-        for (const [k, v] of pruned) {
-          if (!entries.has(k)) entries.set(k, v);
-        }
+        rollback();
         return fail(err);
       }
       if (ifRoom) textSkipLogged = false;
@@ -889,6 +877,18 @@ async function readMediaFile({ fd, filePath, mediaKind, maxBytes }) {
 // Thrown when the upload gate is saturated; answered as HTTP 429 — the
 // caller retries with the SAME idempotency key once load drains.
 class BusyError extends Error {}
+class PublishWaitTimeout extends Error {
+  constructor() { super('publish admission deadline expired before sending'); }
+}
+
+function waitForPublishOwner(promise, deadline) {
+  if (deadline === undefined) return promise;
+  if (Date.now() >= deadline) return Promise.reject(new PublishWaitTimeout());
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new PublishWaitTimeout()), deadline - Date.now());
+  })]).finally(() => clearTimeout(timer));
+}
 
 // createUploadGate bounds outbound media admission globally (codex
 // jg-d0xr finding 9): at most `slots` requests hold a media buffer
@@ -1028,6 +1028,11 @@ export function createOutboundPublisher(deps) {
       mediaSize: e.mediaSize,
       uploadFilename: e.uploadFilename,
       messageID: e.messageID,
+      textCheckpoint: e.textCheckpoint,
+      chunksTotal: e.chunksTotal,
+      chunksAttempted: e.chunksAttempted,
+      retriedUnackedChunks: !!e.retriedUnackedChunks,
+      retryUnacked: !!e.retryUnacked,
       captionMessageID: e.captionMessageID,
       chunksDelivered: e.chunksDelivered ?? 0,
       receipt: e.receipt,
@@ -1041,7 +1046,7 @@ export function createOutboundPublisher(deps) {
       expectedTranscript: e.expectedTranscript,
       deliveryUnknown: !!e.deliveryUnknown
         || (!!e.sendAttempted && !e.mediaSent && !e.receipt)
-        || ((e.chunksAttempted ?? 0) > (e.chunksDelivered ?? 0) && !e.receipt),
+        || ((!e.textCheckpoint || !e.retryUnacked) && (e.chunksAttempted ?? 0) > (e.chunksDelivered ?? 0) && !e.receipt),
     };
   }
 
@@ -1078,18 +1083,28 @@ export function createOutboundPublisher(deps) {
   // send per chatid; different chats stay concurrent.
   const sendChains = new Map();
 
-  function chainSend(chatid, fn) {
+  function chainSend(chatid, fn, deadline) {
     const prev = sendChains.get(chatid) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(fn);
+    let expired = false;
+    let timer;
+    const next = prev.catch(() => {}).then(() => {
+      clearTimeout(timer);
+      if (expired || (deadline !== undefined && Date.now() >= deadline)) throw new PublishWaitTimeout();
+      return fn();
+    });
+    // Keep the actual queue tail even when its caller times out. The
+    // cancelled callback stays inert, and later sends cannot jump the queue.
     sendChains.set(chatid, next);
-    // The cleanup must hang off a rejection-proofed derivative: `next` can
-    // reject (the caller handles that), and `.finally()` on a rejecting
-    // promise yields ANOTHER rejecting promise — left bare, that derived
-    // rejection is unhandled and kills the process on the first failed send.
     next.catch(() => {}).then(() => {
       if (sendChains.get(chatid) === next) sendChains.delete(chatid);
     });
-    return next;
+    if (deadline === undefined) return next;
+    return Promise.race([next, new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        reject(new PublishWaitTimeout());
+      }, Math.max(0, deadline - Date.now()));
+    })]).finally(() => clearTimeout(timer));
   }
 
   // countByEndpoint tallies the live in-memory pool for one endpoint.
@@ -1254,13 +1269,13 @@ export function createOutboundPublisher(deps) {
   // them). A captured state that settled WITH a receipt is still safe to
   // answer from directly even if it was evicted meanwhile — it is the
   // same dedup answer the map would have given.
-  async function claimPublishState(key, endpoint = 'publish') {
+  async function claimPublishState(key, endpoint = 'publish', deadline) {
     for (;;) {
       const state = publishStateFor(key, endpoint);
       if (!state) return { refused: true };
       if (state.receipt) return { receipt: state.receipt, state };
       if (!state.promise) return { state, token: installOwner(state) };
-      await state.promise.catch(() => {});
+      await waitForPublishOwner(state.promise.catch(() => {}), deadline);
       if (state.receipt) return { receipt: state.receipt, state };
       // Otherwise: refetch — never resume a possibly-retired reference.
     }
@@ -1314,6 +1329,16 @@ export function createOutboundPublisher(deps) {
 
   // --- /publish: text/markdown --------------------------------------------
 
+  function textDeliveryReceipt(conversation, state) {
+    return {
+      conversation,
+      message_id: state.messageID ?? '',
+      delivered: true,
+      chunks_delivered: state.chunksDelivered,
+      delivery_outcome: state.retriedUnackedChunks ? 'retried-unacked-chunks' : 'acked-and-done',
+    };
+  }
+
   // During shutdown only gc's matching media transcript callback may use
   // /publish. Answer directly from receipts: never claim a key, wait on its
   // owner, or fall through to a fresh send while the owner drains.
@@ -1335,6 +1360,7 @@ export function createOutboundPublisher(deps) {
   }
 
   async function handlePublish(req, res, body) {
+    const authDeadline = Date.now() + (cfg.publishAuthWaitMs ?? 45000);
     let pub;
     try {
       pub = JSON.parse(body);
@@ -1344,7 +1370,7 @@ export function createOutboundPublisher(deps) {
     }
     const convo = pub.conversation ?? {};
     const chatid = convo.conversation_id;
-    if (!chatid || !pub.text) {
+    if (typeof chatid !== 'string' || !chatid || typeof pub.text !== 'string' || !pub.text) {
       res.writeHead(400).end('conversation.conversation_id and text are required');
       return;
     }
@@ -1354,13 +1380,14 @@ export function createOutboundPublisher(deps) {
     // re-sends), while 0/false read as keyless. /publish-media already
     // rejects the shape; fail closed here too rather than half-honor it.
     if (pub.idempotency_key !== undefined
-      && (typeof pub.idempotency_key !== 'string' || pub.idempotency_key === '')) {
+      && (typeof pub.idempotency_key !== 'string' || pub.idempotency_key === ''
+        || Buffer.byteLength(pub.idempotency_key) > MAX_IDEMPOTENCY_KEY_BYTES)) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         conversation: convo,
         delivered: false,
         failure_kind: 'invalid_request',
-        error: `idempotency_key must be a non-empty string when supplied, got ${Array.isArray(pub.idempotency_key) ? 'array' : typeof pub.idempotency_key}`,
+        error: 'idempotency_key must be a non-empty string of at most 256 bytes',
       }));
       return;
     }
@@ -1394,7 +1421,19 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
-    const claim = await claimPublishState(pub.idempotency_key, 'publish');
+    const textFingerprint = { endpoint: 'publish', payload_sha256: sha256Hex(JSON.stringify([chatid, pub.text])) };
+    let claim;
+    try { claim = await claimPublishState(pub.idempotency_key, 'publish', authDeadline); }
+    catch (err) {
+      if (!(err instanceof PublishWaitTimeout)) throw err;
+      // Another request still owns this key; do not cancel or steal it.
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ conversation: convo, delivered: false,
+        failure_kind: 'publish_pending', delivery_outcome: 'in-progress', retry_safe: true,
+        idempotency_key: pub.idempotency_key,
+        error: 'another request still owns this key; retry with the same key to observe or resume it' }));
+      return;
+    }
     if (claim.refused) {
       // The idempotency map is at cap with nothing safely evictable:
       // refusing the NEW key beats evicting a live/pinned entry whose
@@ -1405,6 +1444,14 @@ export function createOutboundPublisher(deps) {
         delivered: false,
         failure_kind: 'overloaded',
       }));
+      return;
+    }
+    if (claim.state?.endpoint === 'publish' && claim.state.fingerprint
+      && fingerprintConflicts(claim.state, textFingerprint).length) {
+      claim.token?.finish();
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ delivered: false, failure_kind: 'idempotency_conflict',
+        error: 'idempotency_key already belongs to different text or conversation' }));
       return;
     }
     if (claim.receipt) {
@@ -1434,8 +1481,9 @@ export function createOutboundPublisher(deps) {
           return;
         }
       }
+      const textDone = claim.state?.endpoint === 'publish';
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(claim.receipt));
+      res.end(JSON.stringify({ ...claim.receipt, ...(textDone ? { replayed: true } : {}) }));
       return;
     }
     const { state, token } = claim;
@@ -1473,7 +1521,7 @@ export function createOutboundPublisher(deps) {
     // A chunk was attempted without an acknowledgement (in this process,
     // or journaled before a restart): it may already be in the chat, so
     // this key is not blindly retryable — exactly media's rule.
-    if (state.deliveryUnknown || (state.chunksAttempted ?? 0) > state.chunksDelivered) {
+    if (state.deliveryUnknown || (!state.textCheckpoint && (state.chunksAttempted ?? 0) > state.chunksDelivered)) {
       token.finish(new Error(`delivery unknown for ${key}`));
       writeDeliveryUnknown(res, {
         convo,
@@ -1484,43 +1532,65 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
-    // The delivered log line (below) names feedbackBase so a later
-    // feedback_event correlates back to this exact publish — feedback
-    // ids are adapter-minted identifiers, not conversation content, so
-    // logging them is within the no-content-logging policy.
-    //
-    // chunksAttempted latches in memory BEFORE each frame goes out
-    // (media's caption discipline). A keyed publish writes the journal
-    // once before the first chunk, recording every remaining chunk as
-    // attempted: a crash anywhere in the loop rehydrates as
-    // delivery-unknown. A DELIVERED publish drops that entry in memory
-    // only (deferred — the next journal write persists the drop), so it
-    // costs one write; a restart before then refuses the key, the safe
-    // side. A FAILED publish writes its outcome at once, so it costs two:
-    // nothing written drops the entry (a restart must not answer 409 for
-    // a key just told "retrying is safe"), a pre-write refusal
-    // mid-message records the resume point, and an unacknowledged chunk
-    // records deliveryUnknown with that chunk's index (a refusal after a
-    // restart names the chunk that timed out and never understates
-    // chunks_delivered). A lost outcome write errs toward refusing a
-    // retry after a restart, never toward re-sending. Text journal
-    // writes are non-critical and ifRoom: a full or broken journal never
-    // blocks text delivery (it only loses the restart-durable half of
-    // the protection). Text keys are not byte-capped on the wire, so only
-    // a key within media's cap is journaled — that keeps every entry
-    // small and the persist cheap.
-    const journalText = !!key && Buffer.byteLength(key) <= MAX_IDEMPOTENCY_KEY_BYTES && !journal.isDegraded?.();
-    const journalTextState = (patch) => journal.record(key, { endpoint: 'publish', ...patch }, { critical: false, ifRoom: true });
+    // New keyed text attempts persist each acknowledgement before advancing.
+    // Legacy ambiguous attempts remain refused: they have no trustworthy
+    // checkpoint. A retry replays only the unacknowledged suffix; a lost
+    // provider ack can still mean that suffix is already visible (at-least-once).
+    const journalTextState = () => {
+      if (!key) return;
+      const saved = journal.record(key, {
+        endpoint: 'publish', textCheckpoint: true, fingerprint: textFingerprint,
+        chunksTotal: state.chunksTotal, chunksAttempted: state.chunksAttempted ?? 0,
+        chunksDelivered: state.chunksDelivered, messageID: state.messageID,
+        deliveryUnknown: false, retriedUnackedChunks: !!state.retriedUnackedChunks,
+        retryUnacked: !!state.retryUnacked,
+        // Remove padding left by older checkpoints. A growing ack can
+        // reclaim a settled receipt; failed persistence stops the suffix.
+        ackReserve: undefined,
+      }, { ifRoom: true });
+      if (!saved) throw new JournalUnavailableError('text checkpoint journal is full — retry with the same key after capacity is available');
+      state.textCheckpoint = true;
+      state.fingerprint = textFingerprint;
+    };
+    if (state.textCheckpoint && state.chunksDelivered === state.chunksTotal) {
+      try { if (!journalCovers(key, state)) journalTextState(); } catch (err) {
+        token.finish(err);
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ delivered: false, failure_kind: 'journal_unavailable', error: err.message }));
+        return;
+      }
+      state.receipt = textDeliveryReceipt(convo, state);
+      token.finish();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...state.receipt, replayed: true }));
+      return;
+    }
     let chunkCount = 0;
-    let sendFailure = ''; // set only by a failed sendMessage: not_written | rejected | unknown
+    let sendFailure = ''; // not_written | rejected | retryable | unknown
     const send = async () => {
       const chunks = chunkText(pub.text);
       chunkCount = chunks.length;
-      if (journalText && state.chunksDelivered < chunks.length) {
-        journalTextState({ chunksAttempted: chunks.length, chunksDelivered: state.chunksDelivered });
+      state.chunksTotal = chunks.length;
+      // Refresh registration before the pre-send latch so even the backup
+      // knows this attempt, including a cached key whose checkpoint expired.
+      // This also repairs an acknowledgement that failed to persist.
+      journalTextState();
+      if (state.textCheckpoint && (state.chunksAttempted ?? 0) > state.chunksDelivered) {
+        state.retriedUnackedChunks = true;
       }
+      let admitted = false;
       for (let i = state.chunksDelivered; i < chunks.length; i++) {
+        const previousAttempted = state.chunksAttempted;
+        const previousRetryUnacked = state.retryUnacked;
         state.chunksAttempted = i + 1;
+        state.retryUnacked = false;
+        try { journalTextState(); } catch (err) {
+          // No provider call happened. A failed latch must not turn an
+          // unwritten attempt into a delivery-unknown refusal on retry.
+          state.chunksAttempted = previousAttempted;
+          state.retryUnacked = previousRetryUnacked;
+          throw err;
+        }
         let chunkReceipt;
         try {
           chunkReceipt = await sendMessage(chatid, {
@@ -1529,37 +1599,36 @@ export function createOutboundPublisher(deps) {
               content: chunks[i],
               ...(feedbackBase ? { feedback: { id: `${feedbackBase}.${i}` } } : {}),
             },
-          });
+          }, { authDeadline: admitted ? null : authDeadline });
         } catch (err) {
           if (isDefiniteSendFailure(err)) {
             // Nothing from this chunk is in the chat: keep the key retryable.
             sendFailure = typeof err?.errcode === 'number' ? 'rejected' : 'not_written';
             state.chunksAttempted = state.chunksDelivered;
-            if (journalText) {
-              if (state.chunksDelivered === 0) journal.forget?.(key);
-              else journalTextState({ chunksAttempted: state.chunksDelivered, chunksDelivered: state.chunksDelivered });
-            }
+            journalTextState();
           } else {
-            sendFailure = 'unknown';
-            state.deliveryUnknown = true;
-            // The complete text state, not a bare flag: if the pre-send
-            // write was lost (or pruned meanwhile) this is a fresh write,
-            // and a bare patch would rehydrate as a media entry and
-            // answer a spurious idempotency_conflict.
-            if (journalText) {
-              journalTextState({ chunksAttempted: i + 1, chunksDelivered: state.chunksDelivered, deliveryUnknown: true });
+            sendFailure = key && state.textCheckpoint ? 'retryable' : 'unknown';
+            if (sendFailure === 'unknown') state.deliveryUnknown = true;
+            else {
+              state.retryUnacked = true;
+              journalTextState();
             }
           }
           throw err;
         }
-        state.messageID = chunkReceipt?.headers?.req_id ?? state.messageID;
+        admitted = true;
+        state.messageID = latchedReqId(chunkReceipt) ?? state.messageID;
         state.chunksDelivered = i + 1;
+        journalTextState();
       }
-      if (journalText) journal.forget?.(key, { deferred: true });
     };
     try {
-      await chainSend(chatid, send);
+      await chainSend(chatid, send, authDeadline);
     } catch (err) {
+      if (err instanceof PublishWaitTimeout) {
+        sendFailure = 'not_written';
+        chunkCount = chunkText(pub.text).length;
+      }
       token.finish(err);
       const chunk = state.chunksDelivered + 1;
       const delivered = state.chunksDelivered;
@@ -1575,9 +1644,9 @@ export function createOutboundPublisher(deps) {
       //                                    → 503 not_sent
       //   written, no acknowledgement (ack timeout, socket-loss
       //     cancellation, anything unrecognized)
-      //                                    → 502 delivery_unknown; a keyed
-      //                                      retry is refused: 409 with the
-      //                                      same failure_kind (above)
+      //                                    → keyed: 503 retryable (resume
+      //                                      the unacknowledged suffix);
+      //                                      keyless: 502 delivery_unknown
       //   explicit provider rejection (ack frame with errcode ≠ 0): the
       //     frame was written and refused, nothing is visible
       //                                    → 502 provider_error + errcode
@@ -1589,6 +1658,17 @@ export function createOutboundPublisher(deps) {
         chunks_delivered: delivered,
         ...(key ? { idempotency_key: key } : {}),
       };
+      if (err instanceof JournalUnavailableError || sendFailure === 'retryable') {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ conversation: convo, delivered: false,
+          failure_kind: err instanceof JournalUnavailableError ? 'journal_unavailable' : 'retryable',
+          retry_safe: !(err instanceof JournalUnavailableError),
+          delivery_outcome: sendFailure === 'retryable' ? 'unacknowledged-chunks' : 'checkpoint-unavailable',
+          error: err instanceof JournalUnavailableError ? err.message
+            : 'Retry with the same key to resume at the first unacknowledged chunk. A lost acknowledgement may repeat that chunk; acknowledged chunks are not resent.',
+          ...extra }));
+        return;
+      }
       if (sendFailure === 'unknown') {
         writeDeliveryUnknown(res, {
           convo,
@@ -1604,8 +1684,11 @@ export function createOutboundPublisher(deps) {
           conversation: convo,
           delivered: false,
           failure_kind: 'not_sent',
-          error: `not sent: ${describeProviderError(err)} — chunk ${chunk} of ${chunkCount} is not in the chat. `
-            + (delivered === 0
+          delivery_outcome: 'nothing-written',
+          error: `not sent: ${describeProviderError(err)} — this request did not write chunk ${chunk} of ${chunkCount}. `
+            + (state.retryUnacked || state.retriedUnackedChunks
+              ? 'An earlier unacknowledged attempt may already be visible; retry with the same key to preserve acknowledged progress.'
+              : delivered === 0
               ? 'Retrying is safe.'
               : `Chunks 1–${delivered} were delivered earlier; retry with the same idempotency key to resume at chunk ${chunk} without repeating them.`),
           ...extra,
@@ -1625,11 +1708,7 @@ export function createOutboundPublisher(deps) {
     }
     // The receipt must be visible BEFORE the owner promise settles, so a
     // waiter woken by finish() answers from the map instead of re-claiming.
-    state.receipt = {
-      conversation: convo,
-      message_id: state.messageID ?? '',
-      delivered: true,
-    };
+    state.receipt = textDeliveryReceipt(convo, state);
     token.finish();
     log(`publish → ${chatid} delivered (session=${pub.session_id ?? ''}${feedbackBase ? ` feedback_base=${feedbackBase}` : ''})`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
