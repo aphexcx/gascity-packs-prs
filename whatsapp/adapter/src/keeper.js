@@ -37,6 +37,7 @@ import path from 'node:path';
 
 import { killPoint } from './clock.js';
 import { conversationRef } from './gc.js';
+import { lastFour } from './ledger.js';
 import { isRetryableAnswer, ladderDelay, ladderMs } from './http.js';
 import { verdictOf } from './inbound.js';
 import {
@@ -84,9 +85,13 @@ export function parseInstant(value) {
 
 const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 // Logs name a conversation by its last four digits only.
-const tag = (waId) => `…${String(waId).slice(-4)}`;
+const tag = (conversationId) => `…${lastFour(conversationId)}`;
 const blank = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim());
-const digitsOf = (waId) => String(waId ?? '').replace(/\D/g, '');
+const digitsOf = (conversationId) => String(conversationId ?? '').replace(/\D/g, '');
+// A phone number as an operator types it: digits and phone punctuation only.
+const PHONE_TYPED = /^[+\d\s().-]+$/;
+// A conversation id as the gateway gives one: a number, or a user id.
+const ID_SHAPED = /^[A-Za-z0-9._-]{1,200}$/;
 // A refusal the internal listener answers with its own status (index.js).
 const refusal = (status, message) => Object.assign(new Error(message), { status });
 
@@ -118,11 +123,13 @@ function normalizeRow(raw) {
 }
 
 // window_read_ok_at: the last good GET /v1/window (the doctor row reads it);
-// window_read_error(_at): the last failure since, cleared by a good read.
+// window_read_error(_at): the last failure since, cleared by a good read;
+// window_ids: the conversation ids that read listed (null until one is
+// recorded), so a restart knows them before its first read (gp-g02t).
 // An invite stays after its bind, as {..., bound_to, bound_at}, so a second
 // sight of the same join is a no-op; prune drops it after 30 days.
 const emptyState = () => ({
-  version: 1, conversations: {}, invites: {}, window_read_ok_at: null, window_read_error: null, window_read_error_at: null,
+  version: 1, conversations: {}, invites: {}, window_read_ok_at: null, window_read_error: null, window_read_error_at: null, window_ids: null,
 });
 // A good read that changes nothing else is written at most once a minute
 // (windowStampMs; the doctor row turns red after 5 minutes without one).
@@ -172,7 +179,13 @@ export function createKeeper({
   let readFailures = 0;
   let readRetryAt = -Infinity;
   let savedOkAt = state.window_read_ok_at;
-  let lastWindowIds = new Map(); // the last good read's conversations, digits -> id
+  // The last good read's conversation ids (null: no read recorded yet, as in
+  // a keeper.json written before gp-g02t). A row the last good read did not
+  // list raises nothing (the Opus read r1's CRITICAL 1, the mayor's (A)): its
+  // owner is unbound at the gateway, and its id may be a phone number a later
+  // owner shows, so an event there would prompt the mayor to send to it.
+  let lastWindowIds = state.window_ids === null ? null : new Set(state.window_ids);
+  const listed = (id) => lastWindowIds === null || lastWindowIds.has(id);
   let raiseFailLogAt = -Infinity;
   const loggedOnce = new Set();
   const retries = []; // events waiting on the ladder (memory only: a kill loses them, never repeats them)
@@ -205,6 +218,7 @@ export function createKeeper({
       if (typeof raw.window_read_ok_at === 'number') s.window_read_ok_at = raw.window_read_ok_at;
       if (typeof raw.window_read_error === 'string') s.window_read_error = raw.window_read_error;
       if (typeof raw.window_read_error_at === 'number') s.window_read_error_at = raw.window_read_error_at;
+      if (Array.isArray(raw.window_ids)) s.window_ids = raw.window_ids.filter((id) => typeof id === 'string');
       return s;
     } catch (err) {
       // Never guess at a damaged record: set it aside and start with every
@@ -288,24 +302,36 @@ export function createKeeper({
     for (const [code, inv] of Object.entries(s.invites)) if (inv.recorded_at < keepAfter) delete s.invites[code];
   }
 
-  function row(waId) {
-    const id = String(waId);
+  function row(conversationId) {
+    const id = String(conversationId);
     if (!Object.hasOwn(state.conversations, id)) state.conversations[id] = freshRow();
     return state.conversations[id];
   }
 
-  // The operator's verbs name a phone as typed ("+55 11 99999-0001"); a row
-  // is keyed by the gateway's wa_id. The digits must match a row, or a
-  // conversation of the last good window read; a verb never creates a row
-  // for a phone the keeper does not know (consent --off on a mistyped number
-  // must not answer OK while the real one stays ON). Returns the row's id.
-  function knownConversation(waId) {
-    const digits = digitsOf(waId);
-    if (!digits) throw refusal(400, 'wa_id has no digits: give the phone number the owner joined from');
-    if (Object.hasOwn(state.conversations, digits)) return digits;
-    const id = Object.keys(state.conversations).find((key) => digitsOf(key) === digits) ?? lastWindowIds.get(digits);
-    if (id !== undefined) return id;
-    throw refusal(404, `no conversation ending ${digits.slice(-4)} is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded`);
+  // The operator's verbs name a conversation by the id gc shows
+  // (whatsapp/<conversation_id>): a row is keyed by the gateway's
+  // conversation_id (its GET /v1/window entry). A user id matches only whole
+  // and exact: one may hold letters (the gateway's BSUID pattern: two
+  // capitals, a period, up to 128 alphanumerics), so two user ids can share
+  // every digit and one can have none (gp-g02t, codex self-review r1 MAJOR 1).
+  // A number may be typed in any form ("+55 11 99999-0001"): text of digits
+  // and phone punctuation alone matches the conversation whose id is exactly
+  // its digits, which no user id is. The candidates are the keeper's rows and
+  // the conversations of the last good window read; a verb never creates a
+  // row for a conversation the keeper does not know (consent --off on a
+  // mistyped number must not answer OK while the real one stays ON). Returns
+  // the row's id.
+  function knownConversation(typed) {
+    const text = String(typed ?? '').trim();
+    const phoneTyped = PHONE_TYPED.test(text) && /\d/.test(text);
+    if (!phoneTyped && !ID_SHAPED.test(text)) {
+      throw refusal(400, 'not a conversation id: give the id gc shows for the conversation (whatsapp/<conversation_id>), or the owner\'s number in any form');
+    }
+    const known = new Set([...Object.keys(state.conversations), ...(lastWindowIds ?? [])]);
+    if (known.has(text)) return text;
+    const digits = phoneTyped ? digitsOf(text) : '';
+    if (digits && known.has(digits)) return digits;
+    throw refusal(404, `no conversation ending ${(digits || text).slice(-4)} is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded`);
   }
 
   const zoneOf = (r) => r.tz || homeZone;
@@ -376,32 +402,34 @@ export function createKeeper({
     state.window_read_error = null;
     state.window_read_error_at = null;
     let dirty = false;
-    const ids = new Map();
+    const ids = new Set();
     for (const w of Array.isArray(answer?.windows) ? answer.windows : []) {
       if (blank(w?.conversation_id)) continue;
       const id = String(w.conversation_id);
-      ids.set(digitsOf(id), id);
+      ids.add(id);
       if (applyWindow(id, parseInstant(w.last_inbound_at), parseInstant(w.window_closes_at), t)) dirty = true;
     }
+    const listChanged = state.window_ids === null || state.window_ids.length !== ids.size || state.window_ids.some((id) => !ids.has(id));
     lastWindowIds = ids;
-    if (dirty || hadError || !(t - savedOkAt < stampEvery)) persist();
+    state.window_ids = [...ids];
+    if (dirty || hadError || listChanged || !(t - savedOkAt < stampEvery)) persist();
   }
 
-  function applyWindow(waId, last, close, t) {
-    const r = row(waId);
+  function applyWindow(conversationId, last, close, t) {
+    const r = row(conversationId);
     if (r.window_closes_at === close && r.last_inbound_at === last) return false;
     // Only an inbound moves last_inbound_at, and only forward. A read that
     // carries an older one (a gateway restored from a backup, a replica
     // behind) is ignored: taking it would empty the fired set and raise a
     // mark's id a second time when the newer one comes back.
     if (r.last_inbound_at != null && (last == null || last < r.last_inbound_at)) {
-      logOnce(`backward:${waId}:${last}`, `keeper: ${tag(waId)}: the gateway's last_inbound_at went back (${iso(last) ?? 'none'} after ${iso(r.last_inbound_at)}); read ignored`);
+      logOnce(`backward:${conversationId}:${last}`, `keeper: ${tag(conversationId)}: the gateway's last_inbound_at went back (${iso(last) ?? 'none'} after ${iso(r.last_inbound_at)}); read ignored`);
       return false;
     }
     const oldClose = r.window_closes_at;
     // (d) a close that passed before the message that moved it was a lapse,
     // counted here too in case no tick saw it pass (the keeper was down).
-    if (oldClose != null && last != null && last >= oldClose) countLapse(waId, r, oldClose, t);
+    if (oldClose != null && last != null && last >= oldClose) countLapse(conversationId, r, oldClose, t);
     r.last_inbound_at = last;
     r.window_closes_at = close;
     // (a) a new close time empties the fired set; (c) the case is decided
@@ -409,7 +437,7 @@ export function createKeeper({
     if (r.marks.close_at !== close) r.marks = { close_at: close, fired: [] };
     r.plan = close == null ? null : planLadder(r, t);
     // A nudge waiting on the ladder for the old close is moot: the business wrote.
-    dropRetries((job) => job.waId === waId && job.kind === 'nudge' && job.close !== close);
+    dropRetries((job) => job.conversationId === conversationId && job.kind === 'nudge' && job.close !== close);
     return true;
   }
 
@@ -459,13 +487,13 @@ export function createKeeper({
     return plan('shifted', ladder(businessClose).filter((m) => inside(m.at)), businessClose);
   }
 
-  function countLapse(waId, r, close, t) {
+  function countLapse(conversationId, r, close, t) {
     if (r.consent !== true) return false;
     if (r.consent_at != null && close < r.consent_at) return false;
     if (r.lapse_close_at != null && r.lapse_close_at >= close) return false; // once per close
     r.lapse_close_at = close;
     r.lapses.push({ close_at: close, at: t });
-    log(`keeper: ${tag(waId)}: the window closed with nobody from the business writing (lapse)`);
+    log(`keeper: ${tag(conversationId)}: the window closed with nobody from the business writing (lapse)`);
     return true;
   }
 
@@ -500,7 +528,7 @@ export function createKeeper({
     return null;
   }
 
-  async function raiseUpdate(waId, r, slot, t) {
+  async function raiseUpdate(conversationId, r, slot, t) {
     const close = r.window_closes_at;
     const open = close != null && t < close;
     const before = structuredClone(r);
@@ -508,29 +536,29 @@ export function createKeeper({
     // (e) at most one update per window: a second business day inside the
     // same open window (a 23-hour DST day) is recorded without an event.
     if (open && r.update_window_closes_at === close) {
-      log(`keeper: ${tag(waId)}: ${slot.day} update skipped, one already raised in this window`);
+      log(`keeper: ${tag(conversationId)}: ${slot.day} update skipped, one already raised in this window`);
       persist();
       return;
     }
     r.update_at = t;
     r.update_window_closes_at = open ? close : null;
     const zone = zoneOf(r);
-    const head = `[window-keeper] ${waId}: daily update due. Send today's short business update with one acknowledgement ask.`;
+    const head = `[window-keeper] ${conversationId}: daily update due. Send today's short business update with one acknowledgement ask.`;
     let text;
     if (open) text = `${head} Window open, closes ${formatHHMM(close, zone)}.`;
     else if (close != null) text = `${head} Window closed since ${formatHHMM(close, zone)}: ${CLOSED_TAIL}`;
     else text = `${head} Window closed (nobody from the business has written yet): ${CLOSED_TAIL}`;
-    await raise(waId, r, before, { kind: 'update', id: `keeper:${waId}:${slot.day}:update`, text, close }, t);
+    await raise(conversationId, r, before, { kind: 'update', id: `keeper:${conversationId}:${slot.day}:update`, text, close }, t);
   }
 
   // --- the ladder (c), the lapse (d), the quiet rules (e) --------------------
 
-  async function runLadder(waId, r, t) {
+  async function runLadder(conversationId, r, t) {
     const close = r.window_closes_at;
     if (close == null) return;
     if (t >= close) {
       // No nudge after the close; a close that passed with nobody writing is one lapse.
-      if (countLapse(waId, r, close, t)) persist();
+      if (countLapse(conversationId, r, close, t)) persist();
       return;
     }
     if (r.marks.close_at !== close) r.marks = { close_at: close, fired: [] };
@@ -553,8 +581,8 @@ export function createKeeper({
       return;
     }
     r.marks.fired.push({ mark: mark.mark, at: t, event: true });
-    const id = `keeper:${waId}:${new Date(close).toISOString()}:${mark.mark}`;
-    await raise(waId, r, before, { kind: 'nudge', id, text: nudgeText(waId, r, mark, t), close }, t);
+    const id = `keeper:${conversationId}:${new Date(close).toISOString()}:${mark.mark}`;
+    await raise(conversationId, r, before, { kind: 'nudge', id, text: nudgeText(conversationId, r, mark, t), close }, t);
   }
 
   // The business day an instant belongs to, as dueUpdate defines it: with
@@ -597,21 +625,21 @@ export function createKeeper({
     return `${n} minute${n === 1 ? '' : 's'}`;
   }
 
-  function nudgeText(waId, r, mark, t) {
+  function nudgeText(conversationId, r, mark, t) {
     const zone = zoneOf(r);
     if (r.plan.case === 'shifted') {
       const left = minutesLeft(r.plan.business_close_at, t, mark.mark);
-      return `[window-keeper] ${waId}: window closes at ${formatHHMM(r.window_closes_at, zone)}, after your hours; last chance before close of business in ${left}. ${NUDGE_TAIL}`;
+      return `[window-keeper] ${conversationId}: window closes at ${formatHHMM(r.window_closes_at, zone)}, after your hours; last chance before close of business in ${left}. ${NUDGE_TAIL}`;
     }
     const left = minutesLeft(r.window_closes_at, t, mark.mark);
-    return `[window-keeper] ${waId}: window closes in ${left}, nobody from the business has written since ${formatHHMM(r.last_inbound_at, zone)}. ${NUDGE_TAIL}`;
+    return `[window-keeper] ${conversationId}: window closes in ${left}, nobody from the business has written since ${formatHHMM(r.last_inbound_at, zone)}. ${NUDGE_TAIL}`;
   }
 
   // --- raising and posting an event ------------------------------------------
 
   // `r` holds the event's record (the update day, the mark fired); `before`
   // is the row as it was before that record was made.
-  async function raise(waId, r, before, ev, t) {
+  async function raise(conversationId, r, before, ev, t) {
     // (a) the record reaches the disk before the event exists anywhere.
     try {
       save();
@@ -622,13 +650,13 @@ export function createKeeper({
       restoreRow(r, before);
       if (t - raiseFailLogAt >= MINUTE) {
         raiseFailLogAt = t;
-        log(`keeper: ${tag(waId)}: state write failed, ${ev.kind} not raised yet (retried every tick): ${err.message}`);
+        log(`keeper: ${tag(conversationId)}: state write failed, ${ev.kind} not raised yet (retried every tick): ${err.message}`);
       }
       return;
     }
     killPoint('keeper-after-state', ev.id);
     await post({
-      waId,
+      conversationId,
       kind: ev.kind,
       id: ev.id,
       close: ev.close ?? null,
@@ -636,7 +664,7 @@ export function createKeeper({
       dueAt: t,
       message: {
         provider_message_id: ev.id,
-        conversation: conversationRef(city, waId),
+        conversation: conversationRef(city, conversationId),
         actor: { ...ACTOR },
         text: ev.text,
         received_at: new Date(t).toISOString(),
@@ -655,7 +683,7 @@ export function createKeeper({
           job.attempt += 1;
           job.dueAt = now() + delay; // clock time, not a sleep
           retries.push(job);
-          log(`keeper: ${tag(job.waId)}: ${job.kind} answered HTTP ${err.status}; retry ${job.attempt} in ${delay / 1000}s`);
+          log(`keeper: ${tag(job.conversationId)}: ${job.kind} answered HTTP ${err.status}; retry ${job.attempt} in ${delay / 1000}s`);
           return;
         }
         return undelivered(job, `HTTP ${err.status} through the retry ladder`);
@@ -672,10 +700,10 @@ export function createKeeper({
   }
 
   function undelivered(job, reason) {
-    const r = state.conversations[job.waId];
+    const r = state.conversations[job.conversationId];
     if (!r) return;
     r.undelivered.push({ id: job.id, kind: job.kind, at: now(), reason });
-    log(`keeper: ${tag(job.waId)}: ${job.kind} not delivered (${reason}); counted, never raised again`);
+    log(`keeper: ${tag(job.conversationId)}: ${job.kind} not delivered (${reason}); counted, never raised again`);
     persist();
   }
 
@@ -688,8 +716,9 @@ export function createKeeper({
     if (!due.length) return;
     dropRetries((job) => due.includes(job));
     for (const job of due) {
-      const r = state.conversations[job.waId];
+      const r = state.conversations[job.conversationId];
       if (!r || r.consent !== true) continue; // consent withdrawn: dropped
+      if (!listed(job.conversationId)) continue; // unbound at the gateway: dropped
       if (job.kind === 'nudge' && (r.window_closes_at !== job.close || t >= job.close)) {
         // A nudge never goes out after its close, nor after the business wrote.
         if (r.window_closes_at === job.close) undelivered(job, 'the window closed before the retry');
@@ -705,11 +734,12 @@ export function createKeeper({
     const t = now();
     await readWindow(t);
     await retryDue(t);
-    for (const [waId, r] of Object.entries(state.conversations)) {
+    for (const [conversationId, r] of Object.entries(state.conversations)) {
       if (r.consent !== true) continue; // (e) OFF without recorded consent: no event at all
+      if (!listed(conversationId)) continue; // the last good read does not list it: no event (gp-g02t)
       try {
         const slot = dueUpdate(r, t);
-        if (slot) await raiseUpdate(waId, r, slot, t);
+        if (slot) await raiseUpdate(conversationId, r, slot, t);
         // The update's post awaited gc: consent --off may have landed
         // meanwhile (setters commit in place, so r is the live row).
         if (r.consent !== true) continue;
@@ -719,9 +749,9 @@ export function createKeeper({
         // for a fresh clock rather than nudge on a stale one. The update
         // does not. The doctor row turns red when this lasts.
         if (readOwed()) continue;
-        await runLadder(waId, r, t);
+        await runLadder(conversationId, r, t);
       } catch (err) {
-        log(`keeper: ${tag(waId)}: ${err?.message ?? err}`);
+        log(`keeper: ${tag(conversationId)}: ${err?.message ?? err}`);
       }
     }
   }
@@ -767,9 +797,9 @@ export function createKeeper({
     // and at startup: true when the code is bound to that phone (now, or
     // already), false when there is nothing to bind. Throws on a failed
     // write, nothing changed.
-    bindInvite(code, waId) {
+    bindInvite(code, conversationId) {
       const key = String(code ?? '').trim();
-      const id = String(waId);
+      const id = String(conversationId);
       const invite = key && Object.hasOwn(state.invites, key) ? state.invites[key] : null;
       if (!invite) {
         logOnce(`no-invite:${key}:${id}`, `keeper: no onboarding record for that invite code; ${tag(id)} keeps its keeper record`);
@@ -791,25 +821,25 @@ export function createKeeper({
       return true;
     },
 
-    // gc whatsapp consent <wa_id> --on|--off. Returns the matched row's id;
-    // an unknown phone is refused (404), never recorded.
-    setConsent(waId, on) {
+    // gc whatsapp consent <conversation_id> --on|--off. Returns the matched row's id;
+    // an unknown conversation is refused (404), never recorded.
+    setConsent(conversationId, on) {
       if (typeof on !== 'boolean') throw refusal(400, 'consent must be true (--on) or false (--off)');
-      const id = knownConversation(waId);
+      const id = knownConversation(conversationId);
       const r = draftRow(id);
       if (on && r.consent !== true) r.consent_at = now();
       r.consent = on;
       commit({ rows: { [id]: r } });
-      if (!on) dropRetries((job) => job.waId === id);
+      if (!on) dropRetries((job) => job.conversationId === id);
       return id;
     },
 
-    // gc whatsapp hours <wa_id> --hours "..." --tz <zone> | --clear. Blank
+    // gc whatsapp hours <conversation_id> --hours "..." --tz <zone> | --clear. Blank
     // hours clear them; tz undefined keeps the recorded zone, blank clears
-    // it. Returns the matched row's id; an unknown phone is refused (404).
-    setHours(waId, hoursText, tz) {
+    // it. Returns the matched row's id; an unknown conversation is refused (404).
+    setHours(conversationId, hoursText, tz) {
       const fields = checkFields(hoursText, tz);
-      const id = knownConversation(waId);
+      const id = knownConversation(conversationId);
       const r = draftRow(id);
       r.hours = fields.hours;
       if (tz !== undefined) r.tz = fields.tz;
@@ -819,8 +849,8 @@ export function createKeeper({
     },
 
     // The gateway refused a free-form publish window_closed: counted, never a template.
-    noteRefusedNudge(waId) {
-      row(waId).refused_nudges.push({ at: now() });
+    noteRefusedNudge(conversationId) {
+      row(conversationId).refused_nudges.push({ at: now() });
       persist();
     },
 
@@ -829,16 +859,17 @@ export function createKeeper({
       const since = t - STATUS_SPAN_MS;
       const recent = (list) => list.filter((x) => x.at >= since).length;
       const conversations = {};
-      for (const [waId, r] of Object.entries(state.conversations)) {
+      for (const [conversationId, r] of Object.entries(state.conversations)) {
         const zone = zoneOf(r);
         const close = r.window_closes_at;
         const plan = r.plan?.close_at === close ? r.plan : null;
         const fired = r.marks.close_at === close ? r.marks.fired : [];
         let today = null;
         try { today = localDate(t, zone); } catch { /* a bad zone shows as not today */ }
-        conversations[waId] = {
+        conversations[conversationId] = {
           keeper: r.consent === true ? 'on' : 'off',
           consent: r.consent,
+          listed: listed(conversationId),
           consent_at: iso(r.consent_at),
           hours: r.hours,
           tz: r.tz,

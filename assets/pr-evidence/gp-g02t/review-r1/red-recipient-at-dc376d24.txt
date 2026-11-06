@@ -1,0 +1,115 @@
+✖ the recipient (C1): owner A is unbound and B shows A's number now: the mayor's reply and update in A's conversation reach nobody, never B (318.687042ms)
+✖ the recipient (M2): owner A is still bound and B shows A's number: the mayor's reply and update in A's conversation reach A's user id, never refused 409 (280.311709ms)
+✖ the recipient: `--to` naming a number that is no conversation id (one an owner shows) is refused with a hint naming the conversation id, and nothing is sent (264.852ms)
+✔ the recipient: an owner PR 73 bound by number alone (PR 76's window lists it with user_id null) is not bound, and nothing is sent (236.434084ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 1
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1220.565
+
+✖ failing tests:
+
+test at test/conversation.test.js:185:1
+✖ the recipient (C1): owner A is unbound and B shows A's number now: the mayor's reply and update in A's conversation reach nobody, never B (318.687042ms)
+  AssertionError [ERR_ASSERTION]: {"reply":{"message_id":"wamid.out.1","conversation":{"scope_id":"test-city","provider":"whatsapp","account_id":"dynasty","conversation_id":"5511900000001","kind":"dm"},"delivered":true,"idempotency_key":"k-C1","metadata":{"chunks":"1","message_ids":"wamid.out.1"}},"update":{"conversation":{"scope_id":"test-city","provider":"whatsapp","account_id":"dynasty","conversation_id":"5511900000001","kind":"dm"},"delivered":false,"failure_kind":"permanent","error":"the 24-hour window for this conversation is open until 2026-11-05T14:58:00.000Z: a free-form reply is cheaper than the template; send it with gc whatsapp publish --to 5511900000001 --text \"<the reply>\"","metadata":{"reason":"window_open","window_closes_at":"2026-11-05T14:58:00.000Z"}}}
+  + actual - expected
+  
+    {
+      reply: [
+  +     true,
+  +     undefined
+  -     false,
+  -     'not_bound'
+      ],
+  +   sends: [
+  +     [
+  +       '5511900000001',
+  +       'US.70412958836127405533'
+  +     ]
+  +   ],
+  -   sends: [],
+      update: [
+        false,
+  +     'window_open'
+  -     'not_bound'
+      ]
+    }
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/conversation.test.js:196:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { reply: [ true, undefined ], update: [ false, 'window_open' ], sends: [ [Array] ] },
+    expected: { reply: [ false, 'not_bound' ], update: [ false, 'not_bound' ], sends: [] },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/conversation.test.js:203:1
+✖ the recipient (M2): owner A is still bound and B shows A's number: the mayor's reply and update in A's conversation reach A's user id, never refused 409 (280.311709ms)
+  AssertionError [ERR_ASSERTION]: {"reply":{"conversation":{"scope_id":"test-city","provider":"whatsapp","account_id":"dynasty","conversation_id":"5511900000001","kind":"dm"},"delivered":false,"failure_kind":"permanent","idempotency_key":"k-M2","error":"The gateway found two owners of this city answering to this conversation's id (a phone number another owner of this city now shows: a recycled number) and sent nothing (the gateway's hint: \"send to the owner's current id\"). This adapter does not resend.","metadata":{"reason":"gateway_refused","chunks":"1","chunks_delivered":"0","gateway_error":"ambiguous_recipient","hint":"The gateway found two owners of this city answering to this conversation's id (a phone number another owner of this city now shows: a recycled number) and sent nothing (the gateway's hint: \"send to the owner's current id\"). This adapter does not resend.","gateway_status":"409"}},"update":{"conversation":{"scope_id":"test-city","provider":"whatsapp","account_id":"dynasty","conversation_id":"5511900000001","kind":"dm"},"delivered":false,"failure_kind":"permanent","error":"the 24-hour window for this conversation is open until 2026-11-05T14:58:00.000Z: a free-form reply is cheaper than the template; send it with gc whatsapp publish --to 5511900000001 --text \"<the reply>\"","metadata":{"reason":"window_open","window_closes_at":"2026-11-05T14:58:00.000Z"}}}
+  + actual - expected
+  
+    {
+  +   reply: false,
+  +   sends: [],
+  +   update: false
+  -   reply: true,
+  -   sends: [
+  -     [
+  -       'text',
+  -       'US.13491208655302741918',
+  -       '5511900000001'
+  -     ],
+  -     [
+  -       'template',
+  -       'US.13491208655302741918',
+  -       '5511900000001'
+  -     ]
+  -   ],
+  -   update: true
+    }
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/conversation.test.js:215:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { reply: false, update: false, sends: [] },
+    expected: { reply: true, update: true, sends: [ [Array], [Array] ] },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/conversation.test.js:222:1
+✖ the recipient: `--to` naming a number that is no conversation id (one an owner shows) is refused with a hint naming the conversation id, and nothing is sent (264.852ms)
+  AssertionError [ERR_ASSERTION]: {"message_id":"wamid.out.1","conversation":{"scope_id":"test-city","provider":"whatsapp","account_id":"dynasty","conversation_id":"5511900000077","kind":"dm"},"delivered":true,"idempotency_key":"u-N","metadata":{"template":"dynasty_update","language":"en_US"}}
+  + actual - expected
+  
+    [
+  +   true,
+  +   undefined,
+  +   1
+  -   false,
+  -   'not_bound',
+  -   0
+    ]
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/conversation.test.js:230:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ true, undefined, 1 ],
+    expected: [ false, 'not_bound', 0 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

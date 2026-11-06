@@ -10,15 +10,42 @@
 export const MAX_TEXT_CHARS = 4096;
 const GRAPH_TIMEOUT_MS = 20_000;
 
+/**
+ * A business-scoped user id (BSUID): the user's ISO 3166 alpha-2 country code, a period, then up
+ * to 128 alphanumerics, with ENT and a period between them on a parent id (US.13491208655302741918,
+ * US.ENT.11815799212886844830). A request must carry it whole and unchanged.
+ * (developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids,
+ * read 2026-11-04.)
+ */
+export const BSUID = /^[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}$/;
+
+/**
+ * A user's number change, as Meta's system message reports it: the user_id Meta regenerated, the
+ * one it replaced, and the new phone number when Meta shares it. user_changed_user_id is the same
+ * change when no phone number can be shared.
+ */
+export interface IdChange {
+  type: "user_changed_number" | "user_changed_user_id";
+  userId: string | null;
+  previousUserId: string | null;
+  waId: string | null;
+}
+
 export interface InboundMessage {
   /** The wamid. */
   wamid: string;
-  /** The sender's wa_id. */
-  from: string;
+  /** The sender's wa_id (its phone number); null when Meta shares none (a user with a username). */
+  from: string | null;
+  /** The sender's business-scoped user id; null on a payload from before Meta sent one. */
+  fromUserId: string | null;
   /** Meta's timestamp of the message (epoch seconds), null when absent or malformed. */
   timestamp: number | null;
   type: string;
   profileName: string | null;
+  /** The sender's WhatsApp username, when it has one. */
+  username: string | null;
+  /** Set on a number-change system message. */
+  change: IdChange | null;
   /** text.body for a text message; null otherwise. */
   text: string | null;
   /** The media id of an image, audio, video, document or sticker; null otherwise. */
@@ -31,7 +58,12 @@ export interface InboundStatus {
   /** The outbound wamid the status reports on. */
   wamid: string;
   status: string;
+  /** The recipient's wa_id; Meta omits it for a send to a user_id when the phone is not shared. */
   recipientId: string | null;
+  /** The recipient's user_id; Meta omits it on a failed status of a send to a phone number. */
+  recipientUserId: string | null;
+  /** The recipient's WhatsApp username (Meta sends it on delivered and read statuses). */
+  username: string | null;
   /** Meta's statuses[] object exactly as received. */
   raw: Record<string, unknown>;
 }
@@ -146,10 +178,38 @@ function epochSeconds(v: unknown): number | null {
   return Number(s);
 }
 
+interface Person {
+  wa: string | null;
+  user: string | null;
+  name: string | null;
+  username: string | null;
+}
+
+/** The contacts entry for a user: matched by the user_id first, then by the wa_id. */
+function contactOf(people: Person[], wa: string | null, user: string | null): Person | null {
+  return people.find((p) => user !== null && p.user === user) ?? people.find((p) => wa !== null && p.wa === wa) ?? null;
+}
+
+function idChange(m: Obj): IdChange | null {
+  if (m.type !== "system" || !isObj(m.system)) return null;
+  const type = m.system.type;
+  if (type !== "user_changed_number" && type !== "user_changed_user_id") return null;
+  // Meta's general webhook reference names the new number new_wa_id; the BSUID page names it wa_id.
+  const waId = str(m.system.wa_id) ?? str(m.system.new_wa_id);
+  return { type, userId: str(m.system.user_id), previousUserId: str(m.system.previous_user_id), waId };
+}
+
 /**
  * Reads a webhook payload into messages and statuses for the one configured business number.
  * Anything malformed is skipped, never thrown: a signed payload that is not what we expect is
  * counted, and Meta is still answered.
+ *
+ * A message names its sender by `from` (the wa_id) and `from_user_id` (the user_id). Either may be
+ * absent; the contacts entry for the same user (matched by either id) supplies the other, the
+ * profile name and the username. A message is skipped when it names no wa_id and no user_id,
+ * unless it is a number-change notice: one of those is kept whatever ids it names, so the gateway
+ * counts one naming none (gp-lv49). A status's username comes from the contacts entry matched by
+ * its recipient ids.
  */
 export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBatch {
   const batch: WebhookBatch = { messages: [], statuses: [], wrongNumber: 0, ignored: 0 };
@@ -168,19 +228,24 @@ export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBa
         batch.wrongNumber += 1;
         continue;
       }
-      const names = new Map<string, string>();
+      const people: Person[] = [];
       for (const c of arr(value.contacts)) {
         if (!isObj(c)) continue;
-        const wa = str(c.wa_id);
-        const name = isObj(c.profile) ? str(c.profile.name) : null;
-        if (wa && name) names.set(wa, name);
+        const profile = isObj(c.profile) ? c.profile : {};
+        people.push({ wa: str(c.wa_id), user: str(c.user_id), name: str(profile.name), username: str(profile.username) });
       }
       for (const m of arr(value.messages)) {
         if (!isObj(m)) continue;
         const wamid = str(m.id);
-        const from = str(m.from);
         const type = str(m.type) ?? "unknown";
-        if (!wamid || !from) continue;
+        const change = idChange(m);
+        const ownFrom = str(m.from);
+        const ownUser = str(m.from_user_id);
+        const contact = contactOf(people, ownFrom, ownUser);
+        const from = ownFrom ?? contact?.wa ?? null;
+        const fromUserId = ownUser ?? contact?.user ?? null;
+        // A number-change notice is kept whatever ids it names: one naming none is still counted.
+        if (!wamid || (!from && !fromUserId && !change)) continue;
         let mediaId: string | null = null;
         for (const t of MEDIA_TYPES) {
           const media = m[t];
@@ -190,9 +255,12 @@ export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBa
         batch.messages.push({
           wamid,
           from,
+          fromUserId,
           timestamp: epochSeconds(m.timestamp),
           type,
-          profileName: names.get(from) ?? null,
+          profileName: contact?.name ?? null,
+          username: contact?.username ?? null,
+          change,
           text,
           mediaId,
           raw: m,
@@ -203,16 +271,28 @@ export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBa
         const wamid = str(s.id);
         const status = str(s.status);
         if (!wamid || !status) continue;
-        batch.statuses.push({ wamid, status, recipientId: str(s.recipient_id), raw: s });
+        const recipientId = str(s.recipient_id);
+        const recipientUserId = str(s.recipient_user_id);
+        const username = contactOf(people, recipientId, recipientUserId)?.username ?? null;
+        batch.statuses.push({ wamid, status, recipientId, recipientUserId, username, raw: s });
       }
     }
   }
   return batch;
 }
 
-/** The Graph body for a send (POST /<version>/<phone number id>/messages). */
+/**
+ * Where a send names its recipient: a phone number (digits only) in `to`, any other id (a user_id)
+ * in `recipient` with `to` omitted, exactly as given. Meta: "set `recipient` to the BSUID ... omit
+ * the `to` property"; when both are present, `to` wins.
+ */
+function recipientOf(id: string): { to: string } | { recipient: string } {
+  return /^\d+$/.test(id) ? { to: id } : { recipient: id };
+}
+
+/** The Graph body for a send (POST /<version>/<phone number id>/messages) to a wa_id or a user_id. */
 export function sendBody(to: string, req: SendRequest): Record<string, unknown> {
-  const head = { messaging_product: "whatsapp", recipient_type: "individual", to };
+  const head = { messaging_product: "whatsapp", recipient_type: "individual", ...recipientOf(to) };
   switch (req.type) {
     case "text":
       return { ...head, type: "text", text: { body: req.text, preview_url: false } };

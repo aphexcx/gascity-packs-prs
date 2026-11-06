@@ -9,6 +9,6 @@ numbers: whether the city is enrolled (a 401 from the gateway stops polling),
 the last poll, the inbound entries in flight by state and the acks owed, the
 dead letters, every terminal hold by rid (resolve with `gc whatsapp inbound
 resolve`), every restore gap by conversation (clear with `gc whatsapp inbound
-clear-gap`), and per bound phone (last four digits) the window's close time and
+clear-gap`), and per bound conversation (last four digits) the window's close time and
 the window-keeper's state: consent, the day's update raised or not, the marks
 fired, the lapses.

@@ -1,0 +1,147 @@
+# gp-0g2s self-review r1 cross-check: the reviewer's scenario file (self-review-r1-scenarios.test.ts.txt), whose
+# tests assert the behaviour at 735e5373, run on a `git archive 48e53c7d whatsapp/gateway` copy
+# (/private/tmp/gp-0g2s-work/xcheck-48e). A failure means that finding no longer reproduces: S1a, S1b, S2, S3
+# and S4 fail. S5 and S6 pass, as documented behaviour; S7 and S8 pass, as behaviour the code keeps.
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /private/tmp/gp-0g2s-work/xcheck-48e/whatsapp/gateway
+
+ × test/review.test.ts > R1: a never-stored wamid after unbind/rebind goes to the new city (PR 73 MAJOR, the first-delivery-failed order) > S1a: same owner (wa+user) moves city; its message whose first delivery failed is delivered to the NEW city, media granted there 21ms
+   → expected false to be true // Object.is equality
+ × test/review.test.ts > R1: a never-stored wamid after unbind/rebind goes to the new city (PR 73 MAJOR, the first-delivery-failed order) > S1b: phone-only shape, a DIFFERENT person binds the number in another city: the old owner's failed-then-retried message lands there 13ms
+   → expected false to be true // Object.is equality
+ × test/review.test.ts > R2: an alias whose binding is gone falls through to ownerKey (README: 'names nobody ... nothing reaches the next city') > S2: number change, unbind, the number binds in another city; a phone-only retry stamped before the change lands in the other city and rewrites its holder's profile_name 14ms
+   → expected undefined to match object { …(3) }
+ × test/review.test.ts > R3: the stale-number strip keeps no alias > S3: the new holder of P binds before A's notice lands (strip), so A's phone-only pre-change retry goes to B 12ms
+   → expected [ { …(4) }, { …(4) } ] to deeply equal [ { …(4) }, { …(4) } ]
+ × test/review.test.ts > R4: a redelivered notice is not alias-guarded in the change block > S4: notice 1 redelivered after A's second change re-keys a phone-only holder of A's first number onto A's old ids 15ms
+   → expected [ { …(4) } ] to deeply equal [ { …(4) } ]
+ ✓ test/review.test.ts > R6: README rule 7's resend advice ('the user_id of its newest delivery') after the 409 > S6: right after A's number change, A's newest delivery is the notice, carrying A's OLD user_id; a resend to it answers 403 not_bound 11ms
+ ✓ test/review.test.ts > R7: the alias-window UPDATE's MAX is the only thing keeping an old retry from rewinding the window > S7: the owner writes under its new ids, then the pre-change retry lands: the window stays at the newer stamp (pins MAX; mutation M1 survives the suite) 9ms
+ ✓ test/review.test.ts > R8: the alias ORDER BY is pinned only by wamid luck > S8: one number two owners left in turn, with the earlier binding's wamid sorting AFTER the later one's: a retry still goes to the owner that held it then (mutation M4 survives the suite) 12ms
+ ✓ test/review.test.ts > R5: a retry with no timestamp is never alias-routed > S5: Meta's retry with the timestamp missing, under the old ids after the change, is a stranger's: lost with 200 and a canned line to the old number 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/review.test.ts > R1: a never-stored wamid after unbind/rebind goes to the new city (PR 73 MAJOR, the first-delivery-failed order) > S1a: same owner (wa+user) moves city; its message whose first delivery failed is delivered to the NEW city, media granted there
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ test/review.test.ts:52:69
+     50|     const got = (await t.inbox(second)).body.deliveries;
+     51|     // CURRENT: the second city receives the first city's message and …
+     52|     expect(got.some((d: any) => d.message?.id === wamidOf(before))).to…
+       |                                                                     ^
+     53|     expect(got.some((d: any) => d.message?.id === wamidOf(image))).toB…
+     54|     expect((await t.call("GET", `/v1/media/${mediaId}`, { token: secon…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  test/review.test.ts > R1: a never-stored wamid after unbind/rebind goes to the new city (PR 73 MAJOR, the first-delivery-failed order) > S1b: phone-only shape, a DIFFERENT person binds the number in another city: the old owner's failed-then-retried message lands there
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ test/review.test.ts:73:105
+     71|     t.clock.now = T0 + 3 * HOUR;
+     72|     expect((await t.webhook(before)).status).toBe(200);
+     73|     expect((await t.inbox(second)).body.deliveries.some((d: any) => d.…
+       |                                                                                                         ^
+     74|   });
+     75| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  test/review.test.ts > R2: an alias whose binding is gone falls through to ownerKey (README: 'names nobody ... nothing reaches the next city') > S2: number change, unbind, the number binds in another city; a phone-only retry stamped before the change lands in the other city and rewrites its holder's profile_name
+AssertionError: expected undefined to match object { …(3) }
+
+- Expected:
+{
+  "conversation_id": "5505975412711",
+  "user_id": "US.02950048111706595709",
+  "wa_id": "5505975412711",
+}
+
++ Received:
+undefined
+
+ ❯ test/review.test.ts:102:15
+    100|     const d = (await t.inbox(second)).body.deliveries.find((x: any) =>…
+    101|     // CURRENT: delivered to the second city under C's conversation.
+    102|     expect(d).toMatchObject({ conversation_id: p, wa_id: p, user_id: c…
+       |               ^
+    103|     expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE…
+    104|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  test/review.test.ts > R3: the stale-number strip keeps no alias > S3: the new holder of P binds before A's notice lands (strip), so A's phone-only pre-change retry goes to B
+AssertionError: expected [ { …(4) }, { …(4) } ] to deeply equal [ { …(4) }, { …(4) } ]
+
+- Expected
++ Received
+
+@@ -7,8 +7,8 @@
+    },
+    {
+      "city_id": "city_a918e0eb296f1ad8cdce9015",
+      "conversation_id": "US.28042906743411361556",
+      "user_id": "US.28042906743411361556",
+-     "wa_id": null,
++     "wa_id": "5531328422864",
+    },
+  ]
+
+ ❯ test/review.test.ts:137:39
+    135|     // the stale-number strip before any alias of a exists, so B loses…
+    136|     // then refills A's wa_id with P, and the re-key moves A to Q. B i…
+    137|     expect(await owners(p, q, a2, b)).toEqual([
+       |                                       ^
+    138|       { conversation_id: p, wa_id: q, user_id: a2, city_id: city.id },
+    139|       { conversation_id: b, wa_id: null, user_id: b, city_id: city.id …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  test/review.test.ts > R4: a redelivered notice is not alias-guarded in the change block > S4: notice 1 redelivered after A's second change re-keys a phone-only holder of A's first number onto A's old ids
+AssertionError: expected [ { …(4) } ] to deeply equal [ { …(4) } ]
+
+- Expected
++ Received
+
+  [
+    {
+      "city_id": "city_44c6759c3a0a7456866afbdc",
+      "conversation_id": "5517182000249",
+-     "user_id": "US.03365479371908981980",
+-     "wa_id": "5523645934853",
++     "user_id": null,
++     "wa_id": "5517182000249",
+    },
+  ]
+
+ ❯ test/review.test.ts:176:29
+    174|     expect((await t.webhook(n1)).status).toBe(200); // Meta redelivers…
+    175|     // CURRENT: B's row now carries A's old ids (Q, a2); B's city's se…
+    176|     expect(await owners(p)).toEqual([{ conversation_id: p, wa_id: q, u…
+       |                             ^
+    177|     await t.say(p, "B writes"); // makes the window open for a text? B…
+    178|     const s = await t.send(other, { to: p, idempotency_key: uniq(), ty…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 4 passed (9)
+   Start at  17:46:16
+   Duration  2.52s (transform 46ms, setup 61ms, import 33ms, tests 117ms, environment 0ms)
+

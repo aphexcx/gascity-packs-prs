@@ -1,5 +1,8 @@
-// deadletter.js — <city>/.gc/whatsapp/inbound_dead_letter/<wa_id>.jsonl
+// deadletter.js — <city>/.gc/whatsapp/inbound_dead_letter/<conversation_id>.jsonl
 // (0700/0600), one line per dead-lettered request id holding its envelope.
+// The file is named by the entry's conversation (its received line's key);
+// files the PR 74 adapter named by wa_id are read the same way (the index
+// below loads every file, whatever its name).
 //
 // The dead-letter file line is written BEFORE the dead journal line (the
 // gate r7's second rule), and the write is idempotent per rid: the index of
@@ -13,9 +16,14 @@ import { readLines } from './journal.js';
 
 export const DEAD_LETTER_DIR = 'inbound_dead_letter';
 
-export function safeWaId(waId) {
-  const digits = String(waId ?? '').replace(/[^0-9A-Za-z_-]/g, '');
-  return digits || 'unknown';
+// Every id the gateway gives keeps its name: a number's digits, a user id's
+// letters, digits and periods (US.ENT.A123 and US.ENTA123 are two owners;
+// codex self-review r1 MINOR 2). Anything else is dropped, and a leading
+// period is escaped, so the name never leaves the directory or hides.
+export function safeConversationId(conversationId) {
+  const kept = String(conversationId ?? '').replace(/[^0-9A-Za-z_.-]/g, '');
+  if (!kept) return 'unknown';
+  return kept.startsWith('.') ? `_${kept}` : kept;
 }
 
 export function createDeadLetters({ stateDir }) {
@@ -38,9 +46,9 @@ export function createDeadLetters({ stateDir }) {
     entries: () => [...index.values()],
     count: () => index.size,
     // Returns true when a line was written, false when the rid already had one.
-    write(waId, line) {
+    write(conversationId, line) {
       if (index.has(line.rid)) return false;
-      const file = path.join(dir, `${safeWaId(waId)}.jsonl`);
+      const file = path.join(dir, `${safeConversationId(conversationId)}.jsonl`);
       const fd = fs.openSync(file, 'a', 0o600);
       try {
         // All of the line or none of it (a short write on ENOSPC is cut back).

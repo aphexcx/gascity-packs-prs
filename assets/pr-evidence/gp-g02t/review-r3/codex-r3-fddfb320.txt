@@ -1,0 +1,17 @@
+# codex-gate exec: prompt /private/tmp/gp-g02t/codex-r3-prompt.md (8554 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs; model gpt-6-astra; 2026-11-06T12:41:49Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+
+No CRITICAL or MAJOR findings established. Three MINOR issues remain:
+
+- **MINOR — inconsistent clear-gap label.** [clear-gap.sh:32](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/commands/clear-gap.sh:32) takes the raw suffix. For valid ID `US.A`, it prints `...US.A`, while [lastFour:70](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/ledger.js:70) produces `USA`. The confirmation therefore differs from status/doctor. Apply the same alphanumeric filtering before slicing.
+
+- **MINOR — skill promises unsupported ID formatting.** [SKILL.md:187](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/skills/whatsapp/SKILL.md:187) says both verbs accept the conversation ID “in any form.” Given known `US.ownerB1`, changing its case or punctuation is refused by [knownConversation:324](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:324). Require the exact user ID; reserve formatting tolerance for legacy number keys. Also describe the label as letters or digits.
+
+- **MINOR — consent help truncates the corrected explanation.** [consent.sh:23](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/commands/consent.sh:23) prints only lines 2–7, ending mid-sentence before the whole-user-ID and legacy-number rules at lines 8–10. Extend the help extraction through line 10.
+
+Tests **not run (sandbox)**. Worker transcripts record:
+
+- At `fddfb320`: [gateway 229/229](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-g02t/green/gateway-suite-at-fddfb320.txt:343), [typecheck exit 0](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-g02t/green/gateway-typecheck-at-fddfb320.txt:3), [dry run exit 0](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-g02t/green/gateway-dry-run-at-fddfb320.txt:15).
+- The latest [adapter run is 194/195](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-g02t/green/adapter-suite-at-fddfb320.txt:304), with a partial-receipt ack timeout at line 317. Earlier `e3f09f38` evidence records [195/195](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-g02t/green/adapter-suite-at-e3f09f38-run4-clean.txt:304), [pytest 46/46](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-g02t/green/pack-pytest-at-e3f09f38.txt:2), and [conversation 11/11](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-g02t/green/conversation-at-e3f09f38.txt:12).
+
+VERDICT: CLEAN

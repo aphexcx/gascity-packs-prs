@@ -1,0 +1,6 @@
+# gp-ac0u typecheck (tsc --noEmit)
+# HEAD f29bc6571ef3d51d5e27e4504ce4a10545d755c5
+# 2026-11-04T21:33:53Z pnpm typecheck (cwd whatsapp/gateway) -> exit 0
+
+pnpm wrapper: verify-deps off for run typecheck (round 3)
+$ tsc -p tsconfig.json --noEmit

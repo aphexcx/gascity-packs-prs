@@ -1,0 +1,15 @@
+# gp-ac0u deploy gap: the stack base's src/ (392f9c09, the running Worker) on migrations 0001 + 0002
+# HEAD f29bc6571ef3d51d5e27e4504ce4a10545d755c5
+# 2026-11-04T21:33:57Z pnpm exec vitest run --reporter=verbose test/deploy-gap.test.ts (cwd whatsapp/gateway) -> exit 0
+
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-b/whatsapp/gateway
+
+ ✓ test/deploy-gap.test.ts > the v1 Worker on the v2 schema: a bound owner's message, a send, its status and the window work; a stranger's text and an invite text answer 500 18ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  15:33:58
+   Duration  450ms (transform 43ms, setup 57ms, import 32ms, tests 19ms, environment 0ms)
+
+pnpm wrapper: verify-deps off for exec (round 3)

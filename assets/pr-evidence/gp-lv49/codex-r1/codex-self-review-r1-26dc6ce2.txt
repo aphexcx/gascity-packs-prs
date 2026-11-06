@@ -1,0 +1,17 @@
+# codex-gate exec: prompt /Users/tailor512/city/assets/pr-evidence/gp-lv49/codex-r1-prompt.md (3106 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs; model gpt-6-astra; 2026-11-06T07:39:46Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+
+Three MAJOR findings in `26dc6ce2`:
+
+1. **MAJOR — Late notices bypass an earlier unbind.** [gateway.ts:771](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway/src/gateway.ts:771)
+   Bind `a` to X; fail the `a→a2` notice and subsequent `a2` messages containing Y’s live code and an image; unbind X; then retry the notice, code and image. The unbind recorded only `a`. Adding the link never extends that record to `a2`, so the code binds Y and the image reaches Y, violating the unbind isolation requirement. Apply existing unbind boundaries to IDs revealed by delayed notices, respecting their stamps.
+
+2. **MAJOR — A retried invite ignores links already waiting for it.** [gateway.ts:673](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway/src/gateway.ts:673)
+   Fail an invite text under `a`, commit a later `a→a2` notice, then retry the invite. The insert stores `a` directly; only processing another notice runs the re-key. Consequently, messages under `a2` remain strangers, and welcomes and city sends target obsolete `a`. Resolve waiting links within the binding transaction and use the resulting current ID for the welcome.
+
+3. **MAJOR — Depth exhaustion authorizes a second binding.** [gateway.ts:278](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway/src/gateway.ts:278)
+   After 17 changes within the retry window, walking from the original ID cannot reach the standing binding. `holder()` returns NULL, which `stranger()` treats as permission to bind. A delayed live-code text can therefore create another city’s binding, followed by delivery of earlier private messages and media there. The design specifies no 16-change restriction. Preserve complete ownership evidence or detect traversal exhaustion; it must never establish that an ID is unowned.
+
+Tests, typecheck and builds: **not run (sandbox)**. Committed evidence confirms the base acceptance RED run and 2/2 deploy-gap checks. The head’s 215/215, clean typecheck and green Wrangler dry run are lane-reported.
+
+VERDICT: BLOCK

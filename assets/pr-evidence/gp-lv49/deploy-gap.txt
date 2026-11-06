@@ -1,0 +1,20 @@
+# gp-lv49 deploy gap: the deployed Worker's src/ (PR 73, the gateway source of main 2372b4f2) on migrations 0001 + 0002 + 0003 as re-cut at 67a5bb31
+# Run in a detached probe tree (/private/tmp/gp-lv49-probe/tree at 67a5bb31) with main's src/*.ts written in and the two earlier check files copied into test/:
+#   assets/pr-evidence/gp-ac0u/deploy-gap.check.ts -> test/deploy-gap-ac0u.test.ts
+#   assets/pr-evidence/gp-0g2s/deploy-gap.check.ts -> test/deploy-gap-0g2s.test.ts
+# src sha256 (the same as gp-0g2s's record): src/gateway.ts 0ec0b4436eb4, src/meta.ts 4580b74a43df, src/window.ts 3c205c48ed5f, src/index.ts b7f65f18c48e
+# 2026-11-06T07:37:49Z pnpm exec vitest run --reporter=verbose test/deploy-gap-ac0u.test.ts test/deploy-gap-0g2s.test.ts -> exit 0
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /private/tmp/gp-lv49-probe/tree/whatsapp/gateway
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+ ✓ test/deploy-gap-0g2s.test.ts > the deployed Worker on the v3 schema: a redelivered message and a redelivered status are each one row, and an owner's image is served to its city 22ms
+ ✓ test/deploy-gap-ac0u.test.ts > the v1 Worker on the v2 schema: a bound owner's message, a send, its status and the window work; a stranger's text and an invite text answer 500 23ms
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  01:37:38
+   Duration  509ms (transform 89ms, setup 128ms, import 70ms, tests 47ms, environment 0ms)
+

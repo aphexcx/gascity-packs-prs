@@ -1,0 +1,50 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+ ❯ test/bsuid.test.ts (68 tests | 1 failed | 67 skipped) 168ms
+     × gp-g02t (M3): a new binding is keyed by its user id, never the number: a PR 73 owner A keyed by P is unbound, then B binds on P: B is keyed by its user id and its messages never land in A's conversation P; a new owner showing a number is keyed by its user id too 167ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: binding and routing > gp-g02t (M3): a new binding is keyed by its user id, never the number: a PR 73 owner A keyed by P is unbound, then B binds on P: B is keyed by its user id and its messages never land in A's conversation P; a new owner showing a number is keyed by its user id too
+AssertionError: expected [ { …(5) }, { …(5) } ] to deeply equal [ { …(5) }, { …(5) } ]
+
+- Expected
++ Received
+
+  [
+    {
+      "city_id": "city_3600187aece739c8ce3e97a5",
+-     "conversation_id": "US.27473268832940335362",
++     "conversation_id": "5523158820451",
+      "shows": "5523158820451",
+      "user_id": "US.27473268832940335362",
+      "username": null,
+    },
+    {
+      "city_id": "city_3600187aece739c8ce3e97a5",
+-     "conversation_id": "US.18577948461740636843",
++     "conversation_id": "5535596936477",
+      "shows": "5535596936477",
+      "user_id": "US.18577948461740636843",
+      "username": null,
+    },
+  ]
+
+ ❯ test/bsuid.test.ts:186:41
+    184|     const c = bsuid();
+    185|     await t.joinAs(city, { wa: wa2, user: c });
+    186|     expect(await owners(wa, b, wa2, c)).toEqual([
+       |                                         ^
+    187|       { conversation_id: b, shows: wa, user_id: b, username: null, cit…
+    188|       { conversation_id: c, shows: wa2, user_id: c, username: null, ci…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 67 skipped (68)
+   Start at  06:16:06
+   Duration  1.03s (transform 70ms, setup 128ms, import 81ms, tests 168ms, environment 0ms)
+

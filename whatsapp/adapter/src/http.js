@@ -95,7 +95,8 @@ export async function requestJSON(url, {
   }
 }
 
-// Never log a query string: it can carry a wa_id.
+// Never log a query string: it can carry a conversation id (a phone number
+// or a WhatsApp user id).
 export function redactURL(url) {
   try {
     const u = new URL(url);

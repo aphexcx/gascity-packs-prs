@@ -111,6 +111,11 @@ export async function startFakeGateway({ clock } = {}) {
     // to which answers 409 ambiguous_recipient, sends nothing and spends no key.
     userIds: new Map(), // wa_id -> the owner's user_id
     ambiguous: new Set(), // `to` values naming two owners
+    // PR 76's window entries carry a user_id field (null for a PR 73 row);
+    // PR 73's carry none. And PR 76's marks: the number an owner shows now,
+    // by which a send's `to` also names it (gateway.ts send, gp-g02t).
+    v2Owners: new Set(), // owners whose window entry carries user_id
+    shows: new Map(), // number -> the conversation_id of the owner who shows it
     lastInbound: new Map(), // wa_id -> ms
     invites: [],
     enrollCodes: new Set(['enroll-ok']),
@@ -124,12 +129,28 @@ export async function startFakeGateway({ clock } = {}) {
     ackMaxIds: Infinity, // a batch over this answers 413
   };
 
-  g.addDelivery = ({ kind = 'message', wa_id, profile_name = 'Owner', message }) => {
+  // A delivery in the gateway contract v1 (PR 73's inbox: wa_id is the
+  // owner's key) unless conversation_id is given: then in PR 76's inbox shape
+  // (gateway.ts inbox(): wa_id the number or null, user_id, username, and the
+  // owner's stable conversation_id), and the fake keys the owner (bound, its
+  // window, a send's `to`) by that conversation_id, as the gateway does.
+  g.addDelivery = ({ kind = 'message', wa_id, profile_name = 'Owner', message, conversation_id, user_id = null, username = null }) => {
     const id = g.nextId++;
-    const delivery = { id, received_at: Math.floor(now() / 1000), kind, wa_id: String(wa_id), profile_name: kind === 'status' ? null : profile_name, message };
+    const v2 = conversation_id !== undefined;
+    const delivery = v2
+      ? {
+        id, received_at: Math.floor(now() / 1000), kind, wa_id: wa_id == null ? null : String(wa_id), user_id, username,
+        conversation_id, profile_name: kind === 'status' ? null : profile_name, message,
+      }
+      : { id, received_at: Math.floor(now() / 1000), kind, wa_id: String(wa_id), profile_name: kind === 'status' ? null : profile_name, message };
+    const owner = String(v2 ? conversation_id : wa_id);
     g.deliveries.set(id, delivery);
-    g.bound.add(String(wa_id));
-    if (kind === 'message' || kind === 'joined') g.lastInbound.set(String(wa_id), Number(message?.timestamp) * 1000 || now());
+    g.bound.add(owner);
+    if (v2) {
+      g.v2Owners.add(owner);
+      if (user_id) g.userIds.set(owner, user_id);
+    }
+    if (kind === 'message' || kind === 'joined') g.lastInbound.set(owner, Number(message?.timestamp) * 1000 || now());
     return id;
   };
   g.addText = (wa_id, wamid, body, extra = {}) => g.addDelivery({
@@ -140,7 +161,7 @@ export async function startFakeGateway({ clock } = {}) {
   g.windowFor = (waId) => {
     const last = g.lastInbound.get(String(waId));
     const userId = g.userIds.get(String(waId));
-    const ids = { conversation_id: String(waId), ...(userId ? { user_id: userId } : {}) };
+    const ids = { conversation_id: String(waId), ...(userId ? { user_id: userId } : g.v2Owners.has(String(waId)) ? { user_id: null } : {}) };
     if (!last) return { ...ids, last_inbound_at: null, window_closes_at: null };
     return {
       ...ids,
@@ -148,8 +169,17 @@ export async function startFakeGateway({ clock } = {}) {
       window_closes_at: Math.floor(last / 1000) + 86400 - 120,
     };
   };
-  // The bound owner a send's `to` names: its wa_id, or its user_id.
-  g.ownerOf = (to) => (g.bound.has(to) ? to : [...g.userIds].find(([waId, userId]) => userId === to && g.bound.has(waId))?.[0]);
+  // Every bound owner a send's `to` names, as PR 76's send resolves it: its
+  // conversation_id (PR 73: its wa_id), its user_id, or a number it shows.
+  g.namedBy = (to) => {
+    const named = new Set();
+    if (g.bound.has(to)) named.add(to);
+    for (const [owner, userId] of g.userIds) if (userId === to && g.bound.has(owner)) named.add(owner);
+    const shown = g.shows.get(to);
+    if (shown !== undefined && g.bound.has(shown)) named.add(shown);
+    return [...named];
+  };
+  g.ownerOf = (to) => g.namedBy(to)[0];
   g.windowOpen = (waId) => {
     const last = g.lastInbound.get(String(waId));
     return Boolean(last) && now() < last + DAY_MS - MARGIN_MS;
@@ -196,14 +226,19 @@ export async function startFakeGateway({ clock } = {}) {
     if (route === 'POST /v1/send') {
       const { idempotency_key: key, type } = body;
       const to = String(body.to);
-      const owner = g.ownerOf(to);
+      const named = g.namedBy(to);
+      const owner = named[0];
       if (!owner) return send(res, 403, { error: 'not_bound' });
       if (g.sendAnswers.has(key)) return send(res, 200, g.sendAnswers.get(key));
-      if (g.ambiguous.has(to)) return send(res, 409, { error: 'ambiguous_recipient', hint: 'send to the owner\'s current id' });
+      if (named.length > 1 || g.ambiguous.has(to)) {
+        return send(res, 409, { error: 'ambiguous_recipient', hint: 'send to the owner\'s current id', owner_user_id: g.userIds.get(to) ?? null });
+      }
+      // A PR 76 owner with no user id (a PR 73 row) has no address.
+      if (g.v2Owners.has(owner) && !g.userIds.get(owner)) return send(res, 403, { error: 'not_bound' });
       if (g.sendFailOn.has(key)) { g.sendFailOn.delete(key); return send(res, 500, { error: 'graph failed' }); }
       if (type !== 'template' && !g.windowOpen(owner)) return send(res, 422, { error: 'window_closed' });
       const answer = { message_id: `wamid.out.${g.sends.length + 1}` };
-      g.sends.push({ ...body, at: now() });
+      g.sends.push({ ...body, owner, at: now() });
       g.sendAnswers.set(key, answer);
       return send(res, 200, answer);
     }

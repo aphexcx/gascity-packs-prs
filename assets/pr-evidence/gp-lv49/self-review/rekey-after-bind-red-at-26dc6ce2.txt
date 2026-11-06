@@ -1,0 +1,42 @@
+
+ RUN  v4.1.12 /private/tmp/gp-lv49-probe/tree/whatsapp/gateway
+
+ ❯ test/bsuid.test.ts (55 tests | 1 failed | 54 skipped) 15ms
+     × a code text under a user id whose number-change notice already landed binds and is re-keyed along the waiting link: the owner answers to its newest id, and the welcome goes there (point 2: links in any order) 14ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 54 skipped (55)
+   Start at  01:41:27
+   Duration  410ms (transform 55ms, setup 49ms, import 63ms, tests 15ms, environment 0ms)
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > a code text under a user id whose number-change notice already landed binds and is re-keyed along the waiting link: the owner answers to its newest id, and the welcome goes there (point 2: links in any order)
+AssertionError: expected [] to deeply equal [ { …(5) } ]
+
+- Expected
++ Received
+
+- [
+-   {
+-     "city_id": "city_6d8d447555e9a42bdc9431c8",
+-     "conversation_id": "5518231017896",
+-     "shows": "5539934131163",
+-     "user_id": "US.38830870121799736345",
+-     "username": null,
+-   },
+- ]
++ []
+
+ ❯ test/bsuid.test.ts:1537:30
+    1535|     const calls = t.graph.sends().length;
+    1536|     expect((await t.webhook(joining)).status).toBe(200);
+    1537|     expect(await owners(a3)).toEqual([{ conversation_id: p, shows: q, …
+       |                              ^
+    1538|     expect(t.graph.sends().slice(calls).map((c) => [c.body?.recipient,…
+    1539|     // The owner writes under its newest id: its own city, no canned l…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

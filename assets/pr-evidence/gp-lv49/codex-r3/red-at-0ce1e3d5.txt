@@ -1,0 +1,58 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+ ❯ test/bsuid.test.ts (67 tests | 2 failed | 65 skipped) 31ms
+     × the cron never erases an unbind's reach while a message it decides can still arrive: an expiring link leaves its component's floor on both its ids (codex self-review r3, finding 1) 22ms
+     × links that loop (a -> b and b -> a, neither bound) leave a binding on its own id, however Meta replays them (codex self-review r3, finding 2) 9ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > the cron never erases an unbind's reach while a message it decides can still arrive: an expiring link leaves its component's floor on both its ids (codex self-review r3, finding 1)
+AssertionError: expected { n: 1 } to deeply equal { n: +0 }
+
+- Expected
++ Received
+
+  {
+-   "n": 0,
++   "n": 1,
+  }
+
+ ❯ test/bsuid.test.ts:1746:107
+    1744|     t.clock.now = T0 + 9 * DAY + HOUR;
+    1745|     expect((await t.webhook(code)).status).toBe(200); // stamped day 3…
+    1746|     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHER…
+       |                                                                                                           ^
+    1747|   });
+    1748|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > links that loop (a -> b and b -> a, neither bound) leave a binding on its own id, however Meta replays them (codex self-review r3, finding 2)
+AssertionError: expected [ 'US.31707709752597193612' ] to deeply equal [ 'US.25792080683675594376' ]
+
+- Expected
++ Received
+
+  [
+-   "US.25792080683675594376",
++   "US.31707709752597193612",
+  ]
+
+ ❯ test/bsuid.test.ts:1760:29
+    1758|     await t.joinAs(x, { user: a });
+    1759|     const current = async () => (await t.window(x)).body.windows.map((…
+    1760|     expect(await current()).toEqual([a]);
+       |                             ^
+    1761|     for (const n of [ba, ab, ba]) {
+    1762|       expect((await t.webhook(n)).status).toBe(200);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 65 skipped (67)
+   Start at  02:21:09
+   Duration  549ms (transform 76ms, setup 66ms, import 84ms, tests 31ms, environment 0ms)
+

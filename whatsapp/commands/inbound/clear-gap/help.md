@@ -1,8 +1,11 @@
 # gc whatsapp inbound clear-gap
 
 ```
-gc whatsapp inbound clear-gap <wa_id>
+gc whatsapp inbound clear-gap <conversation_id>
 ```
+
+Name the conversation exactly as gc shows it (`whatsapp/<conversation_id>`):
+a phone number's digits, or a WhatsApp user id whole.
 
 The adapter keeps, per conversation, a WATERMARK: the highest transcript
 sequence gc accepted from it. It reads the gc store at every watermark at

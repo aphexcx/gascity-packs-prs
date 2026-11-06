@@ -1,0 +1,19 @@
+# gp-w376 deploy gap: the deployed Worker's src/ (392f9c09) on migrations 0001 + 0002 + this round's 0003
+# HEAD 1d85f5bad5541710d9993da9d0fe80e2039ec6fd
+# tree: src/ from 392f9c09649dd37eea414dbc520270ba586ed18c; the migrations as committed; the two checks copied into test/
+# 2026-11-05T01:10:10Z pnpm exec vitest run --reporter=verbose test/deploy-gap-ac0u.test.ts test/deploy-gap-0g2s.test.ts (cwd whatsapp/gateway) -> exit 0
+# sha256: {'src/gateway.ts': '0ec0b4436eb4', 'src/meta.ts': '4580b74a43df', 'src/window.ts': '3c205c48ed5f', 'src/index.ts': 'b7f65f18c48e', 'migrations/0003_retries.sql': '4d3cf69aea02', 'test/bsuid.test.ts': '0d2e81d781ef'}
+
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+ ✓ test/deploy-gap-ac0u.test.ts > the v1 Worker on the v2 schema: a bound owner's message, a send, its status and the window work; a stranger's text and an invite text answer 500 16ms
+ ✓ test/deploy-gap-0g2s.test.ts > the deployed Worker on the v3 schema: a redelivered message and a redelivered status are each one row, and an owner's image is served to its city 17ms
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  19:10:11
+   Duration  463ms (transform 77ms, setup 110ms, import 60ms, tests 34ms, environment 0ms)
+
+pnpm wrapper: verify-deps off for exec (round 3)
