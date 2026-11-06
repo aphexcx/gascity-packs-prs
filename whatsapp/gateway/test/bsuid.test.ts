@@ -1586,6 +1586,71 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     for (const city of [x, y]) expect((await t.inbox(city)).body.deliveries.some((d: any) => d.message?.id === wamid)).toBe(false);
   });
 
+  it("a notice landing after an unbind extends the unbind's record to the id it reveals: what the owner wrote under the new id while bound binds nothing and reaches no city (codex self-review r1, finding 1)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const y = await t.enrollCity();
+    const [p, q] = [phone(), phone()];
+    const [a, a2] = [bsuid(), bsuid()];
+    await t.joinAs(x, { wa: p, user: a });
+    // A changes number at T1; the notice's write fails. Under a2 A then texts Y's live code (T2)
+    // and sends an image (T3); both writes fail. X answered to a2 from T1, though the gateway
+    // cannot know it yet.
+    const ky = await t.invite(y);
+    const change = changeAs("user_changed_number", { from: p, previousUser: a, newUser: a2, newWa: q }, { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    const code = textAs({ wa: q, user: a2 }, ky, { wamid: `wamid.${uniq()}`, ts: T0 + 2 * HOUR });
+    const mediaId = `3${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
+    t.graph.media.set(mediaId, { mime: "image/jpeg", bytes: new Uint8Array([255, 216, 255]) });
+    const image = imageAs({ wa: q, user: a2 }, mediaId, { wamid: `wamid.${uniq()}`, ts: T0 + 3 * HOUR });
+    for (const [m, at] of [[change, T0 + HOUR], [code, T0 + 2 * HOUR], [image, T0 + 3 * HOUR]] as const) {
+      t.clock.now = at;
+      flaky.arm(0);
+      expect((await t.webhook(m)).status).toBe(500);
+    }
+    // X's operator unbinds A: the record names a, the only id the gateway knows.
+    t.clock.now = T0 + 4 * HOUR;
+    await t.unbind(a);
+    // Meta retries all three, the notice first.
+    t.clock.now = T0 + 5 * HOUR;
+    for (const m of [change, code, image]) expect((await t.webhook(m)).status).toBe(200);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHERE city_id = ?").bind(y.id).first()).toEqual({ n: 0 });
+    const wamids = [code, image].map((m) => m.entry[0].changes[0].value.messages[0].id);
+    for (const city of [x, y]) {
+      expect((await t.inbox(city)).body.deliveries.filter((d: any) => wamids.includes(d.message?.id))).toEqual([]);
+      expect((await t.call("GET", `/v1/media/${mediaId}`, { token: city.token })).status).toBe(404);
+    }
+    expect(await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(ky).first()).toEqual({ used_at: null });
+  });
+
+  it("a chain of number changes of any length within the retry window still leads to its binding: no depth limit makes an owned id a stranger's (codex self-review r1, finding 3)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const y = await t.enrollCity();
+    const ids = Array.from({ length: 21 }, () => bsuid());
+    await t.joinAs(x, { user: ids[0]! });
+    // Before any change: A's message to X and a code text for Y under the first id; both writes fail.
+    const ky = await t.invite(y);
+    const early = textAs({ user: ids[0]! }, "for X's mayor", { wamid: `wamid.${uniq()}`, ts: T0 + 60 });
+    const code = textAs({ user: ids[0]! }, ky, { wamid: `wamid.${uniq()}`, ts: T0 + 120 });
+    for (const m of [early, code]) {
+      flaky.arm(0);
+      expect((await t.webhook(m)).status).toBe(500);
+    }
+    // Twenty number changes, a minute apart.
+    for (let i = 1; i < ids.length; i++) {
+      t.clock.now = T0 + HOUR + i * 60;
+      expect((await t.webhook(changeAs("user_changed_user_id", { previousUser: ids[i - 1]!, newUser: ids[i]! }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
+    }
+    expect((await t.window(x)).body.windows.map((w: any) => w.user_id)).toEqual([ids.at(-1)]);
+    t.clock.now = T0 + 2 * HOUR;
+    for (const m of [early, code]) expect((await t.webhook(m)).status).toBe(200);
+    const held = (await t.inbox(x)).body.deliveries.map((d: any) => d.message?.id);
+    expect(held).toContain(early.entry[0].changes[0].value.messages[0].id);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHERE city_id = ?").bind(y.id).first()).toEqual({ n: 0 });
+  });
+
   it("a notice whose previous user id no binding answers to reaches no city, hears nothing and is counted", async () => {
     const t = setup();
     await t.enrollCity();

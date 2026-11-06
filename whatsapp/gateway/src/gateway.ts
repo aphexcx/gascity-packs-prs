@@ -56,8 +56,6 @@ export const TOMBSTONE_SECONDS = 8 * DAY;
  * later than this.
  */
 export const EVIDENCE_SECONDS = TOMBSTONE_SECONDS;
-/** The longest chain of number changes a route follows; Meta's own chains are one or two long. */
-const LINK_DEPTH = 16;
 /** How long a counted wrong code's wamid is kept: as long as Meta may redeliver it. */
 const CODE_WAMIDS_KEEP_SECONDS = TOMBSTONE_SECONDS;
 /** Meta keeps a webhook media id for 7 days. */
@@ -268,14 +266,17 @@ function senderOf(m: InboundMessage): { wa: string | null; user: string | null }
  *
  * walkFrom(id) is that chain: each id from the given one along the links, with `until`, the stamp
  * of the notice that replaced the given id (NULL while it is current), stopping at the first id
- * that is some binding's current user_id. Every fragment below joins it to phones.
+ * that is some binding's current user_id. Every fragment below joins it to phones. It has no
+ * depth limit: an id has at most one link out (links' key), so the chain is a path, and UNION's
+ * set semantics end it should Meta ever link back into it. A depth limit would read a long chain
+ * as unowned and let a code bind its first id a second time (the codex self-review r1, finding 3).
  */
 const walkFrom = (id: string) =>
-  `WITH RECURSIVE walk(id, until, depth) AS (
-     SELECT ${id}, NULL, 0
-     UNION ALL
-     SELECT l.new_id, COALESCE(walk.until, l.stamp), walk.depth + 1 FROM walk JOIN links l ON l.old_id = walk.id
-     WHERE walk.depth < ${LINK_DEPTH} AND NOT EXISTS (SELECT 1 FROM phones h WHERE h.user_id = walk.id))`;
+  `WITH RECURSIVE walk(id, until) AS (
+     SELECT ${id}, NULL
+     UNION
+     SELECT l.new_id, COALESCE(walk.until, l.stamp) FROM walk JOIN links l ON l.old_id = walk.id
+     WHERE NOT EXISTS (SELECT 1 FROM phones h WHERE h.user_id = walk.id))`;
 /** The binding the user id answers to now, at any stamp: the one it is, or its chain ends at. */
 const holder = (id: string) => `(${walkFrom(id)} SELECT p.conversation_id FROM walk JOIN phones p ON p.user_id = walk.id LIMIT 1)`;
 /** The gateway's clock at the id's last unbind, or NULL (unbinds are kept 8 days). */
@@ -300,17 +301,35 @@ const stranger = (id: string, stamp: string) =>
   `(${id} IS NOT NULL AND ${holder(id)} IS NULL AND ${stamp} > COALESCE(${unboundAt(id)}, -1))`;
 /**
  * The re-key, for the binding whose current user id is ?1: along the links from it, to the newest
- * id no other binding answers to. A link is reached when its old id becomes a binding's, by the
- * notice that links to it or by a bind under it, and both run this one statement (point 2).
+ * id no other binding answers to, the one with no further link to follow. A link is reached when
+ * its old id becomes a binding's, by the notice that links to it or by a bind under it, and both
+ * run this one statement (point 2). No depth limit, as walkFrom; a chain that loops has no end,
+ * and the binding keeps its id.
  */
-const REKEY = `UPDATE phones SET user_id = (
-     WITH RECURSIVE fwd(id, depth) AS (
-       SELECT ?1, 0
-       UNION ALL
-       SELECT l.new_id, fwd.depth + 1 FROM fwd JOIN links l ON l.old_id = fwd.id
-       WHERE fwd.depth < ${LINK_DEPTH} AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
-     SELECT id FROM fwd ORDER BY depth DESC LIMIT 1)
+const REKEY = `UPDATE phones SET user_id = COALESCE((
+     WITH RECURSIVE fwd(id) AS (
+       SELECT ?1
+       UNION
+       SELECT l.new_id FROM fwd JOIN links l ON l.old_id = fwd.id
+       WHERE NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
+     SELECT f.id FROM fwd f
+     WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.old_id = f.id AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
+     LIMIT 1), ?1)
    WHERE user_id = ?1`;
+/**
+ * A notice's link that lands after an unbind: the unbound binding answered to the link's new id
+ * from the notice's stamp until its unbind, so every unbind record of the old id at or after the
+ * notice's stamp extends along the chain (to each id whose own link came before that unbind). What
+ * the owner wrote under the new id while bound then binds nothing and reaches no city (point 2: an
+ * unbind records every id its binding answered to; the codex self-review r1, finding 1).
+ */
+const EXTEND_UNBINDS = `INSERT OR IGNORE INTO unbinds (user_id, unbound_at)
+   WITH RECURSIVE reach(id, at) AS (
+     SELECT l.new_id, u.unbound_at FROM links l JOIN unbinds u ON u.user_id = l.old_id
+     WHERE l.old_id = ?1 AND l.stamp <= u.unbound_at
+     UNION
+     SELECT l.new_id, reach.at FROM reach JOIN links l ON l.old_id = reach.id WHERE l.stamp <= reach.at)
+   SELECT id, at FROM reach`;
 /** The number a binding shows (the admin view, a delivery omitting it): its id's newest mark. */
 const shownNumber = (row: string) =>
   `(CASE WHEN ${row}.user_id IS NULL THEN ${row}.wa_id
@@ -795,6 +814,9 @@ export function createGateway(deps: Deps) {
           // newest id no other binding answers to. A link waiting for its old id's own notice is
           // reached when that one lands, by this same statement.
           push(db.prepare(REKEY).bind(previousUserId));
+          // A link whose old id an unbind recorded after the notice's stamp: the record extends
+          // along it.
+          push(db.prepare(EXTEND_UNBINDS).bind(previousUserId));
         }
         // The mark: the new number shows the new id from the notice's stamp, the old number shows
         // nobody, each unless Meta already paired it later (point 4).
@@ -1252,12 +1274,11 @@ export function createGateway(deps: Deps) {
       db
         .prepare(
           `INSERT OR IGNORE INTO unbinds (user_id, unbound_at)
-           WITH RECURSIVE answered(id, depth) AS (
-             SELECT user_id, 0 FROM phones WHERE (conversation_id = ?1 OR user_id = ?1 OR wa_id = ?1) AND user_id IS NOT NULL
-             UNION ALL
-             SELECT l.old_id, answered.depth + 1 FROM answered JOIN links l ON l.new_id = answered.id
-             WHERE answered.depth < ${LINK_DEPTH})
-           SELECT DISTINCT id, ?2 FROM answered`,
+           WITH RECURSIVE answered(id) AS (
+             SELECT user_id FROM phones WHERE (conversation_id = ?1 OR user_id = ?1 OR wa_id = ?1) AND user_id IS NOT NULL
+             UNION
+             SELECT l.old_id FROM answered JOIN links l ON l.new_id = answered.id)
+           SELECT id, ?2 FROM answered`,
         )
         .bind(id, now),
       db.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR user_id = ?1 OR wa_id = ?1").bind(id),
