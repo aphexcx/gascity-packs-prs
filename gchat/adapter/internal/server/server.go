@@ -1341,7 +1341,7 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			}
 			// History is the message as Chat has it: the provenance frame is
 			// the turn's, not the text's. Invisible characters stay removed.
-			if line, ok := provenance.FrameOf(saved.Text); ok {
+			if line, ok := provenance.FrameOf(saved.Text); change.ProvenanceFramed && ok {
 				saved.Text = strings.TrimPrefix(saved.Text, line+"\n")
 			}
 			if change.Kind == "message.updated" && id != m.Name {

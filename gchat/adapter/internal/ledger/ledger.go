@@ -96,6 +96,9 @@ type ChangeState struct {
 	Event     string    `json:"event"`
 	Reason    string    `json:"reason"`
 	CatchUp   bool      `json:"catch_up,omitempty"` // adapter added the delivery header
+	// ProvenanceFramed marks adapter-authored frames; legacy records default
+	// to false so user text resembling a frame is never trusted or stripped.
+	ProvenanceFramed bool `json:"provenance_framed,omitempty"`
 }
 
 type SendState struct {

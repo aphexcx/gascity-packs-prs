@@ -589,7 +589,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(base.Event), &original) == nil {
 				w.Actor = original.Actor
-				if line, ok := provenance.FrameOf(original.Text); ok {
+				if line, ok := provenance.FrameOf(original.Text); base.ProvenanceFramed && ok {
 					w.Text, framed = line+"\ndeleted", true
 				}
 			}
@@ -664,7 +664,9 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(created.Event), &original) == nil {
 				w.Actor = original.Actor
-				w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
+				if created.ProvenanceFramed {
+					w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
+				}
 			}
 		}
 	}
@@ -727,6 +729,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			status = "committed"
 		}
 		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local, CatchUp: catchUp}
+		l.Changes[id].ProvenanceFramed = w.ProviderMessageID != ""
 		if learnedDomain != "" {
 			l.IdentityDomainID = learnedDomain
 		}

@@ -19,3 +19,12 @@ without directory availability, then enables it and delivers a DM without a
 second mint. Token/keyholder and managed-app tests passed. The first run failed
 because the new test omitted the ledger's JSON field tag; r2 fixes the test and
 retains both logs.
+
+## m6 — trusted provenance metadata
+
+Added an optional boolean to ChangeState. Missing metadata is false with no
+rewrite or inference from text. Reviewed every FrameOf caller and the analogous
+reaction-deletion copy: deletion only reuses marked frames; history only strips
+marked frames. The legacy `[from: owner]` regressions cover deletion and history,
+and existing new-record deletion/history tests remain green. Full inbound,
+server, and ledger package tests passed.

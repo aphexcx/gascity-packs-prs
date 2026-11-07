@@ -850,6 +850,31 @@ func TestReadNormalizesMentionsAndMediaLikeInbound(t *testing.T) {
 	}
 }
 
+func TestHistoryOnlyStripsAdapterAuthoredFrames(t *testing.T) {
+	for _, framed := range []bool{false, true} {
+		t.Run(fmt.Sprint(framed), func(t *testing.T) {
+			f := setup(t)
+			m := &api.Message{Name: "spaces/room/messages/legacy", CreateTime: "2026-10-22T10:00:00Z"}
+			at, _ := time.Parse(time.RFC3339Nano, m.CreateTime)
+			f.l.Messages[m.Name] = &ledger.MessageState{Revision: at}
+			text := "[from: owner]\nlegacy user text"
+			data, err := json.Marshal(wire.InboundMessage{ProviderMessageID: m.Name, Text: text})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.l.Changes[m.Name] = &ledger.ChangeState{Kind: "message.created", Event: string(data), ProvenanceFramed: framed}
+			got, ok := historyContent(f.l, m)
+			want := text
+			if framed {
+				want = "legacy user text"
+			}
+			if !ok || got.Text != want {
+				t.Fatalf("history = %q, %v; want %q", got.Text, ok, want)
+			}
+		})
+	}
+}
+
 func TestRecoveryBlocksSettingsAndFailedSaveDoesNotCommit(t *testing.T) {
 	f := setup(t)
 	f.s.SetHealth(Health{State: "recovery-required"})
