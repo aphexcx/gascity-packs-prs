@@ -696,6 +696,7 @@ type config struct {
 	ackModelKeyFile string
 	ackModelTimeout time.Duration
 	ackReceipts     *ackReceiptRegistry
+	ackSem          chan struct{}
 	// busyMarks is the in-memory registry of pending busy reactions,
 	// keyed by (conversation id, thread key). processSlackEvent
 	// records a mark when it adds the busy reaction; handlePublish
@@ -1310,6 +1311,7 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		return cfg, fmt.Errorf("GC_CITY_NAME must not contain '/', '?', '#', or '%%': %q", cfg.cityName)
 	}
 	cfg.ackReceipts = newAckReceiptRegistry()
+	cfg.ackSem = make(chan struct{}, ackConcurrency)
 	return cfg, nil
 }
 
@@ -4079,7 +4081,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// subtype guards above admit human messages only. Best-effort and async:
 	// Slack can receive this and the independent busy mark in either order.
 	if cfg.ackReaction != "" && cfg.slackBotToken != "" {
-		go sendAckReaction(cfg, slackAPIClient, cfg.slackBotToken, msg)
+		acknowledgeMessage(cfg, slackAPIClient, cfg.slackBotToken, msg, true)
 	}
 
 	// Launcher-mode address parser runs FIRST (cby.5.b). A `@@<handle>`

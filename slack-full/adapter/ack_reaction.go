@@ -8,6 +8,29 @@ import (
 	"time"
 )
 
+// Four slots limit simultaneous model requests and Slack writes to a small
+// burst while allowing unrelated conversations to make progress. Acquire before
+// spawning: overflow waits in the existing event/delivery worker, never in an
+// unbounded set of acknowledgement goroutines, and no receipt is dropped.
+const ackConcurrency = 4
+
+func acknowledgeMessage(cfg config, client *http.Client, token string, msg slackMessageEvent, async bool) {
+	if cfg.ackSem != nil {
+		cfg.ackSem <- struct{}{}
+	}
+	work := func() {
+		if cfg.ackSem != nil {
+			defer func() { <-cfg.ackSem }()
+		}
+		sendAckReaction(cfg, client, token, msg)
+	}
+	if async {
+		go work()
+	} else {
+		work()
+	}
+}
+
 // sendAckReaction is the one configured acknowledgement path. The caller
 // supplies the posting token: legacy/switchboard for rooms, owner for agent DMs.
 // It is best effort; company receipts retain their durable delivery status.

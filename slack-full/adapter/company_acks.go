@@ -120,10 +120,10 @@ func (g *companyGateway) applyConfiguredAck(r *IngressReceipt) {
 		return
 	}
 	msg := decodeCompanyMessage(r.Origin, g.store().receiptBody(r))
-	sendAckReaction(g.cfg, g.slackClient, token, slackMessageEvent{
+	acknowledgeMessage(g.cfg, g.slackClient, token, slackMessageEvent{
 		Channel: msg.ChannelID, TS: msg.TS, User: msg.UserID, BotID: msg.BotID,
 		Subtype: msg.Subtype, Text: msg.Text, Files: msg.Files,
-	})
+	}, false)
 	g.commitAckState(r, ackStateDone)
 }
 

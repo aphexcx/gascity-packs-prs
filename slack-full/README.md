@@ -829,6 +829,13 @@ when unset, that lifecycle retains its existing behavior and
 `SLACK_COMPANY_VISIBLE_ACKS` gate. Bot and system messages are filtered first.
 Neither path waits for an agent turn.
 
+Acknowledgements share four concurrent slots across both paths. Under load,
+existing event/delivery workers wait for a slot before starting an ack, so
+over-cap messages are queued, never discarded. The message identity (channel
+plus timestamp) is reserved before choosing an emoji; paired `message` and
+`app_mention` events share one pick and one post. Completed receipts expire
+after 30 minutes, with at most 4096 entries; active picks are never evicted.
+
 - `ACK_REACTION=eyes` (or `:eyes:`): always use that Slack emoji name.
 - `ACK_REACTION=auto`: choose from the local keyword table, falling back to
   `eyes`. There is no model call.
