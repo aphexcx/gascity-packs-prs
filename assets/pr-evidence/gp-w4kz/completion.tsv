@@ -5,3 +5,5 @@ go test ./internal/inbound ./internal/server ./internal/ledger -count=1 -timeout
 go test ./internal/app -run TestIdentityChange|TestSeedless|TestPersistedIdentitySeed|TestShutdownDuringReseed -count=1 -timeout=3m	0
 go test ./internal/inbound -run TestConcurrentNormalizers|TestMediaAccounting|TestAttachmentCount -count=1 -timeout=3m	0
 go test ./internal/app -run TestJoinedSpaceHistory -count=1 -timeout=3m	0
+go test ./internal/catchup ./internal/app -run TestDeletedSpace|TestRetryPendingWaits -count=1 -timeout=3m	1
+go test ./internal/catchup ./internal/app -run TestDeletedSpace|TestRetryPendingWaits -count=1 -timeout=3m (r2)	1

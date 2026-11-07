@@ -85,6 +85,7 @@ var eventTypes = []string{
 }
 
 var errSpaceUnavailable = errors.New("catchup: space unavailable")
+var errSpaceRetired = errors.New("catchup: space retired")
 var errUnchanged = errors.New("catchup: ledger unchanged")
 
 func New(opts Options) (*Runner, error) {
@@ -233,6 +234,9 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 		budget := r.budget
 		for {
 			enumerationErr := r.enumerate(ctx, name)
+			if errors.Is(enumerationErr, errSpaceRetired) {
+				break
+			}
 			if enumerationErr != nil {
 				failures = append(failures, enumerationErr)
 				// An unread event page may precede every retained message. Hold
@@ -351,6 +355,9 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		if err != nil {
 			kind, _ := chat.Classify(err)
 			var apiErr *googleapi.Error
+			if errors.As(err, &apiErr) && apiErr.Code == 404 {
+				return r.retireSpace(name)
+			}
 			if kind == "auth" || (kind == "not_found" && errors.As(err, &apiErr) && apiErr.Code == 403) {
 				return r.holdAccess(name, p, err)
 			}
@@ -644,6 +651,35 @@ func (r *Runner) quarantine(space string, item queuedChange) error {
 		l.Changes[id], l.Unresolved[id] = c, c
 		return nil
 	})
+}
+
+// A history 404 means this space is gone. Preserve already fetched records for
+// inspection, but remove its recovery interval so live spaces can become ready.
+func (r *Runner) retireSpace(name string) error {
+	err := r.update(func(l *ledger.Ledger) error {
+		s, err := spaceState(l, name)
+		if err != nil {
+			return err
+		}
+		for _, raw := range s.Backlog {
+			var item queuedChange
+			if err := json.Unmarshal([]byte(raw), &item); err != nil {
+				return errors.New("catchup: invalid durable backlog")
+			}
+			id := unavailableID(item)
+			if l.Changes[id] == nil {
+				l.Changes[id] = &ledger.ChangeState{ID: id, Space: name, Kind: "catchup.unavailable", Status: "committed", Created: r.opts.Now().UTC(), Event: raw, Reason: "space deleted: HTTP 404"}
+			}
+		}
+		delete(l.Spaces, name)
+		l.Counters["unrecoverable:"+name]++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	r.report(name)
+	return errSpaceRetired
 }
 
 func (r *Runner) saveProgress(name string, p progress, lost bool) error {

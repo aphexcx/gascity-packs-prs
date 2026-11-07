@@ -18,6 +18,8 @@ import (
 	"cloud.google.com/go/pubsub/v2"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 )
 
@@ -208,6 +210,69 @@ func TestManagedSourceKeyholderRefusalRecovers(t *testing.T) {
 	f.health(t, "ready", 10*time.Second)
 	if notices.Load() != 1 {
 		t.Fatalf("notices=%d want one", notices.Load())
+	}
+}
+
+func TestDeletedSpaceDoesNotHoldInterruptedSend(t *testing.T) {
+	f := newFixture(t, true)
+	f.google.Configure(func(g *fakegoogle.Server) {
+		g.Spaces["spaces/live"] = &api.Space{Name: "spaces/live", SpaceType: "SPACE"}
+	})
+	target, _ := url.Parse(f.cfg.Endpoints.ChatAPIBase)
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var gone atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/spaces/gone/") {
+			gone.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":404,"message":"space deleted"}}`))
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	f.cfg.Endpoints.ChatAPIBase = srv.URL
+	// Model the city's service proxy so gc's outbound callback reaches the
+	// running adapter over its private socket.
+	gcTarget, _ := url.Parse(f.cfg.Secrets.GCAPIBase)
+	gcProxy := httputil.NewSingleHostReverseProxy(gcTarget)
+	adapterTarget, _ := url.Parse("http://adapter")
+	adapterProxy := httputil.NewSingleHostReverseProxy(adapterTarget)
+	adapterProxy.Transport = f.client.Transport
+	prefix := "/v0/city/" + f.cfg.Secrets.CityName + "/svc/gchat"
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, prefix+"/") {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
+			adapterProxy.ServeHTTP(w, r)
+			return
+		}
+		gcProxy.ServeHTTP(w, r)
+	}))
+	defer gateway.Close()
+	f.cfg.Secrets.GCAPIBase = gateway.URL
+	l := ledger.New()
+	l.IdentityUserID = fakegoogle.UserID
+	l.Spaces["spaces/gone"] = &ledger.SpaceState{Kind: "room", MessageCursor: time.Now().Add(-time.Hour), EventCursor: time.Now().Add(-time.Hour)}
+	p := wire.PublishRequest{SessionID: "example", IdempotencyKey: "interrupted", Text: "recover me", Conversation: wire.Conversation{ScopeID: f.cfg.Secrets.CityName, Provider: "gchat", AccountID: f.cfg.Identity().Name, ConversationID: "spaces/live", Kind: "room"}}
+	f.gc.Bind(p.Conversation, p.SessionID)
+	l.Sends[p.IdempotencyKey] = &ledger.SendState{Key: p.IdempotencyKey, Space: "spaces/live", Request: &p, RecordPending: true, Parts: []ledger.SendPart{{RequestID: "interrupted-1", Text: p.Text}}}
+	if err := l.Save(f.cfg.Endpoints.StateFile); err != nil {
+		t.Fatal(err)
+	}
+	f.start(t)
+	f.health(t, "ready", 5*time.Second)
+	waitFor(t, 12*time.Second, func() bool {
+		data, _ := os.ReadFile(f.cfg.Endpoints.StateFile)
+		var saved ledger.Ledger
+		if json.Unmarshal(data, &saved) != nil {
+			return false
+		}
+		s := saved.Sends[p.IdempotencyKey]
+		return saved.Spaces["spaces/gone"] == nil && s != nil && s.Recorded && !s.RecordPending && s.Receipt != nil && s.Receipt.Delivered
+	})
+	if gone.Load() != 1 {
+		t.Fatalf("deleted-space history requests=%d, want one", gone.Load())
 	}
 }
 

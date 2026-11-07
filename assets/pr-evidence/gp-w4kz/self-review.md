@@ -54,3 +54,13 @@ clamps both message and event overlap to this bound; old ledgers retain their
 unknown-bound behavior. Existing space updates preserve the field. The app's
 membership/history regression now places the forbidden message 30 seconds before
 join, inside the old overlap, and passes with only the post-join message delivered.
+
+## m1 — deleted-space readiness
+
+Reviewed 404 retirement separately from authorization holds. Retirement archives
+any fetched backlog as unavailable changes, removes the space interval atomically,
+and reports history loss. Pass treats successful retirement as completed work.
+The regression checks repeated passes and the full running-app sequence: deleted
+history, readiness, then automatic recovery and recording of an interrupted send
+to a live space. The first app run exposed missing service-proxy routing in the
+new fixture; r2 models the city's socket proxy and passes. Both logs are retained.

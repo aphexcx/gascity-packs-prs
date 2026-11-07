@@ -683,7 +683,7 @@ func TestCatchupReactionsAndMalformedHistory(t *testing.T) {
 	}
 }
 
-func TestUnavailableHistoryReportedWithoutMovingCursor(t *testing.T) {
+func TestDeletedSpaceHistoryIsRetiredWithoutBlockingReadiness(t *testing.T) {
 	f := setup(t)
 	f.opts.Ledger.Spaces["spaces/gone"] = &ledger.SpaceState{Kind: "room", Wake: "all", MessageCursor: frozen.Add(-time.Hour), EventCursor: frozen.Add(-time.Hour)}
 	f.freeze(t)
@@ -691,12 +691,12 @@ func TestUnavailableHistoryReportedWithoutMovingCursor(t *testing.T) {
 	// classified error to exercise a genuinely inaccessible history interval.
 	f.onRequest = func(r *http.Request) error { return &googleapi.Error{Code: 404, Message: "space unavailable"} }
 	for i := 0; i < 2; i++ {
-		if _, _, err := f.r.Pass(context.Background()); err == nil {
-			t.Fatal("unavailable history succeeded")
+		if _, remaining, err := f.r.Pass(context.Background()); err != nil || remaining != 0 {
+			t.Fatalf("deleted space held readiness: remaining=%d err=%v", remaining, err)
 		}
 	}
-	if f.opts.Ledger.Counters["unrecoverable:spaces/gone"] != 1 || !f.opts.Ledger.Spaces["spaces/gone"].MessageCursor.Equal(frozen.Add(-time.Hour)) {
-		t.Fatal("history loss not reported or cursor advanced")
+	if f.opts.Ledger.Counters["unrecoverable:spaces/gone"] != 1 || f.opts.Ledger.Spaces["spaces/gone"] != nil {
+		t.Fatal("history loss not reported or deleted space not retired")
 	}
 }
 
