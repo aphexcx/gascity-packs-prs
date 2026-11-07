@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Clear the learned organization domain atomically when the authenticated identity changes.
 - Reuse or strip provenance frames only when the ledger marks them adapter-authored; preserve legacy user text.
 - Retry unknown managed identities and rebuild the running Chat client after discovery.
 - Bound sender directory lookups to 30 seconds, then use the existing external fallback.

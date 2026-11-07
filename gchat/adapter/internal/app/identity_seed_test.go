@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -10,7 +12,65 @@ import (
 
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/principal"
+	"gchat-adapter/internal/provenance"
+	api "google.golang.org/api/chat/v1"
 )
+
+func TestIdentityChangeClearsDomainAtomically(t *testing.T) {
+	for _, method := range []string{"seed", "observed"} {
+		for _, failSave := range []bool{false, true} {
+			name := method + "/saved"
+			if failSave {
+				name = method + "/rollback"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := newFixture(t, false)
+				a := &application{cfg: f.cfg, l: ledger.New(), log: slog.Default()}
+				a.l.IdentityUserID, a.l.IdentitySeed, a.l.IdentityDomainID = "users/111", "users/111", "old-domain"
+				if err := a.l.Save(f.cfg.Endpoints.StateFile); err != nil {
+					t.Fatal(err)
+				}
+				if failSave {
+					a.l.SetSaveGuard(func() error { return errors.New("injected persistence failure") })
+				}
+				var err error
+				if method == "seed" {
+					err = a.seedIdentity("users/222")
+				} else {
+					c := &chat.Client{}
+					if err := c.SetIdentityUserID("users/222"); err != nil {
+						t.Fatal(err)
+					}
+					err = a.persistIdentity(c)
+				}
+				if (err != nil) != failSave {
+					t.Fatalf("change error = %v, failSave=%v", err, failSave)
+				}
+				wantID, wantDomain, wantClass := "users/222", "", provenance.External
+				if failSave {
+					wantID, wantDomain, wantClass = "users/111", "old-domain", provenance.Organization
+				}
+				saved, err := ledger.Load(f.cfg.Endpoints.StateFile, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, l := range []*ledger.Ledger{a.l, saved} {
+					if l.IdentityUserID != wantID || l.IdentityDomainID != wantDomain {
+						t.Fatalf("identity/domain not atomic: %q/%q", l.IdentityUserID, l.IdentityDomainID)
+					}
+					speaker := principal.New(principal.Options{}).Speaker(context.Background(), &api.User{Name: "users/333", DomainId: "old-domain"}, l.IdentityDomainID)
+					if speaker.Class != wantClass {
+						t.Fatalf("previous domain classified as %q, want %q", speaker.Class, wantClass)
+					}
+					if failSave && l.IdentitySeed != "users/111" {
+						t.Fatal("identity seed did not roll back")
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestSeedlessLegacyLedgerReportsReseedWithoutClaimingNewConsent(t *testing.T) {
 	f := newFixture(t, false)

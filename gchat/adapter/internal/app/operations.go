@@ -28,9 +28,14 @@ func (a *application) seedIdentity(id string) error {
 	}
 	previous := a.l.IdentityUserID
 	previousSeed := a.l.IdentitySeed
+	previousDomain := a.l.IdentityDomainID
 	a.l.IdentityUserID, a.l.IdentitySeed = id, id
+	if previous != id {
+		a.l.IdentityDomainID = ""
+	}
 	if err := a.l.Save(a.cfg.Endpoints.StateFile); err != nil {
 		a.l.IdentityUserID, a.l.IdentitySeed = previous, previousSeed
+		a.l.IdentityDomainID = previousDomain
 		return err
 	}
 	// Shutdown may checkpoint before the generation installs its new client.
@@ -61,9 +66,12 @@ func (a *application) persistIdentity(c *chat.Client) error {
 		return result
 	}
 	previous := a.l.IdentityUserID
+	previousDomain := a.l.IdentityDomainID
 	a.l.IdentityUserID = id
+	a.l.IdentityDomainID = ""
 	if err := a.l.Save(a.cfg.Endpoints.StateFile); err != nil {
 		a.l.IdentityUserID = previous
+		a.l.IdentityDomainID = previousDomain
 		return err
 	}
 	return result

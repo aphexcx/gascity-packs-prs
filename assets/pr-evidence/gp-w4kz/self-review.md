@@ -28,3 +28,11 @@ reaction-deletion copy: deletion only reuses marked frames; history only strips
 marked frames. The legacy `[from: owner]` regressions cover deletion and history,
 and existing new-record deletion/history tests remain green. Full inbound,
 server, and ledger package tests passed.
+
+## m7 — identity/domain transaction
+
+Reviewed both credential seeding and observed-identity persistence under the
+ledger mutex. A changed user clears the domain in the same save; a rejected save
+restores the old user, seed, and domain. Table tests cover both paths with success
+and injected persistence failures, checking disk, memory, and classification of
+the previous domain's users. Related identity/reseed tests passed.
