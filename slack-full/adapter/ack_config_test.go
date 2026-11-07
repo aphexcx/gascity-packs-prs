@@ -28,6 +28,18 @@ func TestAckConfigOffAndColons(t *testing.T) {
 	}
 }
 
+func TestAckConfigRejectsBusyCollision(t *testing.T) {
+	for _, busy := range []string{"hourglass", "eyes"} {
+		env := baseSlackEnv()
+		env["ACK_REACTION"] = ":" + busy + ":"
+		env["BUSY_REACTION"] = busy
+		if _, err := loadConfigFromEnv(stubEnv(env)); err == nil ||
+			!strings.Contains(err.Error(), "ACK_REACTION") || !strings.Contains(err.Error(), "BUSY_REACTION") {
+			t.Errorf("collision %q: want error naming both settings, got %v", busy, err)
+		}
+	}
+}
+
 func TestAckUnsetPreservesExistingReactions(t *testing.T) {
 	for _, targeted := range []bool{false, true} {
 		for _, busy := range []bool{false, true} {

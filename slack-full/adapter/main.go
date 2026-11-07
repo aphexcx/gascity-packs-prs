@@ -986,6 +986,9 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	} else {
 		cfg.busyReaction = busyReactionDefault
 	}
+	if cfg.ackReaction != "" && cfg.ackReaction != "auto" && cfg.ackReaction != "model" && cfg.ackReaction == cfg.busyReaction {
+		return cfg, fmt.Errorf("ACK_REACTION must differ from BUSY_REACTION so replies preserve the acknowledgement")
+	}
 
 	// channelMappingPath default: prefer the city-rooted path when
 	// GC_CITY_PATH is set so a single-host slack-pack deployment
