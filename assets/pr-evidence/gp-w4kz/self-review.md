@@ -149,3 +149,15 @@ failures were the existing one-second rate-limit assertion (correct result in
 1.755s) and the 500ms shutdown-checkpoint assertion. Each test passed five
 isolated repetitions. No assertion or deadline changed; the final full run uses
 the serialized package/test settings used successfully in round one.
+
+## Codex r3 — launcher fixture dependency
+
+The third DEEP review at 4ad81ce4 returned BLOCK: the Go launcher fixture copied
+run.sh without the shared commands/runtime.sh helper introduced by the N1
+correction. The third full Go run independently reproduced the three failing
+launcher layouts. The fixture now copies the real helper beside the adapter,
+matching the pack layout; production code is unchanged. Reviewed the relative
+path and helper loading against the source and fixture. Both launcher tests,
+including all three layouts and the missing-env path, pass with
+`go test ./cmd/gc-gchat-adapter -run '^TestRunScript' -count=1 -timeout=2m`
+(0.836s). The failed review and run are retained.

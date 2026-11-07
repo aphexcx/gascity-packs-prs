@@ -444,6 +444,11 @@ func launcherFixture(t *testing.T) (dir, script string) {
 		t.Fatalf("read launcher: %v", err)
 	}
 	writeFile(t, script, string(contents))
+	runtime, err := os.ReadFile("../../../commands/runtime.sh")
+	if err != nil {
+		t.Fatalf("read launcher runtime: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, "commands", "runtime.sh"), string(runtime))
 	writeFile(t, filepath.Join(filepath.Dir(script), "internal", "source.go"), "package internal\n")
 	build := filepath.Join(filepath.Dir(script), "build.sh")
 	writeFile(t, build, "#!/bin/sh\nset -eu\nprintf 'build\\n' >> builds\ncat > gc-gchat-adapter <<'BINARY'\n#!/bin/sh\nprintf '%s|%s\\n' \"$*\" \"$LAUNCHER_VALUE\"\nBINARY\nchmod +x gc-gchat-adapter\n")
