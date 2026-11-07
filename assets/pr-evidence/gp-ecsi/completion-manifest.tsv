@@ -1,0 +1,16 @@
+go test ./internal/inbound ./internal/chat -run TestSpaceInventoryForbiddenRetriesMessage|TestResourceDenied$ -count=1 -timeout=2m	exit=1
+uv run --with pytest --with PyYAML --with jsonschema python -c import-check	exit=0
+go vet ./...	exit=0
+gofmt -l .	exit=0
+uv run --with pytest --with PyYAML --with jsonschema python -m pytest tests -q -p no:cacheprovider (cwd gchat)	exit=0
+git diff --check -- gchat/adapter	exit=0
+go test ./internal/puller -run ^TestRunQuarantineRecoversDuringRun$ -count=5 -timeout=2m	exit=0
+codex-gate.sh review --base 727f921460ed4673321e7ef7f5532ce236e042e6 --head 85af4f7c -C "$GC_DIR" --class STANDARD --model gpt-6-astra --output .gc/scratch/gp-ecsi/self-review-r2.txt --evidence-dir assets/pr-evidence/gp-ecsi	exit=0
+go test ./... -count=1 -timeout=30m	exit=1
+go test ./internal/app -run ^TestRevokedTokenReplacementResumes$ -count=5 -timeout=2m	exit=0
+go test ./... -count=1 -timeout=30m -json	exit=1
+go test ./internal/app -run ^TestObservedIdentityReplacesContradictedLedgerIdentity$ -count=5 -timeout=2m	exit=1
+go test -overlay ../../.gc/scratch/gp-ecsi/base-chat-overlay.json ./internal/app -run ^TestObservedIdentityReplacesContradictedLedgerIdentity$ -count=10 -timeout=3m	exit=1
+GOMAXPROCS=2 go test ./... -count=1 -timeout=30m -json	exit=1
+go test ./... -count=1 -timeout=30m -json -p=1 -parallel=1	exit=0
+git diff --exit-code 85af4f7c -- gchat	exit=0
