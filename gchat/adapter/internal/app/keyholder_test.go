@@ -240,7 +240,7 @@ func TestDeletedSpaceDoesNotHoldInterruptedSend(t *testing.T) {
 	adapterTarget, _ := url.Parse("http://adapter")
 	adapterProxy := httputil.NewSingleHostReverseProxy(adapterTarget)
 	adapterProxy.Transport = f.client.Transport
-	prefix := "/v0/city/" + f.cfg.Secrets.CityName + "/svc/gchat"
+	prefix := f.cfg.Secrets.ServiceURLPrefix
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, prefix+"/") {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
@@ -262,6 +262,14 @@ func TestDeletedSpaceDoesNotHoldInterruptedSend(t *testing.T) {
 	}
 	f.start(t)
 	f.health(t, "ready", 5*time.Second)
+	defer func() {
+		if t.Failed() {
+			data, _ := os.ReadFile(f.cfg.Endpoints.StateFile)
+			var saved ledger.Ledger
+			_ = json.Unmarshal(data, &saved)
+			t.Logf("recovery state: gone=%d pending=%+v published=%d", gone.Load(), saved.Sends[p.IdempotencyKey], len(f.gc.Published()))
+		}
+	}()
 	waitFor(t, 12*time.Second, func() bool {
 		data, _ := os.ReadFile(f.cfg.Endpoints.StateFile)
 		var saved ledger.Ledger

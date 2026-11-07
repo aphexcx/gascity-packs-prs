@@ -63,4 +63,9 @@ and reports history loss. Pass treats successful retirement as completed work.
 The regression checks repeated passes and the full running-app sequence: deleted
 history, readiness, then automatic recovery and recording of an interrupted send
 to a live space. The first app run exposed missing service-proxy routing in the
-new fixture; r2 models the city's socket proxy and passes. Both logs are retained.
+new fixture; r2 models the city's socket proxy but still fails. The initial m1
+commit incorrectly reported r2 as passing before its result was inspected. This
+record is corrected without rewriting history. The fixture used a guessed city
+prefix; Register actually appends ServiceURLPrefix directly. r4 uses that value
+and passes both the running-app recovery and catch-up tests. r3 preserves the
+failed callback diagnostic. No production correction was needed after m1.
