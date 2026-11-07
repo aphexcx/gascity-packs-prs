@@ -108,7 +108,8 @@ func (g *companyGateway) applyAdmissionAck(r *IngressReceipt) {
 }
 
 // Configured receipts replace the eyes/check/warning lifecycle. Mark them done
-// after the single best-effort attempt so terminal delivery keeps the receipt.
+// when the single best-effort attempt is queued so terminal delivery keeps the
+// receipt. The model request and ack capacity never hold the delivery worker.
 // With ACK_REACTION unset, applyAdmissionAck follows its original path verbatim.
 func (g *companyGateway) applyConfiguredAck(r *IngressReceipt) {
 	if r == nil || r.AckState != ackStateNone || g.store() == nil {
@@ -120,10 +121,10 @@ func (g *companyGateway) applyConfiguredAck(r *IngressReceipt) {
 		return
 	}
 	msg := decodeCompanyMessage(r.Origin, g.store().receiptBody(r))
-	acknowledgeMessage(g.cfg, g.slackClient, token, slackMessageEvent{
+	go sendAckReaction(g.cfg, g.slackClient, token, slackMessageEvent{
 		Channel: msg.ChannelID, TS: msg.TS, User: msg.UserID, BotID: msg.BotID,
 		Subtype: msg.Subtype, Text: msg.Text, Files: msg.Files,
-	}, false)
+	})
 	g.commitAckState(r, ackStateDone)
 }
 

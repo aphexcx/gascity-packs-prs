@@ -4077,11 +4077,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	if strings.TrimSpace(msg.Text) == "" && len(msg.Files) == 0 {
 		return
 	}
-	// Instant receipt before routing and coalescing. The existing bot and
-	// subtype guards above admit human messages only. Best-effort and async:
-	// Slack can receive this and the independent busy mark in either order.
+	// Queue the receipt before routing and coalescing. Ack capacity and all
+	// model/Slack work stay in this goroutine, never holding a dispatch slot.
+	// Slack can receive the receipt and independent busy mark in either order.
 	if cfg.ackReaction != "" && cfg.slackBotToken != "" {
-		acknowledgeMessage(cfg, slackAPIClient, cfg.slackBotToken, msg, true)
+		go sendAckReaction(cfg, slackAPIClient, cfg.slackBotToken, msg)
 	}
 
 	// Launcher-mode address parser runs FIRST (cby.5.b). A `@@<handle>`

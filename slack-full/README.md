@@ -830,8 +830,9 @@ when unset, that lifecycle retains its existing behavior and
 Neither path waits for an agent turn.
 
 Acknowledgements share four concurrent slots across both paths. Under load,
-existing event/delivery workers wait for a slot before starting an ack, so
-over-cap messages are queued, never discarded. The message identity (channel
+acknowledgement goroutines wait for a slot independently of dispatch and
+delivery, so a slow model cannot hold a message's dispatch slot. Pending acks
+are retained in memory without a queue cap. The message identity (channel
 plus timestamp) is reserved before choosing an emoji; paired `message` and
 `app_mention` events share one pick and one post. Completed receipts expire
 after 30 minutes, with at most 4096 entries; active picks are never evicted.
