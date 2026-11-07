@@ -17,6 +17,47 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
+// lockLedger checks cancellation before each access. Use that boundary to
+// retire the space immediately after inventory has persisted its type, without
+// relying on goroutine scheduling or adding a production-only test hook.
+type retireOnAccessContext struct {
+	context.Context
+	beforeAccess func()
+}
+
+func (c retireOnAccessContext) Err() error {
+	c.beforeAccess()
+	return c.Context.Err()
+}
+
+func TestRequestHandlesSpaceRetiredAfterInventory(t *testing.T) {
+	for _, route := range []string{"command", "read"} {
+		t.Run(route, func(t *testing.T) {
+			f := setup(t)
+			retired := false
+			ctx := retireOnAccessContext{Context: context.Background(), beforeAccess: func() {
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if v := f.l.Spaces["spaces/dm"]; !retired && v != nil && v.ChatType != "" {
+					delete(f.l.Spaces, "spaces/dm")
+					retired = true
+				}
+			}}
+			w := httptest.NewRecorder()
+			if route == "command" {
+				r := httptest.NewRequest(http.MethodPost, "/commands/publish", strings.NewReader(`{"conversation_id":"spaces/dm","text":"hello","idempotency_key":"retired"}`)).WithContext(ctx)
+				f.s.commandHTTP(w, r)
+			} else {
+				r := httptest.NewRequest(http.MethodGet, "/read?space=spaces/dm", nil).WithContext(ctx)
+				f.s.read(w, r)
+			}
+			if !retired || w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "space retired during request") {
+				t.Fatalf("retired=%v status=%d body=%s", retired, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestStatusOmitsBacklogContentAndClassifiesSubscriptionRefusal(t *testing.T) {
 	f := setup(t)
 	f.l.Spaces["spaces/room"] = &ledger.SpaceState{Backlog: []string{`{"text":"private-backlog"}`}}

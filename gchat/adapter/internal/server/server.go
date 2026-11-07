@@ -771,7 +771,12 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 			problem(w, 500, err)
 			return
 		}
-		p.Conversation.Kind = l.Spaces[p.Conversation.ConversationID].Kind
+		space := l.Spaces[p.Conversation.ConversationID]
+		if space == nil {
+			problem(w, http.StatusNotFound, errors.New("space retired during request"))
+			return
+		}
+		p.Conversation.Kind = space.Kind
 		p.IdempotencyKey = commandKey(p, cmd.IdempotencyKey, upload)
 	}
 	result, _ := s.command(r.Context(), p, upload)
@@ -1299,7 +1304,12 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.configuration()
 	kind := "room"
-	if l.Spaces[q.Get("space")].Kind == "dm" {
+	space := l.Spaces[q.Get("space")]
+	if space == nil {
+		problem(w, http.StatusNotFound, errors.New("space retired during request"))
+		return
+	}
+	if space.Kind == "dm" {
 		kind = "dm"
 	}
 	result := make([]wire.InboundMessage, 0, len(messages))

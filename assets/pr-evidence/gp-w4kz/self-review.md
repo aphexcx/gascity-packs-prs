@@ -117,3 +117,17 @@ time.Time still emitted an unknown join bound. Changed only the new field's JSON
 tag to `omitzero`, supported by the module's Go 1.27 toolchain. Unknown bounds are
 now absent, preserving the legacy JSON shape. The full ledger package passes
 (1.604s). This is an additional commit; no earlier commit was rewritten.
+
+## Codex r1 — retirement race follow-up
+
+The installed DEEP review at 8703590d returned BLOCK: retirement could remove a
+space after HTTP inventory validation and before the next snapshot dereference.
+Both command and read handlers now return a structured 404 if that snapshot no
+longer contains the space. A deterministic regression retires it at the next
+ledger-access boundary after inventory saves its type, exercising both handlers.
+That regression plus cached-command and read tests pass (6.343s).
+
+The first complete Go run passed 20/21 packages; its only failed test was the
+legacy JSON compatibility assertion fixed in 1d273d27. The app and end-to-end
+packages passed, including the previously named timing-sensitive cases. Final
+full-suite and second review results are recorded separately below when complete.
