@@ -114,7 +114,11 @@ func (r *Resolver) resolve(ctx context.Context, id string) string {
 	if failed && r.now().Sub(failedAt) < r.ttl {
 		return ""
 	}
-	address, err := r.lookup(ctx, id)
+	// Inbound holds its delivery gate while classifying a speaker. A stalled
+	// directory must not hold that gate indefinitely.
+	lookupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	address, err := r.lookup(lookupCtx, id)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err != nil {

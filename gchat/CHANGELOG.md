@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bound sender directory lookups to 30 seconds, then use the existing external fallback.
 - Inbound attachments always carry a mime_type: Chat sends no contentType for
   Drive links, and gc rejects an attachment without one (HTTP 422), which
   silently dropped any message with a Drive attachment. Drive links without a

@@ -63,6 +63,30 @@ func TestUnknownIdentityDomainIsExternal(t *testing.T) {
 	}
 }
 
+func TestStalledDirectoryFallsBackWithinInboundBudget(t *testing.T) {
+	started := time.Now()
+	r := New(Options{Lookup: func(ctx context.Context, _ string) (string, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok || deadline.Sub(started) > 31*time.Second {
+			t.Fatal("directory lookup has no 30-second deadline")
+		}
+		<-ctx.Done()
+		return "", ctx.Err()
+	}})
+	got := r.Speaker(context.Background(), &api.User{Name: "users/2", Type: "HUMAN"}, "")
+	if got.Class != provenance.External || got.Address != "users/2" {
+		t.Fatalf("timeout fallback = %+v", got)
+	}
+	if elapsed := time.Since(started); elapsed > 32*time.Second {
+		t.Fatalf("directory held delivery for %s", elapsed)
+	}
+	// The failure cache lets the next delivery proceed without another wait.
+	r.Speaker(context.Background(), &api.User{Name: "users/2", Type: "HUMAN"}, "")
+	if elapsed := time.Since(started); elapsed > 32*time.Second {
+		t.Fatalf("cached failure held delivery for %s", elapsed)
+	}
+}
+
 func TestFailedLookupRetriesAfterTTL(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	calls := 0
