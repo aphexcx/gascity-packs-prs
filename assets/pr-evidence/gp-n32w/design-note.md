@@ -25,6 +25,13 @@ The shared four-slot limit queues excess acknowledgements, and paired Slack
 events share one selection and post by channel/message timestamp. Fixed ack
 and busy emoji collisions are rejected at startup.
 
+Round 3 moves the four-slot wait into acknowledgement goroutines, so neither
+dispatch nor company delivery waits for a slow model. Pending acks stay in
+memory without a queue cap. The company model receives the shared channel-name
+cache, and signed HTTP coverage now includes the MPIM owner's token. In
+configured mode, company receipts ignore `SLACK_COMPANY_VISIBLE_ACKS` and
+replace the eyes/check/warning lifecycle with one persistent ack.
+
 I recommend keeping the shipped default off and trying `auto` on Hou first,
 with the busy hourglass retained for progress. Enable a local `model` only
 after comparing its emoji quality and latency with the keyword baseline.

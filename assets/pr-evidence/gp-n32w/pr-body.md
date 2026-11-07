@@ -105,4 +105,42 @@ round-1 hardening changes are retained; and true event-ID redelivery is
 filtered before the legacy hook. N5 is now explicit in the README: a fallback
 log can contain the key-file path, never the key contents.
 
-Beads: gp-n32w (round 1), gp-82fs (round 2)
+### Round 3
+
+Both round-2 reviews found that the ack limit could hold dispatch and company
+delivery. At `5fce97fac5a555c12507145909ddd090716560e5`, nine signed HTTP
+admissions at `SLACK_DISPATCH_CONCURRENCY=1` returned 200, but a held model
+allowed only four messages to forward; after release only five had forwarded,
+with messages six through nine logged as dropped. The regression now passes:
+all nine forward while the model is held, all nine eventually receive one ack,
+and model concurrency peaks at four.
+
+| Finding | Commit | Regression evidence |
+| --- | --- | --- |
+| Gate/read MAJOR: ack backpressure delays or drops messages; read MINOR: filtered messages take slots | `41b48bb6` | HTTP admission test above; company room/DM delivery finishes with a held model; bot and system messages finish with every ack slot occupied. |
+| Gate/read MINOR: company model requests lack channel names | `1c1eeda7` | Real adapter startup and signed HTTP company-room admission: baseline prompt lacks a channel; fixed prompt includes `Channel: #company-launch`. |
+| Read NOTE: MPIM coverage and README wrapping | `15a81266` | Signed HTTP MPIM admission delivers and posts exactly one configured ack with the owner's token; key-path prose rewrapped. |
+
+The semaphore is acquired inside the ack goroutine after the bot/subtype
+filter and identity claim. Dispatch and company delivery do not wait for
+ack capacity or model/Slack requests. Pending acks remain in memory without
+a queue cap. The channel-name cache is initialized before the gateway copies
+cfg, sharing the same cache with legacy dispatch.
+
+In configured mode, company receipts ignore `SLACK_COMPANY_VISIBLE_ACKS` and
+replace the eyes/check/warning terminal lifecycle with one persistent ack.
+
+Go 1.27.3: `go test ./... -count=1 -json` from `slack-full/adapter` passed
+both packages: **1,466 top-level passes, 3 skips; 12,907 passing cases**.
+`go vet ./...` passed; `gofmt -l .` was empty.
+`go test -race . -run '^TestAck' -count=1 -json` passed **32 top-level tests,
+40 cases**. Python 3.12.13: `python -m pytest tests -q` from `slack-full`
+passed **915 tests, 2 skipped**, with two existing fork deprecation warnings.
+Both requested regressions were red on the exact round-2 head. Tests use
+local fake Slack, gc, and model endpoints. Worker self-review is complete;
+the Mayor's round-3 delta gate and Opus read remain pending. PR stays draft.
+
+Round-3 logs and the completion manifest are in the city evidence directory
+`assets/pr-evidence/gp-n32w/round-3/`.
+
+Beads: gp-n32w (round 1), gp-82fs (round 2), gp-1nez (round 3)
