@@ -13,3 +13,5 @@ uv run --with pytest --with PyYAML --with jsonschema python -m pytest tests -q -
 go test ./internal/server -run TestSlowLargeUpload|TestUploadBound -count=1 -timeout=3m	0
 go test ./internal/events -count=1 -timeout=5m	1
 go test ./internal/events -count=1 -timeout=5m (r2)	0
+uv run --with pytest --with PyYAML --with jsonschema python -m pytest tests -q -p no:cacheprovider (N1)	0
+go test ./internal/config -count=1 -timeout=2m	0

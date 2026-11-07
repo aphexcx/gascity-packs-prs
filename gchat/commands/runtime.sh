@@ -28,10 +28,14 @@ gchat_load_env() {
         GC_SERVICE_SECRETS_DIR=$(dirname "$env_file")
         export GC_SERVICE_SECRETS_DIR
     fi
+    # Preserve inherited overrides using the shell's own assignment quoting.
+    gchat_saved_exports=$(export -p)
     set -a
     # shellcheck disable=SC1090
     . "$env_file"
     set +a
+    eval "$gchat_saved_exports"
+    unset gchat_saved_exports
 }
 
 gchat_build() {

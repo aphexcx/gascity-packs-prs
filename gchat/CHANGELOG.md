@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserve exported overrides while shell launchers load the env file, matching direct binary path precedence.
 - Bound subscription create, get, list, renew, and reactivate requests to the two-minute operation timeout.
 - Give uploads a size-based transfer budget and align the command's timeout, including automatic retries.
 - Retire spaces whose history returns 404, preserving fetched records and allowing live-space send recovery.

@@ -88,3 +88,13 @@ stalls get/list/create/patch/reactivate and observes the actual two-minute bound
 Its first run hung because a real HTTP keepalive goroutine prevented fake time
 from advancing; a SIGQUIT trace is retained. r2 uses only scripted transport
 responses inside fake time, and the full events package passes (2.309s).
+
+## N1 — launcher environment precedence
+
+Reviewed both shell-loading paths against config.envOr's existing nonempty
+process precedence. The launchers restore inherited exports using the shell's
+own `export -p` quoting, without logging or writing secret values. New file-only
+variables remain loaded. A shell regression exercises service and auth with a
+state path containing quotes and literal command-substitution syntax; both
+preserve the value and perform no substitution. All 22 Python tests and the
+config package passed. The established config precedence contract is unchanged.

@@ -49,7 +49,7 @@ class AuthCommandTest(unittest.TestCase):
         adapter = self.pack / "adapter"
         adapter.mkdir()
         binary = adapter / "gc-gchat-adapter"
-        binary.write_text('#!/bin/sh\nprintf "%s\\n" "$@" "env=${GC_GCHAT_ADAPTER_ENV:-}" "secrets=${GC_SERVICE_SECRETS_DIR:-}" "project=${GCHAT_PROJECT_ID:-}"\n')
+        binary.write_text('#!/bin/sh\nprintf "%s\\n" "$@" "env=${GC_GCHAT_ADAPTER_ENV:-}" "secrets=${GC_SERVICE_SECRETS_DIR:-}" "project=${GCHAT_PROJECT_ID:-}" "state=${GCHAT_STATE_FILE:-}"\n')
         binary.chmod(0o755)
         self.env = {"PATH": os.environ["PATH"], "HOME": str(self.root),
                     "GC_PACK_DIR": str(self.pack)}
@@ -68,6 +68,24 @@ class AuthCommandTest(unittest.TestCase):
         self.assertIn("auth\n--check\n", result.stdout)
         self.assertIn(f"env={env}\n", result.stdout)
         self.assertIn("project=example\n", result.stdout)
+
+    def test_service_and_auth_preserve_exported_state_override(self):
+        env = self.root / "env"
+        env.write_text("GCHAT_PROJECT_ID=example\nGCHAT_STATE_FILE=/from-file/state.json\n")
+        override = str(self.root / "process 'quoted' $(touch SHOULD_NOT_EXIST).json")
+        self.env.update(GC_GCHAT_ADAPTER_ENV=str(env), GCHAT_STATE_FILE=override)
+        run = self.pack / "adapter/run.sh"
+        shutil.copyfile(PACK / "adapter/run.sh", run)
+        for command in (["sh", str(self.pack / "commands/auth.sh"), "--check"],
+                        ["sh", str(run)]):
+            with self.subTest(command=command[-1]):
+                result = subprocess.run(command, env=self.env, text=True, capture_output=True,
+                                        cwd=self.root, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"state={override}\n", result.stdout)
+                self.assertIn("project=example\n", result.stdout)
+                self.assertFalse((self.root / "SHOULD_NOT_EXIST").exists())
+                self.assertFalse((self.pack / "adapter/SHOULD_NOT_EXIST").exists())
 
     def test_city_context_resolves_service_secrets(self):
         secrets = self.root / "examplecity/.gc/services/gchat/secrets"
