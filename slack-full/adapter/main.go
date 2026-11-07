@@ -4077,29 +4077,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// subtype guards above admit human messages only. Best-effort and async:
 	// Slack can receive this and the independent busy mark in either order.
 	if cfg.ackReaction != "" && cfg.slackBotToken != "" {
-		go func(channel, ts, text string, files []slackFile) {
-			name := cfg.ackReaction
-			switch name {
-			case "auto":
-				name = pickAckEmoji(text, len(files) > 0)
-			case "model":
-				if cfg.ackModelKeyFile == "" {
-					// Config already logged this once; avoid per-message noise
-					// and a channel lookup when the model cannot be called.
-					name = pickAckEmoji(text, len(files) > 0)
-				} else {
-					name = pickAckEmojiModel(cfg, text, files, resolveChannelName(cfg, channel))
-				}
-			}
-			resp, err := postReactionToSlack(cfg.slackBotToken, slackReactionsAddReq{
-				Channel: channel, Name: name, Timestamp: ts,
-			})
-			if err != nil {
-				log.Printf("ack reaction %s failed: chan=%s ts=%s: %v", name, channel, ts, err)
-			} else if !resp.OK && resp.Error != "already_reacted" {
-				log.Printf("ack reaction %s failed: chan=%s ts=%s: slack error=%s", name, channel, ts, resp.Error)
-			}
-		}(msg.Channel, msg.TS, msg.Text, msg.Files)
+		go sendAckReaction(cfg, slackAPIClient, cfg.slackBotToken, msg)
 	}
 
 	// Launcher-mode address parser runs FIRST (cby.5.b). A `@@<handle>`

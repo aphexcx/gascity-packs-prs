@@ -819,9 +819,15 @@ mark. Ambient room messages do not get a busy reaction.
 
 `ACK_REACTION` is **off when unset or empty**. This opt-in receipt comes from
 the Hou-dynasty local patches of 2026-10-30 and 2026-11-03 (gp-n32w). The
-adapter starts it asynchronously when a human message arrives, before routing
-and coalescing, including ambient messages. Bot and system messages are
-filtered first. It does not wait for an agent turn or block dispatch.
+legacy path starts it asynchronously when a human message arrives, before
+routing and coalescing, including ambient messages, mention-only rooms and DMs
+(the hook precedes those routing gates). Company rooms and registered agent
+DMs use the same picker and posting function at their first delivery attempt,
+with the room's switchboard token or the DM owner's token. When configured,
+this persistent receipt replaces the company's eyes/check/warning lifecycle;
+when unset, that lifecycle retains its existing behavior and
+`SLACK_COMPANY_VISIBLE_ACKS` gate. Bot and system messages are filtered first.
+Neither path waits for an agent turn.
 
 - `ACK_REACTION=eyes` (or `:eyes:`): always use that Slack emoji name.
 - `ACK_REACTION=auto`: choose from the local keyword table, falling back to

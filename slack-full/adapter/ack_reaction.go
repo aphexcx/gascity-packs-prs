@@ -1,9 +1,42 @@
 package main
 
 import (
+	"log"
+	"net/http"
 	"regexp"
 	"strings"
 )
+
+// sendAckReaction is the one configured acknowledgement path. The caller
+// supplies the posting token: legacy/switchboard for rooms, owner for agent DMs.
+// It is best effort; company receipts retain their durable delivery status.
+func sendAckReaction(cfg config, client *http.Client, token string, msg slackMessageEvent) {
+	if cfg.ackReaction == "" || token == "" || msg.User == "" || msg.BotID != "" ||
+		(msg.Subtype != "" && msg.Subtype != "file_share") ||
+		(strings.TrimSpace(msg.Text) == "" && len(msg.Files) == 0) {
+		return
+	}
+	name := cfg.ackReaction
+	switch name {
+	case "auto":
+		name = pickAckEmoji(msg.Text, len(msg.Files) > 0)
+	case "model":
+		if cfg.ackModelKeyFile == "" {
+			name = pickAckEmoji(msg.Text, len(msg.Files) > 0)
+		} else {
+			cfg.slackBotToken = token // channel metadata has the same token custody
+			name = pickAckEmojiModel(cfg, msg.Text, msg.Files, resolveChannelName(cfg, msg.Channel))
+		}
+	}
+	resp, err := postReactionMethod(client, token, "reactions.add", slackReactionsAddReq{
+		Channel: msg.Channel, Name: name, Timestamp: msg.TS,
+	})
+	if err != nil {
+		log.Printf("ack reaction %s failed: chan=%s ts=%s: %v", name, msg.Channel, msg.TS, err)
+	} else if !resp.OK && resp.Error != "already_reacted" {
+		log.Printf("ack reaction %s failed: chan=%s ts=%s: slack error=%s", name, msg.Channel, msg.TS, resp.Error)
+	}
+}
 
 // Instant acknowledgement reaction from the hou-dynasty local patch of
 // 2026-10-30 and 2026-11-03, upstreamed by gp-n32w.

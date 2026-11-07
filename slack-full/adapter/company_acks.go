@@ -81,6 +81,10 @@ func (g *companyGateway) hasReactHook() bool {
 // The ack actor's token is chosen per receipt (switchboard for rooms, owner
 // agent for DMs); a DM whose owner token is missing degrades silently.
 func (g *companyGateway) applyAdmissionAck(r *IngressReceipt) {
+	if g != nil && g.cfg.ackReaction != "" {
+		g.applyConfiguredAck(r)
+		return
+	}
 	if g == nil || !g.visibleAcks || !g.hasReactHook() || r == nil {
 		return
 	}
@@ -101,6 +105,26 @@ func (g *companyGateway) applyAdmissionAck(r *IngressReceipt) {
 	case ackUnchanged:
 		// ratelimited / transient: leave AckState "" so the next attempt retries.
 	}
+}
+
+// Configured receipts replace the eyes/check/warning lifecycle. Mark them done
+// after the single best-effort attempt so terminal delivery keeps the receipt.
+// With ACK_REACTION unset, applyAdmissionAck follows its original path verbatim.
+func (g *companyGateway) applyConfiguredAck(r *IngressReceipt) {
+	if r == nil || r.AckState != ackStateNone || g.store() == nil {
+		return
+	}
+	token, ok := g.ackActorToken(r)
+	if !ok {
+		g.noteDMAckDegraded(r)
+		return
+	}
+	msg := decodeCompanyMessage(r.Origin, g.store().receiptBody(r))
+	sendAckReaction(g.cfg, g.slackClient, token, slackMessageEvent{
+		Channel: msg.ChannelID, TS: msg.TS, User: msg.UserID, BotID: msg.BotID,
+		Subtype: msg.Subtype, Text: msg.Text, Files: msg.Files,
+	})
+	g.commitAckState(r, ackStateDone)
 }
 
 // applyTerminalAck runs the eyes → check/warn/remove hook when a receipt reaches
