@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep unrecognized per-space history 403s scoped to that space; reserve credential holds for 401 and scope errors.
 - Preserve exported overrides while shell launchers load the env file, matching direct binary path precedence.
 - Bound subscription create, get, list, renew, and reactivate requests to the two-minute operation timeout.
 - Give uploads a size-based transfer budget and align the command's timeout, including automatic retries.

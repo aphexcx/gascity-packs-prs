@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -713,9 +714,10 @@ func (r *Runner) holdAccess(name string, p progress, cause error) error {
 	}
 	key, sentinel, first := "unavailable:", errSpaceUnavailable, p.Unavailable == ""
 	retrying := p.RetryUnavailable
-	// A 403 about this one space (a pending invitation, a space the identity
-	// cannot read) holds the space, not the credential.
-	if chat.ResourceDenied(cause) {
+	// This request names one space. Unknown 403 wording must hold only that
+	// space; reserve credential repair for 401 and explicit scope failures.
+	// Inventory lookups retain their stricter positive resource-denial match.
+	if apiErr != nil && apiErr.Code == http.StatusForbidden && !strings.Contains(strings.ToLower(apiErr.Message), "scope") && kind == "auth" {
 		kind = "unavailable"
 		summary = strings.Replace(summary, "auth", "permission denied", 1)
 	}

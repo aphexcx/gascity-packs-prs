@@ -1,0 +1,4 @@
+# gchat-adapter/internal/catchup [gchat-adapter/internal/catchup.test]
+internal/catchup/catchup.go:719:37: undefined: http
+FAIL	gchat-adapter/internal/catchup [build failed]
+FAIL

@@ -801,6 +801,31 @@ func TestResourceDeniedSpaceIsHeldNotCredentials(t *testing.T) {
 	}
 }
 
+func TestUnrecognizedHistoryForbiddenOnlyHoldsItsSpace(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/a-held", true)
+	f.addSpace("spaces/z-live", true)
+	f.addMessage("spaces/a-held", 0, frozen.Add(-time.Minute))
+	f.addMessage("spaces/z-live", 0, frozen.Add(-time.Minute))
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if strings.Contains(r.URL.Path, "spaces/a-held/") {
+			return &googleapi.Error{Code: 403, Message: "A new resource-policy denial wording"}
+		}
+		return nil
+	}
+	delivered, _, err := f.r.Pass(context.Background())
+	if delivered != 1 || !errors.Is(err, errSpaceUnavailable) || errors.Is(err, inbound.ErrCredentials) {
+		t.Fatalf("per-space 403 stopped live delivery: delivered=%d err=%v", delivered, err)
+	}
+	if got := f.gc.Inbound(); len(got) != 1 || !strings.HasPrefix(got[0].ProviderMessageID, "spaces/z-live/") {
+		t.Fatalf("live space after the held space: %+v", got)
+	}
+	if f.opts.Ledger.Counters["unavailable:spaces/a-held"] != 1 || f.opts.Ledger.Counters["credentials:spaces/a-held"] != 0 {
+		t.Fatal("unknown 403 escalated to credential hold")
+	}
+}
+
 func TestListedForbiddenSpaceStaysHeldAcrossFreezes(t *testing.T) {
 	f := setup(t)
 	f.pageSize = 2
@@ -1122,7 +1147,9 @@ func TestHistoryErrorHoldsRetainedMessagesUntilEnumerationCompletes(t *testing.T
 	f.freeze(t)
 	f.onRequest = func(r *http.Request) error {
 		if strings.HasSuffix(r.URL.Path, "/spaceEvents") {
-			return &googleapi.Error{Code: 404, Message: "event history unavailable"}
+			// A 404 now retires the deleted space (m1); a rejected query still
+			// holds its retained messages until enumeration can complete.
+			return &googleapi.Error{Code: 400, Message: "event history query rejected"}
 		}
 		return nil
 	}

@@ -98,3 +98,14 @@ variables remain loaded. A shell regression exercises service and auth with a
 state path containing quotes and literal command-substitution syntax; both
 preserve the value and perform no substitution. All 22 Python tests and the
 config package passed. The established config precedence contract is unchanged.
+
+## R1 — per-space authorization hold
+
+Reviewed the boundary between inventory and per-space history: only holdAccess
+changes. Unknown history 403s retain a one-hour space hold; 401 and explicit scope
+failures still signal credential repair. The new test visits the held space
+before the live space and confirms live delivery continues without ErrCredentials.
+The first run caught a missing net/http import. The full package then exposed an
+older generic-error fixture using 404; it now uses a rejected-query 400 so its
+ordering assertion remains valid alongside m1 retirement. The full catch-up
+package passes in r3 (36.575s), including scope and resource-denial regressions.
