@@ -377,7 +377,7 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 		added := false
 		err := p.update(func(l *ledger.Ledger) {
 			if l.Spaces[c.Space] == nil {
-				l.Spaces[c.Space] = &ledger.SpaceState{Wake: string(p.opts.Config.Wake(c.Space)), MessageCursor: joined, EventCursor: joined}
+				l.Spaces[c.Space] = &ledger.SpaceState{Wake: string(p.opts.Config.Wake(c.Space)), JoinedAt: joined, MessageCursor: joined, EventCursor: joined}
 				added = true
 			}
 		})

@@ -186,6 +186,12 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 
 func (r *Runner) begin(s *ledger.SpaceState, upper time.Time) progress {
 	p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
+	if p.MessageLower.Before(s.JoinedAt) {
+		p.MessageLower = s.JoinedAt
+	}
+	if p.EventLower.Before(s.JoinedAt) {
+		p.EventLower = s.JoinedAt
+	}
 	// Request the full retained event window. Message history has no 28-day
 	// limit. Report only a known cursor older than the retention boundary.
 	earliest := r.opts.Now().UTC().Add(-28 * 24 * time.Hour)

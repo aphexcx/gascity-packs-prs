@@ -221,7 +221,7 @@ func TestJoinedSpaceHistoryIsSweptWithoutMessageEvents(t *testing.T) {
 	f.start(t)
 	f.health(t, "ready", 5*time.Second)
 	joined := time.Now().UTC().Add(-2 * time.Second)
-	before := joined.Add(-time.Hour)
+	before := joined.Add(-30 * time.Second)
 	after := joined.Add(time.Second)
 	f.google.Configure(func(g *fakegoogle.Server) {
 		g.Spaces["spaces/joined"] = &api.Space{Name: "spaces/joined", SpaceType: "SPACE"}

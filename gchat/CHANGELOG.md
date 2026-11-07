@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Persist join-time history bounds and clamp catch-up overlap so pre-join messages stay unread.
 - Serialize media accounting and downloads across readers; refuse downloads when usage cannot be measured.
 - Clear the learned organization domain atomically when the authenticated identity changes.
 - Reuse or strip provenance frames only when the ledger marks them adapter-authored; preserve legacy user text.

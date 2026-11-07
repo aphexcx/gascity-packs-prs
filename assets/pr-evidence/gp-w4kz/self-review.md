@@ -46,3 +46,11 @@ native downloads while retaining explanatory attachment text and Drive links.
 The overlapping-reader regression stores one five-byte file under an eight-byte
 cap; the unreadable-directory regression proves accounting failures fail closed.
 Quota/count and new concurrency tests passed.
+
+## m9 — join lower bound
+
+Added an optional persisted JoinedAt separate from moving cursors. Catch-up
+clamps both message and event overlap to this bound; old ledgers retain their
+unknown-bound behavior. Existing space updates preserve the field. The app's
+membership/history regression now places the forbidden message 30 seconds before
+join, inside the old overlap, and passes with only the post-join message delivered.
