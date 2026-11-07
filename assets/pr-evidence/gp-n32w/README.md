@@ -9,7 +9,7 @@ lifecycle reconciliation, model/config tests, docs/doctor, design note and
 delivery evidence. Every commit carries `Bead: gp-n32w`.
 
 The read-only source record on citadel is
-`/Users/tailor512/city/assets/ops/records/hou-ack-reaction-patch-20261107/pull.out`.
+the citadel record `hou-ack-reaction-patch-20261107/pull.out` (a city-side file, not in this repo).
 Extracted SHA-256 prefixes match the record: `ack_reaction.go`
 `09dadd0426a98af9`, `ack_model.go` `fef17bc1ea5ede15`, and
 `ack_model_test.go` `dcf061e2ac6c71d0`. The implementation files have only
@@ -19,7 +19,7 @@ attribution-header changes; the imported model test is byte-identical.
 
 Go version: `go1.27.3 darwin/arm64`. Python: shared relay venv, Python 3.12,
 with pytest import proved at
-`/Users/tailor512/city/houmanoids-www/relay/.venv/lib/python3.12/site-packages/pytest/__init__.py`.
+the shared relay venv's `site-packages/pytest/__init__.py`.
 No Node tests were used.
 
 From `slack-full/adapter`:
@@ -48,7 +48,7 @@ The full and focused runs set a closed loopback sentinel
 From `slack-full`:
 
 ```text
-/Users/tailor512/city/houmanoids-www/relay/.venv/bin/python -m pytest tests -q
+<the shared relay venv>/bin/python -m pytest tests -q
 914 passed, 2 skipped, 2 warnings in 47.70s
 ```
 
