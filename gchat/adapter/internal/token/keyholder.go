@@ -263,10 +263,12 @@ func (k *keyholder) identifyFromMemberships(ctx context.Context, tok *oauth2.Tok
 
 // watchKeyholder is the managed counterpart of the token-file watch: while the
 // key holder refuses to mint, it asks again every interval, and the first
-// success is a credential replacement (clients rebuild, work resumes).
+// success is a credential replacement (clients rebuild, work resumes). An
+// unknown identity is retried even while the credential itself remains valid.
 func (s *Source) watchKeyholder(ctx context.Context, onReload func()) {
 	ticker := time.NewTicker(s.watchInterval)
 	defer ticker.Stop()
+	lastIdentity := s.IdentityUserID()
 	for {
 		select {
 		case <-ctx.Done():
@@ -274,6 +276,21 @@ func (s *Source) watchKeyholder(ctx context.Context, onReload func()) {
 		case <-ticker.C:
 		}
 		if s.State() != NeedsSignIn {
+			if s.IdentityUserID() == "" {
+				lookupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				if tok, err := s.token(lookupCtx); err == nil {
+					s.learnIdentity(lookupCtx, tok)
+				}
+				cancel()
+			}
+			// Discovery may also have succeeded in a concurrent token refresh.
+			// Rebuild the running Chat client, which was seeded at generation start.
+			if id := s.IdentityUserID(); id != "" && id != lastIdentity && ctx.Err() == nil {
+				lastIdentity = id
+				if onReload != nil {
+					onReload()
+				}
+			}
 			continue
 		}
 		mintCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -287,6 +304,7 @@ func (s *Source) watchKeyholder(ctx context.Context, onReload func()) {
 		s.generation++
 		s.mu.Unlock()
 		s.learnIdentity(ctx, tok)
+		lastIdentity = s.IdentityUserID()
 		if onReload != nil {
 			onReload()
 		}

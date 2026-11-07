@@ -108,6 +108,46 @@ func TestManagedSourceDeliversDM(t *testing.T) {
 	f.health(t, "ready", 5*time.Second)
 }
 
+func TestManagedSourceLateIdentityReachesRunningClient(t *testing.T) {
+	f, k := managedFixture(t)
+	var available atomic.Bool
+	var attempts atomic.Int32
+	directory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		if !available.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"people":[{"resourceName":"people/123456","emailAddresses":[{"value":"agent1@example.com"}]}]}`))
+	}))
+	defer directory.Close()
+	f.cfg.Endpoints.PeopleAPIBase = directory.URL
+	f.startOptions(t, Options{KeyholderRetry: 50 * time.Millisecond})
+	f.health(t, "ready", 5*time.Second)
+	// A generation is already running with a valid token and no known identity.
+	waitFor(t, 5*time.Second, func() bool { return attempts.Load() >= 2 })
+	available.Store(true)
+	waitFor(t, 5*time.Second, func() bool {
+		b, _ := os.ReadFile(f.cfg.Endpoints.StateFile)
+		var state struct {
+			IdentityUserID string `json:"identity_user_id"`
+		}
+		return json.Unmarshal(b, &state) == nil && state.IdentityUserID == "users/123456"
+	})
+	f.google.Configure(func(g *fakegoogle.Server) {
+		g.Spaces["spaces/dm"] = &api.Space{Name: "spaces/dm", SpaceType: "DIRECT_MESSAGE"}
+	})
+	data := `{"message":{"name":"spaces/dm/messages/late-identity","text":"hello","sender":{"name":"users/222","type":"HUMAN"},"createTime":"` + time.Now().UTC().Format(time.RFC3339Nano) + `","thread":{"name":"spaces/dm/threads/late-identity"}}}`
+	if _, err := f.pub.Publish(t.Context(), &pubsub.Message{Data: []byte(data), Attributes: map[string]string{"ce-type": "google.workspace.chat.message.v1.created", "ce-id": "late-identity"}}).Get(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 5*time.Second, func() bool { return len(f.gc.Inbound()) == 1 })
+	f.health(t, "ready", 5*time.Second)
+	if k.mints.Load() != 1 {
+		t.Fatalf("identity recovery should reuse the valid credential; mints=%d", k.mints.Load())
+	}
+}
+
 func TestManagedSourceChatRefusalRetriesWithoutSignIn(t *testing.T) {
 	f, _ := managedFixture(t)
 	var lists atomic.Int32

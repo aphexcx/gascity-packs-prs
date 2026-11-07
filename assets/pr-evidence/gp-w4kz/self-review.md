@@ -8,3 +8,14 @@ the existing failure-cache entry without caching an empty successful address.
 The stalled lookup test waits for the actual 30-second production deadline,
 checks external classification, and checks the next delivery uses the failure
 cache. `go test ./internal/principal -count=1 -timeout=2m` passed (30.270s).
+
+## m5 — late managed identity
+
+Reviewed both watcher recovery branches and the application's reload channel.
+The watcher retries discovery with a cached valid token and notices discovery
+from concurrent refreshes, notifying once per newly known identity. The existing
+generation reload seeds and persists that identity. The app regression starts
+without directory availability, then enables it and delivers a DM without a
+second mint. Token/keyholder and managed-app tests passed. The first run failed
+because the new test omitted the ledger's JSON field tag; r2 fixes the test and
+retains both logs.
