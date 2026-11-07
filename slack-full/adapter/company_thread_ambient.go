@@ -218,8 +218,8 @@ func threadParticipantFromReceipt(r *IngressReceipt) (threadParticipantKey, thre
 		return threadParticipantKey{}, threadParticipantEvent{}, false
 	}
 	return threadParticipantKey{
-			TeamID: r.Origin.TeamID, ChannelID: r.Origin.ChannelID, ThreadRootTS: r.ThreadRootTS,
-		}, threadParticipantEvent{
-			Agent: r.ThreadParticipantAgent, TS: r.Origin.TS, ReceivedAt: r.ReceivedAt,
-		}, true
+		TeamID: r.Origin.TeamID, ChannelID: r.Origin.ChannelID, ThreadRootTS: r.ThreadRootTS,
+	}, threadParticipantEvent{
+		Agent: r.ThreadParticipantAgent, TS: r.Origin.TS, ReceivedAt: r.ReceivedAt,
+	}, true
 }

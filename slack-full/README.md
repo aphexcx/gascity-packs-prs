@@ -809,6 +809,71 @@ the adapter runs as a `[[service]]`; do not set them by hand):
 `GC_SERVICE_STATE_ROOT`, `GC_SERVICE_RUN_ROOT`. See
 "What gc injects vs. what stays in the env file" above.
 
+### Busy reaction
+
+Targeted inbounds get `BUSY_REACTION` (default `hourglass`) during dispatch.
+Publishing the reply removes it. Set `BUSY_REACTION=` to disable that progress
+mark. Ambient room messages do not get a busy reaction.
+
+### Acknowledgement reaction
+
+`ACK_REACTION` is **off when unset or empty**. This opt-in receipt comes from
+the Hou-dynasty local patches of 2026-10-30 and 2026-11-03 (gp-n32w). The
+legacy path starts it asynchronously when a human message arrives, before
+routing and coalescing, including ambient messages, mention-only rooms and DMs
+(the hook precedes those routing gates). Company rooms and registered agent
+DMs use the same picker and posting function at their first delivery attempt,
+with the room's switchboard token or the DM owner's token. When configured,
+this persistent receipt replaces the company's eyes/check/warning lifecycle;
+when unset, that lifecycle retains its existing behavior and
+`SLACK_COMPANY_VISIBLE_ACKS` gate. Bot and system messages are filtered first.
+Neither path waits for an agent turn.
+
+Acknowledgements share four concurrent slots across both paths. Under load,
+acknowledgement goroutines wait for a slot independently of dispatch and
+delivery, so a slow model cannot hold a message's dispatch slot. Pending acks
+are retained in memory without a queue cap. The message identity (channel
+plus timestamp) is reserved before choosing an emoji; paired `message` and
+`app_mention` events share one pick and one post. Completed receipts expire
+after 30 minutes, with at most 4096 entries; active picks are never evicted.
+
+- `ACK_REACTION=eyes` (or `:eyes:`): always use that Slack emoji name.
+- `ACK_REACTION=auto`: choose from the local keyword table, falling back to
+  `eyes`. There is no model call.
+- `ACK_REACTION=model`: ask a small model for one allowed emoji. Every model
+  failure falls back to the keyword pick so every message still gets exactly
+  one acknowledgement reaction attempt. Slack API failures remain best effort.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ACK_REACTION` | empty (off) | Emoji name, `auto`, or `model`. |
+| `ACK_MODEL_BASE_URL` | `https://gateway.teale.com/v1` | OpenAI-compatible API base; the adapter appends `/chat/completions`. |
+| `ACK_MODEL_NAME` | `teale/auto` | Model identifier sent to the endpoint. |
+| `ACK_MODEL_API_KEY_FILE` | empty | Readable file containing the bearer key; reread on each call for rotation. |
+| `ACK_MODEL_TIMEOUT_MS` | `6000` | Positive integer timeout in milliseconds, representable as a Go duration. |
+
+The Teale values are the original installation's working defaults; operators
+can override them, including a local OpenAI-compatible `/v1/chat/completions`
+server. Model requests use temperature 0, at most 16 completion tokens, and
+at most 1000 characters of redacted message text, plus channel/attachment
+metadata. Selecting model mode sends that content to the configured endpoint.
+Keep the key in a host-private file; the doctor checks a configured file exists
+and is readable without printing its contents. In the adapter env file, use a
+literal path (optionally quoted), not shell expansion. An unset key file logs
+one startup warning and uses keywords on every message without model calls.
+Timeouts, transport/HTTP errors, unreadable or empty keys, and unusable replies
+also use keywords; calls are not retried. The key file's path may appear in
+fallback logs, but its contents are never logged.
+
+The acknowledgement stays as a receipt; the separate busy reaction is removed
+on reply. A targeted inbound therefore has two marks; an ambient inbound has
+only the acknowledgement. Both requests are asynchronous, so Slack may display
+them in either order. Choose a busy emoji distinct from the acknowledgement
+emoji (and the auto/model choices): Slack stores only one reaction per bot,
+emoji and message, so identical names cannot have independent lifetimes.
+Configuration rejects a fixed `ACK_REACTION` equal to `BUSY_REACTION`.
+Slack redeliveries returning `already_reacted` are silently accepted.
+
 ### SIGHUP-driven reload
 
 Five of the adapter's registries are written by `gc slack` CLI

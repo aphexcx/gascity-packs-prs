@@ -687,6 +687,16 @@ type config struct {
 	// and no mark is recorded. Replaces the previous unconditional
 	// "eyes" reaction on targeted inbounds.
 	busyReaction string
+	// Instant acknowledgement on human messages, before routing. Empty is off;
+	// "auto" uses keywords and "model" uses the bounded endpoint with fallback.
+	// From the Hou-dynasty patch; see ack_reaction.go and ack_model.go.
+	ackReaction     string
+	ackModelBaseURL string
+	ackModelName    string
+	ackModelKeyFile string
+	ackModelTimeout time.Duration
+	ackReceipts     *ackReceiptRegistry
+	ackSem          chan struct{}
 	// busyMarks is the in-memory registry of pending busy reactions,
 	// keyed by (conversation id, thread key). processSlackEvent
 	// records a mark when it adds the busy reaction; handlePublish
@@ -950,6 +960,22 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		fileUploadRoot:       getenv("FILE_UPLOAD_ROOT"),
 	}
 
+	cfg.ackReaction = strings.Trim(getenv("ACK_REACTION"), ":")
+	cfg.ackModelBaseURL = envOrFn("ACK_MODEL_BASE_URL", defaultAckModelBaseURL)
+	cfg.ackModelName = envOrFn("ACK_MODEL_NAME", defaultAckModelName)
+	cfg.ackModelKeyFile = getenv("ACK_MODEL_API_KEY_FILE")
+	cfg.ackModelTimeout = defaultAckModelTimeout
+	if raw := getenv("ACK_MODEL_TIMEOUT_MS"); raw != "" {
+		ms, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || ms <= 0 || ms > int64((1<<63-1)/time.Millisecond) {
+			return cfg, fmt.Errorf("ACK_MODEL_TIMEOUT_MS %q must be a positive integer representable as a duration", raw)
+		}
+		cfg.ackModelTimeout = time.Duration(ms) * time.Millisecond
+	}
+	if cfg.ackReaction == "model" && cfg.ackModelKeyFile == "" {
+		log.Printf("ACK_REACTION=model but ACK_MODEL_API_KEY_FILE is unset: every ack will use the keyword fallback")
+	}
+
 	// BUSY_REACTION: emoji added to a targeted inbound while the agent
 	// works, removed when the reply publishes back (hq-xizo). Read
 	// through lookup (not envOrFn) because the set-but-empty form
@@ -961,6 +987,9 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		cfg.busyReaction = strings.Trim(v, ":")
 	} else {
 		cfg.busyReaction = busyReactionDefault
+	}
+	if cfg.ackReaction != "" && cfg.ackReaction != "auto" && cfg.ackReaction != "model" && cfg.ackReaction == cfg.busyReaction {
+		return cfg, fmt.Errorf("ACK_REACTION must differ from BUSY_REACTION so replies preserve the acknowledgement")
 	}
 
 	// channelMappingPath default: prefer the city-rooted path when
@@ -1281,6 +1310,8 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	if strings.ContainsAny(cfg.cityName, "/?#%") {
 		return cfg, fmt.Errorf("GC_CITY_NAME must not contain '/', '?', '#', or '%%': %q", cfg.cityName)
 	}
+	cfg.ackReceipts = newAckReceiptRegistry()
+	cfg.ackSem = make(chan struct{}, ackConcurrency)
 	return cfg, nil
 }
 
@@ -1891,6 +1922,9 @@ func main() {
 	// to stop retrying at shutdown, and a flag assigned after the copy
 	// left that branch dead (citadel Fable read r1, jg-vobf70 round 6).
 	cfg.draining = &atomic.Bool{}
+	// The gateway copies cfg too: share this cache with legacy dispatch so
+	// company model acknowledgements receive the channel name from startup.
+	cfg.channelNames = newChannelNameCache()
 	companyGW := newCompanyGateway(cfg, companyDirStore, companyBindStore, receipts)
 	if rerr != nil {
 		companyGW.setStoreError(rerr)
@@ -1916,7 +1950,6 @@ func main() {
 		cfg.deliveryPolicyPath, deliveryPolicy.Len())
 	cfg.deliveryPolicy = deliveryPolicy
 	cfg.deliveredIDs = newDeliveredIDs()
-	cfg.channelNames = newChannelNameCache()
 	cfg.injectionParents = &injectionParents{}
 	cfg.replyHelp = newOncePerChannel()
 	cfg.postFailures = newRepeatedFailureLog()
@@ -4045,6 +4078,12 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// screenshot and says nothing) and must not be discarded.
 	if strings.TrimSpace(msg.Text) == "" && len(msg.Files) == 0 {
 		return
+	}
+	// Queue the receipt before routing and coalescing. Ack capacity and all
+	// model/Slack work stay in this goroutine, never holding a dispatch slot.
+	// Slack can receive the receipt and independent busy mark in either order.
+	if cfg.ackReaction != "" && cfg.slackBotToken != "" {
+		go sendAckReaction(cfg, slackAPIClient, cfg.slackBotToken, msg)
 	}
 
 	// Launcher-mode address parser runs FIRST (cby.5.b). A `@@<handle>`

@@ -1,0 +1,12 @@
+2026-11-07; base 2372b4f262aad8e847c416267ba3092d31a083fd
+slack-full/adapter: go test ./... -count=1 -json exit=0
+top-level pass=1458 skip=3; all passing cases including subtests=12891
+slack-full/adapter: go vet ./... exit=0; stdout empty
+slack-full/adapter: gofmt -l . exit=0; final stdout empty
+slack-full/adapter: go test ./... -run Test(Ack|ParseAck|PickAck) -count=1 -json exit=0; passing cases=28
+slack-full/adapter: go test -race ./... -run Test(Ack|ParseAck|PickAck) -count=1 exit=0; both packages pass
+slack-full: shared Python 3.12 venv -m pytest tests -q exit=0
+914 passed, 2 skipped, 2 existing os.fork deprecation warnings
+Full and focused Go tests used a closed loopback model/proxy sentinel with only loopback fixtures bypassing it.
+git diff --check exit=0
+Draft PR https://github.com/aphexcx/gascity-packs-prs/pull/80

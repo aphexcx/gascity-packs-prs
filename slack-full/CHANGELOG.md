@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Opt-in instant acknowledgement reactions** (gp-n32w), ported from the
+  Hou-dynasty patches of 2026-10-30 and 2026-11-03: `ACK_REACTION` selects a
+  fixed emoji, keyword `auto`, or an OpenAI-compatible `model` with keyword
+  fallback. Off by default; receipt reactions coexist with the busy lifecycle.
 - **Session-proven inbound ingestion receipts** (gp-41p6): local deliveries
   receive `ingested` only after the complete payload appears in a rendered
   Claude or Codex session record. After three minutes without proof, the journal
