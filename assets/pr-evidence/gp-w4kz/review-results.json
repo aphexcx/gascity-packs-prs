@@ -1,0 +1,50 @@
+[
+  {
+    "stage": "codex",
+    "round": 1,
+    "verdict": "BLOCK",
+    "sha": "8703590d6cebb62d5da87e07cf3e234e072f86f4",
+    "base": "788acecf695b79b4b23c1c5cba996fd86fd6d305",
+    "ref": "codex-review-r1.txt",
+    "helper_exit": 1,
+    "helper_reason": "anchored VERDICT: BLOCK",
+    "class": "DEEP",
+    "model": "gpt-6-astra"
+  },
+  {
+    "stage": "codex",
+    "round": 2,
+    "verdict": "CLEAN",
+    "sha": "a5c2b7d2dc3ce098cb28499da71783a9f1305aec",
+    "base": "788acecf695b79b4b23c1c5cba996fd86fd6d305",
+    "ref": "codex-review-r2.txt",
+    "helper_exit": 0,
+    "helper_reason": "anchored VERDICT: CLEAN",
+    "class": "DEEP",
+    "model": "gpt-6-astra"
+  },
+  {
+    "stage": "codex",
+    "round": 3,
+    "verdict": "BLOCK",
+    "sha": "4ad81ce409442f3a2893ca13d2a80f0a8a84f544",
+    "base": "a5c2b7d2dc3ce098cb28499da71783a9f1305aec",
+    "ref": "codex-review-r3.txt",
+    "helper_exit": 1,
+    "helper_reason": "anchored VERDICT: BLOCK",
+    "class": "DEEP",
+    "model": "gpt-6-astra"
+  },
+  {
+    "stage": "codex",
+    "round": 4,
+    "verdict": "CLEAN",
+    "sha": "4cefd2e756a537a998845427b292b428adb08d26",
+    "base": "4ad81ce409442f3a2893ca13d2a80f0a8a84f544",
+    "ref": "codex-review-r4.txt",
+    "helper_exit": 0,
+    "helper_reason": "anchored VERDICT: CLEAN",
+    "class": "DEEP",
+    "model": "gpt-6-astra"
+  }
+]

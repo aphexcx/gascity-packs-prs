@@ -1,0 +1,19 @@
+# Google Chat provider pack. One Workspace user identity per city;
+# Workspace Events API + Pub/Sub streaming pull inbound, Chat API outbound.
+# No public listener. Tokens come from a desktop OAuth sign-in, or from a key
+# holder the city trusts (GCHAT_TOKEN_SOURCE=keyholder), as on a boxboxbox box.
+[pack]
+name = "gchat"
+version = "0.4.1"
+schema = 2
+
+[[service]]
+name = "gchat"
+kind = "proxy_process"
+
+[service.publication]
+visibility = "private"
+
+[service.process]
+command = ["./adapter/run.sh"]
+health_path = "/healthz"

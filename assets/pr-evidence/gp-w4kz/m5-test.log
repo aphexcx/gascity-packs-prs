@@ -1,0 +1,6 @@
+ok  	gchat-adapter/internal/token	0.293s
+--- FAIL: TestManagedSourceLateIdentityReachesRunningClient (6.10s)
+    keyholder_test.go:130: condition did not become true
+FAIL
+FAIL	gchat-adapter/internal/app	12.095s
+FAIL

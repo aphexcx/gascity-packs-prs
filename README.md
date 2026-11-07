@@ -224,6 +224,16 @@ your use case:
 See the [tiering design memo](./docs/design/slack-pack-tiering.md) for the
 rationale.
 
+### Google Chat pack
+
+- [gchat](./gchat) is the Google Chat provider: one Workspace user identity
+  speaks for the city's agents. It receives DMs, messages in joined spaces,
+  edits, deletions, reactions and attachments through the Workspace Events API
+  and Pub/Sub streaming pull, and sends text, files and reactions through the
+  Chat API. There is no public listener or webhook; gc supervises the Go
+  adapter and proxies its private Unix socket. See its README for the
+  Google-side setup checklist.
+
 ### Contributor workflow packs
 
 Discipline for sending good work *to* another repo — planning, building,

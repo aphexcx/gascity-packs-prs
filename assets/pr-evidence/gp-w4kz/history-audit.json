@@ -1,0 +1,77 @@
+{
+  "audited_head": "4cefd2e756a537a998845427b292b428adb08d26",
+  "base": "788acecf695b79b4b23c1c5cba996fd86fd6d305",
+  "commits": 16,
+  "trailer_errors": [],
+  "base_is_ancestor": true,
+  "registry_unchanged": true,
+  "out_of_scope_files": [],
+  "changed_dependency_manifests": [],
+  "new_merges": [],
+  "commit_order": [
+    {
+      "sha": "3aa497670641ac6d7a112a56e0b275d6e62f860f",
+      "subject": "fix(gchat): bound sender directory lookups (m4)"
+    },
+    {
+      "sha": "01029d0754a98ee8230fd3e09b807ea713ca3496",
+      "subject": "fix(gchat): propagate late managed identity discovery (m5)"
+    },
+    {
+      "sha": "aca6bae6180c3c2518a9e68052b52262d4136a38",
+      "subject": "fix(gchat): trust only explicitly marked provenance frames (m6)"
+    },
+    {
+      "sha": "dd78ca308935302722263dba7a9f7d83f672cd53",
+      "subject": "fix(gchat): clear learned domain on identity changes (m7)"
+    },
+    {
+      "sha": "80ba69c1b491997c5974f54501e51b0325bc0c48",
+      "subject": "fix(gchat): serialize media quota accounting and downloads (m8)"
+    },
+    {
+      "sha": "ac7a10b445502f15a8ebcfd7cfd1d75d4cea61bd",
+      "subject": "fix(gchat): clamp catch-up overlap to the membership join (m9)"
+    },
+    {
+      "sha": "26c838f71e546d59742a5dc2f7948bab8331e1c3",
+      "subject": "fix(gchat): retire deleted spaces without holding send recovery (m1)"
+    },
+    {
+      "sha": "a5ef6bf42fb0dbbb5e53213c432237f5b5d3bdc3",
+      "subject": "test(gchat): route the deleted-space recovery callback correctly (m1)"
+    },
+    {
+      "sha": "65e1c83387bec1b6ffff7b9150bdc528c3c028d4",
+      "subject": "fix(gchat): budget uploads by transfer size (m2)"
+    },
+    {
+      "sha": "56a3b3a52ac7042fbb9d9bd4a7a971ca0456d9b9",
+      "subject": "fix(gchat): bound every subscription request (m3)"
+    },
+    {
+      "sha": "d6d986ccda882a7a8e4fcc39a195292179e99bd2",
+      "subject": "fix(gchat): preserve exported launcher overrides (N1)"
+    },
+    {
+      "sha": "8703590d6cebb62d5da87e07cf3e234e072f86f4",
+      "subject": "fix(gchat): scope unknown history denials to one space (R1)"
+    },
+    {
+      "sha": "1d273d2753d9f20e7f6503b43b83bb71c312200c",
+      "subject": "fix(gchat): omit unknown join bounds from legacy ledgers (m9)"
+    },
+    {
+      "sha": "a5c2b7d2dc3ce098cb28499da71783a9f1305aec",
+      "subject": "fix(gchat): handle space retirement during HTTP requests (m1)"
+    },
+    {
+      "sha": "4ad81ce409442f3a2893ca13d2a80f0a8a84f544",
+      "subject": "fix(gchat): preserve only supported process overrides (N1)"
+    },
+    {
+      "sha": "4cefd2e756a537a998845427b292b428adb08d26",
+      "subject": "test(gchat): include runtime helper in launcher fixtures (N1)"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+ok  	gchat-adapter/internal/catchup	0.337s
+--- FAIL: TestDeletedSpaceDoesNotHoldInterruptedSend (13.13s)
+    keyholder_test.go:265: condition did not become true
+FAIL
+FAIL	gchat-adapter/internal/app	13.360s
+FAIL

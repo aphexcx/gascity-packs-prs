@@ -1,0 +1,18 @@
+# codex-gate review: base 4ad81ce409442f3a2893ca13d2a80f0a8a84f544 (merge base of --base 4ad81ce409442f3a2893ca13d2a80f0a8a84f544 = 4ad81ce409442f3a2893ca13d2a80f0a8a84f544 and the head) head 4cefd2e756a537a998845427b292b428adb08d26; 5 file(s) (4 under assets/pr-evidence/, outside the --max-files cap; 1 counted); class DEEP; model gpt-6-astra; 2026-11-07T04:45:09Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (HEAD of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; 204 untracked entr(ies) there ignored)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+#  assets/pr-evidence/gp-w4kz/N1-launcher-fixture-test.log |  1 +
+#  assets/pr-evidence/gp-w4kz/codex-review-r3.txt          | 26 ++++++++++++++++++++++++++
+#  assets/pr-evidence/gp-w4kz/completion.tsv               |  1 +
+#  assets/pr-evidence/gp-w4kz/self-review.md               | 12 ++++++++++++
+#  gchat/adapter/cmd/gc-gchat-adapter/main_test.go         |  5 +++++
+#  5 files changed, 45 insertions(+)
+
+No actionable correctness or regression findings in `4ad81ce4 → 4cefd2e7`.
+
+Read all five changed files in full and traced the fixture’s callers, file operations, launcher behavior, and error paths. The added helper correctly reproduces the production directory layout.
+
+Tests **not run (sandbox)**. Committed [test evidence](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.cwXqNi/tree/assets/pr-evidence/gp-w4kz/N1-launcher-fixture-test.log:1) records the launcher tests passing in 0.836s. No successful full-suite run after this correction is recorded.
+
+VERDICT: CLEAN

@@ -1,0 +1,373 @@
+SIGQUIT: quit
+PC=0x196e5efcc m=0 sigcode=0
+
+goroutine 0 gp=0x103f60880 m=0 mp=0x103f618a0 [idle]:
+runtime.kevent(0x3, 0x0, 0x0, 0x16cfbcab0, 0x40, 0x16cfbca78)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/sys_darwin.go:421 +0x20 fp=0x16cfbca20 sp=0x16cfbca00 pc=0x102eac5b0
+runtime.netpoll(0x253ecc7a5)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/netpoll_kqueue.go:110 +0x104 fp=0x16cfbd2c0 sp=0x16cfbca20 pc=0x102e885f4
+runtime.findRunnable()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:3769 +0x9c8 fp=0x16cfbd490 sp=0x16cfbd2c0 pc=0x102e942a8
+runtime.schedule()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:4179 +0x90 fp=0x16cfbd4d0 sp=0x16cfbd490 pc=0x102e95c30
+runtime.park_m(0x2b7f5496a780)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:4319 +0x23c fp=0x16cfbd530 sp=0x16cfbd4d0 pc=0x102e960ac
+runtime.mcall()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:319 +0x54 fp=0x16cfbd540 sp=0x16cfbd530 pc=0x102ecc184
+
+goroutine 1 gp=0x2b7f547101e0 m=nil [chan receive]:
+runtime.gopark(0x102ecec80?, 0x2b7f54adf908?, 0x71?, 0x22?, 0x2b7f54800008?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f54adf8c0 sp=0x2b7f54adf8a0 pc=0x102ec6748
+runtime.chanrecv(0x2b7f5485e500, 0x2b7f54adf9c7, 0x1)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/chan.go:667 +0x470 fp=0x2b7f54adf940 sp=0x2b7f54adf8c0 pc=0x102e56920
+runtime.chanrecv1(0x18?, 0x103e201b0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/chan.go:509 +0x14 fp=0x2b7f54adf970 sp=0x2b7f54adf940 pc=0x102e56474
+testing.(*T).Run(0x2b7f548e7688, {0x103571e6a?, 0x2b7f54adfa88?}, 0x103ec6a40)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2268 +0x3cc fp=0x2b7f54adfa50 sp=0x2b7f54adf970 pc=0x102f7860c
+testing.runTests.func1(0x2b7f548e7688)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2744 +0x38 fp=0x2b7f54adfa90 sp=0x2b7f54adfa50 pc=0x102f7d8c8
+testing.tRunner(0x2b7f548e7688, 0x2b7f54adfbb8)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0xc4 fp=0x2b7f54adfae0 sp=0x2b7f54adfa90 pc=0x102f781d4
+testing.runTests({0x103557355, 0xd}, {0x1035667c6, 0x1d}, 0x2b7f548aaa38, {0x103f52dd0, 0x39, 0x39}, {0x2b7f54adfc58?, 0x2b7f548af7e0?, ...})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2742 +0x400 fp=0x2b7f54adfbe0 sp=0x2b7f54adfae0 pc=0x102f7a130
+testing.(*M).Run(0x2b7f54a4a5a0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2602 +0x578 fp=0x2b7f54adfe20 sp=0x2b7f54adfbe0 pc=0x102f79178
+main.main()
+	_testmain.go:158 +0x80 fp=0x2b7f54adfea0 sp=0x2b7f54adfe20 pc=0x1034f6200
+runtime.main()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:302 +0x380 fp=0x2b7f54adffd0 sp=0x2b7f54adfea0 pc=0x102e8e130
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f54adffd0 sp=0x2b7f54adffd0 pc=0x102ece154
+
+goroutine 2 gp=0x2b7f54710780 m=nil [force gc (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547dcf90 sp=0x2b7f547dcf70 pc=0x102ec6748
+runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:480
+runtime.forcegchelper()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:387 +0xb4 fp=0x2b7f547dcfd0 sp=0x2b7f547dcf90 pc=0x102e8e414
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547dcfd0 sp=0x2b7f547dcfd0 pc=0x102ece154
+created by runtime.init.7 in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:375 +0x24
+
+goroutine 3 gp=0x2b7f54710d20 m=nil [GC sweep wait]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547dd770 sp=0x2b7f547dd750 pc=0x102ec6748
+runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:480
+runtime.bgsweep(0x2b7f54750180)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mgcsweep.go:279 +0x9c fp=0x2b7f547dd7b0 sp=0x2b7f547dd770 pc=0x102e7810c
+runtime.gcenable.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mgc.go:214 +0x20 fp=0x2b7f547dd7d0 sp=0x2b7f547dd7b0 pc=0x102ebc2c0
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547dd7d0 sp=0x2b7f547dd7d0 pc=0x102ece154
+created by runtime.gcenable in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mgc.go:214 +0x6c
+
+goroutine 4 gp=0x2b7f54710f00 m=nil [GC scavenge wait]:
+runtime.gopark(0x2b7f54750180?, 0x1035acd00?, 0x1?, 0x0?, 0x2b7f54710f00?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547ddf60 sp=0x2b7f547ddf40 pc=0x102ec6748
+runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:480
+runtime.(*scavengerState).park(0x103f60220)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mgcscavenge.go:425 +0x5c fp=0x2b7f547ddf90 sp=0x2b7f547ddf60 pc=0x102e75d5c
+runtime.bgscavenge(0x2b7f54750180)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mgcscavenge.go:653 +0x44 fp=0x2b7f547ddfb0 sp=0x2b7f547ddf90 pc=0x102e76284
+runtime.gcenable.gowrap2()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mgc.go:215 +0x20 fp=0x2b7f547ddfd0 sp=0x2b7f547ddfb0 pc=0x102ebc280
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547ddfd0 sp=0x2b7f547ddfd0 pc=0x102ece154
+created by runtime.gcenable in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mgc.go:215 +0xac
+
+goroutine 17 gp=0x2b7f548843c0 m=nil [GOMAXPROCS updater (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547d8770 sp=0x2b7f547d8750 pc=0x102ec6748
+runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:480
+runtime.updateMaxProcsGoroutine()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:7146 +0xf4 fp=0x2b7f547d87d0 sp=0x2b7f547d8770 pc=0x102e9bd44
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547d87d0 sp=0x2b7f547d87d0 pc=0x102ece154
+created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:7134 +0x48
+
+goroutine 18 gp=0x2b7f548845a0 m=nil [finalizer wait]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547d8d80 sp=0x2b7f547d8d60 pc=0x102ec6748
+runtime.runFinalizers()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mfinal.go:210 +0x100 fp=0x2b7f547d8fd0 sp=0x2b7f547d8d80 pc=0x102e692f0
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547d8fd0 sp=0x2b7f547d8fd0 pc=0x102ece154
+created by runtime.createfing in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mfinal.go:172 +0x78
+
+goroutine 19 gp=0x2b7f5496a780 m=nil [select]:
+runtime.gopark(0x2b7f547f9f68?, 0x3?, 0xc8?, 0x9e?, 0x2b7f547f9f62?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547f9de0 sp=0x2b7f547f9dc0 pc=0x102ec6748
+runtime.selectgo(0x2b7f547f9f68, 0x2b7f547f9f5c, 0x2b7f548fa500?, 0x0, 0x0?, 0x1)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/select.go:351 +0x838 fp=0x2b7f547f9f20 sp=0x2b7f547f9de0 pc=0x102ea0c98
+go.opencensus.io/stats/view.(*worker).start(0x2b7f548fa500)
+	/Users/tailor512/go/pkg/mod/go.opencensus.io@v0.24.0/stats/view/worker.go:292 +0x88 fp=0x2b7f547f9fb0 sp=0x2b7f547f9f20 pc=0x1034bf2a8
+go.opencensus.io/stats/view.init.0.gowrap1()
+	/Users/tailor512/go/pkg/mod/go.opencensus.io@v0.24.0/stats/view/worker.go:34 +0x20 fp=0x2b7f547f9fd0 sp=0x2b7f547f9fb0 pc=0x1034c0d20
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547f9fd0 sp=0x2b7f547f9fd0 pc=0x102ece154
+created by go.opencensus.io/stats/view.init.0 in goroutine 1
+	/Users/tailor512/go/pkg/mod/go.opencensus.io@v0.24.0/stats/view/worker.go:34 +0x9c
+
+goroutine 20 gp=0x2b7f5496a960 m=nil [cleanup wait]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547d9f50 sp=0x2b7f547d9f30 pc=0x102ec6748
+runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:480
+runtime.(*cleanupQueue).dequeue(0x103f606c0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mcleanup.go:522 +0x160 fp=0x2b7f547d9f90 sp=0x2b7f547d9f50 pc=0x102e662d0
+runtime.runCleanups()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mcleanup.go:718 +0x40 fp=0x2b7f547d9fd0 sp=0x2b7f547d9f90 pc=0x102e66a20
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547d9fd0 sp=0x2b7f547d9fd0 pc=0x102ece154
+created by runtime.(*cleanupQueue).createGs in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/mcleanup.go:672 +0x108
+
+goroutine 33 gp=0x2b7f54a42b40 m=nil [chan receive]:
+runtime.gopark(0x102ecec80?, 0x2b7f547fad68?, 0x35?, 0x21?, 0x2b7f54800008?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547fad20 sp=0x2b7f547fad00 pc=0x102ec6748
+runtime.chanrecv(0x2b7f5497ac80, 0x2b7f547fae27, 0x1)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/chan.go:667 +0x470 fp=0x2b7f547fada0 sp=0x2b7f547fad20 pc=0x102e56920
+runtime.chanrecv1(0x18?, 0x103e201b0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/chan.go:509 +0x14 fp=0x2b7f547fadd0 sp=0x2b7f547fada0 pc=0x102e56474
+testing.(*T).Run(0x2b7f5484cd88, {0x103550b00?, 0x1d5b722b0?}, 0x2b7f548aad08)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2268 +0x3cc fp=0x2b7f547faeb0 sp=0x2b7f547fadd0 pc=0x102f7860c
+gchat-adapter/internal/events.TestEverySubscriptionRequestHasDeadline(0x2b7f5484cd88)
+	/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gchat/adapter/internal/events/events_test.go:155 +0x8c fp=0x2b7f547faf60 sp=0x2b7f547faeb0 pc=0x1034df22c
+testing.tRunner(0x2b7f5484cd88, 0x103ec6a40)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0xc4 fp=0x2b7f547fafb0 sp=0x2b7f547faf60 pc=0x102f781d4
+testing.(*T).Run.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x20 fp=0x2b7f547fafd0 sp=0x2b7f547fafb0 pc=0x102f7d640
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547fafd0 sp=0x2b7f547fafd0 pc=0x102ece154
+created by testing.(*T).Run in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x3b8
+
+goroutine 29 gp=0x2b7f54a42d20 m=nil [synctest.Run (durable), synctest bubble 3]:
+runtime.gopark(0x2b7f547f4da0?, 0x1e?, 0x88?, 0x4d?, 0x102ec3ec4?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547f4d20 sp=0x2b7f547f4d00 pc=0x102ec6748
+internal/synctest.Run(0x2b7f548afac0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/synctest.go:214 +0x1a4 fp=0x2b7f547f4df0 sp=0x2b7f547f4d20 pc=0x102eca724
+testing/synctest.Test(0x2b7f54a5e488, 0x2b7f548afaa0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/synctest/synctest.go:291 +0x90 fp=0x2b7f547f4e30 sp=0x2b7f547f4df0 pc=0x10346eb70
+gchat-adapter/internal/events.TestEverySubscriptionRequestHasDeadline.func1(0x2b7f54a5e488)
+	/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gchat/adapter/internal/events/events_test.go:169 +0x248 fp=0x2b7f547f4f60 sp=0x2b7f547f4e30 pc=0x1034eb758
+testing.tRunner(0x2b7f54a5e488, 0x2b7f548aad08)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0xc4 fp=0x2b7f547f4fb0 sp=0x2b7f547f4f60 pc=0x102f781d4
+testing.(*T).Run.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x20 fp=0x2b7f547f4fd0 sp=0x2b7f547f4fb0 pc=0x102f7d640
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547f4fd0 sp=0x2b7f547f4fd0 pc=0x102ece154
+created by testing.(*T).Run in goroutine 33
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x3b8
+
+goroutine 50 gp=0x2b7f54a434a0 m=nil [IO wait, synctest bubble 3]:
+runtime.gopark(0xffffffffffffffff?, 0xffffffffffffffff?, 0xe8?, 0x8a?, 0x102ee2c38?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547f8a80 sp=0x2b7f547f8a60 pc=0x102ec6748
+runtime.netpollblock(0x2b7f547f8af8?, 0x5?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/netpoll.go:575 +0x150 fp=0x2b7f547f8ac0 sp=0x2b7f547f8a80 pc=0x102e87d60
+internal/poll.runtime_pollWait(0x1316a9e00, 0x72)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/netpoll.go:351 +0xa0 fp=0x2b7f547f8af0 sp=0x2b7f547f8ac0 pc=0x102ec5980
+internal/poll.(*pollDesc).wait(0x2b7f548fb980?, 0x2b7f54af5000?, 0x0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_poll_runtime.go:84 +0x28 fp=0x2b7f547f8b30 sp=0x2b7f547f8af0 pc=0x102f023b8
+internal/poll.(*pollDesc).waitRead(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0x2b7f548fb980, {0x2b7f54af5000, 0x1000, 0x1000})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_unix.go:170 +0x22c fp=0x2b7f547f8bd0 sp=0x2b7f547f8b30 pc=0x102f0339c
+net.(*netFD).Read(0x2b7f548fb980, {0x2b7f54af5000?, 0x8?, 0x80?})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/fd_posix.go:68 +0x28 fp=0x2b7f547f8c20 sp=0x2b7f547f8bd0 pc=0x1030c76c8
+net.(*conn).Read(0x2b7f54882590, {0x2b7f54af5000?, 0x0?, 0x2b7f547f8cf8?})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/net.go:196 +0x34 fp=0x2b7f547f8c70 sp=0x2b7f547f8c20 pc=0x1030d4514
+net/http.(*persistConn).Read(0x2b7f54a4f040, {0x2b7f54af5000?, 0x103eb73d0?, 0x103f387c0?})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/transport.go:2300 +0x48 fp=0x2b7f547f8cd0 sp=0x2b7f547f8c70 pc=0x1031f1478
+bufio.(*Reader).fill(0x2b7f54891320)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/bufio/bufio.go:113 +0xdc fp=0x2b7f547f8d10 sp=0x2b7f547f8cd0 pc=0x102f7edbc
+bufio.(*Reader).Peek(0x2b7f54891320, 0x1)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/bufio/bufio.go:152 +0x58 fp=0x2b7f547f8d30 sp=0x2b7f547f8d10 pc=0x102f7eef8
+net/http.(*persistConn).readLoop(0x2b7f54a4f040)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/transport.go:2493 +0x120 fp=0x2b7f547f8fb0 sp=0x2b7f547f8d30 pc=0x1031f2040
+net/http.(*Transport).dialConn.gowrap2()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/transport.go:2123 +0x20 fp=0x2b7f547f8fd0 sp=0x2b7f547f8fb0 pc=0x1031f98b0
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547f8fd0 sp=0x2b7f547f8fd0 pc=0x102ece154
+created by net/http.(*Transport).dialConn in goroutine 49
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/transport.go:2123 +0x14d8
+
+goroutine 32 gp=0x2b7f54a43860 m=nil [chan receive (durable), synctest bubble 3]:
+runtime.gopark(0x2b7f54841208?, 0x102f15840?, 0xc8?, 0xb6?, 0x1bf08eb000?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f548411e0 sp=0x2b7f548411c0 pc=0x102ec6748
+runtime.chanrecv(0x2b7f54868a80, 0x0, 0x1)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/chan.go:667 +0x470 fp=0x2b7f54841260 sp=0x2b7f548411e0 pc=0x102e56920
+runtime.chanrecv1(0x2b7f54826e00?, 0x2b7f54812990?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/chan.go:509 +0x14 fp=0x2b7f54841290 sp=0x2b7f54841260 pc=0x102e56474
+gchat-adapter/internal/events.TestEverySubscriptionRequestHasDeadline.func1.2.1(0x2b7f54839540)
+	/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gchat/adapter/internal/events/events_test.go:185 +0x2ec fp=0x2b7f548412e0 sp=0x2b7f54841290 pc=0x1034ebcfc
+gchat-adapter/internal/events.setup.func1(0x2b7f54839540)
+	/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gchat/adapter/internal/events/events_test.go:86 +0x24c fp=0x2b7f548413a0 sp=0x2b7f548412e0 pc=0x1034eb25c
+gchat-adapter/internal/events.roundTripFunc.RoundTrip(0x808080808080773b?, 0x103eb7510?)
+	/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gchat/adapter/internal/events/events_test.go:53 +0x28 fp=0x2b7f548413c0 sp=0x2b7f548413a0 pc=0x1034de478
+net/http.send(0x2b7f54839540, {0x103eb7510, 0x2b7f54afe220}, {0x103e3ed28?, 0x1035ad100?, 0x0?})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/client.go:266 +0x4b0 fp=0x2b7f54841590 sp=0x2b7f548413c0 pc=0x1031bf710
+net/http.(*Client).send(0x2b7f54a5d0b0, 0x2b7f54839540, {0x2b7f548416b8?, 0x2b7f54864061?, 0x0?})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/client.go:187 +0x1d0 fp=0x2b7f54841630 sp=0x2b7f54841590 pc=0x1031bf110
+net/http.(*Client).do(0x2b7f54a5d0b0, 0x2b7f54839540)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/client.go:745 +0x71c fp=0x2b7f54841840 sp=0x2b7f54841630 pc=0x1031c0bbc
+net/http.(*Client).Do(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/client.go:604
+google.golang.org/api/internal/gensupport.send({0x103ec1b68, 0x2b7f54826e00}, 0x1035590a0?, 0x2b7f54839400)
+	/Users/tailor512/go/pkg/mod/google.golang.org/api@v0.307.0/internal/gensupport/send.go:103 +0xd0 fp=0x2b7f54841890 sp=0x2b7f54841840 pc=0x103455920
+google.golang.org/api/internal/gensupport.SendRequest({0x103ec1b68, 0x2b7f54826e00}, 0x2b7f54a5d0b0, 0x2b7f54839400)
+	/Users/tailor512/go/pkg/mod/google.golang.org/api@v0.307.0/internal/gensupport/send.go:96 +0x6c fp=0x2b7f548418d0 sp=0x2b7f54841890 pc=0x1034557cc
+google.golang.org/api/workspaceevents/v1.(*SubscriptionsCreateCall).doRequest(0x2b7f54841e08, {0x10354f77d, 0x4})
+	/Users/tailor512/go/pkg/mod/google.golang.org/api@v0.307.0/workspaceevents/v1/workspaceevents-gen.go:855 +0x3c0 fp=0x2b7f548419f0 sp=0x2b7f548418d0 pc=0x103469d80
+google.golang.org/api/workspaceevents/v1.(*SubscriptionsCreateCall).Do(0x2b7f54841e08, {0x0?, 0x1bf08eb000?, 0x0?})
+	/Users/tailor512/go/pkg/mod/google.golang.org/api@v0.307.0/workspaceevents/v1/workspaceevents-gen.go:865 +0x54 fp=0x2b7f54841b10 sp=0x2b7f548419f0 pc=0x103469e24
+gchat-adapter/internal/events.(*Manager).reconcile(0x2b7f54a5eb48, {0x103ec19a8, 0x103f883e0})
+	/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gchat/adapter/internal/events/events.go:230 +0x7f4 fp=0x2b7f54841ea0 sp=0x2b7f54841b10 pc=0x1034d9504
+gchat-adapter/internal/events.(*Manager).Reconcile(...)
+	/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gchat/adapter/internal/events/events.go:150
+gchat-adapter/internal/events.TestEverySubscriptionRequestHasDeadline.func1.2(0x2b7f54a5ed88)
+	/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gchat/adapter/internal/events/events_test.go:193 +0x154 fp=0x2b7f54841f60 sp=0x2b7f54841ea0 pc=0x1034eb8d4
+testing.tRunner(0x2b7f54a5ed88, 0x2b7f548afaa0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0xc4 fp=0x2b7f54841fb0 sp=0x2b7f54841f60 pc=0x102f781d4
+testing.testingSynctestTest.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2309 +0x20 fp=0x2b7f54841fd0 sp=0x2b7f54841fb0 pc=0x102f7d680
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f54841fd0 sp=0x2b7f54841fd0 pc=0x102ece154
+created by testing/synctest.testingSynctestTest in goroutine 31
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2309 +0x204
+
+goroutine 30 gp=0x2b7f548043c0 m=nil [IO wait]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547f5b90 sp=0x2b7f547f5b70 pc=0x102ec6748
+runtime.netpollblock(0x2b7f547f5bf8?, 0x2f07c20?, 0x1?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/netpoll.go:575 +0x150 fp=0x2b7f547f5bd0 sp=0x2b7f547f5b90 pc=0x102e87d60
+internal/poll.runtime_pollWait(0x1316a9a00, 0x72)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/netpoll.go:351 +0xa0 fp=0x2b7f547f5c00 sp=0x2b7f547f5bd0 pc=0x102ec5980
+internal/poll.(*pollDesc).wait(0x2b7f548fb800?, 0x102e40168?, 0x0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_poll_runtime.go:84 +0x28 fp=0x2b7f547f5c40 sp=0x2b7f547f5c00 pc=0x102f023b8
+internal/poll.(*pollDesc).waitRead(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Accept(0x2b7f548fb800)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_unix.go:618 +0x210 fp=0x2b7f547f5cf0 sp=0x2b7f547f5c40 pc=0x102f05fd0
+net.(*netFD).accept(0x2b7f548fb800)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/fd_unix.go:149 +0x28 fp=0x2b7f547f5db0 sp=0x2b7f547f5cf0 pc=0x1030c8cc8
+net.(*TCPListener).accept(0x2b7f54a58540)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/tcpsock_posix.go:159 +0x24 fp=0x2b7f547f5e00 sp=0x2b7f547f5db0 pc=0x1030dc344
+net.(*TCPListener).Accept(0x2b7f54a58540)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/tcpsock.go:387 +0x2c fp=0x2b7f547f5e50 sp=0x2b7f547f5e00 pc=0x1030db7bc
+net/http.(*Server).Serve(0x2b7f54a4eb40, {0x103ec0a40, 0x2b7f54a58540})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:3574 +0x2a8 fp=0x2b7f547f5f80 sp=0x2b7f547f5e50 pc=0x1031dfca8
+net/http/httptest.(*Server).goServe.func1()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/httptest/server.go:586 +0x54 fp=0x2b7f547f5fd0 sp=0x2b7f547f5f80 pc=0x103470714
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547f5fd0 sp=0x2b7f547f5fd0 pc=0x102ece154
+created by net/http/httptest.(*Server).goServe in goroutine 29
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/httptest/server.go:584 +0x8c
+
+goroutine 39 gp=0x2b7f54804d20 m=nil [IO wait]:
+runtime.gopark(0xffffffffffffffff?, 0xffffffffffffffff?, 0xb8?, 0xb8?, 0x102ee2c38?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f54b9b850 sp=0x2b7f54b9b830 pc=0x102ec6748
+runtime.netpollblock(0x2b7f54b9b8c8?, 0x6?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/netpoll.go:575 +0x150 fp=0x2b7f54b9b890 sp=0x2b7f54b9b850 pc=0x102e87d60
+internal/poll.runtime_pollWait(0x1316a9c00, 0x72)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/netpoll.go:351 +0xa0 fp=0x2b7f54b9b8c0 sp=0x2b7f54b9b890 pc=0x102ec5980
+internal/poll.(*pollDesc).wait(0x2b7f54846680?, 0x2b7f54b00000?, 0x0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_poll_runtime.go:84 +0x28 fp=0x2b7f54b9b900 sp=0x2b7f54b9b8c0 pc=0x102f023b8
+internal/poll.(*pollDesc).waitRead(...)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0x2b7f54846680, {0x2b7f54b00000, 0x1000, 0x1000})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/internal/poll/fd_unix.go:170 +0x22c fp=0x2b7f54b9b9a0 sp=0x2b7f54b9b900 pc=0x102f0339c
+net.(*netFD).Read(0x2b7f54846680, {0x2b7f54b00000?, 0x2b7f54b9ba28?, 0x102f08c70?})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/fd_posix.go:68 +0x28 fp=0x2b7f54b9b9f0 sp=0x2b7f54b9b9a0 pc=0x1030c76c8
+net.(*conn).Read(0x2b7f54802410, {0x2b7f54b00000?, 0x1316a9c00?, 0x0?})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/net.go:196 +0x34 fp=0x2b7f54b9ba40 sp=0x2b7f54b9b9f0 pc=0x1030d4514
+net/http.(*connReader).Read(0x2b7f548313c0, {0x2b7f54b00000, 0x1000, 0x1000})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:856 +0x228 fp=0x2b7f54b9baa0 sp=0x2b7f54b9ba40 pc=0x1031d6238
+bufio.(*Reader).fill(0x2b7f549b0000)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/bufio/bufio.go:113 +0xdc fp=0x2b7f54b9bae0 sp=0x2b7f54b9baa0 pc=0x102f7edbc
+bufio.(*Reader).Peek(0x2b7f549b0000, 0x4)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/bufio/bufio.go:152 +0x58 fp=0x2b7f54b9bb00 sp=0x2b7f54b9bae0 pc=0x102f7eef8
+net/http.(*conn).serve(0x2b7f54828f30, {0x103ec1ac0, 0x2b7f54b828a0})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:2193 +0x6cc fp=0x2b7f54b9bfa0 sp=0x2b7f54b9bb00 pc=0x1031db68c
+net/http.(*Server).Serve.gowrap3()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:3604 +0x24 fp=0x2b7f54b9bfd0 sp=0x2b7f54b9bfa0 pc=0x1031f8434
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f54b9bfd0 sp=0x2b7f54b9bfd0 pc=0x102ece154
+created by net/http.(*Server).Serve in goroutine 30
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:3604 +0x3e8
+
+goroutine 31 gp=0x2b7f54711a40 m=nil [chan receive (durable), synctest bubble 3]:
+runtime.gopark(0x1547da6d8?, 0x102f14e74?, 0xe0?, 0x3c?, 0x1316a17c0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f547da670 sp=0x2b7f547da650 pc=0x102ec6748
+runtime.chanrecv(0x2b7f5497ad80, 0x2b7f547da757, 0x1)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/chan.go:667 +0x470 fp=0x2b7f547da6f0 sp=0x2b7f547da670 pc=0x102e56920
+runtime.chanrecv1(0x18?, 0x103e201b0?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/chan.go:509 +0x14 fp=0x2b7f547da720 sp=0x2b7f547da6f0 pc=0x102e56474
+testing/synctest.testingSynctestTest(0x2b7f54a5e488, 0x2b7f548afaa0)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2310 +0x218 fp=0x2b7f547da7a0 sp=0x2b7f547da720 pc=0x102f7e198
+testing/synctest.Test.func1()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/synctest/synctest.go:292 +0x28 fp=0x2b7f547da7d0 sp=0x2b7f547da7a0 pc=0x10346ebd8
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f547da7d0 sp=0x2b7f547da7d0 pc=0x102ece154
+created by testing/synctest.Test in goroutine 29
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/synctest/synctest.go:291 +0x90
+
+goroutine 51 gp=0x2b7f54c063c0 m=nil [select (durable), synctest bubble 3]:
+runtime.gopark(0x2b7f54aeef38?, 0x2?, 0xb8?, 0xf9?, 0x2b7f54aeeee4?)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/proc.go:474 +0xb8 fp=0x2b7f54aeed60 sp=0x2b7f54aeed40 pc=0x102ec6748
+runtime.selectgo(0x2b7f54aeef38, 0x2b7f54aeeee0, 0x2b7f54a58640?, 0x0, 0x2b7f54a5d440?, 0x1)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/select.go:351 +0x838 fp=0x2b7f54aeeea0 sp=0x2b7f54aeed60 pc=0x102ea0c98
+net/http.(*persistConn).writeLoop(0x2b7f54a4f040)
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/transport.go:2833 +0x98 fp=0x2b7f54aeefb0 sp=0x2b7f54aeeea0 pc=0x1031f3618
+net/http.(*Transport).dialConn.gowrap3()
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/transport.go:2124 +0x20 fp=0x2b7f54aeefd0 sp=0x2b7f54aeefb0 pc=0x1031f9870
+runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x2b7f54aeefd0 sp=0x2b7f54aeefd0 pc=0x102ece154
+created by net/http.(*Transport).dialConn in goroutine 49
+	/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/transport.go:2124 +0x1528
+
+r0      0x4
+r1      0x0
+r2      0x0
+r3      0x16cfbcab0
+r4      0x40
+r5      0x16cfbca78
+r6      0x86d96beea8941
+r7      0x86d9912d7adac
+r8      0x103f618a0
+r9      0x1
+r10     0x3598
+r11     0x20
+r12     0x20
+r13     0x16cfbc9b0
+r14     0x1c8ce5
+r15     0x0
+r16     0x16b
+r17     0x196e5efc4
+r18     0x0
+r19     0x16cfbd1e8
+r20     0x16cfbca20
+r21     0x3
+r22     0xf
+r23     0x2b7f54862aed
+r24     0x0
+r25     0x0
+r26     0x103ec7248
+r27     0x103ecd000
+r28     0x103f60880
+r29     0x16cfbc998
+lr      0x102ecef18
+sp      0x16cfbc9a0
+pc      0x196e5efcc
+fault   0x196e5efcc
+FAIL	gchat-adapter/internal/events	76.336s
+FAIL
