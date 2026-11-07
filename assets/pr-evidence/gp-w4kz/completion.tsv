@@ -32,3 +32,7 @@ uv run --with pytest --with PyYAML --with jsonschema python -m pytest tests -q -
 go test ./... -count=1 -timeout=30m -json (r2)	1
 uv run --with pytest --with PyYAML --with jsonschema python -m pytest tests -q -p no:cacheprovider (N1 review correction)	0
 go test ./cmd/gc-gchat-adapter -run '^TestRunScript' -count=1 -timeout=2m	0
+go test ./... -count=1 -timeout=30m -json -p=1 -parallel=1 (r3)	1
+go test ./... -count=1 -timeout=30m -json -p=1 -parallel=1 (r4)	0
+go vet ./... (r4)	0
+gofmt -l . (r4)	0

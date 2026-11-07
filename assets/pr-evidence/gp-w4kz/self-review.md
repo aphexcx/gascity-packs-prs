@@ -161,3 +161,30 @@ path and helper loading against the source and fixture. Both launcher tests,
 including all three layouts and the missing-env path, pass with
 `go test ./cmd/gc-gchat-adapter -run '^TestRunScript' -count=1 -timeout=2m`
 (0.836s). The failed review and run are retained.
+
+## Codex r4 — fixture correction clean
+
+The fourth DEEP review at 4cefd2e7 compared the fixture correction with 4ad81ce4
+and returned CLEAN, with no actionable findings. It read all five changed files
+and traced the launcher fixture and error paths. The installed helper validated
+the anchored verdict and exited 0. `review-results.json` records every round's
+actual reviewed SHA, comparison base, verdict, and helper result; no mayor gate
+or read verdict is asserted.
+
+## Final source verification
+
+At 4cefd2e756a537a998845427b292b428adb08d26, the complete serialized r4 run
+passed all 21 packages, 588 top-level tests, and 1,088 subtests, with no failures
+or skips. The launcher fixture and all end-to-end recovery scenarios passed.
+Go vet exited 0 with zero output; gofmt exited 0 with zero files. The completion
+manifest and parsed summary were read before recording these results. Python
+validation passed 23 tests and 22 subtests after the final production shell
+change; the only later source change was the Go launcher fixture.
+
+Reviewed the final evidence against command exits, complete JSON test events,
+and the four validated review reports. The explicit-head history audit checks
+all sixteen source/correction commits for ancestry, requested author/trailers,
+and scope; no registry, dependency, or other-pack changes were introduced.
+The changelog has one entry for each of the eleven findings. The final evidence
+commit adds no source change. Earlier failed runs and review findings remain
+available, and no test deadline or assertion was loosened.
