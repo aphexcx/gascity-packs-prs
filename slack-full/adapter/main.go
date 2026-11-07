@@ -695,6 +695,7 @@ type config struct {
 	ackModelName    string
 	ackModelKeyFile string
 	ackModelTimeout time.Duration
+	ackReceipts     *ackReceiptRegistry
 	// busyMarks is the in-memory registry of pending busy reactions,
 	// keyed by (conversation id, thread key). processSlackEvent
 	// records a mark when it adds the busy reaction; handlePublish
@@ -1308,6 +1309,7 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	if strings.ContainsAny(cfg.cityName, "/?#%") {
 		return cfg, fmt.Errorf("GC_CITY_NAME must not contain '/', '?', '#', or '%%': %q", cfg.cityName)
 	}
+	cfg.ackReceipts = newAckReceiptRegistry()
 	return cfg, nil
 }
 

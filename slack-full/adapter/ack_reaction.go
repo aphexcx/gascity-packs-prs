@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // sendAckReaction is the one configured acknowledgement path. The caller
@@ -16,6 +17,11 @@ func sendAckReaction(cfg config, client *http.Client, token string, msg slackMes
 		(strings.TrimSpace(msg.Text) == "" && len(msg.Files) == 0) {
 		return
 	}
+	key := ackReceiptKey{msg.Channel, msg.TS}
+	if !cfg.ackReceipts.claim(key, time.Now()) {
+		return
+	}
+	defer func() { cfg.ackReceipts.finish(key, time.Now()) }()
 	name := cfg.ackReaction
 	switch name {
 	case "auto":

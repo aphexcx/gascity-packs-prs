@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -88,7 +89,7 @@ func TestAckMissingKeyFallsBackEveryMessageLogsOnce(t *testing.T) {
 	cfg.gcAPIBase = gc.URL
 	cfg.dispatchSem = defaultTestDispatchSem
 	for i, text := range []string{"thanks", "the site is broken", "hello"} {
-		env := botMentionEnvelope(t, "message", "", "C1", "100.000015", "", text, true)
+		env := botMentionEnvelope(t, "message", "", "C1", fmt.Sprintf("100.%06d", 15+i), "", text, true)
 		processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
 		if got := reactions.await(t, time.Second); got.name != []string{"pray", "wrench", "eyes"}[i] {
 			t.Fatalf("missing-key reaction = %+v", got)
