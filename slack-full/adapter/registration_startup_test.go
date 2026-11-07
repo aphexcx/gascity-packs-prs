@@ -25,6 +25,10 @@ func TestRegistrationProcessHelper(t *testing.T) {
 	if os.Getenv("SLACK_REGISTRATION_TEST_PROCESS") != "1" {
 		return
 	}
+	if base := os.Getenv("SLACK_TEST_API_BASE"); base != "" {
+		// Real startup tests still use only their local fake Slack server.
+		slackAPIBase = base
+	}
 	if os.Getenv("SLACK_REGISTRATION_TEST_SHORT_DEADLINE") == "1" {
 		bootRegistrationPolicy.timeout = 100 * time.Millisecond
 	}

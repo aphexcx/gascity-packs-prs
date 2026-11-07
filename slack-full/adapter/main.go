@@ -1922,6 +1922,9 @@ func main() {
 	// to stop retrying at shutdown, and a flag assigned after the copy
 	// left that branch dead (citadel Fable read r1, jg-vobf70 round 6).
 	cfg.draining = &atomic.Bool{}
+	// The gateway copies cfg too: share this cache with legacy dispatch so
+	// company model acknowledgements receive the channel name from startup.
+	cfg.channelNames = newChannelNameCache()
 	companyGW := newCompanyGateway(cfg, companyDirStore, companyBindStore, receipts)
 	if rerr != nil {
 		companyGW.setStoreError(rerr)
@@ -1947,7 +1950,6 @@ func main() {
 		cfg.deliveryPolicyPath, deliveryPolicy.Len())
 	cfg.deliveryPolicy = deliveryPolicy
 	cfg.deliveredIDs = newDeliveredIDs()
-	cfg.channelNames = newChannelNameCache()
 	cfg.injectionParents = &injectionParents{}
 	cfg.replyHelp = newOncePerChannel()
 	cfg.postFailures = newRepeatedFailureLog()
