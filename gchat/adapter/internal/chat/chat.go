@@ -557,15 +557,17 @@ func Classify(err error) (kind string, retryAfter time.Duration) {
 // ResourceDenied reports a 403 that is about the resource, not the credential:
 // Google answers "permission denied ... or the resource doesn't exist" for a
 // space the user is not (yet) a joined member of, such as a direct message it
-// was invited to and never accepted. A missing scope says so explicitly
-// ("insufficient authentication scopes") and stays a credential problem.
+// was invited to and never accepted. Match that denial positively: other 403s
+// can describe API, project, policy, or scope failures, including on ListSpaces,
+// and must remain on the credential/retry path. Explicit "not a member" errors
+// are already classified as not_found by Classify.
 func ResourceDenied(err error) bool {
 	var apiErr *googleapi.Error
 	if !errors.As(err, &apiErr) || apiErr.Code != http.StatusForbidden {
 		return false
 	}
 	message := strings.ToLower(apiErr.Message)
-	return !strings.Contains(message, "insufficient authentication scopes") && !strings.Contains(message, "not a member")
+	return strings.Contains(message, "permission denied to perform the requested action on the specified resource, or the resource doesn't exist")
 }
 
 func classifyAt(err error, now time.Time) (kind string, retryAfter time.Duration) {

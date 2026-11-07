@@ -1206,9 +1206,8 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			// A 401 and a 503 hold the change for retry; a 403 without a scope
-			// complaint is about the space itself and is retained like a 404.
-			if status != 200 && status != 400 && status != 403 && status != 404 {
+			// A 401, an unrecognized 403, and a 503 hold the change for retry.
+			if status != 200 && status != 400 && status != 404 {
 				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[messageName] != nil || f.l.Transport.Seen("pubsub:space-unavailable") {
 					t.Fatalf("transient space lookup: %v %v", out, err)
 				}
@@ -1786,6 +1785,74 @@ func TestCatchUpReactionMarkerBelongsToCurrentChange(t *testing.T) {
 			}
 			if got := f.gc.Inbound()[1].Text; got != want {
 				t.Fatalf("delete marker: %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSpaceInventoryForbiddenRetriesMessage(t *testing.T) {
+	for _, tc := range []struct{ name, message string }{
+		{"api_disabled", "Google Chat API has not been used in project 123 before or it is disabled."},
+		{"access_policy", "Request is prohibited by organization's policy."},
+		{"project_permission", "Permission denied on consumer project 123."},
+		{"unknown", "Forbidden"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			target, err := url.Parse(f.google.URL())
+			if err != nil {
+				t.Fatal(err)
+			}
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var repaired atomic.Bool
+			var lookups atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/spaces" {
+					lookups.Add(1)
+					if !repaired.Load() {
+						w.WriteHeader(http.StatusForbidden)
+						_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": 403, "message": tc.message + " PRIVATE INVENTORY CONTENT"}})
+						return
+					}
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.Config.Endpoints.ChatAPIBase = s.URL
+			f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Space = nil
+			ev := event("inventory-forbidden", "message.created", m)
+			out, err := f.p.Handle(context.Background(), ev)
+			if out != puller.Nack || !errors.Is(err, ErrCredentials) {
+				t.Fatalf("inventory failure = %v, %v; want credential hold", out, err)
+			}
+			if strings.Contains(err.Error(), "PRIVATE") || !strings.Contains(err.Error(), "auth (HTTP 403)") {
+				t.Fatalf("unsafe or unclassified inventory failure: %v", err)
+			}
+			if len(f.l.Changes) != 0 || len(f.l.Messages) != 0 || len(f.gc.Inbound()) != 0 || f.l.Transport.Seen("pubsub:inventory-forbidden") {
+				t.Fatal("inventory failure consumed the message")
+			}
+			repaired.Store(true)
+			handle(t, f, ev)
+			handle(t, f, ev)
+			got := f.gc.Inbound()
+			if lookups.Load() != 2 || len(got) != 1 || got[0].ProviderMessageID != messageName || got[0].Text != framed("hello") {
+				t.Fatalf("redelivery: lookups=%d inbound=%+v", lookups.Load(), got)
+			}
+			stored, err := ledger.Load(f.opts.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c := stored.Changes[messageName]; c == nil || c.Status != "committed" || c.Reason != "delivered" {
+				t.Fatalf("recovered message not durably delivered: %+v", c)
 			}
 		})
 	}

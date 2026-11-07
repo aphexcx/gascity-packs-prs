@@ -34,6 +34,7 @@ import (
 	"gchat-adapter/internal/fakes/fakegc"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/server"
 	"gchat-adapter/internal/token"
 	"gchat-adapter/internal/wire"
@@ -520,7 +521,12 @@ func TestEndToEnd(t *testing.T) {
 		f.emit("message.v1.updated", "stale-edit", map[string]any{"message": m})
 		f.barrier()
 		f.turns(2)
-		if f.gc.Inbound()[0].Text != "new version" || !f.state().Messages[m.Name].Deleted || len(f.state().Unresolved) != 0 {
+		text := f.gc.Inbound()[0].Text
+		frame, ok := provenance.FrameOf(text)
+		if !ok {
+			t.Fatalf("missing provenance frame: %q", text)
+		}
+		if strings.TrimPrefix(text, frame+"\n") != "new version" || !f.state().Messages[m.Name].Deleted || len(f.state().Unresolved) != 0 {
 			t.Fatal("revision order lost")
 		}
 	})
@@ -588,7 +594,7 @@ func TestEndToEnd(t *testing.T) {
 					})
 				}
 				m := message("spaces/dm", "attachment message", "users/222", kind, time.Now())
-				m.Attachment = []*api.Attachment{{ContentName: "file.bin", ContentType: "application/octet-stream", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "attachment/file"}}}
+				m.Attachment = []*api.Attachment{{Name: m.Name + "/attachments/file", ContentName: "file.bin", ContentType: "application/octet-stream", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "attachment/file"}}}
 				f.emit("message.v1.created", kind, map[string]any{"message": m})
 				got := f.expectTurn(t, "unavailable")
 				f.committed(m.Name)

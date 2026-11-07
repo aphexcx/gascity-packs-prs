@@ -181,6 +181,18 @@ func TestInboundRejectsAttachmentWithoutMIMEType(t *testing.T) {
 	call(t, s, "POST", "inbound", m, true, 200)
 }
 
+func TestInboundRejectsAttachmentWithoutProviderID(t *testing.T) {
+	s := New(t)
+	m := inbound("nameless-attachment")
+	m.Message.Attachments = []wire.Attachment{{MIMEType: "application/octet-stream"}}
+	call(t, s, "POST", "inbound", m, true, 422)
+	if len(s.Inbound()) != 0 {
+		t.Fatal("rejected attachment was recorded")
+	}
+	m.Message.Attachments[0].ProviderID = "spaces/room/messages/nameless-attachment/attachments/a"
+	call(t, s, "POST", "inbound", m, true, 200)
+}
+
 func TestConcludedFailureDoesNotOverwriteSuccessfulRetry(t *testing.T) {
 	s := New(t)
 	s.NextDelivery = "pending"

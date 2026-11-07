@@ -913,6 +913,34 @@ func TestUploadAttemptsHaveIndependentOffsets(t *testing.T) {
 	}
 }
 
+func TestResourceDenied(t *testing.T) {
+	for _, tc := range []struct {
+		name, message string
+		code          int
+		want          bool
+	}{
+		{"resource", "Permission denied to perform the requested action on the specified resource, or the resource doesn't exist.", 403, true},
+		{"membership", "The caller is not a member of the space.", 403, false}, // Classify returns not_found.
+		{"scope", "Request had insufficient authentication scopes.", 403, false},
+		{"api_disabled", "Google Chat API has not been used in project 123 before or it is disabled.", 403, false},
+		{"policy", "Request is prohibited by organization's policy.", 403, false},
+		{"project", "Permission denied on consumer project 123.", 403, false},
+		{"unknown", "Forbidden", 403, false},
+		{"empty", "", 403, false},
+		{"wrong_status", "Permission denied to perform the requested action on the specified resource, or the resource doesn't exist.", 401, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fmt.Errorf("wrapped: %w", &googleapi.Error{Code: tc.code, Message: tc.message})
+			if got := ResourceDenied(err); got != tc.want {
+				t.Fatalf("ResourceDenied = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if ResourceDenied(nil) || ResourceDenied(io.ErrUnexpectedEOF) {
+		t.Fatal("non-API error classified as resource denial")
+	}
+}
+
 func TestClassify(t *testing.T) {
 	for _, tc := range []struct {
 		code          int
