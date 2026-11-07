@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"gchat-adapter/internal/fakes/fakegoogle"
@@ -146,6 +147,64 @@ func TestFreshCreatePersistsGoogleExpiryAndRequestContract(t *testing.T) {
 				t.Error("create must omit ttl")
 			}
 		}
+	}
+}
+
+func TestEverySubscriptionRequestHasDeadline(t *testing.T) {
+	for _, action := range []string{"get", "list", "create", "patch", "reactivate"} {
+		t.Run(action, func(t *testing.T) {
+			f := setup(t)
+			lookupBody := "{}"
+			if action == "get" || action == "patch" || action == "reactivate" {
+				s := f.reconcile()
+				if action == "patch" {
+					f.clock.advance(4*time.Hour - 30*time.Second)
+				}
+				if action == "reactivate" {
+					f.server.Configure(func(g *fakegoogle.Server) {
+						g.Subscriptions[s.Name].State = "SUSPENDED"
+						g.Subscriptions[s.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+					})
+				}
+				f.server.Configure(func(g *fakegoogle.Server) {
+					data, err := json.Marshal(g.Subscriptions[s.Name])
+					if err != nil {
+						t.Fatal(err)
+					}
+					lookupBody = string(data)
+				})
+			}
+			synctest.Test(t, func(t *testing.T) {
+				stalled := false
+				f.hook = func(r *http.Request) (*http.Response, error) {
+					matches := (action == "get" && r.Method == "GET" && r.URL.Path != "/v1/subscriptions") ||
+						(action == "list" && r.Method == "GET") ||
+						(action == "create" && r.Method == "POST") ||
+						(action == "patch" && r.Method == "PATCH") ||
+						(action == "reactivate" && strings.HasSuffix(r.URL.Path, ":reactivate"))
+					if !matches {
+						return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(lookupBody)), Request: r}, nil
+					}
+					stalled = true
+					deadline, ok := r.Context().Deadline()
+					if !ok || time.Until(deadline) > operationTimeout {
+						t.Fatal("subscription request has no operation deadline")
+					}
+					<-r.Context().Done()
+					return nil, r.Context().Err()
+				}
+				started := time.Now()
+				var err error
+				if action == "reactivate" {
+					_, err = f.manager.TokenReloaded(context.Background())
+				} else {
+					_, err = f.manager.Reconcile(context.Background())
+				}
+				if !stalled || !errors.Is(err, context.DeadlineExceeded) || time.Since(started) != operationTimeout {
+					t.Fatalf("stalled=%v elapsed=%s err=%v", stalled, time.Since(started), err)
+				}
+			})
+		})
 	}
 }
 

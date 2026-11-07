@@ -226,7 +226,9 @@ func (m *Manager) reconcile(ctx context.Context) (_ ledger.SubscriptionState, re
 		}
 		m.mutationStarted = m.clock.Now()
 		m.pendingKind = "create"
-		op, err := m.service.Subscriptions.Create(&api.Subscription{TargetResource: Target, EventTypes: slices.Clone(m.types), PayloadOptions: &api.PayloadOptions{IncludeResource: true}, NotificationEndpoint: &api.NotificationEndpoint{PubsubTopic: m.topic}}).Context(ctx).Do()
+		requestCtx, cancel := context.WithTimeout(ctx, operationTimeout)
+		op, err := m.service.Subscriptions.Create(&api.Subscription{TargetResource: Target, EventTypes: slices.Clone(m.types), PayloadOptions: &api.PayloadOptions{IncludeResource: true}, NotificationEndpoint: &api.NotificationEndpoint{PubsubTopic: m.topic}}).Context(requestCtx).Do()
+		cancel()
 		if isHTTP(err, http.StatusConflict) {
 			return m.adopt(ctx)
 		}
@@ -242,6 +244,8 @@ func (m *Manager) reconcile(ctx context.Context) (_ ledger.SubscriptionState, re
 }
 
 func (m *Manager) lookup(ctx context.Context, name string) (*api.Subscription, error) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
 	if name != "" {
 		sub, err := m.service.Subscriptions.Get(name).Context(ctx).Do()
 		if err == nil {
@@ -259,6 +263,8 @@ func (m *Manager) lookup(ctx context.Context, name string) (*api.Subscription, e
 }
 
 func (m *Manager) discover(ctx context.Context) (*api.Subscription, error) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
 	terms := make([]string, len(m.types))
 	for i, typ := range m.types {
 		terms[i] = fmt.Sprintf("event_types:%q", typ)
@@ -344,10 +350,12 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 	}
 	m.mutationStarted = m.clock.Now()
 	var op *api.Operation
+	requestCtx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
 	switch sub.State {
 	case "ACTIVE":
 		m.pendingKind = "renew"
-		op, err = m.service.Subscriptions.Patch(sub.Name, &api.Subscription{Ttl: "0s"}).UpdateMask("ttl").Context(ctx).Do()
+		op, err = m.service.Subscriptions.Patch(sub.Name, &api.Subscription{Ttl: "0s"}).UpdateMask("ttl").Context(requestCtx).Do()
 	case "SUSPENDED":
 		if sub.SuspensionReason == "USER_SCOPE_REVOKED" || sub.SuspensionReason == "APP_SCOPE_REVOKED" {
 			if !m.scopeReloaded {
@@ -355,7 +363,7 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 			}
 		}
 		m.pendingKind = "reactivate"
-		op, err = m.service.Subscriptions.Reactivate(sub.Name, &api.ReactivateSubscriptionRequest{}).Context(ctx).Do()
+		op, err = m.service.Subscriptions.Reactivate(sub.Name, &api.ReactivateSubscriptionRequest{}).Context(requestCtx).Do()
 	default:
 		return state, fmt.Errorf("events: unsupported subscription state %q", sub.State)
 	}

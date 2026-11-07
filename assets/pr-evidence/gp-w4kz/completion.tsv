@@ -11,3 +11,5 @@ go test ./internal/app -run TestDeletedSpace -count=1 -timeout=1m (r3)	1
 go test ./internal/catchup ./internal/app -run TestDeletedSpace|TestRetryPendingWaits -count=1 -timeout=3m (r4)	0
 uv run --with pytest --with PyYAML --with jsonschema python -m pytest tests -q -p no:cacheprovider (m2)	0
 go test ./internal/server -run TestSlowLargeUpload|TestUploadBound -count=1 -timeout=3m	0
+go test ./internal/events -count=1 -timeout=5m	1
+go test ./internal/events -count=1 -timeout=5m (r2)	0

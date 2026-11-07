@@ -78,3 +78,13 @@ limit, to the 25-second command overhead. The shell uses actual file size with
 45 seconds overhead, preserving the 20-second response margin. The slow 2 MiB
 upload exceeds the old 25-second deadline and passes; shell tests verify the
 computed curl timeout. Targeted Go tests and all 21 Python tests passed.
+
+## m3 — subscription request deadlines
+
+Reviewed all subscription calls, including paginated discovery and reactivation.
+Each now inherits an operationTimeout child context, preserving parent
+cancellation and existing ambiguous-mutation recovery. The fake-time regression
+stalls get/list/create/patch/reactivate and observes the actual two-minute bound.
+Its first run hung because a real HTTP keepalive goroutine prevented fake time
+from advancing; a SIGQUIT trace is retained. r2 uses only scripted transport
+responses inside fake time, and the full events package passes (2.309s).
