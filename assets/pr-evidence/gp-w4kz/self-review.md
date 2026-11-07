@@ -69,3 +69,12 @@ record is corrected without rewriting history. The fixture used a guessed city
 prefix; Register actually appends ServiceURLPrefix directly. r4 uses that value
 and passes both the running-app recovery and catch-up tests. r3 preserves the
 failed callback diagnostic. No production correction was needed after m1.
+
+## m2 — upload transfer budget
+
+Reviewed interactive and automatic upload paths. The server adds one second per
+256 KiB of the effective configured maximum, capped at Chat's existing 200 MiB
+limit, to the 25-second command overhead. The shell uses actual file size with
+45 seconds overhead, preserving the 20-second response margin. The slow 2 MiB
+upload exceeds the old 25-second deadline and passes; shell tests verify the
+computed curl timeout. Targeted Go tests and all 21 Python tests passed.

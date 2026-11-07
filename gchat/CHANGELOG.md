@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Give uploads a size-based transfer budget and align the command's timeout, including automatic retries.
 - Retire spaces whose history returns 404, preserving fetched records and allowing live-space send recovery.
 - Persist join-time history bounds and clamp catch-up overlap so pre-join messages stay unread.
 - Serialize media accounting and downloads across readers; refuse downloads when usage cannot be measured.

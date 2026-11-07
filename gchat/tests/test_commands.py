@@ -240,6 +240,23 @@ class ProxyCommandsTest(ProxyFixture):
         self.assertEqual(self.requests[-1][3]["path"], os.path.realpath(file))
         self.assertEqual(self.requests[-1][3]["idempotency_key"], "upload-example")
 
+    def test_upload_curl_budget_scales_with_file_size(self):
+        file = self.root / "large.bin"
+        file.write_bytes(bytes(2 << 20))
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        args_file = self.root / "curl-args"
+        wrapper = bin_dir / "curl"
+        wrapper.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$GCHAT_CURL_ARGS"\nexec "$GCHAT_REAL_CURL" "$@"\n')
+        wrapper.chmod(0o755)
+        self.env.update(GCHAT_REAL_CURL=shutil.which("curl"), GCHAT_CURL_ARGS=str(args_file),
+                        PATH=str(bin_dir) + os.pathsep + self.env["PATH"])
+        self.respond("/commands/upload", {"delivered": True, "recorded": True})
+        result = self.run_command("upload", "--conversation-id", "spaces/AAAA", "--file", str(file))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = args_file.read_text().splitlines()
+        self.assertEqual(args[args.index("--max-time") + 1], "53")
+
     def test_react_read_spaces_resolve_and_state_routes(self):
         cases = [
             ("react", ["--message", "spaces/AAAA/messages/1", "--emoji", "👍", "--remove"], "/react", {"message": "spaces/AAAA/messages/1", "emoji": "👍", "remove": True}),

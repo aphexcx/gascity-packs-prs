@@ -16,7 +16,7 @@ gchat_init() {
 gchat_http() {
     # Keep the server's explanation on errors, and never follow a redirect or
     # mistake its response for a successful mutation. No automatic retries.
-    gchat_response=$(curl -sS --connect-timeout 5 --max-time 45 -w '\n%{http_code}' "$@") || return $?
+    gchat_response=$(curl -sS --connect-timeout 5 --max-time "${gchat_http_timeout:-45}" -w '\n%{http_code}' "$@") || return $?
     gchat_newline='
 '
     gchat_code=${gchat_response##*"$gchat_newline"}

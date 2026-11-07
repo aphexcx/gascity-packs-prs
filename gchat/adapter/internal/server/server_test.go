@@ -315,6 +315,39 @@ func TestUploadBoundAndPathValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestSlowLargeUploadOutlivesPublishBudget(t *testing.T) {
+	f := setup(t)
+	f.cfg.Endpoints.MediaMaxBytes = 200 << 20
+	f.s.SetConfig(*f.cfg)
+	c, err := chat.New(t.Context(), &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "/upload/") {
+			select {
+			case <-time.After(publishBudget + time.Second):
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})}, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetClients(c, f.options.GC)
+	f.gc.Bind(conversation("spaces/room"), "session")
+	path := filepath.Join(f.cfg.Endpoints.UploadRoot, "large.bin")
+	if err := os.WriteFile(path, make([]byte, 2<<20), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := command("slow-upload")
+	cmd["path"] = path
+	started := time.Now()
+	_, raw, _ := f.call(t, "/commands/upload", cmd)
+	result := decode[CommandResult](t, raw)
+	if !result.Delivered || !result.Recorded || time.Since(started) <= publishBudget {
+		t.Fatalf("slow upload did not survive publish budget: %+v", result)
+	}
+}
 func TestUnrecordedRetriedAfterRestart(t *testing.T) {
 	for _, upload := range []bool{false, true} {
 		t.Run(map[bool]string{false: "text", true: "upload"}[upload], func(t *testing.T) {

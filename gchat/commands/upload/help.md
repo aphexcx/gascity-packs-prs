@@ -5,3 +5,7 @@ reply-current uses the latest inbound conversation, then its active binding; pas
 Use --help or -h to display this help.
 
 Keep the printed idempotency key and pass --idempotency-key KEY when retrying. --body-file preserves newlines. Upload requires an absolute file path within the configured upload root.
+
+Uploads allow one second per 256 KiB plus command overhead. The server budgets
+against the configured maximum (up to Chat's 200 MiB cap); the command budgets
+against the file size and adds 20 seconds for the proxy response.

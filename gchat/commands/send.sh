@@ -50,7 +50,13 @@ gchat_payload() {
         '{session_id:$session, conversation_id:$conversation, thread:$thread, text:., path:$path, idempotency_key:$key}'
 }
 route=commands/publish
-if [ "$mode" = upload ]; then route=commands/upload; fi
+if [ "$mode" = upload ]; then
+    route=commands/upload
+    # Match the server's 256 KiB/s transfer allowance, with 20 seconds beyond
+    # its 25-second command overhead for the proxy response.
+    gchat_upload_bytes=$(wc -c < "$file")
+    gchat_http_timeout=$((45 + (gchat_upload_bytes + 262143) / 262144))
+fi
 if [ -n "$body_file" ]; then
     result=$(gchat_payload < "$body_file" | gchat_post_stream "$route")
 else

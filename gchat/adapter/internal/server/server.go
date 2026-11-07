@@ -39,6 +39,17 @@ import (
 const publishBudget = 25 * time.Second
 const maxFailureLogKeys = 1024
 
+// Allow 256 KiB/s for the configured upload maximum (Chat caps it at 200 MiB),
+// plus the normal command overhead. The shell uses the file size and 20 seconds
+// of extra response margin with the same transfer rate.
+func uploadBudget(maxBytes int64) time.Duration {
+	limit := int64(200 << 20)
+	if maxBytes > 0 && maxBytes < limit {
+		limit = maxBytes
+	}
+	return publishBudget + time.Duration((limit+(256<<10)-1)/(256<<10))*time.Second
+}
+
 type Health struct {
 	State  string `json:"state"`
 	Reason string `json:"reason"`
@@ -210,7 +221,11 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), publishBudget)
+	budget := publishBudget
+	if r.URL.Path == "/commands/upload" {
+		budget = uploadBudget(s.configuration().Endpoints.MediaMaxBytes)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), budget)
 	defer cancel()
 	if r.URL.Path != "/state" && r.URL.Path != "/healthz" && r.URL.Path != "/status" {
 		if !s.stateGate.TryRLock() {
@@ -1097,7 +1112,11 @@ func (s *Server) RetryPending(ctx context.Context) error {
 	sort.Strings(keys)
 	var failures []error
 	for _, key := range keys {
-		ctx, cancel := context.WithTimeout(ctx, publishBudget)
+		budget := publishBudget
+		if l.Sends[key].Upload != nil {
+			budget = uploadBudget(s.configuration().Endpoints.MediaMaxBytes)
+		}
+		ctx, cancel := context.WithTimeout(ctx, budget)
 		_, err := s.runCommand(ctx, *l.Sends[key].Request, l.Sends[key].Upload, true)
 		cancel()
 		if err != nil {
