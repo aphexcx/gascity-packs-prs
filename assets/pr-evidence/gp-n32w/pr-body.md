@@ -5,14 +5,14 @@ the existing behavior. The busy hourglass still tracks targeted work and is
 removed on reply; the acknowledgement remains.
 
 This ports Taylor's Hou installation patches from 2026-10-30 and 2026-11-03,
-on Afik's request to open a PR for consideration. The read-only source record
-is a **citadel path**:
-`/Users/tailor512/city/assets/ops/records/hou-ack-reaction-patch-20261107/pull.out`.
+on Afik's request to open a PR for consideration. The read-only source is
+a citadel record (the mayor's).
 The base is fork `main` at `2372b4f262aad8e847c416267ba3092d31a083fd`, which
 includes #68 and #72. No installation is repointed by this PR.
 
-The two imported implementation files differ from that record only in their
-attribution headers. The imported `ack_model_test.go` is byte-identical.
+Round 1 imported the two implementation files with only attribution changes;
+round 2 shares and bounds the acknowledgement path across ingress routes.
+The imported `ack_model_test.go` remains byte-identical.
 The main hook additionally treats Slack `already_reacted` as benign, reports
 other Slack API errors, avoids per-message missing-key warnings/channel
 lookups, and rejects timeout duration overflow. The README explains the five
@@ -29,20 +29,20 @@ the required module-wide `gofmt -l .` is empty.
 | --- | --- | --- | --- | --- |
 | A. Existing adapter busy reaction | Targeted dispatch; removed on reply | Configured `BUSY_REACTION`, default `hourglass` | Slack add/remove; no model | Token, targeted dispatch, pending-mark registry |
 | B. Agent-side reaction | Once the main agent turn reaches the reaction tool | Agent follows its reaction skill | Main-model inference plus reaction tool call; can share an existing turn | Agent instruction and `gc slack react` or gchat equivalent |
-| C. This adapter acknowledgement | Starts on human arrival, before routing/coalescing; stays as a receipt | Fixed emoji, keyword `auto`, or small `model` | One Slack add attempt; keywords use no inference; model uses one request, max 16 completion tokens, default 6 s timeout | `ACK_REACTION`; model also needs endpoint, model name and readable key file |
+| C. This adapter acknowledgement | Legacy arrival before routing/coalescing; company first delivery attempt; stays as a receipt | Fixed emoji, keyword `auto`, or small `model` | One Slack add attempt; keywords use no inference; model uses one request, max 16 completion tokens, default 6 s timeout | `ACK_REACTION`; model also needs endpoint, model name and readable key file |
 
 PR #79's gchat skill says “Acknowledge with a reaction, not a message” and
 asks the agent to choose an emoji fitting the feeling or topic. That tree
 does not establish a separate Bonanza-side reaction model. This PR uses
 OpenAI-compatible chat completions with keyword fallback on every model
-failure. Hou uses the Teale gateway; the city's recorded local endpoint at
-`127.0.0.1:11438` would use
-`ACK_MODEL_BASE_URL=http://127.0.0.1:11438/v1` without a code change, provided
-it serves that API and the operator supplies its model/key configuration.
+failure. Hou uses the Teale gateway; a local OpenAI-compatible server can be
+selected with `ACK_MODEL_BASE_URL` without a code change, provided it serves
+that API and the operator supplies its model/key configuration.
 The timeout bounds the model request; channel lookup and Slack delivery are
 additional. Both marks are asynchronous and may arrive in either order.
 Choose distinct acknowledgement and busy emojis: identical names share one
-Slack reaction and cannot have separate lifetimes.
+Slack reaction and cannot have separate lifetimes. Round 2 rejects a fixed
+acknowledgement equal to the busy emoji at configuration time.
 
 I recommend keeping the shipped default off and trying `auto` on Hou first,
 with the busy hourglass retained for progress. Enable a local `model` only
@@ -50,7 +50,7 @@ after comparing its emoji quality and latency with the keyword baseline.
 
 Afik: adopt (C) on every city with which mode, or keep it Hou-only?
 
-### Validation
+### Validation (round 1)
 
 - Go 1.27.3: `go test ./... -count=1 -json` from `slack-full/adapter`:
   1,458 top-level tests passed, 3 skipped (12,891 passing cases including
@@ -58,8 +58,8 @@ Afik: adopt (C) on every city with which mode, or keep it Hou-only?
 - Focused acknowledgement suite: 28 passing cases; the same selection
   passed under `go test -race ./... -run 'Test(Ack|ParseAck|PickAck)' -count=1`.
 - Model tests use local `httptest` servers and a loopback failure sentinel.
-  Runs set `ACK_MODEL_BASE_URL=http://127.0.0.1:1/v1` and HTTP/HTTPS proxies
-  to that closed loopback port, bypassing proxies only for loopback fixtures.
+  Runs point the model default and HTTP/HTTPS proxies at a closed local
+  endpoint, bypassing proxies only for loopback fixtures.
 - Python 3.12 shared venv: `python -m pytest tests -q` from `slack-full`:
   914 passed, 2 skipped; two existing `os.fork()` deprecation warnings.
 - Targeted/ambient/bot/redelivery behavior, no-key fallback, disabled mode,
@@ -68,5 +68,19 @@ Afik: adopt (C) on every city with which mode, or keep it Hou-only?
 
 Evidence and source anchors: `assets/pr-evidence/gp-n32w/README.md`.
 Draft only; mayor's Codex gate and Fable read remain pending.
+
+### Round 2
+
+The review delta starts at `bb0515de59a1e912c32a12e3bfe8afdecadcedf7`.
+The company gateway uses the same persistent receipt when configured, with
+its existing posting token and admission timing. The unset lifecycle is
+unchanged. Paired Slack events share one pick and post, and four shared slots
+queue overflow without dropping acknowledgements.
+
+N1, N3, N4 and N6 were read and accepted: model data exposure is documented;
+the round-1 focused count included 13 existing company tests; the four
+round-1 hardening changes are retained; and true event-ID redelivery is
+filtered before the legacy hook. N5 is now explicit in the README: a fallback
+log can contain the key-file path, never the key contents.
 
 Bead: gp-n32w
