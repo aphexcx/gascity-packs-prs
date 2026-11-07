@@ -77,10 +77,32 @@ its existing posting token and admission timing. The unset lifecycle is
 unchanged. Paired Slack events share one pick and post, and four shared slots
 queue overflow without dropping acknowledgements.
 
+| Finding | Commit | Regression evidence |
+| --- | --- | --- |
+| Gate MAJOR / M1: company rooms and registered agent DMs | `e4c794c6` | Signed HTTP admissions each post one auto pick with the path's token; existing unset lifecycle tests pass. |
+| M2: paired message/app_mention events | `11875d26` | One in-flight model pick and post per channel/timestamp; distinct timestamps remain independent; bounded/expiring registry test. |
+| M3: doctor's env precedence | `c878abe9` | Env-file assignment wins over inherited values, including empty; absent assignment preserves inheritance. |
+| M4: concurrent acknowledgement work | `15b838ff` | Nine messages peak at four model requests and all nine receive their receipt. |
+| M5: fixed ack/busy collision | `4f153813` | Configuration rejects equal names after colon normalization and names both settings. |
+| N2 / N5: public text and key-path disclosure | `1e801323` | Public-body audit passes; README distinguishes key paths from key contents. |
+
+Go 1.27.3 validation: `go test ./... -count=1 -json` passed both adapter
+packages, with **1,463 top-level passes, 3 skips**, and **12,898 passing cases
+including subtests**. `go vet ./...` passed and `gofmt -l .` was empty.
+The focused race run passed **35 top-level tests / 45 cases**. Python 3.12:
+`python -m pytest tests -q` passed **915 tests, 2 skipped**, with two existing
+fork deprecation warnings. All tests use local fixtures.
+
+The four Go behavior regressions also fail against the original round-1
+production source via a Go overlay; the doctor and document checks were red
+before their fixes. The full validation manifest and per-item logs are in
+the mayor's round-2 evidence record. The worker self-review is complete;
+the mayor's round-2 delta gate and Opus 5.5 read are pending. PR remains draft.
+
 N1, N3, N4 and N6 were read and accepted: model data exposure is documented;
 the round-1 focused count included 13 existing company tests; the four
 round-1 hardening changes are retained; and true event-ID redelivery is
 filtered before the legacy hook. N5 is now explicit in the README: a fallback
 log can contain the key-file path, never the key contents.
 
-Bead: gp-n32w
+Beads: gp-n32w (round 1), gp-82fs (round 2)
