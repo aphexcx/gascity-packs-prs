@@ -38,7 +38,7 @@ fi
 # Optional model credential path. Inspect literal env-file assignments without
 # sourcing the file: doctor must never execute it or print credential contents.
 ack_key_file="${ACK_MODEL_API_KEY_FILE:-}"
-if [ "${ACK_MODEL_API_KEY_FILE+x}" != x ] && [ -f "$env_file" ]; then
+if [ -f "$env_file" ] && grep -q '^\(export \)\{0,1\}ACK_MODEL_API_KEY_FILE=' "$env_file"; then
   ack_key_file=$(sed -n 's/^\(export \)\{0,1\}ACK_MODEL_API_KEY_FILE=//p' "$env_file" | tail -n 1)
   case "$ack_key_file" in
     \"*\") ack_key_file=${ack_key_file#\"}; ack_key_file=${ack_key_file%\"} ;;

@@ -44,5 +44,15 @@ def test_ack_key_in_env_file_is_not_executed(tmp_path, quote):
     assert 'private-test-content' not in result.stdout + result.stderr
     key.unlink()
     assert run_check(GC_SLACK_ADAPTER_ENV=str(env_file)).returncode == 2
-    # An explicitly empty ambient setting overrides the env-file path.
-    assert run_check(GC_SLACK_ADAPTER_ENV=str(env_file), ACK_MODEL_API_KEY_FILE='').returncode == 0
+    # run.sh sources the env file last, including over an empty inherited value.
+    assert run_check(GC_SLACK_ADAPTER_ENV=str(env_file), ACK_MODEL_API_KEY_FILE='').returncode == 2
+
+
+def test_ack_key_env_file_precedence(tmp_path):
+    env_file = tmp_path / 'env'
+    base = ''.join(f'{name}=fixture\n' for name in KEYS)
+    inherited = str(tmp_path / 'missing-inherited-key')
+    env_file.write_text(base + 'ACK_MODEL_API_KEY_FILE=\n')
+    assert run_check(GC_SLACK_ADAPTER_ENV=str(env_file), ACK_MODEL_API_KEY_FILE=inherited).returncode == 0
+    env_file.write_text(base)
+    assert run_check(GC_SLACK_ADAPTER_ENV=str(env_file), ACK_MODEL_API_KEY_FILE=inherited).returncode == 2
