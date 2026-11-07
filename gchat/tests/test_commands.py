@@ -49,7 +49,7 @@ class AuthCommandTest(unittest.TestCase):
         adapter = self.pack / "adapter"
         adapter.mkdir()
         binary = adapter / "gc-gchat-adapter"
-        binary.write_text('#!/bin/sh\nprintf "%s\\n" "$@" "env=${GC_GCHAT_ADAPTER_ENV:-}" "secrets=${GC_SERVICE_SECRETS_DIR:-}" "project=${GCHAT_PROJECT_ID:-}" "state=${GCHAT_STATE_FILE:-}"\n')
+        binary.write_text('#!/bin/sh\nprintf "%s\\n" "$@" "env=${GC_GCHAT_ADAPTER_ENV:-}" "secrets=${GC_SERVICE_SECRETS_DIR:-}" "project=${GCHAT_PROJECT_ID:-}" "state=${GCHAT_STATE_FILE:-}" "source=${GCHAT_TOKEN_SOURCE:-oauth}"\n')
         binary.chmod(0o755)
         self.env = {"PATH": os.environ["PATH"], "HOME": str(self.root),
                     "GC_PACK_DIR": str(self.pack)}
@@ -71,9 +71,9 @@ class AuthCommandTest(unittest.TestCase):
 
     def test_service_and_auth_preserve_exported_state_override(self):
         env = self.root / "env"
-        env.write_text("GCHAT_PROJECT_ID=example\nGCHAT_STATE_FILE=/from-file/state.json\n")
+        env.write_text("GCHAT_PROJECT_ID=example\nGCHAT_STATE_FILE=/from-file/state.json\nGCHAT_TOKEN_SOURCE=keyholder\n")
         override = str(self.root / "process 'quoted' $(touch SHOULD_NOT_EXIST).json")
-        self.env.update(GC_GCHAT_ADAPTER_ENV=str(env), GCHAT_STATE_FILE=override)
+        self.env.update(GC_GCHAT_ADAPTER_ENV=str(env), GCHAT_STATE_FILE=override, GCHAT_TOKEN_SOURCE="oauth")
         run = self.pack / "adapter/run.sh"
         shutil.copyfile(PACK / "adapter/run.sh", run)
         for command in (["sh", str(self.pack / "commands/auth.sh"), "--check"],
@@ -84,8 +84,32 @@ class AuthCommandTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f"state={override}\n", result.stdout)
                 self.assertIn("project=example\n", result.stdout)
+                self.assertIn("source=keyholder\n", result.stdout)
                 self.assertFalse((self.root / "SHOULD_NOT_EXIST").exists())
                 self.assertFalse((self.pack / "adapter/SHOULD_NOT_EXIST").exists())
+
+    def test_auth_mode_comes_from_file_not_inherited_export(self):
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        enroll = bin_dir / "boxboxbox-google"
+        enroll.write_text('#!/bin/sh\nprintf "%s\\n" enrolled\n')
+        enroll.chmod(0o755)
+        self.env["PATH"] = str(bin_dir) + os.pathsep + self.env["PATH"]
+        env = self.root / "env"
+        self.env["GC_GCHAT_ADAPTER_ENV"] = str(env)
+        for mode, inherited in (("keyholder", "oauth"), ("oauth", "keyholder"), ("", "keyholder")):
+            with self.subTest(file_mode=mode, inherited=inherited):
+                env.write_text("GCHAT_PROJECT_ID=example\nGCHAT_STATE_FILE=/from-file/state.json\n" +
+                               (f"GCHAT_TOKEN_SOURCE={mode}\n" if mode else ""))
+                self.env.update(GCHAT_TOKEN_SOURCE=inherited, GCHAT_STATE_FILE="")
+                result = self.run_auth()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if mode == "keyholder":
+                    self.assertEqual(result.stdout, "enrolled\n")
+                else:
+                    self.assertIn("auth\n", result.stdout)
+                    self.assertIn("source=oauth\n", result.stdout)
+                    self.assertIn("state=/from-file/state.json\n", result.stdout)
 
     def test_city_context_resolves_service_secrets(self):
         secrets = self.root / "examplecity/.gc/services/gchat/secrets"

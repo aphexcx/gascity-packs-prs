@@ -25,15 +25,10 @@ elif [ -n "${GC_SERVICE_SECRETS_DIR:-}" ]; then
     export GC_SERVICE_SECRETS_DIR
 fi
 
-# export -p emits shell-quoted assignments, including embedded quotes/newlines.
-# Keep inherited overrides while filling missing variables from the env file.
-gchat_saved_exports=$(export -p)
-set -a
-# shellcheck disable=SC1090
-. "$env_file"
-set +a
-eval "$gchat_saved_exports"
-unset gchat_saved_exports
+# Use the same supported override list as the auth and doctor launchers.
+# shellcheck source-path=SCRIPTDIR source=../commands/runtime.sh
+. "$(dirname "$0")/../commands/runtime.sh"
+gchat_source_env "$env_file"
 
 cd "$(dirname "$0")"
 if [ ! -x ./gc-gchat-adapter ]; then

@@ -24,3 +24,10 @@ gofmt -l .	0
 go vet ./...	0
 go test ./... -count=1 -timeout=30m -json	1
 go test ./internal/server -run TestRequestHandlesSpaceRetired|TestCachedCommandOutcome|TestRead -count=1 -timeout=3m	0
+go test ./internal/server -run ^TestPublishRateLimitAndDeadline$ -count=5 -timeout=2m	0
+go test ./internal/app -run ^TestShutdownCheckpointsBeforeDrainingStalledRequestBody$ -count=5 -timeout=3m	0
+gofmt -l . (final source)	0
+go vet ./... (final source)	0
+uv run --with pytest --with PyYAML --with jsonschema python -m pytest tests -q -p no:cacheprovider (final source)	0
+go test ./... -count=1 -timeout=30m -json (r2)	1
+uv run --with pytest --with PyYAML --with jsonschema python -m pytest tests -q -p no:cacheprovider (N1 review correction)	0

@@ -2,6 +2,34 @@
 # Shared only by auth and doctor. Other commands never load credentials.
 set -eu
 
+# Preserve only settings that the Go loader also accepts from the process.
+# Authentication mode and credential keys belong to the env file instead.
+gchat_source_env() {
+    gchat_override_keys='GCHAT_CHAT_API_BASE GCHAT_EVENTS_API_BASE GCHAT_PUBSUB_ENDPOINT
+GCHAT_OAUTH_AUTH_URL GCHAT_OAUTH_TOKEN_URL GCHAT_PEOPLE_API_BASE
+GCHAT_MEDIA_DIR GCHAT_UPLOAD_ROOT GCHAT_STATE_FILE
+GC_GCHAT_ADAPTER_ENV GC_SERVICE_SECRETS_DIR GC_CITY_PATH GC_SERVICE_SOCKET GC_SERVICE_URL_PREFIX HOME'
+    for gchat_key in $gchat_override_keys; do
+        # The key is from the fixed list above. Values expand in assignment
+        # context, so quotes, newlines and literal $() are never re-evaluated.
+        eval "gchat_saved_$gchat_key=\${$gchat_key-}"
+    done
+    # An absent mode means oauth in Go, regardless of an inherited value.
+    unset GCHAT_TOKEN_SOURCE
+    set -a
+    # shellcheck disable=SC1090
+    . "$1"
+    set +a
+    for gchat_key in $gchat_override_keys; do
+        eval "gchat_saved_value=\${gchat_saved_$gchat_key}"
+        if [ -n "$gchat_saved_value" ]; then
+            export "$gchat_key=$gchat_saved_value"
+        fi
+        unset "gchat_saved_$gchat_key"
+    done
+    unset gchat_saved_value gchat_key gchat_override_keys
+}
+
 gchat_load_env() {
     # Pack commands get GC_CITY_PATH, while a supervised service gets its
     # secrets directory directly. Resolve both to the same per-city file.
@@ -28,14 +56,7 @@ gchat_load_env() {
         GC_SERVICE_SECRETS_DIR=$(dirname "$env_file")
         export GC_SERVICE_SECRETS_DIR
     fi
-    # Preserve inherited overrides using the shell's own assignment quoting.
-    gchat_saved_exports=$(export -p)
-    set -a
-    # shellcheck disable=SC1090
-    . "$env_file"
-    set +a
-    eval "$gchat_saved_exports"
-    unset gchat_saved_exports
+    gchat_source_env "$env_file"
 }
 
 gchat_build() {

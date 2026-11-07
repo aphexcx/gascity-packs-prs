@@ -131,3 +131,21 @@ The first complete Go run passed 20/21 packages; its only failed test was the
 legacy JSON compatibility assertion fixed in 1d273d27. The app and end-to-end
 packages passed, including the previously named timing-sensitive cases. Final
 full-suite and second review results are recorded separately below when complete.
+
+## Codex r2 — supported overrides only
+
+The second DEEP review at a5c2b7d2 returned CLEAN for critical/major findings,
+with one MINOR: restoring all exports let shell authentication mode disagree
+with the Go loader's file-owned mode. Replaced that restoration with a shared
+fixed list of the endpoint/path and supervisor-location overrides Go supports.
+Nonempty values retain literal quotes/newlines without re-evaluation; an empty
+value leaves the file fallback. An absent file mode defaults to oauth even if
+keyholder was inherited. Service and auth use the same helper. Tests cover both
+conflicting modes, the missing-mode default, empty path fallback, and literal
+quoted paths. All 23 Python tests and 22 subtests passed (10.65s).
+
+The second full Go run passed 19/21 packages and all end-to-end cases. Its only
+failures were the existing one-second rate-limit assertion (correct result in
+1.755s) and the 500ms shutdown-checkpoint assertion. Each test passed five
+isolated repetitions. No assertion or deadline changed; the final full run uses
+the serialized package/test settings used successfully in round one.

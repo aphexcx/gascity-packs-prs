@@ -8,8 +8,9 @@ service. The binary also accepts `auth`, `auth --check`, `version`,
 resolved env file, including `GCHAT_STATE_FILE`, `GCHAT_MEDIA_DIR`,
 `GCHAT_UPLOAD_ROOT`, `GCHAT_CHAT_API_BASE`, `GCHAT_EVENTS_API_BASE`, and
 `GCHAT_PUBSUB_ENDPOINT`. Nonempty process environment values take precedence.
-The service and auth/doctor shell launchers preserve inherited exports when
-loading that file, so their path selection agrees with direct binary commands.
+The service and auth/doctor shell launchers preserve supported nonempty endpoint,
+path, and supervisor-location overrides when loading that file. Authentication
+mode and credential settings still come from the file, matching the Go loader.
 
 The socket serves health immediately while initialization and catch-up run in
 the background. Health stays HTTP 200 with `X-GC-Health: degraded` until ready.
