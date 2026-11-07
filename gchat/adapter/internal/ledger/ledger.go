@@ -68,7 +68,7 @@ type SpaceState struct {
 	Kind string `json:"kind"`
 	// JoinedAt is the earliest history allowed by an observed membership. Old
 	// ledgers have no known join bound; never infer one from a moving cursor.
-	JoinedAt time.Time `json:"joined_at,omitempty"`
+	JoinedAt time.Time `json:"joined_at,omitzero"`
 	// ChatType distinguishes named SPACE from GROUP_CHAT; both have gc kind room.
 	ChatType      string    `json:"chat_type,omitempty"`
 	Wake          string    `json:"wake"`

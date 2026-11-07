@@ -109,3 +109,11 @@ The first run caught a missing net/http import. The full package then exposed an
 older generic-error fixture using 404; it now uses a rejected-query 400 so its
 ordering assertion remains valid alongside m1 retirement. The full catch-up
 package passes in r3 (36.575s), including scope and resource-denial regressions.
+
+## m9 compatibility follow-up
+
+The first full run exposed TestPreTask15LedgerCompatibility: `omitempty` on a
+time.Time still emitted an unknown join bound. Changed only the new field's JSON
+tag to `omitzero`, supported by the module's Go 1.27 toolchain. Unknown bounds are
+now absent, preserving the legacy JSON shape. The full ledger package passes
+(1.604s). This is an additional commit; no earlier commit was rewritten.
