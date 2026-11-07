@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Serialize media accounting and downloads across readers; refuse downloads when usage cannot be measured.
 - Clear the learned organization domain atomically when the authenticated identity changes.
 - Reuse or strip provenance frames only when the ledger marks them adapter-authored; preserve legacy user text.
 - Retry unknown managed identities and rebuild the running Chat client after discovery.

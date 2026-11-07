@@ -28,6 +28,7 @@ import (
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/media"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/token"
@@ -2693,4 +2694,66 @@ func TestAttachmentCountAndStoreQuota(t *testing.T) {
 			t.Fatalf("existing file removed: %v", err)
 		}
 	})
+}
+
+func TestConcurrentNormalizersShareMediaQuota(t *testing.T) {
+	f := setup(t)
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		<-release
+		_, _ = w.Write([]byte("12345"))
+	}))
+	defer srv.Close()
+	ep := f.opts.Config.Endpoints
+	ep.ChatAPIBase, ep.MediaMaxTotalBytes = srv.URL, 8
+	c, err := chat.New(context.Background(), srv.Client(), ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan string, 2)
+	read := func(id string) {
+		m := message()
+		m.Name = space + "/messages/" + id
+		m.Attachment = []*api.Attachment{{ContentName: "file.txt", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "spaces/room/media/file"}}}
+		text, _ := NormalizeContent(t.Context(), c, ep, m)
+		results <- text
+	}
+	go read("one")
+	<-entered // First reader is downloading, before any bytes reach disk.
+	go read("two")
+	select {
+	case <-entered: // The unfixed code lets the second reader also see zero usage.
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	one, two := <-results, <-results
+	used, err := media.Usage(ep.MediaDir)
+	if err != nil || used != 5 || strings.Count(one+two, "storage quota reached") != 1 {
+		t.Fatalf("concurrent quota: bytes=%d err=%v, texts=%q / %q", used, err, one, two)
+	}
+}
+
+func TestMediaAccountingFailureRefusesDownload(t *testing.T) {
+	f := setup(t)
+	root := f.opts.Config.Endpoints.MediaDir
+	blocked := filepath.Join(root, "unreadable")
+	if err := os.MkdirAll(blocked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blocked, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(blocked, 0o700)
+	if _, err := media.Usage(root); err == nil {
+		t.Skip("runner can read mode-000 directories")
+	}
+	f.google.Configure(func(s *fakegoogle.Server) { s.Media["spaces/room/media/file"] = []byte("new") })
+	m := message()
+	m.Attachment = []*api.Attachment{{ContentName: "file.txt", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "spaces/room/media/file"}}}
+	text, attachments := NormalizeContent(t.Context(), f.opts.Chat, f.opts.Config.Endpoints, m)
+	if !strings.Contains(text, "media accounting unavailable") || len(attachments) != 1 || attachments[0].URL != "" {
+		t.Fatalf("accounting failed open: %q %+v", text, attachments)
+	}
 }

@@ -1031,15 +1031,27 @@ func NormalizeContent(ctx context.Context, client *chat.Client, endpoints config
 	return w.Text, w.Attachments
 }
 
+// All normalizer callers share accounting through download completion. A single
+// process-wide gate also covers config reloads and aliases of the media root.
+var mediaNormalizationGate = make(chan struct{}, 1)
+
 func appendAttachments(ctx context.Context, client *chat.Client, endpoints config.Endpoints, m *api.Message, w *wire.InboundMessage) {
+	if len(m.Attachment) == 0 {
+		return
+	}
 	used := map[string]bool{}
 	// The store has one quota for every file kept, and a message is capped by
 	// count as well as by bytes: a sender chooses both. A file that would
 	// cross the quota is refused, never at the cost of one already kept — the
 	// agent may still be reading it.
-	stored, err := media.Usage(endpoints.MediaDir)
-	if err != nil {
-		stored = 0
+	var stored int64
+	var usageErr error
+	select {
+	case mediaNormalizationGate <- struct{}{}:
+		defer func() { <-mediaNormalizationGate }()
+		stored, usageErr = media.Usage(endpoints.MediaDir)
+	case <-ctx.Done():
+		usageErr = ctx.Err()
 	}
 	downloads := 0
 	for i, a := range m.Attachment {
@@ -1056,6 +1068,10 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 		case a.DriveDataRef != nil && a.DriveDataRef.DriveFileId != "":
 			item.URL = "https://drive.google.com/file/d/" + url.PathEscape(a.DriveDataRef.DriveFileId) + "/view"
 		case a.AttachmentDataRef != nil && a.AttachmentDataRef.ResourceName != "":
+			if usageErr != nil {
+				reason = "media accounting unavailable"
+				break
+			}
 			if endpoints.MediaMaxAttachments > 0 && downloads >= endpoints.MediaMaxAttachments {
 				reason = "attachment limit reached"
 				break

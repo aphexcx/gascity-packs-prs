@@ -36,3 +36,13 @@ ledger mutex. A changed user clears the domain in the same save; a rejected save
 restores the old user, seed, and domain. Table tests cover both paths with success
 and injected persistence failures, checking disk, memory, and classification of
 the previous domain's users. Related identity/reseed tests passed.
+
+## m8 — shared media accounting
+
+Reviewed every normalizer caller: inbound and on-demand reads enter the same
+process-wide, context-aware gate before measuring usage and keep it until their
+downloads finish. This avoids root-alias and reload gaps. Usage errors refuse
+native downloads while retaining explanatory attachment text and Drive links.
+The overlapping-reader regression stores one five-byte file under an eight-byte
+cap; the unreadable-directory regression proves accounting failures fail closed.
+Quota/count and new concurrency tests passed.
