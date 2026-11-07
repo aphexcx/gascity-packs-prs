@@ -687,6 +687,14 @@ type config struct {
 	// and no mark is recorded. Replaces the previous unconditional
 	// "eyes" reaction on targeted inbounds.
 	busyReaction string
+	// Instant acknowledgement on human messages, before routing. Empty is off;
+	// "auto" uses keywords and "model" uses the bounded endpoint with fallback.
+	// From the Hou-dynasty patch; see ack_reaction.go and ack_model.go.
+	ackReaction     string
+	ackModelBaseURL string
+	ackModelName    string
+	ackModelKeyFile string
+	ackModelTimeout time.Duration
 	// busyMarks is the in-memory registry of pending busy reactions,
 	// keyed by (conversation id, thread key). processSlackEvent
 	// records a mark when it adds the busy reaction; handlePublish
@@ -948,6 +956,22 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		handleAliasStorePath: envOrFn("HANDLE_ALIAS_STORE_PATH", "/tmp/gc-slack-adapter/handle-aliases.json"),
 		inboundFileStore:     envOrFn("INBOUND_FILE_STORE", "/tmp/gc-slack-adapter/inbound"),
 		fileUploadRoot:       getenv("FILE_UPLOAD_ROOT"),
+	}
+
+	cfg.ackReaction = strings.Trim(getenv("ACK_REACTION"), ":")
+	cfg.ackModelBaseURL = envOrFn("ACK_MODEL_BASE_URL", defaultAckModelBaseURL)
+	cfg.ackModelName = envOrFn("ACK_MODEL_NAME", defaultAckModelName)
+	cfg.ackModelKeyFile = getenv("ACK_MODEL_API_KEY_FILE")
+	cfg.ackModelTimeout = defaultAckModelTimeout
+	if raw := getenv("ACK_MODEL_TIMEOUT_MS"); raw != "" {
+		ms, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || ms <= 0 || ms > int64((1<<63-1)/time.Millisecond) {
+			return cfg, fmt.Errorf("ACK_MODEL_TIMEOUT_MS %q must be a positive integer representable as a duration", raw)
+		}
+		cfg.ackModelTimeout = time.Duration(ms) * time.Millisecond
+	}
+	if cfg.ackReaction == "model" && cfg.ackModelKeyFile == "" {
+		log.Printf("ACK_REACTION=model but ACK_MODEL_API_KEY_FILE is unset: every ack will use the keyword fallback")
 	}
 
 	// BUSY_REACTION: emoji added to a targeted inbound while the agent
@@ -4045,6 +4069,34 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// screenshot and says nothing) and must not be discarded.
 	if strings.TrimSpace(msg.Text) == "" && len(msg.Files) == 0 {
 		return
+	}
+	// Instant receipt before routing and coalescing. The existing bot and
+	// subtype guards above admit human messages only. Best-effort and async:
+	// Slack can receive this and the independent busy mark in either order.
+	if cfg.ackReaction != "" && cfg.slackBotToken != "" {
+		go func(channel, ts, text string, files []slackFile) {
+			name := cfg.ackReaction
+			switch name {
+			case "auto":
+				name = pickAckEmoji(text, len(files) > 0)
+			case "model":
+				if cfg.ackModelKeyFile == "" {
+					// Config already logged this once; avoid per-message noise
+					// and a channel lookup when the model cannot be called.
+					name = pickAckEmoji(text, len(files) > 0)
+				} else {
+					name = pickAckEmojiModel(cfg, text, files, resolveChannelName(cfg, channel))
+				}
+			}
+			resp, err := postReactionToSlack(cfg.slackBotToken, slackReactionsAddReq{
+				Channel: channel, Name: name, Timestamp: ts,
+			})
+			if err != nil {
+				log.Printf("ack reaction %s failed: chan=%s ts=%s: %v", name, channel, ts, err)
+			} else if !resp.OK && resp.Error != "already_reacted" {
+				log.Printf("ack reaction %s failed: chan=%s ts=%s: slack error=%s", name, channel, ts, resp.Error)
+			}
+		}(msg.Channel, msg.TS, msg.Text, msg.Files)
 	}
 
 	// Launcher-mode address parser runs FIRST (cby.5.b). A `@@<handle>`
