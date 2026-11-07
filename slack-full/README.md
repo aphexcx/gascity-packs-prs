@@ -862,8 +862,8 @@ and is readable without printing its contents. In the adapter env file, use a
 literal path (optionally quoted), not shell expansion. An unset key file logs
 one startup warning and uses keywords on every message without model calls.
 Timeouts, transport/HTTP errors, unreadable or empty keys, and unusable replies
-also use keywords; calls are not retried. The key file's path may appear in fallback logs,
-but its contents are never logged.
+also use keywords; calls are not retried. The key file's path may appear in
+fallback logs, but its contents are never logged.
 
 The acknowledgement stays as a receipt; the separate busy reaction is removed
 on reply. A targeted inbound therefore has two marks; an ambient inbound has

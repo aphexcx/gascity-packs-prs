@@ -12,8 +12,8 @@ import (
 )
 
 func TestAckCompanyUsesConfiguredReceipt(t *testing.T) {
-	for _, dm := range []bool{false, true} {
-		t.Run(fmt.Sprintf("dm=%v", dm), func(t *testing.T) {
+	for _, kind := range []string{"room", "dm", "mpim"} {
+		t.Run(kind, func(t *testing.T) {
 			var mu sync.Mutex
 			var calls []ackCall
 			var tokens []string
@@ -32,7 +32,7 @@ func TestAckCompanyUsesConfiguredReceipt(t *testing.T) {
 			}))
 			defer slack.Close()
 			withSlackAPIStub(t, slack)
-			h, _, _ := setupDM(t)
+			h, _, _, _ := setupMpim(t)
 			h.gw.visibleAcks = true
 			h.gw.cfg.ackReaction = "auto"
 			h.gw.reactHookTok = func(token, method, channel, ts, name string) ackOutcome {
@@ -41,8 +41,13 @@ func TestAckCompanyUsesConfiguredReceipt(t *testing.T) {
 			ev := slackMessageEvent{Type: "message", User: "U0HUMAN01", Channel: testChannelID,
 				TS: "1700000000.000950", Text: "thanks"}
 			app, secret, wantToken := switchAppID, "env-secret", "Bearer xoxb-SWITCHBOARD"
-			if dm {
+			if kind == "dm" {
 				ev.Channel, ev.ChannelType = testDMChannel, "im"
+				app, secret, wantToken = ollieAppID, "ollie-secret", "Bearer xoxb-ollie"
+			}
+			if kind == "mpim" {
+				ev.Channel, ev.ChannelType = testMpimChannel, "mpim"
+				ev.Text = "thanks <@U0AAAAAA1>"
 				app, secret, wantToken = ollieAppID, "ollie-secret", "Bearer xoxb-ollie"
 			}
 			body, ts, sig := signedBody(t, secret, map[string]any{
@@ -60,6 +65,12 @@ func TestAckCompanyUsesConfiguredReceipt(t *testing.T) {
 				t.Fatalf("HTTP admission: %d %s", w.Code, w.Body.String())
 			}
 			h.wait()
+			if kind == "mpim" {
+				r := getMpimReceipt(t, h, ev.TS)
+				if r == nil || r.Kind != receiptKindMpim || r.OwnerAppID != ollieAppID || r.Status != ingressStatusDelivered {
+					t.Fatalf("mpim receipt: %+v", r)
+				}
+			}
 			select {
 			case <-acked:
 			case <-time.After(time.Second):
