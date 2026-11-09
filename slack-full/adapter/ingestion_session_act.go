@@ -73,8 +73,12 @@ func (j *inboundJournal) cacheSessionActLocked(act ingestionSessionAct) {
 }
 
 func sessionActEvidence(act ingestionSessionAct, r inboundJournalRecord) *ingestionEvidence {
+	start := r.StartedAt
+	if start.IsZero() {
+		start = r.DeliveredAt
+	}
 	if !validIngestionAct(act) || act.Channel != r.Channel ||
-		act.Timestamp.Before(r.DeliveredAt.Add(-30*time.Second)) ||
+		act.Timestamp.Before(start.Add(-30*time.Second)) ||
 		act.Timestamp.After(r.DeliveredAt.Add(ingestionLateWindow)) {
 		return nil
 	}
@@ -99,41 +103,80 @@ func sessionActEvidence(act ingestionSessionAct, r inboundJournalRecord) *ingest
 		}
 	}
 	return &ingestionEvidence{SessionID: session, Timestamp: act.Timestamp, Kind: act.Kind,
+		MessageTS: r.MessageTS, ThreadTS: r.ThreadTS,
 		EntryID: strings.Join([]string{act.Source, act.MessageTS, act.Emoji}, ":")}
 }
 
-func (j *inboundJournal) sessionActProof(r inboundJournalRecord) (*ingestionEvidence, error) {
+func ingestionMessageWindows(r inboundJournalRecord) []injectionWindow {
+	if len(r.Windows) > 0 {
+		return r.Windows
+	}
+	return []injectionWindow{{MessageTS: r.MessageTS, ThreadTS: r.ThreadTS}}
+}
+
+// Coalesced messages share the receipt's saved send interval, but each needs
+// its own qualifying act. A partial cache hit must still scan the durable
+// journal on overflow; the returned missing members are only a mail snapshot.
+func (j *inboundJournal) sessionActProof(r inboundJournalRecord) (*ingestionEvidence, []injectionWindow, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	var proof *ingestionEvidence
+	members := ingestionMessageWindows(r)
+	proofs := make([]*ingestionEvidence, len(members))
 	consider := func(act ingestionSessionAct) {
-		if p := sessionActEvidence(act, r); p != nil && (proof == nil || p.Timestamp.Before(proof.Timestamp)) {
-			proof = p
+		for i, member := range members {
+			message := r
+			message.MessageTS, message.ThreadTS = member.MessageTS, member.ThreadTS
+			if p := sessionActEvidence(act, message); p != nil && (proofs[i] == nil || p.Timestamp.Before(proofs[i].Timestamp)) {
+				proofs[i] = p
+			}
 		}
+	}
+	result := func() (*ingestionEvidence, []injectionWindow, error) {
+		var missing []injectionWindow
+		var latest *ingestionEvidence
+		for i, proof := range proofs {
+			if proof == nil {
+				missing = append(missing, members[i])
+			} else if latest == nil || proof.Timestamp.After(latest.Timestamp) {
+				latest = proof
+			}
+		}
+		if len(missing) > 0 {
+			return nil, missing, nil
+		}
+		// The completing act supplies the legacy kind/time. Keep every
+		// member's proof so mixed reaction/reply coverage is auditable.
+		complete := *latest
+		if len(proofs) > 1 {
+			for _, proof := range proofs {
+				complete.Members = append(complete.Members, *proof)
+			}
+		}
+		return &complete, nil, nil
 	}
 	for _, act := range j.sessionActs {
 		consider(act)
 	}
-	if proof != nil || !j.sessionActsOverflow {
-		return proof, nil
+	if proof, missing, err := result(); proof != nil || !j.sessionActsOverflow {
+		return proof, missing, err
 	}
 	paths, err := filepath.Glob(filepath.Join(j.dir, "*.jsonl"))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	remaining := int64(64 << 20)
 	for _, path := range paths {
 		info, err := os.Stat(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		remaining -= info.Size()
 		if remaining < 0 {
-			return nil, fmt.Errorf("journal exceeds 64 MiB session-act observation budget")
+			return nil, nil, fmt.Errorf("journal exceeds 64 MiB session-act observation budget")
 		}
 		f, err := os.Open(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		s := bufio.NewScanner(f)
 		s.Buffer(make([]byte, 4096), 1<<20)
@@ -146,10 +189,10 @@ func (j *inboundJournal) sessionActProof(r inboundJournalRecord) (*ingestionEvid
 		err = s.Err()
 		f.Close()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return proof, nil
+	return result()
 }
 
 // Use Slack's original publication time, not a later idempotent replay or

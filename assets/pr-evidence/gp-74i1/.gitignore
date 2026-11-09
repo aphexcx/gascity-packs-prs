@@ -11,3 +11,10 @@ pr-status.json
 pr-checks.json
 ci-status.json
 pr-body.md
+# Local round-2 routing and mutable status snapshots.
+bead-description.md
+pr-resumed.json
+round2-inbox.json
+gate-r2-pr-*.json
+gate-r2-provenance-before.json
+round2-pr-body.md

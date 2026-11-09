@@ -37,10 +37,13 @@ const ingestionPendingTimingLimit = (receiptFollowUpReposts+1)*receiptFollowUpDe
 // These are session-side facts, not a transport receipt or model claim.
 // No transcript text is persisted in the journal.
 type ingestionEvidence struct {
-	SessionID string    `json:"session_id"`
-	EntryID   string    `json:"entry_id"`
-	Timestamp time.Time `json:"timestamp"`
-	Kind      string    `json:"kind"`
+	SessionID string              `json:"session_id"`
+	EntryID   string              `json:"entry_id"`
+	Timestamp time.Time           `json:"timestamp"`
+	Kind      string              `json:"kind"`
+	MessageTS string              `json:"message_ts,omitempty"`
+	ThreadTS  string              `json:"thread_ts,omitempty"`
+	Members   []ingestionEvidence `json:"members,omitempty"`
 }
 
 type ingestionObserver struct {
@@ -370,7 +373,7 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			}
 		}
 		if proof == nil {
-			proof, err = o.cfg.inboundJournal.sessionActProof(r)
+			proof, _, err = o.cfg.inboundJournal.sessionActProof(r)
 			if err != nil {
 				return err
 			}
@@ -412,7 +415,7 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 		for _, r := range batches[channel] {
 			// Transcript fetches for other targets may have taken time. Observe
 			// successful acts arriving during this pass before sending mail.
-			proof, err := o.cfg.inboundJournal.sessionActProof(r)
+			proof, missing, err := o.cfg.inboundJournal.sessionActProof(r)
 			if err != nil {
 				return err
 			}
@@ -422,6 +425,7 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 				}
 				continue
 			}
+			r.UnseenWindows = missing
 			unseen = append(unseen, r)
 		}
 		batch, unseen, err := o.prepareAlertBatch(channel, unseen)
@@ -475,6 +479,7 @@ func ingestionAlertRows(rows []inboundJournalRecord) []inboundJournalRecord {
 		key := ingestionKey(r, "")
 		if old, ok := unique[key]; ok {
 			old.TargetSessions = append(old.TargetSessions, r.TargetSessions...)
+			old.UnseenWindows = append(ingestionAlertWindows(old), ingestionAlertWindows(r)...)
 			unique[key] = old
 		} else {
 			r.TargetSessions = append([]string(nil), r.TargetSessions...)
@@ -614,6 +619,28 @@ func ingestionAlertMessage(rows []inboundJournalRecord) (string, string) {
 	return ingestionAlertMessageWithBudget(rows, ingestionAlertBatchBudget)
 }
 
+// The union across unresolved fanout targets, in deterministic message order.
+func ingestionAlertWindows(r inboundJournalRecord) []injectionWindow {
+	windows := r.UnseenWindows
+	if windows == nil {
+		windows = ingestionMessageWindows(r)
+	}
+	unique := make(map[string]injectionWindow)
+	for _, w := range windows {
+		unique[w.MessageTS+"\x00"+w.ThreadTS] = w
+	}
+	keys := make([]string, 0, len(unique))
+	for key := range unique {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]injectionWindow, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, unique[key])
+	}
+	return result
+}
+
 // A zero budget measures a new batch without truncation. Saved legacy batches
 // may be larger; summarize those under their original dedup identity instead
 // of permanently failing the retry or inventing subset identities.
@@ -621,26 +648,37 @@ func ingestionAlertMessageWithBudget(rows []inboundJournalRecord, budget int) (s
 	if len(rows) == 0 {
 		return "", ""
 	}
-	subject := fmt.Sprintf("Slack delivered_unseen: %d lines in %s", len(rows), rows[0].Channel)
+	windows := make([][]injectionWindow, len(rows))
+	count := 0
+	for i, r := range rows {
+		windows[i] = ingestionAlertWindows(r)
+		count += len(windows[i])
+	}
+	subject := fmt.Sprintf("Slack delivered_unseen: %d lines in %s", count, rows[0].Channel)
 	footer := fmt.Sprintf("No rendered input, explicit session reaction, or session reply was found within %s of hand-off. Read these Slack threads now. Transport delivery is not ingestion; the dead-letter file is unchanged.", ingestionWindow)
 	key := rows[0].AlertBatchID
 	if key == "" {
 		key = ingestionAlertID(ingestionAlertMembers(rows))
 	}
 	omitted := func(n int) string {
-		return fmt.Sprintf("%d additional receipts omitted from this mail; full membership is in the inbound journal ingestion_batch id=%s.\n", n, key)
+		return fmt.Sprintf("%d additional lines omitted from this mail; full receipt membership is in the inbound journal ingestion_batch id=%s.\n", n, key)
 	}
 	var body strings.Builder
 	body.WriteString(subject + "\n")
+	written := 0
+writeLines:
 	for i, r := range rows {
 		// Session fanout can grow after preparation. Only immutable receipt
-		// coordinates belong in the retry payload; targets stay in the journal.
-		line := fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s\n", r.MessageTS, r.ThreadTS, r.ReceiptID)
-		if budget > 0 && body.Len()+len(line)+len(footer)+len(omitted(len(rows)-i)) > budget {
-			body.WriteString(omitted(len(rows) - i))
-			break
+		// member coordinates belong in the retry payload; targets stay in the journal.
+		for _, w := range windows[i] {
+			line := fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s\n", w.MessageTS, w.ThreadTS, r.ReceiptID)
+			if budget > 0 && body.Len()+len(line)+len(footer)+len(omitted(count-written)) > budget {
+				body.WriteString(omitted(count - written))
+				break writeLines
+			}
+			body.WriteString(line)
+			written++
 		}
-		body.WriteString(line)
 	}
 	body.WriteString(footer)
 	return subject, body.String()

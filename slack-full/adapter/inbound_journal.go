@@ -50,6 +50,7 @@ type inboundJournalRecord struct {
 	ReceiptID          string               `json:"receipt_id,omitempty"`
 	Status             string               `json:"status"`
 	Windows            []injectionWindow    `json:"windows"`
+	UnseenWindows      []injectionWindow    `json:"-"` // recomputed for mail; never replaces durable membership
 	PayloadSHA256      string               `json:"payload_sha256,omitempty"`
 	ProofKind          string               `json:"proof_kind,omitempty"`
 	DeliveredAt        time.Time            `json:"delivered_at,omitempty"`

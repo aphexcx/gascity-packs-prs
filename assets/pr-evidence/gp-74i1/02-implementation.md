@@ -121,3 +121,54 @@ conflict. The complete adapter tree is unchanged from the tested round-4
 commit, verified with `git diff --cached --exit-code HEAD -- slack-full/adapter`
 before integration; no Go tests needed to be repeated for this merge. The
 integration diff check and command manifest are recorded beside the test logs.
+
+## Mayor gate round 2: constituent coverage and delayed confirmation
+
+The mayor's independent gate round 1 reviewed `7caf22383ee42f599cd8f05723a28482e860564e`
+and returned BLOCK on two major findings. These are distinct from the earlier
+lane-local Codex rounds above. The binding round-2 ruling keeps this same PR
+and branch, with a new commit on top of that reviewed head.
+
+Session-act proof now requires coverage for every message in the receipt's
+`Windows`, each using its own message/thread coordinates and the shared saved
+send interval. Reactions and replies can combine to cover the receipt. The
+completing act supplies the compatibility proof kind and time; nested member
+evidence records each constituent's act without message text. An incomplete
+receipt remains unresolved. The mail names only uncovered messages, taking
+the union across unresolved fanout targets. That subset is transient; durable
+receipt membership and saved batch dedup identities remain intact.
+
+The lower bound now matches transcript proof: `StartedAt` minus 30 seconds,
+falling back to `DeliveredAt` for legacy records without a saved start. The
+upper bound remains delivery plus two hours. The three-minute initial alert
+deadline is unchanged. Documentation describes the same rule.
+
+The regressions first failed at the reviewed head: reacting only to the last
+coalesced member incorrectly suppressed its receipt; a mail for an entirely
+unseen receipt omitted the first constituent; and valid acts before delayed
+confirmation still alarmed. New cases cover two different threads, each
+partial direction, both reactions, mixed reply/reaction and both replies,
+with and without restart. Delayed-confirmation tests exercise reactions and
+replies at send+30s, send-30s and send-31s. Additional checks cover partial
+cache hits with durable overflow, fanout coverage union, failed-mail recovery
+with the original batch key, and late completion without another mail.
+
+Self-review by the implementing Codex model traced both proof checks, per-member
+matching, canonical session isolation, durable recovery, mail budgeting and
+fanout union. No remaining correctness finding was identified. This does not
+substitute for the mayor's pending gate round 2 or first Fable read. The module
+boundary is unchanged: the journal owns session-act facts and the observer
+owns receipt verdicts and mail; no new handler-side policy was introduced.
+
+Validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
+
+- `go test -json ./...`: 1,460 top-level passes (12,927 including subtests),
+  three opt-in skips, exit 0.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  48 top-level passes (103 including subtests), one opt-in skip, exit 0.
+- `git diff --check -- slack-full`: exit 0.
+
+The `gate-r2-*` manifests, compressed logs and parsed test summary retain this
+round's results. The mayor gates only `7caf2238..NEW` and reads the whole PR
+with Fable. The lane sends READY and drains without closing the bead; the
+mayor owns the roll and observation week.

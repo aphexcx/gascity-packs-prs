@@ -35,11 +35,21 @@ are bot actions through `/react` (that endpoint does not carry caller session
 identity). Company admission eyes and automatic busy reactions do not count.
 Failed reactions, reaction removals, and replies to another thread do not count.
 
+For a coalesced receipt, every constituent message needs a qualifying reaction
+on its own timestamp or a reply into its own thread. The acts may be mixed;
+one reaction to the final message cannot cover the other messages. The journal
+keeps each member's proof, with the completing act supplying the receipt's
+proof kind and timestamp. A partial receipt remains unresolved, and its alert
+names only the members still lacking proof across the unresolved targets.
+
 The adapter journals successful acts with their source, channel, message/thread,
 emoji or session, and timestamp, never their text. Reaction time is the adapter
 clock; reply time is Slack's original publish timestamp, including on a later
-idempotent replay. Acts must fall between hand-off minus the existing 30-second
-clock tolerance and the two-hour proof horizon. Restart reconstructs the facts.
+idempotent replay. Acts must fall between the saved send start (`StartedAt`)
+minus the existing 30-second clock tolerance and the two-hour proof horizon
+after delivery. Coalesced members share that send interval. A delayed delivery
+confirmation cannot exclude an earlier session act; legacy rows without a
+start use delivery time. Restart reconstructs the facts.
 The in-memory act cache holds at most 4,096 entries; on overflow, a bounded
 journal lookup prevents eviction from turning a seen line into an alarm.
 
@@ -59,7 +69,7 @@ appends `delivered_unseen`. Each observer pass sends at most one
 `gc mail send mayor --dedup ...` per channel, with a count in the subject and
 each message timestamp, thread and receipt in the body. Target sessions stay
 in the journal so delayed fanout cannot enlarge a retry's mail payload.
-Fanout members share one receipt line. Before mail, the journal saves the
+Fanout targets share one line per uncovered message. Before mail, the journal saves the
 sorted original receipt set and its stable batch dedup key. Recovery reuses
 that key even if a member completed or gained proof; new arrivals wait for the
 next pass rather than being hidden by deduplication of the earlier mail.

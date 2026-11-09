@@ -1,0 +1,89 @@
+{
+  "gate-r2-red": {
+    "top_level": {
+      "fail": 2
+    },
+    "including_subtests": {
+      "fail": 10,
+      "pass": 10
+    },
+    "packages": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.175
+      },
+      {
+        "Action": "fail",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 0.913
+      }
+    ]
+  },
+  "gate-r2-focused": {
+    "top_level": {
+      "pass": 47,
+      "skip": 1
+    },
+    "including_subtests": {
+      "pass": 102,
+      "skip": 1
+    },
+    "packages": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.001
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 14.605
+      }
+    ]
+  },
+  "gate-r2-full": {
+    "top_level": {
+      "pass": 1460,
+      "skip": 3
+    },
+    "including_subtests": {
+      "pass": 12927,
+      "skip": 3
+    },
+    "packages": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.002
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 102.626
+      }
+    ]
+  },
+  "gate-r2-race": {
+    "top_level": {
+      "pass": 48,
+      "skip": 1
+    },
+    "including_subtests": {
+      "pass": 103,
+      "skip": 1
+    },
+    "packages": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 16.496
+      }
+    ]
+  }
+}

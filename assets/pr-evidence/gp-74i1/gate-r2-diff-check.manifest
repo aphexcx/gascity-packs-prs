@@ -1,0 +1,1 @@
+git diff --check -- slack-full	exit=0
