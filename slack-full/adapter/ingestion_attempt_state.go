@@ -138,7 +138,7 @@ func (j *inboundJournal) writeAlertAttempt(plan, state ingestionAlertBatch, phas
 	if len(encoded)+1 > slot {
 		return fmt.Errorf("ingestion attempt exceeds its reserved state slot")
 	}
-	replacement := make([]byte, 0, len(content)+slot-(end-start))
+	var replacement []byte
 	replacement = append(replacement, content[:start]...)
 	replacement = append(replacement, encoded...)
 	replacement = append(replacement, bytes.Repeat([]byte{' '}, slot-len(encoded)-1)...)

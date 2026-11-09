@@ -116,6 +116,8 @@ coverage in separate `ingestion_coverage` rows only when its last durable source
 will actually be deleted. A pair already present in a surviving segment is
 not copied, and a prune that deletes nothing writes nothing. Coverage referenced
 by an `All` completion still depends on the saved plan's segment.
+Pending plans protect their source day until completion, even when proof
+settles the last observation during that pass.
 Source-day tracking uses the message/target pair without its batch attribution,
 so a surviving copy under another batch prevents an unnecessary carry.
 A single pair that cannot fit produces a visible retryable error without blocking

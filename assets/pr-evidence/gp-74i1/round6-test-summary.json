@@ -25,26 +25,43 @@
       "pass": 1
     }
   },
+  "round6-proof-retention-red": {
+    "top_level": {
+      "fail": 1
+    },
+    "including_subtests": {
+      "fail": 1
+    }
+  },
+  "round6-pipe-deadline-red": {
+    "top_level": {
+      "fail": 1
+    },
+    "including_subtests": {
+      "pass": 4,
+      "fail": 2
+    }
+  },
   "round6-full": {
     "top_level": {
-      "pass": 1479,
+      "pass": 1480,
       "skip": 3
     },
     "including_subtests": {
-      "pass": 13030,
+      "pass": 13033,
       "skip": 3
     }
   },
   "new_regressions": {
-    "pass": 34
+    "pass": 37
   },
   "round6-race": {
     "top_level": {
-      "pass": 67,
+      "pass": 68,
       "skip": 1
     },
     "including_subtests": {
-      "pass": 206,
+      "pass": 209,
       "skip": 1
     }
   }

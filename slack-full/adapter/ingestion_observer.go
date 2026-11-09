@@ -384,6 +384,14 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			receiptStart = earlierIngestionTime(receiptStart, started[identity])
 		}
 	}
+	// Proof can settle the last observation before the batch completion is
+	// appended. Its plan and attempt state must survive that intervening prune.
+	for id := range j.preparedBatches {
+		day, err := time.Parse("20060102", batchDays[id])
+		if err == nil {
+			receiptStart = earlierIngestionTime(receiptStart, day)
+		}
+	}
 	return rows, days, receiptStart, nil
 }
 
@@ -721,8 +729,13 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 	// Do not log CLI output, which may contain mailbox or provider data.
 	// Output retains bounded stderr on ExitError for refusal classification.
 	_, err := cmd.Output()
-	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
-		return nil // The successful gc exit is authoritative; a descendant held a pipe.
+	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		// A completed exit remains authoritative if the context expires
+		// while waiting for inherited pipes. Signal termination is different.
+		if cmd.ProcessState.Success() {
+			return nil
+		}
+		return err
 	}
 	if ctx.Err() != nil {
 		return ctx.Err() // Cancellation after start leaves acceptance ambiguous.

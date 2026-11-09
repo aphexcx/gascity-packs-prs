@@ -193,11 +193,11 @@ func TestIngestionRefusalStateBoundedAndBacksOff(t *testing.T) {
 }
 
 func TestIngestionMailProcessBoundary(t *testing.T) {
-	for _, mode := range []string{"pipe_success", "pipe_refusal", "cancel_after_start"} {
+	for _, mode := range []string{"pipe_success", "pipe_refusal", "pipe_success_short_deadline", "pipe_refusal_short_deadline", "cancel_after_start"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			script := "#!/bin/sh\n/bin/sleep 4 &\nexit 0\n"
-			if mode == "pipe_refusal" {
+			if mode == "pipe_refusal" || mode == "pipe_refusal_short_deadline" {
 				script = "#!/bin/sh\n/bin/sleep 4 &\nprintf refused >&2\nexit 17\n"
 			}
 			if mode == "cancel_after_start" {
@@ -209,6 +209,11 @@ func TestIngestionMailProcessBoundary(t *testing.T) {
 			t.Setenv("PATH", dir)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
+			if mode == "pipe_success_short_deadline" || mode == "pipe_refusal_short_deadline" {
+				var stop context.CancelFunc
+				ctx, stop = context.WithTimeout(context.Background(), 500*time.Millisecond)
+				defer stop()
+			}
 			if mode == "cancel_after_start" {
 				var stop context.CancelFunc
 				ctx, stop = context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -219,10 +224,10 @@ func TestIngestionMailProcessBoundary(t *testing.T) {
 			if elapsed := time.Since(start); elapsed > 2500*time.Millisecond {
 				t.Errorf("mail waited for descendant: %v", elapsed)
 			}
-			if mode == "pipe_success" && err != nil {
+			if (mode == "pipe_success" || mode == "pipe_success_short_deadline") && err != nil {
 				t.Errorf("successful exit became uncertain: %v", err)
 			}
-			if mode == "pipe_refusal" {
+			if mode == "pipe_refusal" || mode == "pipe_refusal_short_deadline" {
 				var exit *exec.ExitError
 				if !errors.As(err, &exit) || exit.ExitCode() != 17 || !ingestionNotifyDefinitelyRefused(err) {
 					t.Errorf("refusal lost its exit: %v", err)
@@ -436,5 +441,44 @@ func TestIngestionLegacyAttemptStateCanRetry(t *testing.T) {
 				t.Fatalf("legacy retry calls=%d", calls)
 			}
 		})
+	}
+}
+
+func TestIngestionPendingAttemptSurvivesProofAtRetentionBoundary(t *testing.T) {
+	at := time.Date(2026, 11, 9, 23, 56, 0, 0, time.UTC)
+	now := at
+	j := &inboundJournal{dir: t.TempDir(), retentionDays: 1, now: func() time.Time { return now }}
+	r := ingestionTestRecord("100.1", at, "pending attempt retention")
+	r.CanonicalSessionID = "s1"
+	if err := j.append(r); err != nil {
+		t.Fatal(err)
+	}
+	now = at.Add(ingestionWindow + time.Second)
+	named := 0
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
+		fetch:  func(context.Context, string) ([]json.RawMessage, error) { return nil, nil },
+		notify: func(context.Context, []inboundJournalRecord) error { named++; return context.DeadlineExceeded }}
+	if err := o.step(context.Background()); err == nil {
+		t.Fatal("expected accepted but unconfirmed mail")
+	}
+	now = at.Add(5 * time.Minute)
+	recordDeliveredPublish(config{inboundJournal: j}, r.Channel, r.ThreadTS, fmt.Sprintf("%d.000000", now.Unix()), "s1")
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	late := r
+	late.TargetSessions, late.CanonicalSessionID = []string{"s2"}, "s2"
+	if err := j.append(late); err != nil {
+		t.Fatal(err)
+	}
+	o.cfg.inboundJournal = &inboundJournal{dir: j.dir, retentionDays: 1, now: func() time.Time { return now }}
+	o.notify = func(context.Context, []inboundJournalRecord) error { named++; return nil }
+	for i := 0; i < 3; i++ {
+		if err := o.step(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if named != 1 {
+		t.Fatalf("proof pruned the pending plan before its All completion: named=%d", named)
 	}
 }

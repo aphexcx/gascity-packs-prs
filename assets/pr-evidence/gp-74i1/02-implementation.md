@@ -432,7 +432,9 @@ of recovery: the client does not probe service availability during backoff.
 The process boundary sets `cmd.WaitDelay` to one second. A successful gc exit
 with an inherited pipe still open remains success; a nonzero completed exit
 remains a refusal. Direct tests exercise both cases and cancellation after
-process start. A v2 plan reconstructed from the journal remains ambiguous.
+process start. A red-first short-deadline case also proves that a completed
+refusal keeps its exit result when the context expires during pipe cleanup.
+A v2 plan reconstructed from the journal remains ambiguous.
 Source-day lookup now uses the pair without BatchID; a red-first test confirms
 that an already surviving pair under another batch is not copied again.
 
@@ -443,6 +445,18 @@ Each preserves readable state and recoverable coverage, and no notification
 runs after a failed attempt-state write. Another red-first check found that
 legacy receipt-only plans needed a reservation from their actual attempt;
 that compatibility fix is included. Legacy v0/v2 retry controls pass.
+
+A further retention-boundary check reproduced a repeated alert when proof
+settled the last observation at midnight: pruning deleted the pending plan
+before its `All` completion could refer to it. Active plans now protect their
+source day through completion. The regression verifies one named mail after
+proof, completion, pruning, restart and a later unread target.
+
+CodeQL on the first round-six commit (`666b9a3b`) flagged possible integer
+overflow in the replacement buffer's preallocation expression. The unchecked
+capacity arithmetic was removed; ordinary slice appends build the replacement.
+The full and race suites below were rerun after that correction, the
+retention-boundary fix and the completed-exit/deadline case.
 
 The mayor's two timing rulings authorize only clock advances in these existing
 fixtures; their assertions are unchanged:
@@ -460,11 +474,11 @@ on `b363ad0e..NEW` follow READY; this lane does not close the bead.
 
 Final validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
 
-- `go test -json ./...`: 1,479 top-level passed, 3 skipped, zero failed;
-  13,030 passes including subtests. The new file contributes 34 passing
+- `go test -json ./...`: 1,480 top-level passed, 3 skipped, zero failed;
+  13,033 passes including subtests. The new file contributes 37 passing
   tests/subtests.
 - `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
-  67 top-level passed, 1 skipped, zero failed; 206 passes including subtests.
+  68 top-level passed, 1 skipped, zero failed; 209 passes including subtests.
 - `go vet ./...` and diff checks: exit zero.
 
 Python is unchanged in this delta; round five's 948 passes / 2 skips are
