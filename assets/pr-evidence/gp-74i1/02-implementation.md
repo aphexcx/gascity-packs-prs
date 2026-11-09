@@ -114,3 +114,10 @@ Round-4 validation on Go 1.27.3 darwin/arm64: `go test -json ./...` passes
 `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...` passes
 45 top-level tests (82 including subtests), with one opt-in skip. Both commands
 ran from `slack-full/adapter` and exited 0. The scoped diff check also passed.
+
+During final review, main advanced to `ab8d7471` (PRs #81 and #83). The lane
+integrated it, preserving both independent changelog entries at the only
+conflict. The complete adapter tree is unchanged from the tested round-4
+commit, verified with `git diff --cached --exit-code HEAD -- slack-full/adapter`
+before integration; no Go tests needed to be repeated for this merge. The
+integration diff check and command manifest are recorded beside the test logs.

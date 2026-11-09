@@ -86,7 +86,7 @@ def test_bind_room_mentions_only_registers_with_adapter_not_gc(
     monkeypatch.setattr(bind, "deliver_protocol_nudge",
                         lambda sid, cid, template=bind.PROTOCOL_NUDGE_TEMPLATE, **f: nudges.append((sid, cid, template)))
 
-    rc = bind.main(["C0B2Y13DRMK", "mayor", "--mentions-only"])
+    rc = bind.main(["C0B2Y13DRMK", "mayor", "--mentions-only", "--no-group-hold"])
     assert rc == 0
     # No gc group, participant or binding call of any kind.
     assert gc_posts == []
@@ -130,7 +130,7 @@ def test_bind_room_mentions_only_keeps_existing_ambient_record(
     monkeypatch.setattr(common, "register_mention_only_via_adapter", lambda **kw: {"stored": True})
     monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
 
-    assert bind.main(["C1", "mayor", "--mentions-only", "--handle", "chief=mayor"]) == 0
+    assert bind.main(["C1", "mayor", "--mentions-only", "--no-group-hold", "--handle", "chief=mayor"]) == 0
     rec = common.load_pack_config()["bindings"]["room:C1"]
     # Ambient participants and group untouched; mention-only list is a sibling.
     assert rec["participants"] == [{"handle": "ops", "session_name": "ops-session"}]
@@ -207,7 +207,7 @@ def test_bind_room_mentions_only_rejects_ambient_recorded_by_session_name_with_d
     assert registered == []
 
     # --replace-ambient by id drops the record held under the session name.
-    assert bind.main(["C1", "jg-mayor-1", "--mentions-only", "--replace-ambient"]) == 0
+    assert bind.main(["C1", "jg-mayor-1", "--mentions-only", "--no-group-hold", "--replace-ambient"]) == 0
     rec = common.load_pack_config()["bindings"]["room:C1"]
     assert rec["participants"] == []
     assert [r["session_id"] for r in registered] == ["jg-mayor-1"]
@@ -260,14 +260,14 @@ def test_bind_room_mentions_only_replace_ambient_clears_stale_record(
     assert "AMBIENTLY" in str(exc.value) and "--replace-ambient" in str(exc.value)
     assert registered == []
 
-    assert bind.main(["C1", "mayor", "--mentions-only", "--replace-ambient"]) == 0
+    assert bind.main(["C1", "mayor", "--mentions-only", "--no-group-hold", "--replace-ambient"]) == 0
     assert [r["session_id"] for r in registered] == ["jg-mayor-1"]
     rec = common.load_pack_config()["bindings"]["room:C1"]
     assert [p["session_name"] for p in rec["participants"]] == ["ops-session"]
     assert rec["binding_owner"] is None
     assert [p["session_name"] for p in rec["mention_only_participants"]] == ["mayor"]
     # Idempotent: the record is clean now, so the flag is no longer needed.
-    assert bind.main(["C1", "mayor", "--mentions-only"]) == 0
+    assert bind.main(["C1", "mayor", "--mentions-only", "--no-group-hold"]) == 0
 
     # A binding gc still reports ACTIVE is refused even with the flag.
     monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
@@ -295,7 +295,7 @@ def test_bind_room_ambient_rebind_of_a_handle_drops_the_replaced_session(
 
     # old-mayor is no longer ambient here, so it may go mention-only.
     monkeypatch.setattr(common, "register_mention_only_via_adapter", lambda **kw: {"ok": True})
-    assert bind.main(["C1", "old-mayor", "--mentions-only"]) == 0
+    assert bind.main(["C1", "old-mayor", "--mentions-only", "--no-group-hold"]) == 0
     # new-mayor still is.
     with pytest.raises(SystemExit) as exc:
         bind.main(["C1", "new-mayor", "--mentions-only"])
@@ -370,7 +370,7 @@ def test_bind_room_ambient_rebind_keeps_earlier_participants_for_conflict_checks
     monkeypatch.setattr(common, "register_mention_only_via_adapter",
                         lambda **kw: pytest.fail("adapter must not be called on a conflict"))
     with pytest.raises(SystemExit) as exc:
-        bind.main(["C1", "mayor", "--mentions-only"])
+        bind.main(["C1", "mayor", "--mentions-only", "--no-group-hold"])
     assert "AMBIENTLY" in str(exc.value)
 
 
@@ -1069,6 +1069,6 @@ def test_bind_room_mentions_only_drops_registration_held_under_another_identifie
                         lambda **kw: registered.append(kw) or {"ok": True})
     monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
 
-    assert bind.main(["C1", "mayor", "--mentions-only"]) == 0
+    assert bind.main(["C1", "mayor", "--mentions-only", "--no-group-hold"]) == 0
     assert removed == ["C1:rig__mayor"]
     assert [(r["session_id"], r["session_name"]) for r in registered] == [("jg-123", "mayor")]

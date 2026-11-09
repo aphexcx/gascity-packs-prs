@@ -606,6 +606,30 @@ every message, but an UNBOUND room delivers nothing to it — not even
 gc slack bind-room C0B2Y13DRMK mayor --mentions-only
 ```
 
+When there are no ambient gc participants or explicit bindings, this also
+holds the room in a **zero-participant conversation group** and removes the
+sticky agent binding made by the city's `extmsg.default_route`. gc checks a
+direct binding before group routing, and never applies a default route to a
+grouped room (`internal/config/extmsg.go` and `internal/extmsg/inbound.go` in
+gc). Removing only the binding would let the next line recreate it. The
+command checks live gc records, preserves ambient routes, and reports
+`group_held` plus `unbound_bindings`; `gc slack status` shows the live hold
+state or an unreadable-state diagnostic. `--no-group-hold` keeps registration
+alone and leaves any existing hold untouched. Restore ambient routing with
+`bind-room ROOM SESSION --group-only` or `--binding-owner SESSION`; this adds
+a participant and clears the hold. Remove that session's mention-only
+registration first if it has one (DELETE endpoint below). While held, ambient
+lines wake no gc session; read them with `gc slack read --conversation-id ROOM`.
+
+The pack serializes its own `bind-room` commands, verifies the group before
+removing a binding, and aborts with exit 1 and a partial hold result if a
+fresh inspection detects a changed binding. Results and config name the
+`unbind_filter` used. gc has no atomic binding-ID/caller-provenance delete,
+so an external same-agent rebind can still race the final unbind; serialize
+external routing edits until the gc-side conditional-unbind follow-up lands.
+See [bind-room help](commands/bind-room/help.md) for the lock scope and API
+limitations. Unreadable hold diagnostics make `gc slack status` exit 2.
+
 The session is registered with the adapter (`POST
 …/svc/slack/mention-only`) and NOT added as a gc participant, so gc's
 every-message fan-out never reaches it. The adapter instead injects a
