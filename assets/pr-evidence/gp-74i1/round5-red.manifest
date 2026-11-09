@@ -1,0 +1,1 @@
+go test . -run '^TestIngestionCoveragePrune' -count=1 -json	1

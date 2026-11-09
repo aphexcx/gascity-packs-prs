@@ -81,10 +81,21 @@ Recovery retries only the saved message/target set under its original key, even 
 a member completed or gained proof; new members wait for the next pass. If gc
 accepted the original mail but its response was lost, recovery preserves the
 entire original coverage, including members that gained proof before the retry.
-When every member has proof, completion records that original coverage as
-`unconfirmed` without claiming this pass sent another mail (`sent` stays false).
-The adapter cannot distinguish an accepted mail from a lost attempt; this is
-durable ambiguous-acceptance coverage, not a new confirmed delivery. The
+Any completion retaining pairs beyond those confirmed by this pass is marked
+`unconfirmed`, including a successful retry of only a subset. When every member
+has proof, `sent` stays false. This retains ambiguous acceptance; it does not
+claim that the original attempt was confirmed.
+New plans record `ingestion_batch_attempt` immediately before notification.
+Retries reuse an outstanding ambiguous attempt; a refusal of that retry cannot
+clear the earlier uncertainty.
+A plan without an attempt, or an attempt definitely refused by gc, retries as
+fresh delivery of its still-unseen members and retains only coverage actually
+sent. Proven but never mailed members remain eligible if a later target lacks
+proof. Nonzero gc replies and failures to start or establish a connection are
+definite refusals; timeouts after start, signal termination and connection loss
+after sending remain ambiguous. A refusal of a later retry cannot erase an
+earlier ambiguous attempt. Older plans without the attempt-record version
+retain their conservative ambiguous interpretation. The
 `alerted` flag in versioned rows settles that target's alert decision, never other
 messages or targets. Only legacy unversioned rows retain receipt-wide coverage.
 New batches are limited to a 64 KiB journal-record/mail-body budget; larger
@@ -93,7 +104,10 @@ reader's 1 MiB line ceiling and command argument limits. A receipt with too many
 message/target pairs is split into bounded saved plans. Named messages stay
 covered across targets; unnamed messages remain eligible on the next pass.
 Each target's journal row stores only its own coverage. Retention carries shared
-coverage once in separate `ingestion_coverage` rows before its source expires.
+coverage in separate `ingestion_coverage` rows only when its last durable source
+will actually be deleted. A pair already present in a surviving segment is
+not copied, and a prune that deletes nothing writes nothing. Coverage referenced
+by an `All` completion still depends on the saved plan's segment.
 A single pair that cannot fit produces a visible retryable error without blocking
 other channels.
 An oversized batch saved by an older adapter retries under its original dedup

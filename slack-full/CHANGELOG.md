@@ -119,7 +119,10 @@ deliveries also log their registry label.
   pass, with each receipt still recorded individually. Ambiguous mail retries
   preserve the original message coverage, including members that later gain
   proof. Large fanout receipts use bounded plans and target rows retain only
-  their own attribution. The three-minute
+  their own attribution. Retention copies only coverage whose last source is
+  actually deleted, so protected segments cannot cause repeated journal growth.
+  Durable attempt records distinguish definite refusals from ambiguous sends.
+  The three-minute
   initial deadline and two-hour late-proof horizon remain unchanged (gp-74i1).
 
 - Compile a session-scoped native test stub for the CLI and adapter fixtures;

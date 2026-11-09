@@ -32,6 +32,7 @@ type inboundJournal struct {
 	sessionActs         map[string]ingestionSessionAct
 	sessionActsOverflow bool
 	preparedBatches     map[string]ingestionAlertBatch
+	coverageDays        map[ingestionAlertCoverage]string // latest self-contained source for each attribution
 }
 
 type inboundJournalRecord struct {
@@ -204,6 +205,12 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	if r.SessionAct != nil {
 		j.cacheSessionActLocked(*r.SessionAct)
 	}
+	return j.pruneLocked(now, path)
+}
+
+// The caller holds j.mu. Keep pruning separate from the incoming append so
+// repeated retention passes can be checked for writes of their own.
+func (j *inboundJournal) pruneLocked(now time.Time, path string) error {
 	days := j.retentionDays
 	if days <= 0 {
 		days = 7
@@ -252,6 +259,17 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 			cutoff = day
 		}
 	}
+	var deletions []string
+	deletedDays := make(map[string]bool)
+	for _, name := range expired {
+		if name[:8] < cutoff {
+			deletions = append(deletions, name)
+			deletedDays[name[:8]] = true
+		}
+	}
+	if len(deletions) == 0 {
+		return nil // Protected segments must not generate repeated carry records.
+	}
 	// A settled member's evidence may be in yesterday's file while today's
 	// transport conclusion still names that member. Copy only those verdicts
 	// that would otherwise be deleted before their newer rows. Preserve all
@@ -260,10 +278,14 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	var carryCoverage []ingestionAlertCoverage
 	for key, observation := range observations {
 		d := recordDays[key]
-		// Shared attribution may have come from an older target whose own
-		// verdict is expiring. Preserve it for every surviving target too.
+		// Carry only attribution whose last self-contained source is actually
+		// being deleted. A surviving pair or prior carry needs no new write.
 		if d.latest >= cutoff {
-			carryCoverage = mergeIngestionCoverage(carryCoverage, observation.AlertCoverage)
+			for _, c := range observation.AlertCoverage {
+				if deletedDays[j.coverageDays[c]] {
+					carryCoverage = mergeIngestionCoverage(carryCoverage, []ingestionAlertCoverage{c})
+				}
+			}
 		}
 		if !ingestionSettled(observation, now) || d.selected >= cutoff || d.latest < cutoff {
 			continue
@@ -302,11 +324,9 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 			return closeErr
 		}
 	}
-	for _, name := range expired {
-		if name[:8] < cutoff {
-			if err := os.Remove(filepath.Join(j.dir, name)); err != nil {
-				return err
-			}
+	for _, name := range deletions {
+		if err := os.Remove(filepath.Join(j.dir, name)); err != nil {
+			return err
 		}
 	}
 	return nil

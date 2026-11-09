@@ -22,7 +22,11 @@ type ingestionAlertBatch struct {
 	// needed. Keep that uncertainty separate from this pass's Sent result.
 	Unconfirmed bool `json:"unconfirmed,omitempty"`
 	recovered   bool
+	attempted   bool // replayed attempt without a definite refusal
 }
+
+// Older saved plans have no attempt markers, so their acceptance stays unknown.
+const ingestionAlertAttemptVersion = 3
 
 // Leave ample room below the journal scanner's 1 MiB record ceiling and
 // platform argv limits. Excess receipts stay eligible for subsequent passes.
@@ -51,7 +55,7 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 		if batch.Channel != channel {
 			continue
 		}
-		batch.recovered = true
+		batch.recovered = batch.Version < ingestionAlertAttemptVersion || batch.attempted
 		members := make(map[string]bool, len(batch.Members))
 		for _, member := range batch.Members {
 			members[member] = true
@@ -85,7 +89,7 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 	var batch ingestionAlertBatch
 	planFor := func(candidate []inboundJournalRecord) (ingestionAlertBatch, bool, error) {
 		plan := ingestionAlertBatch{Channel: channel, Members: ingestionAlertMembers(candidate), Created: o.now(),
-			Version: ingestionAlertCoverageVersion, Coverage: ingestionCoverageFor(candidate)}
+			Version: ingestionAlertAttemptVersion, Coverage: ingestionCoverageFor(candidate)}
 		plan.ID = ingestionCoverageID(plan.Coverage)
 		encoded, err := json.Marshal(inboundJournalRecord{Phase: "ingestion_batch", TS: o.now(), AlertBatch: &plan})
 		_, body := ingestionAlertMessageWithBudget(candidate, 0)
@@ -139,11 +143,11 @@ func (o *ingestionObserver) finishAlertBatch(batch ingestionAlertBatch, rows []i
 	// before the compatibility per-member rows are written individually.
 	members := ingestionAlertMembers(rows)
 	coverage := ingestionCoverageFor(rows)
-	same := batch.recovered || (len(members) == len(batch.Members) && ingestionAlertID(members) == ingestionAlertID(batch.Members))
-	if batch.Version >= ingestionAlertCoverageVersion && !batch.recovered {
-		same = ingestionCoverageID(coverage) == ingestionCoverageID(batch.Coverage)
+	full := len(members) == len(batch.Members) && ingestionAlertID(members) == ingestionAlertID(batch.Members)
+	if batch.Version >= ingestionAlertCoverageVersion {
+		full = ingestionCoverageID(coverage) == ingestionCoverageID(batch.Coverage)
 	}
-	if same {
+	if batch.recovered || full {
 		// A legacy plan can be close to the reader ceiling. Refer to its
 		// durable membership rather than repeat it with extra completion fields.
 		batch.All, batch.Members = true, nil
@@ -155,6 +159,6 @@ func (o *ingestionObserver) finishAlertBatch(batch ingestionAlertBatch, rows []i
 		}
 	}
 	batch.Sent = sent
-	batch.Unconfirmed = batch.recovered && !sent
+	batch.Unconfirmed = batch.recovered && (!sent || !full)
 	return o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_done", AlertBatch: &batch})
 }

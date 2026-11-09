@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -167,14 +168,20 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 	j.sessionActs = make(map[string]ingestionSessionAct)
 	j.sessionActsOverflow = false
 	j.preparedBatches = make(map[string]ingestionAlertBatch)
+	j.coverageDays = make(map[ingestionAlertCoverage]string)
+	batchDays := make(map[string]string)
+	attemptBefore := make(map[string]bool)
 	rows := make(map[string]inboundJournalRecord)
 	days := make(map[string]ingestionRecordDays)
 	alerted := make(map[string]bool)
 	coverage := make(map[string][]ingestionAlertCoverage)
-	rememberCoverage := func(members []ingestionAlertCoverage, batchID string) {
+	rememberCoverage := func(members []ingestionAlertCoverage, batchID, sourceDay string) {
 		for _, c := range members {
 			if c.BatchID == "" {
 				c.BatchID = batchID
+			}
+			if sourceDay > j.coverageDays[c] {
+				j.coverageDays[c] = sourceDay
 			}
 			coverage[c.Receipt] = mergeIngestionCoverage(coverage[c.Receipt], []ingestionAlertCoverage{c})
 		}
@@ -218,16 +225,37 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			if r.AlertBatch != nil {
 				batch := *r.AlertBatch
 				if r.Phase == "ingestion_batch" {
+					batch.attempted = batch.Version < ingestionAlertAttemptVersion
 					j.preparedBatches[batch.ID] = batch
+					batchDays[batch.ID] = day
+				} else if r.Phase == "ingestion_batch_attempt" {
+					if saved, ok := j.preparedBatches[batch.ID]; ok {
+						attemptBefore[batch.ID] = saved.attempted
+						saved.attempted = true
+						j.preparedBatches[batch.ID] = saved
+					}
+				} else if r.Phase == "ingestion_batch_refused" {
+					if saved, ok := j.preparedBatches[batch.ID]; ok {
+						// Refusing this retry cannot disprove an older attempt.
+						saved.attempted = attemptBefore[batch.ID]
+						j.preparedBatches[batch.ID] = saved
+						delete(attemptBefore, batch.ID)
+					}
 				} else if r.Phase == "ingestion_batch_done" {
+					sourceDay := day
 					if batch.All {
 						batch.Members = j.preparedBatches[batch.ID].Members
 						batch.Coverage = j.preparedBatches[batch.ID].Coverage
+						// All references the plan's bytes. A surviving completion
+						// cannot replace an expiring plan as a coverage source.
+						sourceDay = batchDays[batch.ID]
 					}
 					delete(j.preparedBatches, batch.ID)
+					delete(batchDays, batch.ID)
+					delete(attemptBefore, batch.ID)
 					if batch.Sent || batch.Unconfirmed {
 						if batch.Version >= ingestionAlertCoverageVersion {
-							rememberCoverage(batch.Coverage, batch.ID)
+							rememberCoverage(batch.Coverage, batch.ID, sourceDay)
 						} else {
 							for _, member := range batch.Members {
 								alerted[member] = true
@@ -238,7 +266,7 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 				continue
 			}
 			if r.Phase == "ingestion_coverage" {
-				rememberCoverage(r.AlertCoverage, "")
+				rememberCoverage(r.AlertCoverage, "", day)
 				continue
 			}
 			// Old rows lack a complete payload fingerprint. Do not fabricate
@@ -258,7 +286,7 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" && len(r.HandoffSessions) == 0 {
 				continue
 			}
-			rememberCoverage(r.AlertCoverage, r.AlertBatchID)
+			rememberCoverage(r.AlertCoverage, r.AlertBatchID, day)
 			if r.Alerted && r.AlertVersion < ingestionAlertCoverageVersion {
 				alerted[ingestionKey(r, "")] = true
 			}
@@ -479,10 +507,23 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 		for i := range unseen {
 			unseen[i].AlertBatchID = batch.ID
 		}
+		attempt := ingestionAlertBatch{ID: batch.ID, Version: batch.Version}
+		if !batch.recovered {
+			if err := o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_attempt", AlertBatch: &attempt}); err != nil {
+				return err
+			}
+		}
+		// An outstanding ambiguous attempt already fences recovery. Reuse it
+		// on retries: no additional marker can make that acceptance more certain.
 		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err = o.notify(mailCtx, ingestionAlertRows(unseen))
 		cancel()
 		if err != nil {
+			if !batch.recovered && ingestionNotifyDefinitelyRefused(err) {
+				if recordErr := o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_refused", AlertBatch: &attempt}); recordErr != nil {
+					return errors.Join(err, recordErr)
+				}
+			}
 			failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
 			continue
 		}
@@ -645,11 +686,50 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 	}
 	subject, body := ingestionAlertMessage(rows)
 	if len(body) > ingestionAlertBatchBudget {
-		return fmt.Errorf("ingestion alert exceeds %d-byte mail budget", ingestionAlertBatchBudget)
+		return ingestionNotifyRefusal{fmt.Errorf("ingestion alert exceeds %d-byte mail budget", ingestionAlertBatchBudget)}
+	}
+	if err := ctx.Err(); err != nil {
+		return ingestionNotifyRefusal{err} // No child process was started.
 	}
 	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", subject, "-m", body)
 	// Do not log CLI output, which may contain mailbox or provider data.
-	return cmd.Run()
+	// Output retains bounded stderr on ExitError for refusal classification.
+	_, err := cmd.Output()
+	if ctx.Err() != nil {
+		return ctx.Err() // Cancellation after start leaves acceptance ambiguous.
+	}
+	return err
+}
+
+type ingestionNotifyRefusal struct{ error }
+
+func ingestionNotifyDefinitelyRefused(err error) bool {
+	var refused ingestionNotifyRefusal
+	if errors.As(err, &refused) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true // The connection was never established.
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if exit.ExitCode() < 0 {
+			return false // Signal termination may have followed acceptance.
+		}
+		output := strings.ToLower(string(exit.Stderr))
+		for _, uncertain := range []string{"connection reset", "broken pipe", "eof", "timeout", "timed out", "deadline exceeded"} {
+			if strings.Contains(output, uncertain) {
+				return false // gc may have sent its request before losing the response.
+			}
+		}
+		return true // gc completed and returned a nonzero status.
+	}
+	var start *exec.Error
+	var path *os.PathError
+	return errors.As(err, &start) || errors.As(err, &path)
 }
 
 func ingestionAlertMessage(rows []inboundJournalRecord) (string, string) {

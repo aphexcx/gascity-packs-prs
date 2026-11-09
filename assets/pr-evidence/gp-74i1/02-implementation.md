@@ -285,8 +285,9 @@ additional failure paths were reproduced and fixed during that review: a late
 target present during all-proven completion, and coverage disappearing after
 only the newer target survived retention. Splitting exact pairs was chosen over
 eliding target identities so recovery retains the same attribution contract.
-No external side effect is inferred as confirmed from a timeout. The remaining
-uncertainty is explicit in the completion record and documentation. The initial
+Coverage from an ambiguous attempt is kept, not proven by the timeout. Round
+five marks it unconfirmed whenever the retry does not confirm every kept pair;
+coverage from a definite refusal is not kept. The initial
 three-minute window, two-hour horizon, and rollout gate are unchanged. The
 mayor's Codex gate and Opus delta read on this head follow READY.
 
@@ -304,3 +305,87 @@ Validation from `slack-full/adapter`, Go 1.27.3 darwin/arm64:
 
 The `round4-*` compressed logs, parsed summary and command manifests retain
 the new checks. Raw logs and mutable routing/GitHub snapshots stay local.
+
+## Mayor gate round 5: deletion-driven retention and attempt evidence
+
+The gate and Opus read of `8416780c` identified repeated coverage copies while
+an expired segment was protected. With 300 pairs, the regression measured
+140,700 extra bytes on its first prune, even though no source was deleted.
+Pruning is now a separate locked operation, retaining the same append boundary.
+It computes the final protected cutoff and the actual deletions first. A pass
+that deletes nothing returns without writing carry records.
+
+Replay tracks the latest self-contained source day of each pair's original
+batch attribution. An `All` completion references the plan's day, not its own
+day, because it carries no coverage bytes. Pruning copies only attribution
+needed by surviving observations whose last source is in the deletion set.
+Already surviving pairs and prior carries are skipped. Shared attribution is
+still preserved when the original target expires but a newer target survives.
+The carry is synced before source removal; a restart after that sync but before
+all deletions does not repeat it.
+
+The addendum's refusal distinction is implemented with version-three plans and
+durable `ingestion_batch_attempt` / `ingestion_batch_refused` records. A plan
+with an outstanding ambiguous attempt reuses that marker on retry; its first
+attempt is already durable and a later refusal cannot invalidate it. A plan
+without an attempt, or one whose only attempt was definitely refused, gets no
+inferred original coverage. Its still-unseen original members retry as fresh
+delivery under the bounded saved identity, with coverage only for the lines
+actually sent. A previously proven but never mailed member remains eligible
+for a later target. This preserves the existing rule that an already-proven
+member does not generate an alarm merely because another member needs retry.
+
+The process boundary retains bounded stderr on `exec.ExitError` without logging
+it. Completed gc error replies, executable-start failures and connection refusal
+are definite failures. Timeout/cancellation after start, signal termination,
+connection resets, broken pipes and lost responses remain ambiguous. Replay
+remembers the state before each attempt, so a definite refusal of a retry does
+not clear a prior ambiguous attempt. Older plans lacking attempt markers remain
+conservative. Any completion retaining pairs beyond those confirmed this pass
+sets `unconfirmed`, including `sent=true` subset retries.
+
+The reaction CLI's `--session` help now explicitly says it claims that session's
+identity for ingestion proof. This is the missing round-four help item, not an
+additional authorization mechanism.
+
+Regression cases were observed against the prior production head with
+only the mechanical extraction of the existing prune body: 25 failing
+tests/subtests and six passing controls. The final set adds an untouched-plan
+restart control that retries the full plan exactly once. It covers 25 byte-stable protected
+prunes with 2 and 300 pairs, settlement and one carry, restarts before and after
+deletion, duplicate old batches, surviving standalone/batch/target sources,
+an old plan with a surviving `All` completion, and a retry after partial deletion.
+The mail sequence covers definite refusal, process-start failure, connection
+refusal, death before notify, timeout, reset, signal termination and refusal of
+a later retry, with one or all members gaining proof. It asserts no hidden or
+repeated line and the `Unconfirmed` field itself. Separate boundary tests verify
+the attempt is durable before notify and refusal stderr remains available.
+
+Self-review by the implementing Codex model traced source-day attribution,
+final-cutoff deletion, durable carry-before-delete, attempt replay, prior
+ambiguity across retries, fresh completion coverage and the legacy version
+boundary. Round-three and round-four tests remain unchanged. The journal owns
+durable evidence; the observer owns proof and mail decisions. No other service,
+rollout setting, deadline or late horizon changes in this round. The mayor's
+round-five gate and Opus delta read remain required after READY.
+
+Final validation used Go 1.27.3 on darwin/arm64 from `slack-full/adapter`:
+
+- `go test -json ./...`: 1,472 top-level passed, 3 skipped, zero failed;
+  12,996 passes including subtests. The new regression files contribute
+  32 passing tests/subtests.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  60 top-level passed, 1 skipped, zero failed; 172 passes including subtests.
+- `go vet ./...` and `git diff --check`: exit zero.
+
+From `slack-full`, `env -u GC_TEMPLATE uv run --with pytest --with pyyaml
+--with jsonschema python3 -m pytest tests -q` passed 948 tests with 2 skipped.
+Its two multiprocessing/fork deprecation warnings are pre-existing. The CLI
+help invocation also passed and displays the proof-identity wording. Node and
+pnpm were not used. Compressed logs, exact command/exit manifests and
+`round5-test-summary.json` accompany this record.
+
+An initial full Go run exposed an extra retry-attempt write shifting an existing
+completion crash test. Reusing the outstanding ambiguous marker fixed it; the
+unchanged round-three/four tests and the final full/race runs are green. The
+initial failure is retained in the city record, separate from the final logs.

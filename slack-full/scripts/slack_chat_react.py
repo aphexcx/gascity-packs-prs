@@ -29,7 +29,10 @@ def main(argv: list[str]) -> int:
             "for this session, or to an explicit (channel, ts) pair."
         ),
     )
-    parser.add_argument("--session", default="", help="Override session id")
+    parser.add_argument(
+        "--session", default="",
+        help="Override session id; claims that session's identity for ingestion proof",
+    )
     parser.add_argument(
         "--current",
         action="store_true",
