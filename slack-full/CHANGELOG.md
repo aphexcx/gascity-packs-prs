@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Mention-only room holds** (gp-qgl3): `bind-room --mentions-only` now
+  ensures an empty gc group and clears sticky default-route agent bindings
+  when the room has no ambient routes. Live participants and explicit bindings
+  are preserved; incomplete routing reads fail closed. `--no-group-hold`
+  retains registration alone, and `status` reports the live hold state.
 - **Peer posts are independent inbounds in both modes** (gp-j5p4): every
   allowlisted peer wakes on arrival in every channel/thread, using the human
   reminder shape and registry sender label. `wake` and `immediate_channels`

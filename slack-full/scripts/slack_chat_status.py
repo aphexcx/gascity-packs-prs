@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
 import slack_intake_common as common
+import slack_room_hold as room_hold
 
 
 # Every read below returns (items, error). Returning a bare [] for both "the
@@ -64,8 +66,8 @@ def _bindings_for_session(session_id: str) -> tuple[list[dict[str, Any]], str]:
 def _mention_only_bindings(session: str) -> list[dict[str, Any]]:
     """Mention-only room bindings (jg-vobf70), from the pack config record
     written by `gc slack bind-room --mentions-only` merged with the
-    adapter's registry file (what the adapter actually enforces). Both are
-    local files — no HTTP — and either being unavailable leaves it out."""
+    adapter's registry file (what the adapter actually enforces). Routing hold
+    state is read live from gc; failures are shown as unknown, never held."""
     rows: dict[tuple[str, str], dict[str, Any]] = {}
     try:
         bindings = common.load_pack_config().get("bindings") or {}
@@ -116,6 +118,25 @@ def _mention_only_bindings(session: str) -> list[dict[str, Any]]:
     out = [rows[k] for k in sorted(rows)]
     if session:
         out = [r for r in out if session in (r["session_id"], r["session_name"])]
+    holds: dict[str, dict[str, Any]] = {}
+    for row in out:
+        cid = row["conversation_id"]
+        if cid not in holds:
+            rec = bindings.get("room:" + cid) or {}
+            conv = {
+                "scope_id": common.gc_city_name(), "provider": "slack",
+                "account_id": os.environ.get("SLACK_WORKSPACE_ID", ""),
+                "conversation_id": cid, "kind": "room",
+                **(rec.get("conversation") or {}),
+            }
+            try:
+                routing = room_hold.inspect_room(conv, common.gc_get)
+                holds[cid] = {"group_held": routing.held,
+                              "ambient_participants": routing.ambient_participants,
+                              "hold_status": routing.description}
+            except (common.GCAPIError, room_hold.RoomHoldError) as exc:
+                holds[cid] = {"group_held": None, "hold_status": f"unknown: {exc}"}
+        row.update(holds[cid])
     return out
 
 
@@ -236,6 +257,7 @@ def format_status(status: dict[str, Any]) -> str:
             sid = m.get("session_id") or ""
             tail = f" ({sid})" if sid and sid != who else ""
             lines.append(f"  {m.get('conversation_id')}  → {who}{tail}  handle=@{m.get('handle') or '?'}  [{m.get('source')}]")
+            lines.append(f"    {m.get('hold_status', 'unknown: hold not inspected')}")
 
     recent = []
     for evt in inbound[-5:]:

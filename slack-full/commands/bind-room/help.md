@@ -15,7 +15,7 @@ AMBIENT (default): the session becomes a gc participant of the room's
 conversation group and gc wakes it for EVERY inbound message.
 
 MENTION-ONLY (`--mentions-only`): the session is registered with the
-slack adapter instead (POST /mention-only), never with gc. The adapter
+slack adapter instead (POST /mention-only), never as a gc participant. The adapter
 injects a `Slack mention-only room delivery` reminder into the session
 only when the message
 
@@ -42,6 +42,24 @@ for the room. A mention-only delivery newer than the session's
 company-room/DM current-turn pointer wins over the company dispatch in
 `reply-current`; `--turn-ref`, `--origin-ts` or `--kind room|dm|mpim`
 pin the company turn explicitly.
+
+When gc reports no ambient participants or explicit direct binding, the
+command holds the room in a zero-participant gc conversation group and
+removes any agent binding created by `extmsg-default-route`. This prevents
+the city's sticky default route from waking a session on every line: gc
+resolves direct bindings first, but never default-routes a grouped room
+(`internal/config/extmsg.go` and `internal/extmsg/inbound.go` in gc). Existing
+ambient routes are preserved. Live labeled gc records are read through
+`GET /beads`, including all cursor pages; incomplete reads fail the command.
+The result reports `group_held` and `unbound_bindings`, and `gc slack status`
+shows the live hold state. `--no-group-hold` skips this reconciliation and
+registers with the adapter alone; it does not remove an existing hold.
+
+To restore ambient routing, use `bind-room ROOM SESSION --group-only` or
+`bind-room ROOM SESSION --binding-owner SESSION`. Both add an ambient
+participant and clear the recorded hold. If that session is already registered
+mention-only, first remove its adapter registration with
+`DELETE …/svc/slack/mention-only?channel_id=<ROOM>&session_id=<id>`.
 
 `--mentions-only` cannot be combined with the peer-fanout flags,
 `--default-handle`, or `--binding-owner` — those configure gc group
@@ -143,11 +161,17 @@ Mention-only:
 1. GET  /v0/city/<name>/sessions  (resolve each session name to its gc id)
 2. POST /v0/city/<name>/svc/slack/mention-only for each session
    ({channel_id, session_id, session_name, handle})
+3. Unless `--no-group-hold`: inspect live groups, participants and bindings
+   through GET /beads (also checked before registration). With no ambient
+   route, POST /extmsg/groups with mode=launcher and no participants if the
+   group is missing, then POST /extmsg/unbind for each default-route agent,
+   filtered by both conversation and agent_name. Re-read to verify the hold.
+   An existing empty group is reused without changing its policy or cursor.
 
 The pack records the binding under
 `.gc/services/slack/data/config.json` so other slack-pack commands can
 resolve the room without re-querying gc; a mention-only binding is the
-record's `mention_only_participants` list (`delivery_mode:
+record's `mention_only_participants` list and `group_held` boolean (`delivery_mode:
 mentions_only` when the room has no ambient participants). The
 adapter's own registry — what it actually enforces — lives at
 `<GC_CITY_PATH>/.gc/slack/mention_only_bindings.json`
