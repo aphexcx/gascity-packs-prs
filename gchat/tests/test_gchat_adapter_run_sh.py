@@ -77,7 +77,7 @@ class PrebuiltAdapterTest(unittest.TestCase):
                     self.env["PATH"] = f"{self.adapter}:{self.bin}"
                 result = self.run_adapter()
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(f"cwd={self.root}\n", result.stdout)
+                self.assertIn(f"cwd={self.root.resolve()}\n", result.stdout)
                 self.assertIn(f"using {binary} (version 0.5.0)", result.stderr)
 
     def test_invalid_override_does_not_fall_back(self):
