@@ -1,8 +1,10 @@
 """Prebuilt service startup without a build toolchain or Google credentials."""
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 PACK = Path(__file__).resolve().parents[1]
@@ -85,6 +87,38 @@ class PrebuiltAdapterTest(unittest.TestCase):
         result = self.run_adapter()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ERROR: no Go toolchain found", result.stderr)
+
+    def test_local_binary_remains_fallback(self):
+        self.stub(self.adapter / "gc-gchat-adapter", "LOCAL")
+        result = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "LOCAL\nserve\nproject=from-file\n")
+
+    def test_version_only_change_rebuilds_service_and_command_binary(self):
+        binary = self.adapter / "gc-gchat-adapter"
+        self.stub(binary, "LOCAL")
+        # Record the version seen by the rebuild without needing Go.
+        (self.adapter / "build.sh").write_text(
+            '#!/bin/bash\nsed -n \'s/^version = "\\([^"]*\\)".*/\\1/p\' ../pack.toml > rebuilt-version\n')
+        manifest = self.root / "pack/pack.toml"
+        manifest.write_text('[pack]\nversion = "9.9.9"\n')
+        future = time.time() + 60
+        os.utime(binary, (future, future))
+        os.utime(manifest, (future + 60, future + 60))
+        marker = self.adapter / "rebuilt-version"
+        self.env["GC_PACK_DIR"] = str(self.root / "pack")
+        for command in ([str(self.adapter / "run.sh")],
+                        ["sh", "-c", '. "$1"; gchat_build', "sh",
+                         str(self.root / "pack/commands/runtime.sh")]):
+            with self.subTest(command=command[0]):
+                # The command launcher deliberately remains POSIX sh.
+                if command[0] == "sh":
+                    command[0] = shutil.which("sh")
+                result = subprocess.run(command, cwd=self.root, env=self.env,
+                                        text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(marker.read_text(), "9.9.9\n")
+                marker.unlink()
 
 
 if __name__ == "__main__":

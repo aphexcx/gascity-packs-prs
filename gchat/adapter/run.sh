@@ -51,7 +51,8 @@ fi
 cd "$(dirname "$0")"
 if [ ! -x ./gc-gchat-adapter ]; then
     ./build.sh
-elif [ -n "$(find . -type f \( -name '*.go' -o -name go.mod -o -name go.sum -o -name build.sh \) -newer ./gc-gchat-adapter -print -quit)" ]; then
+elif [ -n "$(find .. -maxdepth 1 -name pack.toml -newer ./gc-gchat-adapter -print -quit)" ] ||
+     [ -n "$(find . -type f \( -name '*.go' -o -name go.mod -o -name go.sum -o -name build.sh \) -newer ./gc-gchat-adapter -print -quit)" ]; then
     ./build.sh
 fi
 
