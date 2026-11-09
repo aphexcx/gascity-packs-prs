@@ -85,30 +85,44 @@ Any completion retaining pairs beyond those confirmed by this pass is marked
 `unconfirmed`, including a successful retry of only a subset. When every member
 has proof, `sent` stays false. This retains ambiguous acceptance; it does not
 claim that the original attempt was confirmed.
-New attempts record the exact message/target coverage immediately before
-notification. A changed retry subset replaces that record before sending;
-an identical pending attempt can reuse its durable marker. Recovery keeps only
+New attempts record the exact message/target coverage and attempt time immediately
+before notification. Each eligible retry atomically replaces its sidecar before
+sending. Recovery keeps only
 the union of attempts not definitely refused. A refused A+B plan followed by
 an ambiguous B-only retry keeps B, leaving never-mailed A eligible for a later
 target without proof. Refusing a retry cannot erase an earlier ambiguous send.
 Nonzero gc replies and failures to start or establish a connection are
 definite refusals; timeouts after start, signal termination and connection loss
 after sending remain ambiguous. A refusal of a later retry cannot erase an
-earlier ambiguous attempt. Older plans without the attempt-record version
-retain their conservative ambiguous interpretation. The
+earlier ambiguous attempt. A version-five plan without a sidecar has never been
+attempted. Older v0/v2 plans without attempt state retain their conservative
+ambiguous interpretation; v3/v4 journal attempt/refusal markers are read-only
+migration input and are never written again. These older plans were introduced
+in earlier, unrolled revisions of this change. The
 `alerted` flag in versioned rows settles that target's alert decision, never other
 messages or targets. Only legacy unversioned rows retain receipt-wide coverage.
-One state row per plan is atomically replaced in its journal segment, with
-reserved padding that prevents byte growth during repeated refusals. Exact
-current pairs and references to previous ambiguous pairs survive replacement.
-The replacement and directory are synced before notification. Definite refusals
+Attempt/refusal state lives in one file per plan under the journal's
+`attempts/` directory, named by a digest of the plan ID. It records the exact
+last attempted pairs, the bounded union of prior ambiguous pairs, the attempt
+time, refusal state and retry schedule. It never expands legacy membership.
+A temporary file is synced, closed and renamed; the directory is synced before
+notification. Attempt updates never scan or rewrite a journal segment, so a
+valid final plan row without a newline is accepted consistently by replay and
+retry. The journal remains append-only, with plan and completion records.
+Repeated refusals add zero journal bytes. Completion is durable before its
+sidecar is removed; replay and retention discard completed/unknown sidecars,
+and startup replay and pruning sweep abandoned temporary files.
+Definite refusals
 retry after 5, 10, 20, 40, 80 and 160 seconds, then every five minutes; the
 counter and next eligible time survive restart. Recovery sends on the first
 eligible retry pass. A gc exit is authoritative even when a descendant holds
 its output pipes: the additional wait is limited to one second.
 New batches are limited to a 64 KiB journal-record/mail-body budget; larger
 backlogs drain over successive passes. This stays below both the journal
-reader's 1 MiB line ceiling and command argument limits. A receipt with too many
+reader's 1 MiB line ceiling and command argument limits. Sidecars have a separate
+8 MiB cap for legacy exact attempts; their bytes count toward the existing
+64 MiB observation budget. An oversized sidecar write fails before notification
+and leaves the previous state intact. A receipt with too many
 message/target pairs is split into bounded saved plans. Named messages stay
 covered across targets; unnamed messages remain eligible on the next pass.
 Each target's journal row stores only its own coverage. Retention carries shared
@@ -131,7 +145,8 @@ avoiding another large record for legacy batches. Restart repairs missing indivi
 mailing again, including after the late-proof horizon. Retention preserves
 source records until those individual completion rows are durable, even if a
 previous day's failed mail succeeds after its observation horizon. Failed mail is retried
-on the next pass and logged; it does not prevent other receipts being checked.
+on the next eligible pass and logged; a channel's state-write failure is collected
+without preventing other channels from mailing.
 The mail command and each target's transcript fetch have ten-second limits.
 The normal alert latency is the three-minute window plus one polling pass.
 The controlled busy-session proof needed 2m16s for the first queued input to

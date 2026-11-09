@@ -1,149 +1,82 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-func (o *ingestionObserver) beginAlertAttempt(plan ingestionAlertBatch, rows []inboundJournalRecord) (ingestionAlertBatch, error) {
-	state := ingestionAlertBatch{ID: plan.ID, Version: ingestionAlertStateVersion, Coverage: ingestionCoverageFor(rows)}
-	possible := make(map[string]bool)
-	for _, c := range plan.possible {
-		possible[ingestionCoverageKey(c)] = true
-	}
-	for i, c := range plan.Coverage {
-		if possible[ingestionCoverageKey(c)] {
-			state.Prior = append(state.Prior, i)
-		}
-	}
-	state.PriorAll = plan.Version < ingestionAlertCoverageVersion && plan.recovered
+const ingestionAlertSidecarVersion = 5
+
+// Legacy receipt-only plans can name thousands of pairs. Keep their state
+// outside the journal's 1 MiB line limit, with a separate hard read/write cap.
+// Modern plans are limited to 64 KiB; this allows older plans to migrate too.
+const ingestionAttemptMaxBytes = 8 << 20
+
+type ingestionAttemptState struct {
+	ID          string                   `json:"id"`
+	Version     int                      `json:"version"`
+	PlanVersion int                      `json:"plan_version"`
+	Coverage    []ingestionAlertCoverage `json:"coverage"`            // last attempt, exactly
+	Prior       []ingestionAlertCoverage `json:"prior,omitempty"`     // union, not history
+	PriorAll    bool                     `json:"prior_all,omitempty"` // v0 uncertainty only
+	AttemptedAt time.Time                `json:"attempted_at"`
+	Refused     bool                     `json:"refused"`
+	Refusals    int                      `json:"refusals"`
+	RetryAt     int64                    `json:"retry_at"`
+}
+
+func (o *ingestionObserver) beginAlertAttempt(plan ingestionAlertBatch, rows []inboundJournalRecord) (ingestionAttemptState, error) {
+	state := ingestionAttemptState{ID: plan.ID, Version: ingestionAlertSidecarVersion, PlanVersion: plan.Version,
+		Coverage: ingestionCoverageFor(rows), Prior: mergeIngestionCoverage(plan.possible), AttemptedAt: o.now(),
+		PriorAll: plan.Version < ingestionAlertCoverageVersion && plan.recovered}
 	if plan.attempt != nil {
 		state.Refusals, state.RetryAt = plan.attempt.Refusals, plan.attempt.RetryAt
-		if !plan.refused && ingestionCoverageID(plan.attempt.Coverage) == ingestionCoverageID(state.Coverage) {
-			// This exact send is already fenced. A refusal still records Prior
-			// from above, so it cannot invalidate the older ambiguous attempt.
-			return state, nil
-		}
 	}
-	return state, o.cfg.inboundJournal.writeAlertAttempt(plan, state, "ingestion_batch_attempt")
+	// Each eligible invocation gets its own timestamp and exact pair list.
+	// The previous unresolved attempt is already in Prior, so refusing this
+	// invocation cannot erase an earlier ambiguous acceptance of the same set.
+	return state, o.cfg.inboundJournal.writeAlertAttempt(state)
 }
 
-// Reserve the largest state this immutable plan can require, including all
-// prior ambiguous pair references. Padding makes repeated refusal updates
-// byte-neutral even when timestamps and the capped backoff counter change.
-func ingestionAttemptSlotSize(plan ingestionAlertBatch) int {
-	state := ingestionAlertBatch{ID: plan.ID, Version: ingestionAlertStateVersion,
-		Coverage: plan.Coverage, PriorAll: true, Refusals: 7, RetryAt: 1<<63 - 1}
-	for i := range plan.Coverage {
-		state.Prior = append(state.Prior, i)
-	}
-	row := inboundJournalRecord{Phase: "ingestion_batch_attempt", AlertBatch: &state,
-		TS: time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)}
-	b, _ := json.Marshal(row)
-	return len(b) + 128
+func (j *inboundJournal) alertAttemptPath(id string) string {
+	// Hash even legacy IDs: journal content must never select a filesystem path.
+	return filepath.Join(j.dir, "attempts", ingestionDigest(id)+".json")
 }
 
-// Keep exactly one current attempt/refusal row per plan. Replace its slot in
-// the owning segment atomically under the journal lock; do not append an
-// outage history that retention cannot discard. A temporary file is never a
-// replay input. Sync the replacement and its directory before calling gc.
-func (j *inboundJournal) writeAlertAttempt(plan, state ingestionAlertBatch, phase string) error {
+func syncIngestionDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	err = dir.Sync()
+	closeErr := dir.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+// The rename is the pre-notify fence. No journal segment is read or changed.
+// A crash before it leaves the previous state; after it the last attempt is
+// conservatively ambiguous until a refusal or completion is durable.
+func (j *inboundJournal) writeAlertAttempt(state ingestionAttemptState) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	now := time.Now().UTC()
-	if j.now != nil {
-		now = j.now().UTC()
+	if _, exists := j.preparedBatches[state.ID]; !exists {
+		return fmt.Errorf("ingestion attempt has no replayed or newly appended pending plan")
 	}
-	row := inboundJournalRecord{Phase: phase, TS: now, AlertBatch: &state}
-	encoded, err := json.Marshal(row)
+	encoded, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
-	paths, err := filepath.Glob(filepath.Join(j.dir, "*.jsonl"))
-	if err != nil {
-		return err
+	if len(encoded) > ingestionAttemptMaxBytes {
+		return fmt.Errorf("ingestion attempt exceeds %d-byte sidecar budget", ingestionAttemptMaxBytes)
 	}
-	path := filepath.Join(j.dir, now.Format("20060102")+".jsonl")
-	var content []byte
-	start, end := -1, -1
-	remaining := int64(64 << 20)
-	foundPlan := false
-	for _, candidate := range paths {
-		f, err := os.Open(candidate)
-		if err != nil {
-			return err
-		}
-		data, readErr := io.ReadAll(io.LimitReader(f, remaining+1))
-		closeErr := f.Close()
-		if readErr != nil {
-			return readErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		remaining -= int64(len(data))
-		if remaining < 0 {
-			return fmt.Errorf("journal exceeds 64 MiB observation budget")
-		}
-		for offset := 0; offset < len(data); {
-			next := bytes.IndexByte(data[offset:], '\n')
-			if next < 0 {
-				break
-			} // Do not interpret an incomplete final record.
-			next += offset + 1
-			var saved inboundJournalRecord
-			if json.Unmarshal(data[offset:next], &saved) == nil && saved.AlertBatch != nil && saved.AlertBatch.ID == plan.ID {
-				switch saved.Phase {
-				case "ingestion_batch":
-					foundPlan, start, end = true, -1, -1
-				case "ingestion_batch_done":
-					foundPlan, start, end = false, -1, -1
-				case "ingestion_batch_attempt", "ingestion_batch_refused":
-					if foundPlan && saved.AlertBatch.Version >= ingestionAlertStateVersion {
-						path, content, start, end = candidate, data, offset, next
-					}
-				}
-			}
-			offset = next
-		}
-	}
-	if !foundPlan {
-		return fmt.Errorf("ingestion attempt has no pending plan")
-	}
-	reservation := plan
-	if plan.Version < ingestionAlertCoverageVersion {
-		// Legacy plans stored receipt IDs only. Their first exact attempt
-		// supplies the reservation; subsequent subsets reuse the same slot.
-		reservation.Coverage = state.Coverage
-	}
-	slot := ingestionAttemptSlotSize(reservation)
-	if start < 0 {
-		path = filepath.Join(j.dir, now.Format("20060102")+".jsonl")
-		content, err = os.ReadFile(path)
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		if len(content) > 0 && content[len(content)-1] != '\n' {
-			content = append(content, '\n')
-		}
-		start, end = len(content), len(content)
-	} else {
-		slot = max(slot, end-start)
-	}
-	if len(encoded)+1 > slot {
-		return fmt.Errorf("ingestion attempt exceeds its reserved state slot")
-	}
-	var replacement []byte
-	replacement = append(replacement, content[:start]...)
-	replacement = append(replacement, encoded...)
-	replacement = append(replacement, bytes.Repeat([]byte{' '}, slot-len(encoded)-1)...)
-	replacement = append(replacement, '\n')
-	replacement = append(replacement, content[end:]...)
 	hook := func(stage string) error {
 		if j.attemptWriteHook != nil {
 			return j.attemptWriteHook(stage)
@@ -153,13 +86,28 @@ func (j *inboundJournal) writeAlertAttempt(plan, state ingestionAlertBatch, phas
 	if err := hook("before_create"); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(j.dir, ".ingestion-attempt-*")
+	path := j.alertAttemptPath(state.ID)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	if err := hook("after_mkdir"); err != nil {
+		return err
+	}
+	// Persist the directory entry too, including on the first-ever attempt.
+	if err := syncIngestionDirectory(j.dir); err != nil {
+		return err
+	}
+	if err := hook("after_parent_sync"); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".attempt-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-	if _, err := f.Write(replacement); err != nil {
+	if _, err := f.Write(encoded); err != nil {
 		return err
 	}
 	if err := hook("after_write"); err != nil {
@@ -183,17 +131,129 @@ func (j *inboundJournal) writeAlertAttempt(plan, state ingestionAlertBatch, phas
 	if err := hook("after_rename"); err != nil {
 		return err
 	}
-	dir, err := os.Open(j.dir)
-	if err != nil {
+	if err := syncIngestionDirectory(dir); err != nil {
 		return err
-	}
-	err = dir.Sync()
-	closeErr := dir.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
 	}
 	return hook("after_dir_sync")
+}
+
+// Caller holds the journal lock and has successfully replayed all segments.
+// Never load unknown sidecars: a completion is authoritative even if a crash
+// prevented unlinking its state. Temporary files are never recovery inputs.
+func (j *inboundJournal) recoverAlertAttemptsLocked(remaining *int64) error {
+	for id, plan := range j.preparedBatches {
+		f, err := os.Open(j.alertAttemptPath(id))
+		if os.IsNotExist(err) {
+			continue // new plan = unattempted; legacy journal state stays intact
+		}
+		if err != nil {
+			return err
+		}
+		data, readErr := io.ReadAll(io.LimitReader(f, min(int64(ingestionAttemptMaxBytes), *remaining)+1))
+		closeErr := f.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		*remaining -= int64(len(data))
+		if len(data) > ingestionAttemptMaxBytes || *remaining < 0 {
+			return fmt.Errorf("ingestion attempt exceeds sidecar or 64 MiB observation budget")
+		}
+		var state ingestionAttemptState
+		if err := json.Unmarshal(data, &state); err != nil {
+			return fmt.Errorf("invalid ingestion sidecar %s: %w", id, err)
+		}
+		if state.ID != id || state.PlanVersion != plan.Version || state.Version != ingestionAlertSidecarVersion || state.AttemptedAt.IsZero() || state.Refusals < 0 || state.Refusals > 7 {
+			return fmt.Errorf("invalid ingestion sidecar state for %s", id)
+		}
+		plan.attempt, plan.refused = &state, state.Refused
+		plan.possible = state.Prior
+		if !state.Refused {
+			plan.possible = mergeIngestionCoverage(plan.possible, state.Coverage)
+		}
+		plan.attempted = state.PriorAll || len(plan.possible) > 0
+		j.preparedBatches[id] = plan
+	}
+	return j.pruneAlertAttemptFilesLocked(false)
+}
+
+// With tempsOnly, no journal reconstruction is needed: temporary files are
+// never authoritative and no writer can be active while the caller holds mu.
+func (j *inboundJournal) pruneAlertAttemptFilesLocked(tempsOnly bool) error {
+	dir := filepath.Join(j.dir, "attempts")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	keep := make(map[string]bool, len(j.preparedBatches))
+	for id := range j.preparedBatches {
+		keep[filepath.Base(j.alertAttemptPath(id))] = true
+	}
+	removed := false
+	for _, entry := range entries {
+		name := entry.Name()
+		temporary := strings.HasPrefix(name, ".attempt-")
+		if entry.IsDir() || keep[name] || (tempsOnly && !temporary) || (!strings.HasSuffix(name, ".json") && !temporary) {
+			continue
+		}
+		if !removed && !tempsOnly {
+			// Replay may run inside completion's append, before its caller
+			// syncs a newly rotated journal directory entry. Make the replayed
+			// completion durable before deleting the orphan's retry evidence.
+			if err := syncIngestionDirectory(j.dir); err != nil {
+				return err
+			}
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		removed = true
+	}
+	if removed {
+		return syncIngestionDirectory(dir)
+	}
+	return nil
+}
+
+func (j *inboundJournal) removeAlertAttempt(id string) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	// append fsyncs the completion's file. Persist its directory entry too
+	// before dropping retry evidence, including a new day or rotated segment.
+	if j.attemptWriteHook != nil {
+		if err := j.attemptWriteHook("before_completion_sync"); err != nil {
+			return err
+		}
+	}
+	if err := syncIngestionDirectory(j.dir); err != nil {
+		return err
+	}
+	if j.attemptWriteHook != nil {
+		if err := j.attemptWriteHook("before_remove"); err != nil {
+			return err
+		}
+	}
+	path := j.alertAttemptPath(id)
+	if err := os.Remove(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if j.attemptWriteHook != nil {
+		if err := j.attemptWriteHook("after_remove"); err != nil {
+			return err
+		}
+	}
+	if err := syncIngestionDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if j.attemptWriteHook != nil {
+		return j.attemptWriteHook("after_remove_dir_sync")
+	}
+	return nil
 }

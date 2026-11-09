@@ -1,0 +1,59 @@
+{
+  "base": "b0155dc3cafd14170b372e771212760d77c98735",
+  "go": "go1.27.3 darwin/arm64",
+  "runs": {
+    "round7-red": {
+      "manifest": "go test -json -run ^TestIngestionAttempt(LegacySixThousandReceipts|PlanWithoutFinalNewline)$ ./...\texit=1",
+      "top_level": {
+        "pass": 0,
+        "skip": 0,
+        "fail": 2
+      },
+      "including_subtests": {
+        "pass": 0,
+        "skip": 0,
+        "fail": 4
+      }
+    },
+    "round7-channel-red": {
+      "manifest": "go test -json -run ^TestIngestionAttemptSidecarFailureDoesNotBlockOtherChannels$ ./...\texit=1",
+      "top_level": {
+        "pass": 0,
+        "skip": 0,
+        "fail": 1
+      },
+      "including_subtests": {
+        "pass": 0,
+        "skip": 0,
+        "fail": 13
+      }
+    },
+    "round7-full": {
+      "manifest": "go test -json ./...\texit=0",
+      "top_level": {
+        "pass": 1488,
+        "skip": 3,
+        "fail": 0
+      },
+      "including_subtests": {
+        "pass": 13091,
+        "skip": 3,
+        "fail": 0
+      }
+    },
+    "round7-race": {
+      "manifest": "go test -race -json -run ^(TestIngestion|TestInboundJournal) ./...\texit=0",
+      "top_level": {
+        "pass": 76,
+        "skip": 1,
+        "fail": 0
+      },
+      "including_subtests": {
+        "pass": 267,
+        "skip": 1,
+        "fail": 0
+      }
+    }
+  },
+  "new_file_passes": 52
+}

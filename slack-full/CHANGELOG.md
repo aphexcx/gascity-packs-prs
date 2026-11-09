@@ -122,7 +122,10 @@ deliveries also log their registry label.
   their own attribution. Retention copies only coverage whose last source is
   actually deleted, so protected segments cannot cause repeated journal growth.
   Durable attempt state records exact sent pairs, distinguishes definite
-  refusals from ambiguous sends, and replaces one bounded row per plan.
+  refusals from ambiguous sends, and atomically replaces one bounded sidecar
+  per plan. Attempt updates leave journal segments untouched; completed and
+  orphan sidecars are removed, and abandoned temporary files are swept.
+  A channel's state-write failure does not prevent other channels from mailing.
   Refusals back off from five seconds to five minutes across restarts;
   completed mail commands wait at most one second for inherited output pipes.
   The three-minute

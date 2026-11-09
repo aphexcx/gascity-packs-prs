@@ -21,8 +21,7 @@ type ingestionAlertBatch struct {
 	// A recovered plan may already have reached gc even when no retry is
 	// needed. Keep that uncertainty separate from this pass's Sent result.
 	Unconfirmed bool `json:"unconfirmed,omitempty"`
-	// Attempt state: exact current coverage plus references to earlier
-	// ambiguous pairs in the immutable plan. Refusal removes only this attempt.
+	// Read-only v4 migration fields. New attempt state lives in a sidecar.
 	Prior     []int `json:"prior,omitempty"`
 	PriorAll  bool  `json:"prior_all,omitempty"` // legacy plans without pair coverage
 	Refusals  int   `json:"refusals,omitempty"`
@@ -30,7 +29,7 @@ type ingestionAlertBatch struct {
 	recovered bool
 	attempted bool // replayed attempt without a definite refusal
 	possible  []ingestionAlertCoverage
-	attempt   *ingestionAlertBatch
+	attempt   *ingestionAttemptState
 	refused   bool
 }
 
@@ -103,12 +102,12 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 	var batch ingestionAlertBatch
 	planFor := func(candidate []inboundJournalRecord) (ingestionAlertBatch, bool, error) {
 		plan := ingestionAlertBatch{Channel: channel, Members: ingestionAlertMembers(candidate), Created: o.now(),
-			Version: ingestionAlertStateVersion, Coverage: ingestionCoverageFor(candidate)}
+			Version: ingestionAlertSidecarVersion, Coverage: ingestionCoverageFor(candidate)}
 		plan.ID = ingestionCoverageID(plan.Coverage)
 		encoded, err := json.Marshal(inboundJournalRecord{Phase: "ingestion_batch", TS: o.now(), AlertBatch: &plan})
 		_, body := ingestionAlertMessageWithBudget(candidate, 0)
 		// Reserve space for the completion flag and timestamp formatting.
-		return plan, len(encoded)+256 <= ingestionAlertBatchBudget && ingestionAttemptSlotSize(plan) <= ingestionAlertBatchBudget && len(body) <= ingestionAlertBatchBudget, err
+		return plan, len(encoded)+256 <= ingestionAlertBatchBudget && len(body) <= ingestionAlertBatchBudget, err
 	}
 	for _, r := range ingestionAlertRows(unseen) {
 		candidate := append(chosen, r)
@@ -178,5 +177,8 @@ func (o *ingestionObserver) finishAlertBatch(batch ingestionAlertBatch, rows []i
 	if batch.Version < ingestionAlertCoverageVersion && batch.recovered {
 		batch.Unconfirmed = !sent || !full
 	}
-	return o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_done", AlertBatch: &batch})
+	if err := o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_done", AlertBatch: &batch}); err != nil {
+		return err
+	}
+	return o.cfg.inboundJournal.removeAlertAttempt(batch.ID)
 }

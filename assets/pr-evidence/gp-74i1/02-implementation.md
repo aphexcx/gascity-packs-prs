@@ -410,16 +410,12 @@ identical already-pending send can reuse that record; a later refusal retains
 the previous ambiguity. Completion uses that union plus the pairs confirmed
 this pass, with `unconfirmed` whenever some kept pairs remain uncertain.
 
-One current state row per plan replaces its predecessor inside the owning
-journal segment, including after segment rotation. Under the journal mutex,
-the writer prepares a temporary replacement, syncs and closes it, atomically
-renames it and syncs the directory. Notification runs only after that boundary.
-Reserved whitespace keeps the row's byte size constant across refusal updates;
-the plan budget includes the largest state reservation. This trades a segment
-rewrite per eligible attempt/refusal for bounded replay storage. The raw state
-holds the exact current pairs; compact references avoid copying prior pairs
-twice. Legacy plans without pair arrays reserve from their first exact attempt.
-Older ambiguous plans retain their conservative interpretation.
+Round six used one reserved state row inside its owning journal segment.
+Round seven supersedes that mechanism with one atomic sidecar per plan under
+`attempts/`: no segment read, rewrite or reserved slot. The file records exact
+current pairs and a bounded union of earlier ambiguous pairs; it never expands
+legacy membership. The temporary file and its directory are synced before
+notification. Older ambiguous plans retain their conservative interpretation.
 
 The refusal counter caps at seven and persists the next eligible timestamp.
 Delays are 5, 10, 20, 40, 80 and 160 seconds, then five minutes. The 1,000-pass
@@ -486,3 +482,122 @@ retained rather than reported as a new run. Node/pnpm were not used.
 Compressed red/final logs, command/exit manifests and `round6-test-summary.json`
 accompany this record. Intermediate ingestion failures from the two remaining
 fixture clocks are retained in the city record.
+
+## Mayor gate round 7: per-plan attempt sidecars
+
+The round-six gate blocked on two defects in the in-segment state writer.
+The new regressions reproduced both on `b0155dc3`: an ordinary 6,000-receipt
+legacy attempt created a 1,283,521-byte journal line and stopped observation
+with `bufio.Scanner: token too long`; a valid final plan without a newline
+replayed successfully but its attempt failed with “no pending plan,” both
+on the same day and after midnight. The addendum's channel test also failed
+before its fix in all twelve cases: six write boundaries for the attempt
+and the refusal, with the second channel never mailed.
+
+Version-five plans use one sidecar under the journal's `attempts/` directory,
+named by a digest of the plan ID. It records both the plan and format versions,
+validates the plan identity/version on replay, and contains the exact last attempted pairs,
+the deduplicated union of earlier ambiguous pairs, attempt time, refusal flag,
+capped counter and next eligible retry time. Every eligible invocation replaces
+this file through temporary-file write, fsync, close, rename and directory sync.
+The attempts directory's parent is synced as well. No journal segment is read
+or rewritten by this writer, and no new attempt/refusal journal rows are emitted.
+The plan's existence comes from the same replay map used by the observer, or
+from a newly fsynced plan append. A successful completion is persisted before
+the sidecar is deleted. Journal directory entries are synced before either
+normal deletion or replay cleanup can discard completed retry evidence.
+
+The mayor's compatibility ruling scopes “no sidecar = never attempted” to
+version-five plans. V0/v2 retain their pre-upgrade uncertainty; v3/v4 attempt
+markers are read-only migration input. Exact legacy attempts are stored as
+computed at notification time, never expanded from receipt membership.
+The 6,000-receipt regression is retained even though the addendum permitted a
+smaller fixture: these legacy plans exist only in unrolled revisions of this PR.
+
+State-write failures are collected per channel, including a failed refusal
+write; later channels still mail. Completion-cleanup errors are also collected.
+Replay ignores and removes unknown or completed sidecars without parsing them.
+Startup replay sweeps abandoned temporary files, and ordinary pruning sweeps
+them even when no journal segment expires. Retention replay cleans orphan
+sidecars before deleting their completed plans. Pending plans and their sidecars
+survive protected retention, rotation and midnight.
+
+### Enumerated write-path self-review
+
+| New write path | Reader limits and rotation | Crash result and evidence |
+| --- | --- | --- |
+| Create `attempts/`, sync its parent, create a temporary file | No journal bytes or line framing; paths use a digest even for legacy IDs | Before create, after mkdir and after parent sync: no new attempt, retry the full plan; abandoned temp is ignored and swept |
+| Encode/write/sync/close attempt, then rename and sync its directory | 8 MiB hard sidecar cap; modern plans remain within 64 KiB; v0's 6,000 exact pairs fit; journal 1 MiB line and missing-newline semantics are untouched | Before rename: previous state survives. After rename: exact current pairs are ambiguous. Eight boundaries tested, with restart across midnight and forced segment rotation |
+| Replace refusal state | Same cap; one file, bounded union rather than attempt history; counter capped at seven; sidecar reads share the 64 MiB observation budget | Failed refusal persistence leaves the current send ambiguous; prior ambiguous pairs survive a later refusal. Existing subset tests and 24 transition/boundary cases remain green |
+| Append completion, sync journal directory, unlink sidecar, sync attempts directory | Completion still uses bounded pairs or an `All` plan reference; no attempt record added to JSONL; sync covers a new day/rotated completion segment | Four cleanup boundaries tested. A durable done row wins over a leftover sidecar, and restart repairs member rows without another mail |
+| Replay/prune cleanup | Unknown files are not decoded or charged as pending attempts; active files are bounded and counted with the journal's 64 MiB limit; invalid/oversize known state fails visibly | Temps never become attempts; completed/unknown sidecars are removed only after successful journal replay. Cleanup syncs the journal directory before removing retry evidence and syncs the attempts directory afterwards |
+
+The writer is also tested against an already over-budget journal: it touches
+only its sidecar, while the observer independently rejects the 64 MiB excess.
+Oversized writes preserve the previous sidecar; oversized, malformed, wrong-ID
+and wrong-version reads fail without deleting pending state. V0/v2 recovery
+tests remain unchanged; new v3/v4 migration cases prove that their markers
+remain readable and that migration emits no new in-journal attempt rows.
+Self-review found and closed the directory-durability gap between a rotated
+completion append and sidecar deletion, including the prune-inside-append path.
+
+Four earlier tests change only to follow the state's new home:
+
+- `TestIngestionRefusedThenAmbiguousSubset` reads the durable exact sidecar
+  before notify; its coverage and mail assertions are unchanged.
+- `TestIngestionRefusalStateBoundedAndBacksOff` counts sidecars, rejects new
+  attempt journal rows, and retains the 128 KiB bound across journal plus
+  sidecar. All backoff, restart and first-eligible-recovery assertions remain.
+- `TestIngestionAttemptReplacementCrashBoundaries` counts sidecars and rejects
+  new attempt rows, while retaining every mail/coverage assertion and adding
+  mkdir/parent-sync boundaries to its three transitions.
+- `TestIngestionBatchAttemptIsDurableBeforeNotify` inspects the sidecar's ID,
+  refusal state and timestamp instead of the last journal row.
+
+There are no clock or production-scheduling changes in round seven.
+
+### Duplicate-send measurement and addendum disposition
+
+The lane sent one scratch mail to itself twice, using
+`--dedup slack-ingestion:gp-74i1-round7-probe-b0155dc3`. Both exits were zero.
+The second send's stdout, verbatim:
+
+```text
+Suppressed duplicate of ci-wisp-yttr5ix to gascity-packs/implementation-worker-codex (dedup key "slack-ingestion:gp-74i1-round7-probe-b0155dc3")
+```
+
+Its stderr was empty (zero bytes). The command/exit manifests and separate
+stdout/stderr files are retained. No classifier change is needed and no scratch
+message was sent to Slack or to the mayor.
+
+All six addendum items are addressed: the legacy scope is documented; replay
+and retry agree on the unterminated final plan and state errors are isolated by
+channel; temp and orphan cleanup is tested; segment rewrites and per-attempt
+journal scans are gone; v3 markers retain their conservative migration meaning;
+the duplicate-send exit was measured as zero. The gate's BLOCK governs despite
+the Opus read's CLEAN verdict and lower grading. The mayor's new gate and read
+on `b0155dc3..NEW` follow READY. The bead remains open for the mayor's rollout
+and observation week; the PR remains draft.
+
+Final round-seven validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
+
+- `go test -json ./...`: **1,488** top-level passes, three skips, zero failures;
+  **13,091** passes including subtests.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  **76** top-level passes, one skip, zero failures; **267** including subtests.
+- The eight new test functions contribute **52** passing tests/subtests;
+  extending the existing transition matrix adds six more, **58** in total.
+- `go vet ./...` and diff checks: exit zero.
+- The 6,000-member fixture retains **774,404** journal bytes with zero bytes
+  added by the attempt. The 1,000-pass refusal fixture records **22** attempts,
+  **one** live sidecar (**385 bytes** maximum), **1,817** journal bytes and
+  **zero** journal growth after the first refusal, including restart.
+- The two red logs show 15 failing leaf cases before their respective fixes
+  (17 failed test/subtest results including the parent tests).
+
+Python is unchanged; round five's 948 passes / two skips remain prior evidence.
+Node/pnpm were not used. Compressed red/final JSONL logs, exact command/exit
+manifests and `round7-test-summary.json` accompany this record. The baseline
+remains 14 reconstructed false alarms / 18 alerted receipts, the initial
+window three minutes, and the late-proof horizon two hours. No live rollout
+or observation-week result is claimed.

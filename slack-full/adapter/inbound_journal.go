@@ -206,12 +206,26 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	if r.SessionAct != nil {
 		j.cacheSessionActLocked(*r.SessionAct)
 	}
+	if r.AlertBatch != nil {
+		switch r.Phase {
+		case "ingestion_batch":
+			if j.preparedBatches == nil {
+				j.preparedBatches = make(map[string]ingestionAlertBatch)
+			}
+			j.preparedBatches[r.AlertBatch.ID] = *r.AlertBatch
+		case "ingestion_batch_done":
+			delete(j.preparedBatches, r.AlertBatch.ID)
+		}
+	}
 	return j.pruneLocked(now, path)
 }
 
 // The caller holds j.mu. Keep pruning separate from the incoming append so
 // repeated retention passes can be checked for writes of their own.
 func (j *inboundJournal) pruneLocked(now time.Time, path string) error {
+	if err := j.pruneAlertAttemptFilesLocked(true); err != nil {
+		return err
+	}
 	days := j.retentionDays
 	if days <= 0 {
 		days = 7

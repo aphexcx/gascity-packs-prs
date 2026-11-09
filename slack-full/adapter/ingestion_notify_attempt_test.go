@@ -151,10 +151,9 @@ func TestIngestionBatchAttemptIsDurableBeforeNotify(t *testing.T) {
 	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return at },
 		fetch: func(context.Context, string) ([]json.RawMessage, error) { return nil, nil },
 		notify: func(_ context.Context, rows []inboundJournalRecord) error {
-			durable := ingestionJournalRows(t, &inboundJournal{dir: j.dir})
-			last := durable[len(durable)-1]
-			if last.Phase != "ingestion_batch_attempt" || last.AlertBatch == nil || last.AlertBatch.ID != rows[0].AlertBatchID {
-				t.Fatalf("notify ran without its durable attempt: phase=%s", last.Phase)
+			state := ingestionReadAttempt(t, &inboundJournal{dir: j.dir}, rows[0].AlertBatchID)
+			if state.Refused || state.ID != rows[0].AlertBatchID || state.AttemptedAt.IsZero() {
+				t.Fatal("notify ran without its durable attempt")
 			}
 			return nil
 		}}

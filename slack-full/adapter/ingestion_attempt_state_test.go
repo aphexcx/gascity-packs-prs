@@ -31,17 +31,9 @@ func TestIngestionRefusedThenAmbiguousSubset(t *testing.T) {
 				o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
 					fetch: func(context.Context, string) ([]json.RawMessage, error) { return nil, nil },
 					notify: func(_ context.Context, rows []inboundJournalRecord) error {
-						found := false
-						for _, row := range ingestionJournalRows(t, j) {
-							if row.Phase == "ingestion_batch_attempt" && row.AlertBatch.ID == rows[0].AlertBatchID {
-								found = true
-								if ingestionCoverageID(row.AlertBatch.Coverage) != ingestionCoverageID(ingestionCoverageFor(rows)) {
-									t.Fatal("durable attempt does not name exactly the notified pairs")
-								}
-							}
-						}
-						if !found {
-							t.Fatal("notify has no durable exact attempt")
+						state := ingestionReadAttempt(t, j, rows[0].AlertBatchID)
+						if state.Refused || ingestionCoverageID(state.Coverage) != ingestionCoverageID(ingestionCoverageFor(rows)) {
+							t.Fatal("durable attempt does not name exactly the notified pairs")
 						}
 						calls++
 						if calls == 1 {
@@ -129,7 +121,7 @@ func TestIngestionRefusalStateBoundedAndBacksOff(t *testing.T) {
 			}
 			return ingestionNotifyRefusal{errors.New("connection refused")}
 		}}
-	firstSize, maxGrowth := 0, 0
+	firstSize, maxGrowth, maxSidecarBytes := 0, 0, 0
 	for i := 0; i < 1000; i++ {
 		_ = o.step(context.Background())
 		size := len(coverageJournalSnapshot(t, j))
@@ -139,6 +131,15 @@ func TestIngestionRefusalStateBoundedAndBacksOff(t *testing.T) {
 		if size-firstSize > maxGrowth {
 			maxGrowth = size - firstSize
 		}
+		files, err := filepath.Glob(filepath.Join(j.dir, "attempts", "*.json"))
+		if err != nil || len(files) != 1 {
+			t.Fatalf("expected one live sidecar on pass %d: %v %v", i, files, err)
+		}
+		info, err := os.Stat(files[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		maxSidecarBytes = max(maxSidecarBytes, int(info.Size()))
 		if i == 500 {
 			j = &inboundJournal{dir: j.dir, retentionDays: 1, now: func() time.Time { return now }}
 			o.cfg.inboundJournal = j
@@ -146,19 +147,23 @@ func TestIngestionRefusalStateBoundedAndBacksOff(t *testing.T) {
 		pruneCoverageFixture(t, j, now)
 		now = now.Add(5 * time.Second)
 	}
-	states := 0
+	files, err := filepath.Glob(filepath.Join(j.dir, "attempts", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := len(files)
 	for _, row := range ingestionJournalRows(t, j) {
 		if row.Phase == "ingestion_batch_attempt" || row.Phase == "ingestion_batch_refused" {
-			states++
+			t.Fatal("new attempt state written into journal")
 		}
 	}
-	if states != 1 || maxGrowth != 0 || firstSize >= 128<<10 {
-		t.Errorf("unbounded refusal state: records=%d growth=%d initial=%d", states, maxGrowth, firstSize)
+	if states != 1 || maxGrowth != 0 || firstSize+maxSidecarBytes >= 128<<10 {
+		t.Errorf("unbounded refusal state: records=%d growth=%d initial=%d sidecar=%d", states, maxGrowth, firstSize, maxSidecarBytes)
 	}
 	if len(attempts) < 7 || len(attempts) > 25 {
 		t.Fatalf("backoff attempt count=%d, want 7..25 over 1000 passes", len(attempts))
 	}
-	t.Logf("1000 passes: %d attempts, %d live state row, %d journal bytes, %d byte growth after first refusal", len(attempts), states, firstSize, maxGrowth)
+	t.Logf("1000 passes: %d attempts, %d live sidecar (%d bytes max), %d journal bytes, %d byte growth after first refusal", len(attempts), states, maxSidecarBytes, firstSize, maxGrowth)
 	for i := 1; i < len(attempts); i++ {
 		want := 5 * time.Second << min(i-1, 6)
 		if want > 5*time.Minute {
@@ -242,7 +247,7 @@ func TestIngestionMailProcessBoundary(t *testing.T) {
 
 func TestIngestionAttemptReplacementCrashBoundaries(t *testing.T) {
 	for _, transition := range []string{"first_attempt", "subset_attempt", "subset_refusal"} {
-		for _, stage := range []string{"before_create", "after_write", "after_sync", "after_close", "after_rename", "after_dir_sync"} {
+		for _, stage := range []string{"before_create", "after_mkdir", "after_parent_sync", "after_write", "after_sync", "after_close", "after_rename", "after_dir_sync"} {
 			t.Run(transition+"/"+stage, func(t *testing.T) {
 				at := time.Now().UTC()
 				now := at
@@ -323,10 +328,14 @@ func TestIngestionAttemptReplacementCrashBoundaries(t *testing.T) {
 				if named["100.1"] != 1 || named["200.1"] != 1 {
 					t.Fatalf("recovery hid or repeated a line: %v", named)
 				}
-				states := 0
+				files, err := filepath.Glob(filepath.Join(j.dir, "attempts", "*.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				states := len(files)
 				for _, row := range ingestionJournalRows(t, j) {
 					if row.AlertBatch != nil && row.AlertBatch.ID == ingestionCoverageID(ingestionCoverageFor([]inboundJournalRecord{r})) && (row.Phase == "ingestion_batch_attempt" || row.Phase == "ingestion_batch_refused") {
-						states++
+						t.Fatal("new attempt state written into journal")
 					}
 				}
 				if states > 1 {

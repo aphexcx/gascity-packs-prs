@@ -244,7 +244,8 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 							saved.possible = mergeIngestionCoverage(saved.possible, batch.Coverage)
 						}
 						saved.attempted = batch.PriorAll || len(saved.possible) > 0
-						saved.attempt = &batch
+						saved.attempt = &ingestionAttemptState{ID: batch.ID, Coverage: batch.Coverage,
+							Refused: saved.refused, Refusals: batch.Refusals, RetryAt: batch.RetryAt}
 						j.preparedBatches[batch.ID] = saved
 					}
 				} else if r.Phase == "ingestion_batch_attempt" {
@@ -360,6 +361,9 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			batch.possible = batch.Coverage
 			j.preparedBatches[id] = batch
 		}
+	}
+	if err := j.recoverAlertAttemptsLocked(&remaining); err != nil {
+		return nil, nil, time.Time{}, err
 	}
 	for key, r := range rows {
 		r.StartedAt = started[ingestionKey(r, "")]
@@ -543,7 +547,8 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 		}
 		attempt, err := o.beginAlertAttempt(batch, unseen)
 		if err != nil {
-			return err
+			failures = append(failures, fmt.Errorf("persist unseen attempt for %s: %w", channel, err))
+			continue
 		}
 		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err = o.notify(mailCtx, ingestionAlertRows(unseen))
@@ -553,15 +558,17 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 				attempt.Refusals = min(attempt.Refusals+1, 7)
 				delay := min(5*time.Second<<uint(attempt.Refusals-1), 5*time.Minute)
 				attempt.RetryAt = o.now().Add(delay).UnixNano()
-				if recordErr := o.cfg.inboundJournal.writeAlertAttempt(batch, attempt, "ingestion_batch_refused"); recordErr != nil {
-					return errors.Join(err, recordErr)
+				attempt.Refused = true
+				if recordErr := o.cfg.inboundJournal.writeAlertAttempt(attempt); recordErr != nil {
+					err = errors.Join(err, recordErr)
 				}
 			}
 			failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
 			continue
 		}
 		if err := o.finishAlertBatch(batch, unseen, true); err != nil {
-			return err
+			failures = append(failures, fmt.Errorf("complete unseen alert for %s: %w", channel, err))
+			continue
 		}
 		for _, r := range unseen {
 			if err := o.recordAlertResult(r, ingestionCoverageFor([]inboundJournalRecord{r})); err != nil {
