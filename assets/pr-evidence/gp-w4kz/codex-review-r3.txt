@@ -1,0 +1,26 @@
+# codex-gate review: base a5c2b7d2dc3ce098cb28499da71783a9f1305aec (merge base of --base a5c2b7d2dc3ce098cb28499da71783a9f1305aec = a5c2b7d2dc3ce098cb28499da71783a9f1305aec and the head) head 4ad81ce409442f3a2893ca13d2a80f0a8a84f544; 11 file(s) (6 under assets/pr-evidence/, outside the --max-files cap; 5 counted); class DEEP; model gpt-6-astra; 2026-11-07T04:40:26Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (HEAD of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; 204 untracked entr(ies) there ignored)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+#  assets/pr-evidence/gp-w4kz/N1-review-fix-test.log  |  2 ++
+#  assets/pr-evidence/gp-w4kz/codex-review-r2.txt     | 63 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  assets/pr-evidence/gp-w4kz/completion.tsv          |  7 +++++++
+#  assets/pr-evidence/gp-w4kz/rate-limit-isolated.log |  1 +
+#  assets/pr-evidence/gp-w4kz/self-review.md          | 18 ++++++++++++++++++
+#  assets/pr-evidence/gp-w4kz/shutdown-isolated.log   |  1 +
+#  gchat/CHANGELOG.md                                 |  2 +-
+#  gchat/adapter/README.md                            |  5 +++--
+#  gchat/adapter/run.sh                               | 13 ++++---------
+#  gchat/commands/runtime.sh                          | 37 ++++++++++++++++++++++++++++--------
+#  gchat/tests/test_commands.py                       | 30 +++++++++++++++++++++++++++---
+#  11 files changed, 156 insertions(+), 23 deletions(-)
+
+**MAJOR — New launcher dependency breaks the Go launcher tests** at [gchat/adapter/run.sh:30](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.sYiWKO/tree/gchat/adapter/run.sh:30).
+
+The launcher now unconditionally sources `../commands/runtime.sh`, but [launcherFixture](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.sYiWKO/tree/gchat/adapter/cmd/gc-gchat-adapter/main_test.go:438) copies only `run.sh` and creates stub build/source files. Static tracing shows all three `TestRunScript` layouts would exit with a missing-helper error before reaching their assertions, breaking the documented full Go suite. Copy the real helper into the fixture’s sibling `commands` directory.
+
+All 11 changed files were read in full; no other actionable findings.
+
+Tests **not run (sandbox)**. Committed evidence reports 23 Python tests and 22 subtests passing. The latest recorded full Go run failed two timing assertions; isolated repetitions passed. No successful full Go run after this launcher change is recorded.
+
+VERDICT: BLOCK

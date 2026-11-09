@@ -1,0 +1,2 @@
+description = "Accept or replay an unresolved inbound delivery"
+run = "../resolve.sh"

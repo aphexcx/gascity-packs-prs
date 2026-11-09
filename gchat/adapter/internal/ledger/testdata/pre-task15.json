@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "identity_user_id": "users/123",
+  "identity_seed": "users/123",
+  "subscription": {
+    "name": "",
+    "state": "",
+    "expiry": "0001-01-01T00:00:00Z",
+    "target": ""
+  },
+  "spaces": {
+    "spaces/example": {
+      "kind": "room",
+      "wake": "all",
+      "message_cursor": "0001-01-01T00:00:00Z",
+      "event_cursor": "0001-01-01T00:00:00Z",
+      "backlog": [
+        "{\"text\":\"persisted\"}"
+      ],
+      "page_token": "saved-token",
+      "frozen_upper": "0001-01-01T00:00:00Z"
+    }
+  },
+  "transport": {
+    "ids": [
+      "pubsub:old"
+    ],
+    "next": 0
+  },
+  "messages": {},
+  "changes": {
+    "old-change": {
+      "id": "old-change",
+      "space": "",
+      "message": "",
+      "kind": "",
+      "status": "unresolved",
+      "receipt_id": "",
+      "attempts": 0,
+      "created": "0001-01-01T00:00:00Z",
+      "event": "{\"text\":\"old turn\"}",
+      "reason": ""
+    }
+  },
+  "sends": {
+    "old-send": {
+      "key": "old-send",
+      "space": "spaces/example",
+      "thread": "",
+      "parts": [
+        {
+          "request_id": "old-send-1",
+          "text": "hello",
+          "message_name": "spaces/example/messages/one"
+        }
+      ],
+      "receipt": {
+        "message_id": "spaces/example/messages/one",
+        "conversation": {
+          "scope_id": "",
+          "provider": "",
+          "account_id": "",
+          "conversation_id": "",
+          "kind": ""
+        },
+        "delivered": true
+      },
+      "recorded": false,
+      "created": "0001-01-01T00:00:00Z",
+      "record_pending": true
+    }
+  },
+  "unresolved": {
+    "old-change": {
+      "id": "old-change",
+      "space": "",
+      "message": "",
+      "kind": "",
+      "status": "unresolved",
+      "receipt_id": "",
+      "attempts": 0,
+      "created": "0001-01-01T00:00:00Z",
+      "event": "{\"text\":\"old turn\"}",
+      "reason": ""
+    }
+  },
+  "quarantine": [],
+  "counters": {}
+}

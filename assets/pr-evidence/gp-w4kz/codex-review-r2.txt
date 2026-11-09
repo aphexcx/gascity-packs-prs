@@ -1,0 +1,63 @@
+# codex-gate review: base 788acecf695b79b4b23c1c5cba996fd86fd6d305 (merge base of --base 788acecf695b79b4b23c1c5cba996fd86fd6d305 = 788acecf695b79b4b23c1c5cba996fd86fd6d305 and the head) head a5c2b7d2dc3ce098cb28499da71783a9f1305aec; 50 file(s) (26 under assets/pr-evidence/, outside the --max-files cap; 24 counted); class DEEP; model gpt-6-astra; 2026-11-07T04:28:43Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (HEAD of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; 198 untracked entr(ies) there ignored)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+#  assets/pr-evidence/gp-w4kz/N1-config-test.log          |   1 +
+#  assets/pr-evidence/gp-w4kz/N1-shell-test.log           |   2 +
+#  assets/pr-evidence/gp-w4kz/R1-test-r2.log              |   5 +
+#  assets/pr-evidence/gp-w4kz/R1-test-r3.log              |   1 +
+#  assets/pr-evidence/gp-w4kz/R1-test.log                 |   4 +
+#  assets/pr-evidence/gp-w4kz/codex-review-r1.txt         |  57 +++++++++
+#  assets/pr-evidence/gp-w4kz/completion.tsv              |  26 ++++
+#  assets/pr-evidence/gp-w4kz/m1-retirement-race-test.log |   1 +
+#  assets/pr-evidence/gp-w4kz/m1-test-r2.log              |   6 +
+#  assets/pr-evidence/gp-w4kz/m1-test-r3.log              |   6 +
+#  assets/pr-evidence/gp-w4kz/m1-test-r4.log              |   2 +
+#  assets/pr-evidence/gp-w4kz/m1-test.log                 |   6 +
+#  assets/pr-evidence/gp-w4kz/m2-shell-test.log           |   2 +
+#  assets/pr-evidence/gp-w4kz/m2-test.log                 |   1 +
+#  assets/pr-evidence/gp-w4kz/m3-test-r2.log              |   1 +
+#  assets/pr-evidence/gp-w4kz/m3-test.log                 | 373 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  assets/pr-evidence/gp-w4kz/m4-test.log                 |   1 +
+#  assets/pr-evidence/gp-w4kz/m5-test-r2.log              |   2 +
+#  assets/pr-evidence/gp-w4kz/m5-test.log                 |   6 +
+#  assets/pr-evidence/gp-w4kz/m6-test.log                 |   3 +
+#  assets/pr-evidence/gp-w4kz/m7-test.log                 |   1 +
+#  assets/pr-evidence/gp-w4kz/m8-test.log                 |   1 +
+#  assets/pr-evidence/gp-w4kz/m9-compatibility-test.log   |   1 +
+#  assets/pr-evidence/gp-w4kz/m9-test.log                 |   1 +
+#  assets/pr-evidence/gp-w4kz/self-review.md              | 133 ++++++++++++++++++++
+#  assets/pr-evidence/gp-w4kz/toolchain.log               |   1 +
+#  gchat/CHANGELOG.md                                     |  11 ++
+#  gchat/adapter/README.md                                |   2 +
+#  gchat/adapter/internal/app/identity_seed_test.go       |  60 ++++++++++
+#  gchat/adapter/internal/app/keyholder_test.go           | 115 +++++++++++++++++-
+#  gchat/adapter/internal/app/operations.go               |   8 ++
+#  gchat/adapter/internal/catchup/catchup.go              |  50 +++++++-
+#  gchat/adapter/internal/catchup/catchup_test.go         |  39 +++++-
+#  gchat/adapter/internal/events/events.go                |  14 ++-
+#  gchat/adapter/internal/events/events_test.go           |  59 +++++++++
+#  gchat/adapter/internal/inbound/inbound.go              |  31 ++++-
+#  gchat/adapter/internal/inbound/inbound_test.go         |  87 ++++++++++++++
+#  gchat/adapter/internal/ledger/ledger.go                |   6 +
+#  gchat/adapter/internal/principal/principal.go          |   6 +-
+#  gchat/adapter/internal/principal/principal_test.go     |  24 ++++
+#  gchat/adapter/internal/server/review_test.go           |  41 +++++++
+#  gchat/adapter/internal/server/server.go                |  39 +++++-
+#  gchat/adapter/internal/server/server_test.go           |  58 +++++++++
+#  gchat/adapter/internal/token/keyholder.go              |  20 +++-
+#  gchat/adapter/run.sh                                   |   5 +
+#  gchat/commands/common.sh                               |   2 +-
+#  gchat/commands/runtime.sh                              |   4 +
+#  gchat/commands/send.sh                                 |   8 +-
+#  gchat/commands/upload/help.md                          |   4 +
+#  gchat/tests/test_commands.py                           |  37 +++++-
+#  50 files changed, 1345 insertions(+), 29 deletions(-)
+
+- **MINOR — Shell and adapter can select different authentication modes** at [gchat/commands/runtime.sh:37](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.CsHNjA/tree/gchat/commands/runtime.sh:37). Restoring every inherited export also restores `GCHAT_TOKEN_SOURCE`, while Go’s `config.Load` reads that setting exclusively from the env file. For example, inherited `oauth` with file-configured `keyholder` now bypasses enrollment and makes doctor require the wrong credential. Previously, sourcing the file kept these paths aligned. Restrict restoration to supported overrides, or make shell consumers use the adapter’s effective configuration. Add coverage for conflicting inherited token-source values.
+
+All changed files were read in full. No critical or major findings.
+
+Tests **not run (sandbox)**. Committed evidence reports passing targeted Go checks and 22 Python tests. The recorded full Go run failed a compatibility assertion subsequently fixed and verified by the ledger tests; no later full-suite success is recorded.
+
+VERDICT: CLEAN

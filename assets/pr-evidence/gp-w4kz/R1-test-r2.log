@@ -1,0 +1,5 @@
+--- FAIL: TestHistoryErrorHoldsRetainedMessagesUntilEnumerationCompletes (0.04s)
+    catchup_test.go:1157: pass 0: (0, 0, <nil>), want (0, 1, error)
+FAIL
+FAIL	gchat-adapter/internal/catchup	31.998s
+FAIL

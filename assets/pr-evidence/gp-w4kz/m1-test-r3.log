@@ -1,0 +1,6 @@
+--- FAIL: TestDeletedSpaceDoesNotHoldInterruptedSend (13.13s)
+    keyholder_test.go:273: condition did not become true
+    keyholder_test.go:270: recovery state: gone=1 pending=&{Key:interrupted Space:spaces/live Thread: Parts:[{RequestID:interrupted-1 Text:recover me MessageName:}] Receipt:0x21bf114cc5a0 Recorded:false Created:0001-01-01 00:00:00 +0000 UTC Request:0x21bf10dadb80 Upload:<nil> RecordPending:false NotRecordable:false RecordingReason:gc did not deliver the message RecordingFailureKind:} published=1
+FAIL
+FAIL	gchat-adapter/internal/app	13.405s
+FAIL

@@ -1,0 +1,25 @@
+--- FAIL: TestSpaceInventoryForbiddenRetriesMessage (0.12s)
+    --- FAIL: TestSpaceInventoryForbiddenRetriesMessage/api_disabled (0.03s)
+        inbound_test.go:1835: inventory failure = 1, <nil>; want credential hold
+    --- FAIL: TestSpaceInventoryForbiddenRetriesMessage/access_policy (0.02s)
+        inbound_test.go:1835: inventory failure = 1, <nil>; want credential hold
+    --- FAIL: TestSpaceInventoryForbiddenRetriesMessage/project_permission (0.03s)
+        inbound_test.go:1835: inventory failure = 1, <nil>; want credential hold
+    --- FAIL: TestSpaceInventoryForbiddenRetriesMessage/unknown (0.03s)
+        inbound_test.go:1835: inventory failure = 1, <nil>; want credential hold
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.469s
+--- FAIL: TestResourceDenied (0.00s)
+    --- FAIL: TestResourceDenied/api_disabled (0.00s)
+        chat_test.go:935: ResourceDenied = true, want false
+    --- FAIL: TestResourceDenied/policy (0.00s)
+        chat_test.go:935: ResourceDenied = true, want false
+    --- FAIL: TestResourceDenied/project (0.00s)
+        chat_test.go:935: ResourceDenied = true, want false
+    --- FAIL: TestResourceDenied/unknown (0.00s)
+        chat_test.go:935: ResourceDenied = true, want false
+    --- FAIL: TestResourceDenied/empty (0.00s)
+        chat_test.go:935: ResourceDenied = true, want false
+FAIL
+FAIL	gchat-adapter/internal/chat	0.346s
+FAIL

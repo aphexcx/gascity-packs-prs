@@ -1,0 +1,125 @@
+{
+  "source_commit": "85af4f7c5efa2557f8f8c61f5770946fc13fb6db",
+  "command": "GOMAXPROCS=2 go test ./... -count=1 -timeout=30m -json",
+  "packages": {
+    "pass": 20,
+    "fail": 1
+  },
+  "top_level_tests": {
+    "pass": 575,
+    "fail": 1
+  },
+  "subtests": {
+    "pass": 1075
+  },
+  "failed_tests": [
+    "gchat-adapter/internal/app/TestObservedIdentityReplacesContradictedLedgerIdentity"
+  ],
+  "package_results": [
+    {
+      "package": "gchat-adapter/cmd/gc-gchat-adapter",
+      "result": "pass",
+      "seconds": 3.743
+    },
+    {
+      "package": "gchat-adapter/internal/catchup",
+      "result": "pass",
+      "seconds": 38.469
+    },
+    {
+      "package": "gchat-adapter/internal/chat",
+      "result": "pass",
+      "seconds": 1.895
+    },
+    {
+      "package": "gchat-adapter/internal/config",
+      "result": "pass",
+      "seconds": 0.197
+    },
+    {
+      "package": "gchat-adapter/internal/events",
+      "result": "pass",
+      "seconds": 2.296
+    },
+    {
+      "package": "gchat-adapter/internal/fakes/fakegc",
+      "result": "pass",
+      "seconds": 0.185
+    },
+    {
+      "package": "gchat-adapter/internal/fakes/fakegoogle",
+      "result": "pass",
+      "seconds": 0.52
+    },
+    {
+      "package": "gchat-adapter/internal/gcclient",
+      "result": "pass",
+      "seconds": 0.164
+    },
+    {
+      "package": "gchat-adapter/internal/inbound",
+      "result": "pass",
+      "seconds": 11.681000000000001
+    },
+    {
+      "package": "gchat-adapter/internal/ledger",
+      "result": "pass",
+      "seconds": 0.645
+    },
+    {
+      "package": "gchat-adapter/internal/markdown",
+      "result": "pass",
+      "seconds": 0.173
+    },
+    {
+      "package": "gchat-adapter/internal/media",
+      "result": "pass",
+      "seconds": 0.103
+    },
+    {
+      "package": "gchat-adapter/internal/principal",
+      "result": "pass",
+      "seconds": 0.19
+    },
+    {
+      "package": "gchat-adapter/internal/provenance",
+      "result": "pass",
+      "seconds": 0.086
+    },
+    {
+      "package": "gchat-adapter/internal/app",
+      "result": "fail",
+      "seconds": 82.164
+    },
+    {
+      "package": "gchat-adapter/internal/puller",
+      "result": "pass",
+      "seconds": 19.926
+    },
+    {
+      "package": "gchat-adapter/internal/token",
+      "result": "pass",
+      "seconds": 5.287
+    },
+    {
+      "package": "gchat-adapter/internal/wire",
+      "result": "pass",
+      "seconds": 0.123
+    },
+    {
+      "package": "gchat-adapter/test/contract",
+      "result": "pass",
+      "seconds": 7.301
+    },
+    {
+      "package": "gchat-adapter/internal/server",
+      "result": "pass",
+      "seconds": 35.95
+    },
+    {
+      "package": "gchat-adapter/test/e2e",
+      "result": "pass",
+      "seconds": 476.684
+    }
+  ]
+}

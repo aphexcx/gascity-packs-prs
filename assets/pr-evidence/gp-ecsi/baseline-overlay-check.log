@@ -1,0 +1,4 @@
+base_chat_blob=1954956a609dc9e7917108adf1051b9588edcbf1
+overlay_chat_blob=1954956a609dc9e7917108adf1051b9588edcbf1
+only_modified_production_file=gchat/adapter/internal/chat/chat.go
+app_production_sources_match_base_under_overlay=true

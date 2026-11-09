@@ -1,0 +1,14 @@
+2026/11/06 21:02:20 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/06 21:02:22 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/06 21:02:24 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/06 21:02:26 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/06 21:02:28 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/06 21:02:31 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+--- FAIL: TestObservedIdentityReplacesContradictedLedgerIdentity (4.56s)
+    app_test.go:363: Post "http://adapter/publish": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+2026/11/06 21:02:37 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/06 21:02:39 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/06 21:02:42 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+FAIL
+FAIL	gchat-adapter/internal/app	24.503s
+FAIL

@@ -1,0 +1,5 @@
+git log --reverse --format=<sha,author,subject,body> 788acecf..HEAD	0
+git diff --name-only 788acecf HEAD	0
+git rev-list --merges 788acecf..HEAD	0
+git rev-parse HEAD	0
+git merge-base --is-ancestor 788acecf HEAD	0
