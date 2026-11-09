@@ -136,7 +136,9 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 }
 
 func ingestionSettled(r inboundJournalRecord, now time.Time) bool {
-	return r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted && !now.Before(r.DeliveredAt.Add(ingestionLateWindow)))
+	// Batch completion proves mail acceptance, but retention must preserve
+	// the source until its individual completion row is durable as well.
+	return r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted && r.Phase == "ingestion_alert" && !now.Before(r.DeliveredAt.Add(ingestionLateWindow)))
 }
 
 type ingestionRecordDays struct {
@@ -421,7 +423,8 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 		}
 		batch, unseen, err := o.prepareAlertBatch(channel, unseen)
 		if err != nil {
-			return err
+			failures = append(failures, fmt.Errorf("prepare unseen alert: %w", err))
+			continue
 		}
 		if len(unseen) == 0 {
 			continue
@@ -587,19 +590,27 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 	if len(rows) == 0 {
 		return nil
 	}
-	var lines []string
-	for _, r := range rows {
-		lines = append(lines, fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s sessions=%s handoff=%s", r.MessageTS, r.ThreadTS, r.ReceiptID, strings.Join(r.TargetSessions, ","), r.DeliveredAt.UTC().Format(time.RFC3339)))
-	}
 	key := rows[0].AlertBatchID
 	if key == "" {
 		key = ingestionAlertID(ingestionAlertMembers(rows))
 	}
-	subject := fmt.Sprintf("Slack delivered_unseen: %d lines in %s", len(rows), rows[0].Channel)
-	body := fmt.Sprintf("%s\n%s\nNo rendered input, explicit session reaction, or session reply was found within %s of hand-off. Read these Slack threads now. Transport delivery is not ingestion; the dead-letter file is unchanged.", subject, strings.Join(lines, "\n"), ingestionWindow)
+	subject, body := ingestionAlertMessage(rows)
+	if len(body) > ingestionAlertBatchBudget {
+		return fmt.Errorf("ingestion alert exceeds %d-byte mail budget", ingestionAlertBatchBudget)
+	}
 	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", subject, "-m", body)
 	// Do not log CLI output, which may contain mailbox or provider data.
 	return cmd.Run()
+}
+
+func ingestionAlertMessage(rows []inboundJournalRecord) (string, string) {
+	var lines []string
+	for _, r := range rows {
+		lines = append(lines, fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s sessions=%s handoff=%s", r.MessageTS, r.ThreadTS, r.ReceiptID, strings.Join(r.TargetSessions, ","), r.DeliveredAt.UTC().Format(time.RFC3339)))
+	}
+	subject := fmt.Sprintf("Slack delivered_unseen: %d lines in %s", len(rows), rows[0].Channel)
+	body := fmt.Sprintf("%s\n%s\nNo rendered input, explicit session reaction, or session reply was found within %s of hand-off. Read these Slack threads now. Transport delivery is not ingestion; the dead-letter file is unchanged.", subject, strings.Join(lines, "\n"), ingestionWindow)
+	return subject, body
 }
 
 // Accept actual user input and rendered queued-command attachments only.

@@ -70,3 +70,25 @@ Final round-2 validation: full adapter suite 1,453 top-level passes (12,902
 including subtests), three skips; focused race suite 41 top-level passes (78
 including subtests), one skip. Both exit 0. This includes the existing
 own-message-ID reply form that Slack normalizes to the root thread.
+
+## Codex round 2 corrections
+
+Round 2 reviewed `3be099e2e9e655820a46a18d7cba73d980d27931` and returned BLOCK
+on an oversized batch exceeding the journal scanner's record limit and on
+retention pruning source rows between atomic batch completion and individual
+completion. Both failures were reproduced: 8,500 ordinary receipt keys made
+the scanner report `token too long`; a one-day-retention retry after the
+two-hour horizon lost both member rows when interrupted after batch completion.
+
+New batches now budget their serialized journal record and mail body to 64 KiB,
+leaving excess receipts eligible for later passes. Oversized single receipts
+fail visibly for their channel; other channels still proceed. Completed mail
+whose individual rows are pending remains unsettled for retention, preserving
+the source until each individual row is durable. Both regressions pass with
+the existing ingestion tests under the race detector: 43 top-level passes
+(80 with subtests), one opt-in live test skipped.
+
+Final round-3 full adapter suite: 1,455 top-level passes (12,904 including
+subtests), three opt-in skips, exit 0. The focused race suite and diff check
+also exit 0. The three-minute deadline and two-hour late-proof horizon remain
+unchanged; only incomplete durable completion writes extend retention.

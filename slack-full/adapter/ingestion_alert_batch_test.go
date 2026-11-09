@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -73,6 +74,78 @@ func TestIngestionBatchRestartRetainsAcceptedMailIdentity(t *testing.T) {
 	}
 	if calls != 2 || len(accepted) != 2 {
 		t.Fatalf("calls=%d accepted mails=%d", calls, len(accepted))
+	}
+}
+
+func TestIngestionBatchBoundsLargeBacklogBeforePersisting(t *testing.T) {
+	now := time.Now().UTC()
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now }}
+	var rows []inboundJournalRecord
+	for i := 0; i < 8500; i++ {
+		r := ingestionTestRecord(fmt.Sprintf("1794198796.%06d", i), now.Add(-ingestionWindow), "body")
+		rows = append(rows, r)
+	}
+	_, selected, err := o.prepareAlertBatch("C1", rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.pending(); err != nil {
+		t.Fatalf("batch poisoned journal reader: %v", err)
+	}
+	if len(selected) == 0 || len(selected) >= len(rows) {
+		t.Fatalf("unbounded backlog selection: %d", len(selected))
+	}
+}
+
+func TestIngestionBatchCompletionRetainsSourceUntilMemberRows(t *testing.T) {
+	at := time.Date(2026, 11, 8, 20, 0, 0, 0, time.UTC)
+	now := at
+	j := &inboundJournal{dir: t.TempDir(), retentionDays: 1, now: func() time.Time { return now }}
+	for _, ts := range []string{"100.1", "100.2"} {
+		if err := j.append(ingestionTestRecord(ts, at, "body")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now = at.Add(ingestionWindow + time.Second)
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
+		fetch:  func(context.Context, string) ([]json.RawMessage, error) { return nil, nil },
+		notify: func(context.Context, []inboundJournalRecord) error { return fmt.Errorf("mail unavailable") }}
+	if err := o.step(context.Background()); err == nil {
+		t.Fatal("expected failed batch")
+	}
+	now = at.Add(4*time.Hour + time.Second) // next day, beyond the late horizon
+	o.notify = func(context.Context, []inboundJournalRecord) error { return nil }
+	appends := 0
+	j.now = func() time.Time {
+		appends++
+		if appends == 2 {
+			panic("crash before first member row")
+		}
+		return now
+	}
+	func() {
+		defer func() {
+			if recover() != "crash before first member row" {
+				t.Fatal("expected completion crash")
+			}
+		}()
+		_ = o.step(context.Background())
+	}()
+	j = &inboundJournal{dir: j.dir, retentionDays: 1, now: func() time.Time { return now }}
+	o.cfg.inboundJournal = j
+	o.notify = func(context.Context, []inboundJournalRecord) error { t.Fatal("accepted mail repeated"); return nil }
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	members := map[string]bool{}
+	for _, row := range ingestionJournalRows(t, j) {
+		if row.Phase == "ingestion_alert" && row.Alerted {
+			members[row.MessageTS] = true
+		}
+	}
+	if len(members) != 2 {
+		t.Fatalf("retention erased recoverable member rows: %v", members)
 	}
 }
 

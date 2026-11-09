@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 )
@@ -15,6 +16,10 @@ type ingestionAlertBatch struct {
 	Created time.Time `json:"created"`
 	Sent    bool      `json:"sent,omitempty"`
 }
+
+// Leave ample room below the journal scanner's 1 MiB record ceiling and
+// platform argv limits. Excess receipts stay eligible for subsequent passes.
+const ingestionAlertBatchBudget = 64 << 10
 
 func ingestionAlertMembers(rows []inboundJournalRecord) []string {
 	unique := make(map[string]bool)
@@ -62,12 +67,40 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 	if len(unseen) == 0 {
 		return ingestionAlertBatch{}, nil, nil
 	}
-	members := ingestionAlertMembers(unseen)
-	batch := ingestionAlertBatch{ID: ingestionAlertID(members), Channel: channel, Members: members, Created: o.now()}
+	var chosen []inboundJournalRecord
+	var batch ingestionAlertBatch
+	for _, r := range ingestionAlertRows(unseen) {
+		candidate := append(chosen, r)
+		members := ingestionAlertMembers(candidate)
+		plan := ingestionAlertBatch{ID: ingestionAlertID(members), Channel: channel, Members: members, Created: o.now()}
+		encoded, err := json.Marshal(inboundJournalRecord{Phase: "ingestion_batch", TS: o.now(), AlertBatch: &plan})
+		if err != nil {
+			return ingestionAlertBatch{}, nil, err
+		}
+		_, body := ingestionAlertMessage(candidate)
+		// Reserve space for the completion flag and timestamp formatting.
+		if len(encoded)+256 > ingestionAlertBatchBudget || len(body) > ingestionAlertBatchBudget {
+			if len(chosen) == 0 {
+				return ingestionAlertBatch{}, nil, fmt.Errorf("single ingestion alert exceeds %d-byte batch budget", ingestionAlertBatchBudget)
+			}
+			break
+		}
+		chosen, batch = candidate, plan
+	}
+	members := make(map[string]bool, len(batch.Members))
+	for _, member := range batch.Members {
+		members[member] = true
+	}
+	var selected []inboundJournalRecord
+	for _, r := range unseen {
+		if members[ingestionKey(r, "")] {
+			selected = append(selected, r)
+		}
+	}
 	if err := o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch", AlertBatch: &batch}); err != nil {
 		return ingestionAlertBatch{}, nil, err
 	}
-	return batch, unseen, nil
+	return batch, selected, nil
 }
 
 func (o *ingestionObserver) finishAlertBatch(batch ingestionAlertBatch, rows []inboundJournalRecord, sent bool) error {

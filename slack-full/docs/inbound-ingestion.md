@@ -62,9 +62,15 @@ Fanout members share one receipt line. Before mail, the journal saves the
 sorted original receipt set and its stable batch dedup key. Recovery reuses
 that key even if a member completed or gained proof; new arrivals wait for the
 next pass rather than being hidden by deduplication of the earlier mail.
+New batches are limited to a 64 KiB journal-record/mail-body budget; larger
+backlogs drain over successive passes. This stays below both the journal
+reader's 1 MiB line ceiling and command argument limits. A single receipt that
+cannot fit produces a visible retryable error without blocking other channels.
 Successful mail writes one atomic batch-completion record before the individual
 receipt completion rows. Restart repairs missing individual rows without
-mailing again, including after the late-proof horizon. Failed mail is retried
+mailing again, including after the late-proof horizon. Retention preserves
+source records until those individual completion rows are durable, even if a
+previous day's failed mail succeeds after its observation horizon. Failed mail is retried
 on the next pass and logged; it does not prevent other receipts being checked.
 The mail command and each target's transcript fetch have ten-second limits.
 The normal alert latency is the three-minute window plus one polling pass.
