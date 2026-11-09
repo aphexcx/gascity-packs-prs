@@ -15,10 +15,10 @@ for key in GCHAT_PROJECT_ID GCHAT_PUBSUB_TOPIC GCHAT_PUBSUB_SUBSCRIPTION "$crede
     value=$(printenv "$key" || :)
     [ -n "$value" ] || gchat_die "secrets $env_file: missing required key $key"
 done
-gchat_build
+adapter_bin=$(gchat_adapter_bin)
 # The binary resolves identity.token_file overrides, checks the token exists,
 # and forces a refresh even when its cached access token is still valid.
-if check=$("$GC_PACK_DIR/adapter/gc-gchat-adapter" auth --check 2>&1); then
+if check=$("$adapter_bin" auth --check 2>&1); then
     : # Keep successful auth output out of the first-failure headline.
 else
     gchat_die "token check failed: $check"

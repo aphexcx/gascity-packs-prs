@@ -31,6 +31,8 @@ After the approved PR is merged, a maintainer may add `--publish --commit
 `aphexcx/gascity-packs-prs`. They are prereleases; existing local or remote
 tags are refused. `gh` must be authenticated for that repository. Build-only
 runs need no GitHub credentials. Publishing is separate from opening a PR.
+If publishing stops between amd64 and arm64, delete the first release and its
+tag by hand before re-running; the existing tag otherwise blocks the retry.
 
 Install the adapter on PATH to start either pack without Go. Each `adapter/run.sh`
 loads its existing secrets configuration, then chooses the corresponding
@@ -39,6 +41,13 @@ on PATH, or the local build. An invalid explicit override fails. Relative paths
 are resolved from the launch directory. Shell functions cannot shadow lookup.
 Local missing/stale gchat binaries and missing Slack binaries retain their
 source-build fallback.
+
+The same prebuilt lookup covers helpers: `GC_GCHAT_ADAPTER_BIN` applies to
+gchat's `adapter/run.sh`, `gc gchat auth` (including `--check`) and its doctor.
+`GC_SLACK_ADAPTER_BIN` applies to Slack's adapter launcher, while
+`GC_SLACK_CLI_BIN` applies to `_cli.sh` and all Slack commands routed through it
+(including `import-app`). Each helper prefers its override, then the named
+binary on PATH, before using or building the pack-local binary.
 
 Gchat logs the selected prebuilt path and its `version` output; local and release
 builds stamp `main.Version` from `gchat/pack.toml` (0.5.0). Slack's pack version is

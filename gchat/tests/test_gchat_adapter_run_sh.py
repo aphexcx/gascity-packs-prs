@@ -20,11 +20,12 @@ class PrebuiltAdapterTest(unittest.TestCase):
         shutil.copy(PACK / "adapter/run.sh", self.adapter)
         shutil.copy(PACK / "adapter/build.sh", self.adapter)
         shutil.copytree(PACK / "commands", self.root / "pack/commands")
+        shutil.copytree(PACK / "doctor", self.root / "pack/doctor")
         shutil.copy(PACK / "pack.toml", self.root / "pack/pack.toml")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         # Deliberately exclude Go and any installed adapter from PATH.
-        for name in ("bash", "dirname", "basename", "find", "sed"):
+        for name in ("bash", "dirname", "basename", "find", "sed", "printenv"):
             (self.bin / name).symlink_to(shutil.which(name))
         self.env_file = self.root / "env"
         self.env_file.write_text("GCHAT_PROJECT_ID=from-file\n")
@@ -75,6 +76,104 @@ class PrebuiltAdapterTest(unittest.TestCase):
         self.env["BASH_FUNC_gc-gchat-adapter%%"] = "() { exit 89; }"
         self.assertEqual(self.run_adapter().stdout, "PATH\nserve\nproject=from-file\n")
 
+    def helper_fixture(self):
+        self.env["GC_PACK_DIR"] = str(self.root / "pack")
+        self.env_file.write_text(
+            "GCHAT_PROJECT_ID=from-file\nGCHAT_PUBSUB_TOPIC=topic\n"
+            "GCHAT_PUBSUB_SUBSCRIPTION=sub\nGCHAT_OAUTH_CLIENT_FILE=client.json\n"
+            "GC_CITY_NAME=test\nGC_API_BASE_URL=http://unused\n")
+        (self.adapter / "build.sh").write_text(
+            "#!/bin/sh\necho BUILD_MUST_NOT_RUN >&2\nexit 97\n")
+
+    def run_helper(self, entry):
+        return subprocess.run(
+            [shutil.which("sh"), str(self.root / "pack" / entry), "--check"],
+            cwd=self.root, env=self.env, text=True, capture_output=True, timeout=10)
+
+    def helper_stub(self, path, marker):
+        self.stub(path, marker)
+        # Doctor stops at auth with this marker, before network/config checks.
+        with path.open("a") as stream:
+            stream.write('exit "${CHECK_EXIT:-0}"\n')
+
+    def assert_helper_selected(self, entry, marker):
+        self.env["CHECK_EXIT"] = "23" if entry.startswith("doctor/") else "0"
+        result = self.run_helper(entry)
+        self.assertEqual(result.returncode, 2 if entry.startswith("doctor/") else 0,
+                         result.stderr)
+        output = result.stderr if entry.startswith("doctor/") else result.stdout
+        self.assertIn(f"{marker}\nauth\n--check\nproject=from-file", output)
+        self.assertNotIn("BUILD_MUST_NOT_RUN", result.stderr)
+        self.assertFalse((self.adapter / "gc-gchat-adapter").exists())
+
+    def test_auth_path_binary_without_go_or_local_binary(self):
+        self.helper_fixture()
+        self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
+        self.assert_helper_selected("commands/auth.sh", "PATH")
+
+    def test_doctor_path_binary_without_go_or_local_binary(self):
+        self.helper_fixture()
+        self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
+        self.assert_helper_selected("doctor/gchat/run.sh", "PATH")
+
+    def test_helpers_override_precedes_path(self):
+        self.helper_fixture()
+        self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
+        self.helper_stub(self.root / "chosen binary", "OVERRIDE")
+        self.env["GC_GCHAT_ADAPTER_BIN"] = "chosen binary"
+        for entry in ("commands/auth.sh", "doctor/gchat/run.sh"):
+            with self.subTest(entry=entry):
+                self.assert_helper_selected(entry, "OVERRIDE")
+
+    def test_keyholder_enrollment_uses_prebuilt_without_building(self):
+        self.helper_fixture()
+        self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
+        with self.env_file.open("a") as stream:
+            stream.write("GCHAT_TOKEN_SOURCE=keyholder\n")
+        self.stub(self.bin / "boxboxbox-google", "ENROLL")
+        result = subprocess.run(
+            [shutil.which("sh"), str(self.root / "pack/commands/auth.sh")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ENROLL\nenroll\nproject=from-file\n")
+        self.assertNotIn("BUILD_MUST_NOT_RUN", result.stderr)
+
+    def test_helpers_invalid_override_never_falls_back(self):
+        self.helper_fixture()
+        self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
+        nonexec = self.root / "nonexec"
+        nonexec.write_text("not executable")
+        for override in ("absent", "nonexec", "bin", ""):
+            self.env["GC_GCHAT_ADAPTER_BIN"] = override
+            for entry in ("commands/auth.sh", "doctor/gchat/run.sh"):
+                with self.subTest(override=override, entry=entry):
+                    result = self.run_helper(entry)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("is not an executable file", result.stderr)
+                    self.assertNotIn("BUILD_MUST_NOT_RUN", result.stderr)
+                    self.assertEqual(result.stdout, "")
+
+    def test_helpers_empty_path_entries_mean_current_directory(self):
+        self.helper_fixture()
+        self.helper_stub(self.root / "gc-gchat-adapter", "CWD")
+        for search_path in (f":{self.bin}", f"{self.bin}:", f"{self.bin}::{self.bin}"):
+            self.env["PATH"] = search_path
+            for entry in ("commands/auth.sh", "doctor/gchat/run.sh"):
+                with self.subTest(path=search_path, entry=entry):
+                    self.assert_helper_selected(entry, "CWD")
+
+    def test_path_walk_skips_directories_and_nonexecutables(self):
+        self.helper_fixture()
+        first = self.root / "first"
+        second = self.root / "second"
+        first.mkdir()
+        second.mkdir()
+        (first / "gc-gchat-adapter").mkdir()
+        (second / "gc-gchat-adapter").write_text("not executable")
+        self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
+        self.env["PATH"] = f"{first}:{second}:{self.bin}"
+        self.assert_helper_selected("commands/auth.sh", "PATH")
+
     def test_missing_secrets_still_fails_before_prebuilt_exec(self):
         self.stub(self.bin / "gc-gchat-adapter", "PATH")
         self.env_file.unlink()
@@ -99,7 +198,7 @@ class PrebuiltAdapterTest(unittest.TestCase):
         self.stub(binary, "LOCAL")
         # Record the version seen by the rebuild without needing Go.
         (self.adapter / "build.sh").write_text(
-            '#!/bin/bash\nsed -n \'s/^version = "\\([^"]*\\)".*/\\1/p\' ../pack.toml > rebuilt-version\n')
+            '#!/bin/bash\necho build-diagnostic\nsed -n \'s/^version = "\\([^"]*\\)".*/\\1/p\' ../pack.toml > rebuilt-version\n')
         manifest = self.root / "pack/pack.toml"
         manifest.write_text('[pack]\nversion = "9.9.9"\n')
         future = time.time() + 60

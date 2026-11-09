@@ -32,28 +32,13 @@ gchat_source_env "$env_file"
 
 # Resolve before changing directories: PATH and an explicit override may be
 # relative to the supervisor's working directory. Ignore shell functions.
-adapter_bin=${GC_GCHAT_ADAPTER_BIN:-}
-if [ -n "$adapter_bin" ]; then
-    if [ ! -f "$adapter_bin" ] || [ ! -x "$adapter_bin" ]; then
-        printf '%s\n' "ERROR: GC_GCHAT_ADAPTER_BIN=$adapter_bin is not an executable file" >&2
-        exit 1
-    fi
-else
-    adapter_bin=$(type -P gc-gchat-adapter 2>/dev/null || true)
-fi
-if [ -n "$adapter_bin" ]; then
-    adapter_bin=$(cd "$(dirname "$adapter_bin")" && pwd)/$(basename "$adapter_bin")
+GC_PACK_DIR=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P)
+adapter_bin=$(gchat_adapter_bin)
+if [ "$adapter_bin" != "$GC_PACK_DIR/adapter/gc-gchat-adapter" ]; then
     adapter_version=$("$adapter_bin" version)
     printf '%s\n' "gc-gchat-adapter run.sh: using $adapter_bin (version $adapter_version)" >&2
     exec "$adapter_bin" serve
 fi
 
 cd "$(dirname "$0")"
-if [ ! -x ./gc-gchat-adapter ]; then
-    ./build.sh
-elif [ -n "$(find .. -maxdepth 1 -name pack.toml -newer ./gc-gchat-adapter -print -quit)" ] ||
-     [ -n "$(find . -type f \( -name '*.go' -o -name go.mod -o -name go.sum -o -name build.sh \) -newer ./gc-gchat-adapter -print -quit)" ]; then
-    ./build.sh
-fi
-
-exec ./gc-gchat-adapter serve
+exec "$adapter_bin" serve

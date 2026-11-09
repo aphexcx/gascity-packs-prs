@@ -95,5 +95,81 @@ class PrebuiltAdapterTest(unittest.TestCase):
         self.assertIn("ERROR: no Go toolchain found", result.stderr)
 
 
+class PrebuiltCLITest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.pack = self.root / "fixture pack"
+        shutil.copytree(PACK / "commands", self.pack / "commands")
+        (self.pack / "cli").mkdir()
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        # No Go, head, or build utilities: prebuilt selection needs none of them.
+        self.env = {"PATH": str(self.bin), "GC_PACK_DIR": str(self.pack)}
+        self.args = ["--marker", "two words", "", "*.json"]
+
+    def stub(self, path, marker):
+        path.write_text(f'#!/bin/sh\nprintf "<%s>\\n" "{marker}" "$@"\nexit 17\n')
+        path.chmod(0o755)
+
+    def run_cli(self, entry="_cli"):
+        return subprocess.run(
+            [shutil.which("sh"), str(self.pack / "commands" / f"{entry}.sh"), *self.args],
+            cwd=self.root, env=self.env, text=True, capture_output=True, timeout=10)
+
+    def assert_selected(self, marker, entry="_cli"):
+        result = self.run_cli(entry)
+        self.assertEqual(result.returncode, 17, result.stderr)
+        args = self.args if entry == "_cli" else [entry, *self.args]
+        self.assertEqual(result.stdout.splitlines(), [f"<{arg}>" for arg in (marker, *args)])
+        self.assertEqual(result.stderr, "")
+        self.assertFalse((self.pack / "cli/gc-slack-cli").exists())
+
+    def test_cli_path_binary_without_go_preserves_argv_and_exit(self):
+        self.stub(self.bin / "gc-slack-cli", "PATH")
+        self.assert_selected("PATH")
+
+    def test_import_app_uses_prebuilt_cli(self):
+        self.stub(self.bin / "gc-slack-cli", "PATH")
+        self.assert_selected("PATH", "import-app")
+
+    def test_cli_override_precedes_path_with_relative_filename(self):
+        self.stub(self.bin / "gc-slack-cli", "PATH")
+        self.stub(self.root / "chosen binary", "OVERRIDE")
+        self.env["GC_SLACK_CLI_BIN"] = "chosen binary"
+        self.assert_selected("OVERRIDE")
+
+    def test_cli_invalid_override_never_falls_back(self):
+        self.stub(self.bin / "gc-slack-cli", "PATH")
+        (self.root / "nonexec").write_text("not executable")
+        for override in ("absent", "nonexec", "bin", ""):
+            with self.subTest(override=override):
+                self.env["GC_SLACK_CLI_BIN"] = override
+                result = self.run_cli()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("is not an executable file", result.stderr)
+                self.assertNotIn("rebuilding", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_cli_empty_and_relative_path_entries(self):
+        self.stub(self.root / "gc-slack-cli", "CWD")
+        for search_path in (f":{self.bin}", f"{self.bin}:", f"{self.bin}::{self.bin}", ".", ""):
+            with self.subTest(path=search_path):
+                self.env["PATH"] = search_path
+                self.assert_selected("CWD")
+
+    def test_cli_path_walk_skips_directories_and_nonexecutables(self):
+        first = self.root / "first"
+        second = self.root / "second"
+        first.mkdir()
+        second.mkdir()
+        (first / "gc-slack-cli").mkdir()
+        (second / "gc-slack-cli").write_text("not executable")
+        self.stub(self.bin / "gc-slack-cli", "PATH")
+        self.env["PATH"] = f"{first}:{second}:{self.bin}"
+        self.assert_selected("PATH")
+
+
 if __name__ == "__main__":
     unittest.main()

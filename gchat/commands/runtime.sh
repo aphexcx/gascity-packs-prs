@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shared only by auth and doctor. Other commands never load credentials.
+# Shared by the service, auth and doctor. Other commands never load credentials.
 set -eu
 
 # Preserve only settings that the Go loader also accepts from the process.
@@ -58,6 +58,39 @@ gchat_load_env() {
     fi
     gchat_source_env "$env_file"
 }
+
+# Print only the selected absolute path; build diagnostics belong on stderr.
+# A subshell keeps PATH splitting and glob settings out of the caller.
+gchat_adapter_bin() (
+    if [ "${GC_GCHAT_ADAPTER_BIN+x}" = x ]; then
+        gchat_bin=$GC_GCHAT_ADAPTER_BIN
+        if [ ! -f "$gchat_bin" ] || [ ! -r "$gchat_bin" ] || [ ! -x "$gchat_bin" ]; then
+            printf '%s\n' "ERROR: GC_GCHAT_ADAPTER_BIN=$gchat_bin is not an executable file" >&2
+            return 1
+        fi
+    else
+        gchat_bin=
+        # The extra delimiter preserves a final empty entry (current directory).
+        gchat_search_path=${PATH-}:
+        IFS=:
+        set -f
+        for gchat_path_dir in $gchat_search_path; do
+            gchat_candidate=${gchat_path_dir:-.}/gc-gchat-adapter
+            if [ -f "$gchat_candidate" ] && [ -x "$gchat_candidate" ]; then
+                gchat_bin=$gchat_candidate
+                break
+            fi
+        done
+        if [ -z "$gchat_bin" ]; then
+            gchat_build >&2 || return
+            gchat_bin=$GC_PACK_DIR/adapter/gc-gchat-adapter
+        fi
+    fi
+    case "$gchat_bin" in
+        /*) printf '%s\n' "$gchat_bin" ;;
+        *) printf '%s/%s\n' "$(pwd -P)" "$gchat_bin" ;;
+    esac
+)
 
 gchat_build() {
     (

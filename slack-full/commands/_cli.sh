@@ -1,12 +1,43 @@
 #!/bin/sh
-# Pack caches are materialized git-only; build the ignored CLI on first use.
+# Prefer a prebuilt CLI; git-only pack caches can build the local fallback.
 set -eu
 
 log() { printf 'gc-slack-cli _cli.sh: %s\n' "$*" >&2; }
 
-pack_dir="$(CDPATH= cd -- "${GC_PACK_DIR:?missing Gas City pack context}" && pwd -P)"
+pack_dir="$(CDPATH='' cd -- "${GC_PACK_DIR:?missing Gas City pack context}" && pwd -P)"
 cli_dir="$pack_dir/cli"
 cli_bin="$cli_dir/gc-slack-cli"
+
+slack_cli_prebuilt_bin() (
+  if [ "${GC_SLACK_CLI_BIN+x}" = x ]; then
+    if [ ! -f "$GC_SLACK_CLI_BIN" ] || [ ! -r "$GC_SLACK_CLI_BIN" ] || [ ! -x "$GC_SLACK_CLI_BIN" ]; then
+      log "ERROR: GC_SLACK_CLI_BIN=$GC_SLACK_CLI_BIN is not an executable file"
+      return 1
+    fi
+    printf '%s\n' "$GC_SLACK_CLI_BIN"
+    return
+  fi
+  # Preserve empty PATH entries, including a final one, without glob expansion.
+  search_path=${PATH-}:
+  IFS=:
+  set -f
+  for path_dir in $search_path; do
+    candidate=${path_dir:-.}/gc-slack-cli
+    if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+)
+
+prebuilt_bin=$(slack_cli_prebuilt_bin)
+if [ -n "$prebuilt_bin" ]; then
+  case "$prebuilt_bin" in
+    /*) ;;
+    *) prebuilt_bin="$PWD/$prebuilt_bin" ;;
+  esac
+  exec "$prebuilt_bin" "$@"
+fi
 
 manual_fix() {
   log "manual fix: (cd \"$cli_dir\" && tmp=\$(mktemp .gc-slack-cli.build.XXXXXX) && trap 'rm -f \"\$tmp\"' 0 && go build -o \"\$tmp\" . && mv -f \"\$tmp\" gc-slack-cli)"
