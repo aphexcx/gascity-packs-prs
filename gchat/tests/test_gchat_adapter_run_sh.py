@@ -63,6 +63,23 @@ class PrebuiltAdapterTest(unittest.TestCase):
         self.env["PATH"] = "bin"
         self.assertEqual(self.run_adapter().stdout, "PATH\nserve\nproject=from-file\n")
 
+    def test_prebuilt_local_path_keeps_version_log_and_launch_directory(self):
+        binary = self.adapter / "gc-gchat-adapter"
+        self.stub(binary, "PREBUILT")
+        with binary.open("a") as stream:
+            stream.write('printf "cwd=%s\\n" "$PWD"\n')
+        for source in ("override", "path"):
+            with self.subTest(source=source):
+                if source == "override":
+                    self.env["GC_GCHAT_ADAPTER_BIN"] = str(binary)
+                else:
+                    self.env.pop("GC_GCHAT_ADAPTER_BIN")
+                    self.env["PATH"] = f"{self.adapter}:{self.bin}"
+                result = self.run_adapter()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"cwd={self.root}\n", result.stdout)
+                self.assertIn(f"using {binary} (version 0.5.0)", result.stderr)
+
     def test_invalid_override_does_not_fall_back(self):
         self.stub(self.bin / "gc-gchat-adapter", "PATH")
         self.env["GC_GCHAT_ADAPTER_BIN"] = str(self.root / "absent")
