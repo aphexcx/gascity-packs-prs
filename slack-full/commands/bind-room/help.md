@@ -49,17 +49,51 @@ removes any agent binding created by `extmsg-default-route`. This prevents
 the city's sticky default route from waking a session on every line: gc
 resolves direct bindings first, but never default-routes a grouped room
 (`internal/config/extmsg.go` and `internal/extmsg/inbound.go` in gc). Existing
-ambient routes are preserved. Live labeled gc records are read through
-`GET /beads`, including all cursor pages; incomplete reads fail the command.
+ambient routes are preserved. Live gc records are read through `GET /beads`
+filtered by this room's group-root and binding-conversation labels, including
+all cursor pages; incomplete reads fail the command. Those labels use gc's
+SHA256 of the normalized six-part conversation encoded with Go's JSON rules.
 The result reports `group_held` and `unbound_bindings`, and `gc slack status`
 shows the live hold state. `--no-group-hold` skips this reconciliation and
 registers with the adapter alone; it does not remove an existing hold.
+
+The hold is ensured and read back before inspecting bindings for removal.
+An authoritative `GET /extmsg/groups` also checks absence before an ensure:
+if it disagrees with the labeled inventory, the command refuses to upsert
+and risk resetting an existing group's policy. Both ambient and mention-only
+`bind-room` commands take an exclusive flock on
+`<city>/.gc/services/slack/data/room-hold.lock`, beside `config.json`, from
+their first config read through routing and persistence. Concurrent pack
+invocations on the same host serialize. Hand-run `gc extmsg bind`, other
+gc callers, and default routing do not take this lock.
+
+Immediately before unbinding, the command compares the room's binding IDs
+and metadata with its post-hold inspection. A changed binding set aborts
+removal with exit 1 and `hold: partial (binding changed during the hold;
+re-run bind-room)`; the group remains in place. The result and config record
+name the filter as `unbind_filter: conversation+agent (gc exposes no binding
+id; see help)`. A partial result is not proof that ambient delivery stopped.
+
+gc currently exposes only `conversation`, `session_id`, and `agent_name` on
+POST `/extmsg/unbind` (`internal/api/huma_types_extmsg.go:98–105` at
+`92a7f383ff69a2b9a995239a6612fe0735c6f09d`). GET `/extmsg/bindings` accepts
+only `session_id` (lines 67–71), hence the labeled-bead inventory. There is
+no binding-ID or expected-caller conditional delete. An explicit same-agent
+rebind by an external operator between the final read and unbind can still
+be removed, even if the window is only milliseconds. Serialize external
+routing edits too. The gc-side follow-up is an atomic binding-identity and
+caller-provenance predicate on unbind, plus conversation-filtered binding
+reads that include agent bindings and their caller; only that closes the
+remaining race. The pack's group prevents new default routing once visible,
+but cannot fence a gc inbound that already passed its group check.
 
 To restore ambient routing, use `bind-room ROOM SESSION --group-only` or
 `bind-room ROOM SESSION --binding-owner SESSION`. Both add an ambient
 participant and clear the recorded hold. If that session is already registered
 mention-only, first remove its adapter registration with
 `DELETE …/svc/slack/mention-only?channel_id=<ROOM>&session_id=<id>`.
+`--group-only` removes direct bindings and clears any previously recorded
+binding owner; it does not retain an owner it just unbound.
 
 `--mentions-only` cannot be combined with the peer-fanout flags,
 `--default-handle`, or `--binding-owner` — those configure gc group

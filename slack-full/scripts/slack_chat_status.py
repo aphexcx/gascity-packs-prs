@@ -123,19 +123,21 @@ def _mention_only_bindings(session: str) -> list[dict[str, Any]]:
         cid = row["conversation_id"]
         if cid not in holds:
             rec = bindings.get("room:" + cid) or {}
-            conv = {
-                "scope_id": common.gc_city_name(), "provider": "slack",
-                "account_id": os.environ.get("SLACK_WORKSPACE_ID", ""),
-                "conversation_id": cid, "kind": "room",
-                **(rec.get("conversation") or {}),
-            }
             try:
+                conv = {
+                    "scope_id": common.gc_city_name(), "provider": "slack",
+                    "account_id": os.environ.get("SLACK_WORKSPACE_ID", ""),
+                    "conversation_id": cid, "kind": "room",
+                    **(rec.get("conversation") or {}),
+                }
                 routing = room_hold.inspect_room(conv, common.gc_get)
                 holds[cid] = {"group_held": routing.held,
                               "ambient_participants": routing.ambient_participants,
+                              "explicit_agent_bindings": routing.explicit_agents,
                               "hold_status": routing.description}
             except (common.GCAPIError, room_hold.RoomHoldError) as exc:
-                holds[cid] = {"group_held": None, "hold_status": f"unknown: {exc}"}
+                holds[cid] = {"group_held": None, "hold_status": f"unknown: {exc}",
+                              "hold_error": str(exc)}
         row.update(holds[cid])
     return out
 
@@ -174,11 +176,16 @@ def collect_status(*, session: str, since: str, limit: int) -> dict[str, Any]:
     else:
         bindings = []
 
+    mention_only = _mention_only_bindings(session)
+    for row in mention_only:
+        if row.get("hold_error"):
+            unreadable["mention_only_bindings." + row["conversation_id"]] = row["hold_error"]
+
     return {
         "adapters": adapters,
         "session": session,
         "bindings": bindings,
-        "mention_only_bindings": _mention_only_bindings(session),
+        "mention_only_bindings": mention_only,
         "events": {
             "since": since or None,
             "limit": limit,

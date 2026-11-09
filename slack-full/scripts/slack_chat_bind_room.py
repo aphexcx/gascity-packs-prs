@@ -81,7 +81,7 @@ message @mentions your bot user, addresses your handle (@{handle}: ...), or is
 a reply in a thread you posted in. Everything else in the room stays silent
 for you — read it on demand with:
   gc slack read --conversation-id {conversation_id}
-While the zero-participant group hold stands, ambient lines reach no gc session.
+{hold_notice}
 
 Reply protocol when you receive a `Slack mention-only room delivery` reminder:
 
@@ -501,6 +501,13 @@ def main(argv: list[str]) -> int:
     if args.no_group_hold and not args.mentions_only:
         parser.error("--no-group-hold requires --mentions-only")
 
+    # Ambient binds must take the same lock as holds, including their config
+    # reads and writes, so a second invocation sees the first one's result.
+    with room_hold.bind_room_lock(common.pack_state_dir()):
+        return _bind_room(args)
+
+
+def _bind_room(args: argparse.Namespace) -> int:
     binding_key = f"{args.kind}:{args.conversation_id}"
     # Before any API call: a rejected declaration must not have created a
     # group, upserted a participant, or touched the binding table.
@@ -938,19 +945,26 @@ def _main_mentions_only(
     rec = record_mention_only_binding(
         cfg, binding_key=binding_key, kind=args.kind, conv=conv, records=records)
     unbound: list[Any] = []
+    hold_error = ""
     if not args.no_group_hold:
         # Persist the adapter registration even if a later gc operation fails,
         # but never leave a stale successful hold claim behind on that failure.
         rec["group_held"] = False
+        rec["hold_status"] = "pending: group hold not verified"
+        rec["unbind_filter"] = room_hold.UNBIND_FILTER
         common.save_pack_config(cfg)
         try:
             routing, unbound = room_hold.hold_room(conv, common.gc_get, common.gc_post)
+        except room_hold.RoomHoldChanged as exc:
+            routing, unbound = exc.state, exc.unbound
+            hold_error = str(exc)
+            print(f"hold: {hold_error}", file=sys.stderr)
         except (common.GCAPIError, room_hold.RoomHoldError) as exc:
             raise SystemExit(f"mention-only registered, but group hold failed: {exc}") from exc
-        rec["group_held"] = routing.held
+        rec["group_held"] = routing.held and not hold_error
+        rec["hold_status"] = hold_error or routing.description
         rec["ambient_participants"] = routing.ambient_participants
-        if routing.group_id:
-            rec["group_id"] = routing.group_id
+        rec["group_id"] = routing.group_id or None
         report_unbound(unbound)
     else:
         rec.setdefault("group_held", False)
@@ -963,7 +977,10 @@ def _main_mentions_only(
             try:
                 deliver_protocol_nudge(
                     r["session_id"], args.conversation_id,
-                    template=MENTION_ONLY_NUDGE_TEMPLATE, handle=r["handle"])
+                    template=MENTION_ONLY_NUDGE_TEMPLATE, handle=r["handle"],
+                    hold_notice=("While the zero-participant group hold stands, "
+                                 "ambient lines reach no gc session."
+                                 if rec["group_held"] and not args.no_group_hold else ""))
                 nudged.append(r["session_id"])
             except Exception as exc:  # noqa: BLE001 — best-effort, never abort bind
                 nudge_failures.append(f"{r['session_id']}: {exc}")
@@ -973,6 +990,9 @@ def _main_mentions_only(
         "delivery_mode": "mentions_only",
         "conversation_id": args.conversation_id,
         "group_held": rec["group_held"],
+        "group_id": rec.get("group_id"),
+        "hold": rec.get("hold_status"),
+        "unbind_filter": None if args.no_group_hold else room_hold.UNBIND_FILTER,
         "unbound_bindings": unbound,
         "mention_only_participants": rec.get("mention_only_participants", []),
         "adapter": registered,
@@ -982,7 +1002,7 @@ def _main_mentions_only(
             "skipped": args.no_protocol_nudge,
         },
     }, indent=2, default=str))
-    return 0
+    return 1 if hold_error else 0
 
 
 if __name__ == "__main__":

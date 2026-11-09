@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the room has no ambient routes. Live participants and explicit bindings
   are preserved; incomplete routing reads fail closed. `--no-group-hold`
   retains registration alone, and `status` reports the live hold state.
+  Pack room binds now serialize on `room-hold.lock`, verify the group before
+  inspecting/removing sticky bindings, and abort with a partial result when
+  a fresh inspection detects replacement. The result/config name the unbind
+  filter and help documents the residual external rebind race. An authoritative
+  group lookup guards against an incomplete inventory resetting group policy.
+  Unreadable hold routing makes status exit 2. Ambient `--group-only` also
+  clears the recorded binding owner after removing the owner's direct binding.
+  Routing reads use per-room labels; status names explicit agent bindings,
+  and only a verified hold adds the no-ambient-delivery reminder sentence.
 - **Peer posts are independent inbounds in both modes** (gp-j5p4): every
   allowlisted peer wakes on arrival in every channel/thread, using the human
   reminder shape and registry sender label. `wake` and `immediate_channels`

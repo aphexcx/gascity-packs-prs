@@ -621,6 +621,15 @@ a participant and clears the hold. Remove that session's mention-only
 registration first if it has one (DELETE endpoint below). While held, ambient
 lines wake no gc session; read them with `gc slack read --conversation-id ROOM`.
 
+The pack serializes its own `bind-room` commands, verifies the group before
+removing a binding, and aborts with exit 1 and a partial hold result if a
+fresh inspection detects a changed binding. Results and config name the
+`unbind_filter` used. gc has no atomic binding-ID/caller-provenance delete,
+so an external same-agent rebind can still race the final unbind; serialize
+external routing edits until the gc-side conditional-unbind follow-up lands.
+See [bind-room help](commands/bind-room/help.md) for the lock scope and API
+limitations. Unreadable hold diagnostics make `gc slack status` exit 2.
+
 The session is registered with the adapter (`POST
 …/svc/slack/mention-only`) and NOT added as a gc participant, so gc's
 every-message fan-out never reaches it. The adapter instead injects a
