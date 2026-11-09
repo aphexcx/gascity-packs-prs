@@ -361,5 +361,103 @@
         "Elapsed": 88.45
       }
     ]
+  },
+  "r4-red-go": {
+    "command_manifest": "go test -json -run ^TestIngestionBatch(RetryPayloadCannotGrowWithFanout|LegacyOversizeStillRecovers)$ ./... exit=1",
+    "all_test_results": {
+      "fail": 2
+    },
+    "top_level": {
+      "fail": 2
+    },
+    "skipped": [],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.191
+      },
+      {
+        "Action": "fail",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 0.409
+      }
+    ]
+  },
+  "r4-focused-go": {
+    "command_manifest": "go test -json -run ^TestIngestionBatch ./... | exit=0",
+    "all_test_results": {
+      "pass": 8
+    },
+    "top_level": {
+      "pass": 6
+    },
+    "skipped": [],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.11
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 8.979
+      }
+    ]
+  },
+  "r4-full-go": {
+    "command_manifest": "go test -json ./... | exit=0",
+    "all_test_results": {
+      "pass": 12906,
+      "skip": 3
+    },
+    "top_level": {
+      "pass": 1457,
+      "skip": 3
+    },
+    "skipped": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement",
+      "TestRegistrationStartupDelayedPort"
+    ],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.002
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 109.978
+      }
+    ]
+  },
+  "r4-race-go": {
+    "command_manifest": "go test -race -json -run ^(TestIngestion|TestInboundJournal) ./... | exit=0",
+    "all_test_results": {
+      "pass": 82,
+      "skip": 1
+    },
+    "top_level": {
+      "pass": 45,
+      "skip": 1
+    },
+    "skipped": [
+      "TestIngestionLiveBusySessionProof"
+    ],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 26.695
+      }
+    ]
   }
 }

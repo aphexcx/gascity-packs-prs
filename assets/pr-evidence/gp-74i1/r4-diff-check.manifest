@@ -1,0 +1,1 @@
+git diff --check (gp-74i1 round 4 paths) | exit=0

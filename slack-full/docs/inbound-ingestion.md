@@ -57,7 +57,8 @@ that arrived between initial acceptance and a delayed conclusion.
 After checking rendered input and session acts, three minutes without proof
 appends `delivered_unseen`. Each observer pass sends at most one
 `gc mail send mayor --dedup ...` per channel, with a count in the subject and
-each message timestamp, thread, receipt and missing target in the body.
+each message timestamp, thread and receipt in the body. Target sessions stay
+in the journal so delayed fanout cannot enlarge a retry's mail payload.
 Fanout members share one receipt line. Before mail, the journal saves the
 sorted original receipt set and its stable batch dedup key. Recovery reuses
 that key even if a member completed or gained proof; new arrivals wait for the
@@ -66,8 +67,12 @@ New batches are limited to a 64 KiB journal-record/mail-body budget; larger
 backlogs drain over successive passes. This stays below both the journal
 reader's 1 MiB line ceiling and command argument limits. A single receipt that
 cannot fit produces a visible retryable error without blocking other channels.
+An oversized batch saved by an older adapter retries under its original dedup
+key, with a bounded receipt prefix, omitted count and journal batch ID; the
+saved membership remains complete. It is not split into new mail identities.
 Successful mail writes one atomic batch-completion record before the individual
-receipt completion rows. Restart repairs missing individual rows without
+receipt completion rows. Full completion references the saved membership,
+avoiding another large record for legacy batches. Restart repairs missing individual rows without
 mailing again, including after the late-proof horizon. Retention preserves
 source records until those individual completion rows are durable, even if a
 previous day's failed mail succeeds after its observation horizon. Failed mail is retried

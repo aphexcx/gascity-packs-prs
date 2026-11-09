@@ -15,6 +15,7 @@ type ingestionAlertBatch struct {
 	Members []string  `json:"members"`
 	Created time.Time `json:"created"`
 	Sent    bool      `json:"sent,omitempty"`
+	All     bool      `json:"all,omitempty"` // completion references the prepared membership
 }
 
 // Leave ample room below the journal scanner's 1 MiB record ceiling and
@@ -77,7 +78,7 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 		if err != nil {
 			return ingestionAlertBatch{}, nil, err
 		}
-		_, body := ingestionAlertMessage(candidate)
+		_, body := ingestionAlertMessageWithBudget(candidate, 0)
 		// Reserve space for the completion flag and timestamp formatting.
 		if len(encoded)+256 > ingestionAlertBatchBudget || len(body) > ingestionAlertBatchBudget {
 			if len(chosen) == 0 {
@@ -106,7 +107,14 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 func (o *ingestionObserver) finishAlertBatch(batch ingestionAlertBatch, rows []inboundJournalRecord, sent bool) error {
 	// One fsynced record establishes completion for every mailed receipt
 	// before the compatibility per-member rows are written individually.
-	batch.Members = ingestionAlertMembers(rows)
+	members := ingestionAlertMembers(rows)
+	if len(members) == len(batch.Members) && ingestionAlertID(members) == ingestionAlertID(batch.Members) {
+		// A legacy plan can be close to the reader ceiling. Refer to its
+		// durable membership rather than repeat it with extra completion fields.
+		batch.All, batch.Members = true, nil
+	} else {
+		batch.Members = members
+	}
 	batch.Sent = sent
 	return o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_done", AlertBatch: &batch})
 }

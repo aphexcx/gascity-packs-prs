@@ -1,0 +1,1 @@
+go test -json -run ^TestIngestionBatch ./... | exit=0

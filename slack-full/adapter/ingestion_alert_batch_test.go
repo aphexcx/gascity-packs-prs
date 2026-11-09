@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -95,6 +96,114 @@ func TestIngestionBatchBoundsLargeBacklogBeforePersisting(t *testing.T) {
 	}
 	if len(selected) == 0 || len(selected) >= len(rows) {
 		t.Fatalf("unbounded backlog selection: %d", len(selected))
+	}
+}
+
+func TestIngestionBatchRetryPayloadCannotGrowWithFanout(t *testing.T) {
+	at := time.Now().UTC()
+	now := at.Add(ingestionWindow + time.Second)
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+	var records []inboundJournalRecord
+	for i := 0; i < 300; i++ {
+		r := ingestionTestRecord(fmt.Sprintf("1794198796.%06d", i), at, "body")
+		r.Status, r.Phase = "delivered_unseen", "ingestion"
+		records = append(records, r)
+	}
+	writeRows := func(rows []inboundJournalRecord) {
+		t.Helper()
+		var data []byte
+		for _, r := range rows {
+			b, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(append(data, b...), '\n')
+		}
+		f, err := os.OpenFile(filepath.Join(j.dir, now.Format("20060102")+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.Write(data)
+		closeErr := f.Close()
+		if err != nil || closeErr != nil {
+			t.Fatalf("fixture write: %v %v", err, closeErr)
+		}
+	}
+	writeRows(records)
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args")
+	script := "#!/bin/sh\nprintf '%s\\000' \"$@\" >> \"$INGESTION_TEST_ARGS\"\nexit \"$INGESTION_TEST_EXIT\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("INGESTION_TEST_ARGS", argsPath)
+	t.Setenv("INGESTION_TEST_EXIT", "17")
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
+		fetch: func(context.Context, string) ([]json.RawMessage, error) { return nil, nil }}
+	o.notify = o.mailUnseen
+	if err := o.step(context.Background()); err == nil {
+		t.Fatal("expected failed first mail")
+	}
+	var fanout []inboundJournalRecord
+	for i := 0; i < 1000; i++ {
+		r := records[0]
+		r.TargetSessions = []string{fmt.Sprintf("late-%04d-%s", i, strings.Repeat("x", 54))}
+		fanout = append(fanout, r)
+	}
+	writeRows(fanout)
+	o.cfg.inboundJournal = &inboundJournal{dir: j.dir, now: func() time.Time { return now }}
+	t.Setenv("INGESTION_TEST_EXIT", "0")
+	if err := o.step(context.Background()); err != nil {
+		t.Fatalf("fanout permanently blocked retry: %v", err)
+	}
+	b, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00")
+	if len(args) != 22 || args[6] != args[17] {
+		t.Fatalf("retry changed dedup identity: %d argv entries", len(args))
+	}
+	if len(args[10]) > ingestionAlertBatchBudget || len(args[21]) > ingestionAlertBatchBudget {
+		t.Fatal("mail exceeded budget")
+	}
+}
+
+func TestIngestionBatchLegacyOversizeStillRecovers(t *testing.T) {
+	now := time.Now().UTC()
+	var rows []inboundJournalRecord
+	for i := 0; i < 1500; i++ {
+		r := ingestionTestRecord(fmt.Sprintf("1794198796.%06d", i), now.Add(-ingestionWindow), "body")
+		r.Status, r.Phase = "delivered_unseen", "ingestion"
+		rows = append(rows, r)
+	}
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+	members := ingestionAlertMembers(rows)
+	legacy := ingestionAlertBatch{ID: ingestionAlertID(members), Channel: "C1", Members: members, Created: now}
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now }, preparedBatches: []ingestionAlertBatch{legacy}}
+	plan, selected, err := o.prepareAlertBatch("C1", rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ID != legacy.ID || len(selected) != len(rows) {
+		t.Fatal("legacy identity/membership changed")
+	}
+	for i := range selected {
+		selected[i].AlertBatchID = plan.ID
+	}
+	subject, body := ingestionAlertMessage(selected)
+	if len(body) > ingestionAlertBatchBudget || !strings.Contains(subject, "1500 lines") || !strings.Contains(body, legacy.ID) {
+		t.Fatalf("legacy retry must fit and identify full durable batch: subject=%s bytes=%d", subject, len(body))
+	}
+	if err := o.finishAlertBatch(plan, selected, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range ingestionJournalRows(t, j) {
+		b, _ := json.Marshal(row)
+		if len(b) >= 1<<20 {
+			t.Fatal("legacy completion exceeded reader ceiling")
+		}
 	}
 }
 

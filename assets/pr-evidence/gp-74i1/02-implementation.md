@@ -92,3 +92,25 @@ Final round-3 full adapter suite: 1,455 top-level passes (12,904 including
 subtests), three opt-in skips, exit 0. The focused race suite and diff check
 also exit 0. The three-minute deadline and two-hour late-proof horizon remain
 unchanged; only incomplete durable completion writes extend retention.
+
+## Codex round 3 corrections
+
+Round 3 reviewed `a0f0536bbd413c16ade3a4fd8556e273fb4ba812` and returned BLOCK:
+delayed fanout could enlarge a saved batch's retry beyond the mail budget,
+and an older oversized batch could never recover. Both regressions failed
+before the fix. Mail now contains immutable receipt coordinates, leaving
+target sessions in the journal. Legacy oversized retries preserve their
+original dedup identity and full membership while the mail shows a bounded
+prefix, omitted count and saved journal batch ID. Full atomic completion
+references the prepared membership rather than repeating a near-limit record.
+
+The eight batch tests (including subtests) pass after the fix. The new retry
+test fails its first mail, adds 1,000 fanout targets, reconstructs the journal,
+and verifies successful recovery with the original key. The legacy test
+preserves all 1,500 receipts and checks bounded summary and completion writes.
+
+Round-4 validation on Go 1.27.3 darwin/arm64: `go test -json ./...` passes
+1,457 top-level tests (12,906 including subtests), with three opt-in skips.
+`go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...` passes
+45 top-level tests (82 including subtests), with one opt-in skip. Both commands
+ran from `slack-full/adapter` and exited 0. The scoped diff check also passed.

@@ -208,6 +208,9 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 				if r.Phase == "ingestion_batch" {
 					j.preparedBatches[batch.ID] = batch
 				} else if r.Phase == "ingestion_batch_done" {
+					if batch.All {
+						batch.Members = j.preparedBatches[batch.ID].Members
+					}
 					delete(j.preparedBatches, batch.ID)
 					if batch.Sent {
 						for _, member := range batch.Members {
@@ -604,13 +607,43 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 }
 
 func ingestionAlertMessage(rows []inboundJournalRecord) (string, string) {
-	var lines []string
-	for _, r := range rows {
-		lines = append(lines, fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s sessions=%s handoff=%s", r.MessageTS, r.ThreadTS, r.ReceiptID, strings.Join(r.TargetSessions, ","), r.DeliveredAt.UTC().Format(time.RFC3339)))
+	subject, body := ingestionAlertMessageWithBudget(rows, 0)
+	if len(body) <= ingestionAlertBatchBudget {
+		return subject, body
+	}
+	return ingestionAlertMessageWithBudget(rows, ingestionAlertBatchBudget)
+}
+
+// A zero budget measures a new batch without truncation. Saved legacy batches
+// may be larger; summarize those under their original dedup identity instead
+// of permanently failing the retry or inventing subset identities.
+func ingestionAlertMessageWithBudget(rows []inboundJournalRecord, budget int) (string, string) {
+	if len(rows) == 0 {
+		return "", ""
 	}
 	subject := fmt.Sprintf("Slack delivered_unseen: %d lines in %s", len(rows), rows[0].Channel)
-	body := fmt.Sprintf("%s\n%s\nNo rendered input, explicit session reaction, or session reply was found within %s of hand-off. Read these Slack threads now. Transport delivery is not ingestion; the dead-letter file is unchanged.", subject, strings.Join(lines, "\n"), ingestionWindow)
-	return subject, body
+	footer := fmt.Sprintf("No rendered input, explicit session reaction, or session reply was found within %s of hand-off. Read these Slack threads now. Transport delivery is not ingestion; the dead-letter file is unchanged.", ingestionWindow)
+	key := rows[0].AlertBatchID
+	if key == "" {
+		key = ingestionAlertID(ingestionAlertMembers(rows))
+	}
+	omitted := func(n int) string {
+		return fmt.Sprintf("%d additional receipts omitted from this mail; full membership is in the inbound journal ingestion_batch id=%s.\n", n, key)
+	}
+	var body strings.Builder
+	body.WriteString(subject + "\n")
+	for i, r := range rows {
+		// Session fanout can grow after preparation. Only immutable receipt
+		// coordinates belong in the retry payload; targets stay in the journal.
+		line := fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s\n", r.MessageTS, r.ThreadTS, r.ReceiptID)
+		if budget > 0 && body.Len()+len(line)+len(footer)+len(omitted(len(rows)-i)) > budget {
+			body.WriteString(omitted(len(rows) - i))
+			break
+		}
+		body.WriteString(line)
+	}
+	body.WriteString(footer)
+	return subject, body.String()
 }
 
 // Accept actual user input and rendered queued-command attachments only.
