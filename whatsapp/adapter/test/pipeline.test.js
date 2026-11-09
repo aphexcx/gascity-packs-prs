@@ -230,27 +230,27 @@ test('(keeper r2 M2, n10) /consent and /hours match a phone by its digits and an
   r.start();
   await waitFor(() => keeperRow(r, X), { what: 'the keeper read the window' });
   const typed = '+55 11 90000-0001'; // X as an operator types it
-  const on = await adapterRequest(r.socket, 'POST', '/consent', { wa_id: typed, on: true });
+  const on = await adapterRequest(r.socket, 'POST', '/consent', { conversation_id: typed, on: true });
   assert.equal(on.status, 200, JSON.stringify(on.json));
-  assert.equal(on.json.wa_id_last4, '0001');
-  const hours = await adapterRequest(r.socket, 'POST', '/hours', { wa_id: typed, hours: 'Mon-Fri 09:00-18:00', tz: 'America/Sao_Paulo' });
+  assert.equal(on.json.conversation_last4, '0001');
+  const hours = await adapterRequest(r.socket, 'POST', '/hours', { conversation_id: typed, hours: 'Mon-Fri 09:00-18:00', tz: 'America/Sao_Paulo' });
   assert.equal(hours.status, 200, JSON.stringify(hours.json));
-  assert.equal(hours.json.wa_id_last4, '0001');
-  const cleared = await adapterRequest(r.socket, 'POST', '/hours', { wa_id: X, hours: '' });
+  assert.equal(hours.json.conversation_last4, '0001');
+  const cleared = await adapterRequest(r.socket, 'POST', '/hours', { conversation_id: X, hours: '' });
   assert.equal(cleared.status, 200, JSON.stringify(cleared.json));
   let row = await keeperRow(r, X);
   assert.equal(row.hours, null, 'hours "" cleared them');
   assert.equal(row.tz, 'America/Sao_Paulo', 'tz omitted keeps the recorded zone');
   assert.equal(row.consent, true);
 
-  const unknown = await adapterRequest(r.socket, 'POST', '/consent', { wa_id: '+55 11 90000-0009', on: false });
+  const unknown = await adapterRequest(r.socket, 'POST', '/consent', { conversation_id: '+55 11 90000-0009', on: false });
   t.diagnostic(`unknown phone: ${unknown.status} ${unknown.json.error}`);
   assert.equal(unknown.status, 404);
   assert.match(unknown.json.error, /0009/);
   assert.ok(!unknown.json.error.includes('5511900000009'), 'never the full number');
-  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { wa_id: '5511900000009', hours: '' })).status, 404);
-  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { wa_id: X, hours: 'weekdays' , tz: 'America/Sao_Paulo' })).status, 400);
-  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { wa_id: X, hours: 'Mon-Fri 09:00-18:00' })).status, 400, 'tz is required with hours');
+  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { conversation_id: '5511900000009', hours: '' })).status, 404);
+  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { conversation_id: X, hours: 'weekdays' , tz: 'America/Sao_Paulo' })).status, 400);
+  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { conversation_id: X, hours: 'Mon-Fri 09:00-18:00' })).status, 400, 'tz is required with hours');
   const status = (await adapterRequest(r.socket, 'GET', '/status')).json.keeper.conversations;
   assert.deepEqual(Object.keys(status), [X], 'no row for a refused or typed phone');
   row = status[X];

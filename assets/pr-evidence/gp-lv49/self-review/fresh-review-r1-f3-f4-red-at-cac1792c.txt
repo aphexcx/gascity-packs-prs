@@ -1,0 +1,84 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+ ❯ test/meta.test.ts (30 tests | 1 failed | 29 skipped) 5ms
+     × a message naming no wa_id and no user_id is skipped, never thrown; a number-change notice naming no id at all is kept, so the gateway counts it (gp-lv49) 4ms
+ ❯ test/bsuid.test.ts (62 tests | 2 failed | 60 skipped) 23ms
+     × a notice naming no id at all (no `from`, no previous_user_id) is counted too, in notices_without_previous_id and unrouted_messages (fresh review r1, F3) 12ms
+     × a payload carrying the owner's first message under its new id before the notice that links it still reaches the owner's city: a payload's notices are planned first (fresh review r1, F4) 11ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > a notice naming no id at all (no `from`, no previous_user_id) is counted too, in notices_without_previous_id and unrouted_messages (fresh review r1, F3)
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ test/bsuid.test.ts:1661:57
+    1659|     const before = { noPrevious: await t.stat("notices_without_previou…
+    1660|     expect((await t.webhook(bare)).status).toBe(200);
+    1661|     expect(await t.stat("notices_without_previous_id")).toBe(before.no…
+       |                                                         ^
+    1662|     expect(await t.stat("unrouted_messages")).toBe(before.unrouted + 1…
+    1663|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > a payload carrying the owner's first message under its new id before the notice that links it still reaches the owner's city: a payload's notices are planned first (fresh review r1, F4)
+AssertionError: expected undefined to match object { …(2) }
+
+- Expected:
+{
+  "conversation_id": "5511267602661",
+  "user_id": "US.15060397980317653914",
+}
+
++ Received:
+undefined
+
+ ❯ test/bsuid.test.ts:1678:92
+    1676|     expect((await t.webhook(both)).status).toBe(200);
+    1677|     const text = both.entry[0].changes[0].value.messages[0].id;
+    1678|     expect((await t.inbox(city)).body.deliveries.find((d: any) => d.me…
+       |                                                                                            ^
+    1679|     expect(t.graph.sends()).toHaveLength(calls);
+    1680|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a message naming no wa_id and no user_id is skipped, never thrown; a number-change notice naming no id at all is kept, so the gateway counts it (gp-lv49)
+AssertionError: expected [] to deeply equal [ [ null, null, null ] ]
+
+- Expected
++ Received
+
+- [
+-   [
+-     null,
+-     null,
+-     null,
+-   ],
+- ]
++ []
+
+ ❯ test/meta.test.ts:241:110
+    239|     const notice = copy(changedUserId);
+    240|     delete notice.entry[0].changes[0].value.messages[0].system.previou…
+    241|     expect(parseWebhook(notice, PNID).messages.map((m) => [m.from, m.f…
+       |                                                                                                              ^
+    242|   });
+    243|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 89 skipped (92)
+   Start at  01:55:59
+   Duration  497ms (transform 108ms, setup 119ms, import 148ms, tests 28ms, environment 0ms)
+

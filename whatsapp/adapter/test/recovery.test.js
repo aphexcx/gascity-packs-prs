@@ -421,7 +421,7 @@ test('(8c) the terminal hold, then unknown, then 24 h: no further POST, no read-
   assert.ok(!JSON.stringify(status.json).includes('wamid.T1'), 'status never names the rid (a wamid encodes the phone)');
   const dead = await adapterRequest(r.socket, 'POST', '/inbound/resolve', { rid: ref(rid('wamid.T1')), as: 'dead' });
   assert.equal(dead.status, 200);
-  assert.equal(dead.json.wa_id_last4, '0001');
+  assert.equal(dead.json.conversation_last4, '0001');
   await acked(r, id1);
   assert.equal(r.deadLetters(WA).find((l) => l.rid === rid('wamid.T1')).reason, 'held_terminal');
   const delivered = await adapterRequest(r.socket, 'POST', '/inbound/resolve', { rid: rid('wamid.T2'), as: 'delivered' });

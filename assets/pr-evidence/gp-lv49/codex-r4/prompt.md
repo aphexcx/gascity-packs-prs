@@ -1,0 +1,21 @@
+STANDARD code review of committed changes in this repository (a Cloudflare Worker in TypeScript on D1/SQLite, `whatsapp/gateway/`).
+
+Inspect `git diff 7945af58e40e5e7b1ed1874e9fc4b81cf2bf2c58 c08c8c7c -- whatsapp/gateway` and the surrounding code. Base 7945af58 is PR 76's draft (e39c0b90) with main merged in; head c08c8c7c is this round. Review only that delta. Skip `assets/pr-evidence/` except as test evidence: `assets/pr-evidence/gp-lv49/red/bsuid-orders-at-e39c0b90.txt` is the RED run of the acceptance tests on the base source; the full suite at the head is 228/228 green, typecheck clean, wrangler dry run green (the lane ran them; the sandbox cannot).
+
+THE SPEC is the design of record, `whatsapp/docs/design-bsuid-pairing-and-spans.md` (read it whole). Section 2 points 1 to 7 are the model the round builds; section 4's T1 to T8 are its acceptance tests (`whatsapp/gateway/test/bsuid-orders.test.ts`); section 5 is the migration (`migrations/0003_retries.sql`, changed in place: main has only 0001). The README rules 2, 3, 5, 7 and the unbind runbook are re-cut to it.
+
+Check, and report with severity (CRITICAL / MAJOR / MINOR) and file:line:
+1. Conformance: anything the note's points 1 to 7 or T1 to T8 require that the code does not do, or does differently. In particular: a message routes by its user id at Meta's stamp only, never by a number; a message or notice naming no user id reaches no city and binds nothing; notice links in any arrival order re-key the binding, replays change nothing, one id answers to one binding; a code binds only an id no binding answers to; every send (welcome, canned line, POST /v1/send) goes to a user id; the mark only picks which binding shows a number; no adoption; invites() unchanged.
+2. Delivery orders: Meta retries failed webhooks for up to 7 days in any order (a D1 batch failure answers 500). Look for an order where a message or its media reaches a city it must not, or a binding, send or welcome reaches the wrong person.
+3. SQL in D1/SQLite: the recursive CTEs (`walkFrom`, the re-key's `fwd`, the unbind's `answered`): termination, cycles, the depth limit, NULL anchors, several `walk` CTEs in one statement. Bound parameters (D1 refuses one the SQL never references). UNIQUE conflicts that would throw a batch, making a message a poison that answers 500 forever. Batch boundaries (MAX_BATCH_STATEMENTS, the per-message group). The cron's deletes.
+4. The new admin route `POST /v1/admin/unbind`: auth, validation, that it records every user id the binding answered to in the same batch as the delete.
+5. Logs: never a phone number, user id, username, body, code or token.
+6. Test changes: a re-cut test that no longer tests what its title says, or a harness change that hides a regression.
+
+Read-only gate. Do not edit files. Do not run test suites, builds, installs or anything that writes. Before reading a file, discover its real name (git ls-files, rg --files). End the final answer with exactly one standalone line: VERDICT: CLEAN if there are no critical or major findings, otherwise VERDICT: BLOCK.
+
+Round 2. Round 1 (on 26dc6ce2) found three MAJOR, each fixed with a RED-first test: a retried invite ignoring a waiting link (0507b4c6: the re-key also runs after a bind, the welcome reads the current id), a late notice bypassing an earlier unbind (cac1792c: EXTEND_UNBINDS), and the 16-link depth limit failing open (cac1792c: UNION set semantics, no depth limit). A fresh Opus review added two MINOR fixes (c08c8c7c: a notice naming no id is counted; a payload's notices are planned first). Check those fixes, and look again for anything new.
+
+Round 3. Round 2 (on 40d9d7ec) found three MAJOR, fixed RED-first in c08c8c7c: a notice now routes by its previous_user_id alone; the unbind floor is one fragment, floorOf(id), the last unbind over the id's whole link component in both directions, read by route, stranger and the re-key's link guard (EXTEND_UNBINDS removed). Check those, and look again for anything new.
+
+Round 4. Round 3 (on abf2918e) found 1 MAJOR and 1 MINOR, fixed RED-first in 2b35269b: the cron writes an expiring link component's unbind floor on both its ids before deleting it; the re-key no longer counts its own row as an obstruction (a loop keeps the id). Check those, and look again for anything new.

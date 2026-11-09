@@ -1,0 +1,78 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+ ❯ test/bsuid.test.ts (65 tests | 3 failed | 62 skipped) 50ms
+     × a notice routes by its previous_user_id alone, never by a contacts entry matched by its old number (codex self-review r2, finding 1) 20ms
+     × an unbind covers the earlier ids a late notice links to the unbound id: an invite text the owner sent under its earlier id binds nothing (codex self-review r2, finding 2) 14ms
+     × a re-key never follows a link stamped at or before its old id's unbind: a retired id reissued to another binding does not carry it on to the first owner's new id (codex self-review r2, finding 3) 14ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > a notice routes by its previous_user_id alone, never by a contacts entry matched by its old number (codex self-review r2, finding 1)
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/bsuid.test.ts:1670:92
+    1668|       expect((await t.webhook(n)).status).toBe(200);
+    1669|       const wamid = value.messages[0].id;
+    1670|       expect((await t.inbox(w)).body.deliveries.some((d: any) => d.mes…
+       |                                                                                            ^
+    1671|       expect((await t.inbox(x)).body.deliveries.some((d: any) => d.mes…
+    1672|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > an unbind covers the earlier ids a late notice links to the unbound id: an invite text the owner sent under its earlier id binds nothing (codex self-review r2, finding 2)
+AssertionError: expected { n: 1 } to deeply equal { n: +0 }
+
+- Expected
++ Received
+
+  {
+-   "n": 0,
++   "n": 1,
+  }
+
+ ❯ test/bsuid.test.ts:1695:107
+    1693|     t.clock.now = T0 + 4 * HOUR;
+    1694|     for (const m of [change, invite]) expect((await t.webhook(m)).stat…
+    1695|     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHER…
+       |                                                                                                           ^
+    1696|     expect(await env.DB.prepare("SELECT used_at FROM invite_codes WHER…
+    1697|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > a re-key never follows a link stamped at or before its old id's unbind: a retired id reissued to another binding does not carry it on to the first owner's new id (codex self-review r2, finding 3)
+AssertionError: expected [ 'US.27128214840760980576' ] to deeply equal [ 'US.21419639342950504852' ]
+
+- Expected
++ Received
+
+  [
+-   "US.21419639342950504852",
++   "US.27128214840760980576",
+  ]
+
+ ❯ test/bsuid.test.ts:1717:73
+    1715|     t.clock.now = T0 + 4 * HOUR;
+    1716|     expect((await t.webhook(aChange)).status).toBe(200);
+    1717|     expect((await t.window(z)).body.windows.map((w: any) => w.user_id)…
+       |                                                                         ^
+    1718|     const mine = await t.sayAs({ user: a2 }, "A, under its own new id"…
+    1719|     expect((await t.inbox(z)).body.deliveries.some((d: any) => d.messa…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 62 skipped (65)
+   Start at  02:10:23
+   Duration  517ms (transform 65ms, setup 57ms, import 78ms, tests 50ms, environment 0ms)
+

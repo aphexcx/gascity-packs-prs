@@ -1,0 +1,1415 @@
+# gp-lv49 RED run: the design note's acceptance tests (test/bsuid-orders.test.ts) on PR 76's source at e39c0b90
+HEAD: 7945af58e40e5e7b1ed1874e9fc4b81cf2bf2c58 (merge of main 2372b4f2 into e39c0b90; no file under whatsapp/gateway/src or migrations differs)
+src/gateway.ts: worktree blob 36b47a157aa8a09814bab310a037f43780dbe2de == e39c0b90 blob 36b47a157aa8a09814bab310a037f43780dbe2de; sha256 a190e3345a66
+src/meta.ts: worktree blob 3061b446b8df7128af16ae5c06b8ad3c0899c914 == e39c0b90 blob 3061b446b8df7128af16ae5c06b8ad3c0899c914; sha256 861279d6cecb
+src/window.ts: worktree blob 4b3ab8a9f333ed059553494c3c049876cf6c5101 == e39c0b90 blob 4b3ab8a9f333ed059553494c3c049876cf6c5101; sha256 dfbd088efebf
+src/index.ts: worktree blob b06cfd38dbc6affe9ef4ef8a9066850145b5f9fc == e39c0b90 blob b06cfd38dbc6affe9ef4ef8a9066850145b5f9fc; sha256 b7f65f18c48e
+migrations/0001_init.sql: worktree blob 02595da928790fc158080879390a1b5cb881afbc == e39c0b90 blob 02595da928790fc158080879390a1b5cb881afbc; sha256 e2dbdbd590d9
+migrations/0002_bsuid.sql: worktree blob afb51ac15d8f6a7b69b00f57d00956ec857e4b3b == e39c0b90 blob afb51ac15d8f6a7b69b00f57d00956ec857e4b3b; sha256 7e7ae1304d67
+migrations/0003_retries.sql: worktree blob 844432550a3eeeb0f9237c9c1506b2fcda9db129 == e39c0b90 blob 844432550a3eeeb0f9237c9c1506b2fcda9db129; sha256 4d3cf69aea02
+
+$ pnpm exec vitest run test/bsuid-orders.test.ts --reporter=verbose
+
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+ × test/bsuid-orders.test.ts > T1, round 4b finding 1 (R1, R2, R2b, R6, R7): P paired with a and b in every order, first writes failing > C with a user id, Meta's shape: a's to X, b's to Y, media likewise; X's sends reach a, never P's holder 747ms
+   → wrong cases:
+order A1 B2 A3 B4: cUnchanged false (expected true)
+order A1 B2 B4 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)
+order A1 A3 B2 B4: cUnchanged false (expected true)
+order A1 A3 B4 B2: cUnchanged false (expected true)
+order A1 B4 B2 A3: cUnchanged false (expected true)
+order A1 B4 A3 B2: cUnchanged false (expected true)
+order B2 A1 A3 B4: cUnchanged false (expected true)
+order B2 A1 B4 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)
+order B2 A3 A1 B4: cUnchanged false (expected true)
+order B2 A3 B4 A1: cUnchanged false (expected true)
+order B2 B4 A1 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)
+order B2 B4 A3 A1: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)
+order A3 A1 B2 B4: cUnchanged false (expected true)
+order A3 A1 B4 B2: cUnchanged false (expected true)
+order A3 B2 A1 B4: cUnchanged false (expected true)
+order A3 B2 B4 A1: cUnchanged false (expected true)
+order A3 B4 A1 B2: cUnchanged false (expected true)
+order A3 B4 B2 A1: cUnchanged false (expected true)
+order B4 A1 B2 A3: cUnchanged false (expected true)
+order B4 A1 A3 B2: cUnchanged false (expected true)
+order B4 B2 A1 A3: cUnchanged false (expected true)
+order B4 B2 A3 A1: cUnchanged false (expected true)
+order B4 A3 A1 B2: cUnchanged false (expected true)
+order B4 A3 B2 A1: cUnchanged false (expected true)
+: expected [ …(24) ] to deeply equal []
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+ × test/bsuid-orders.test.ts > T1, round 4b finding 1 (R1, R2, R2b, R6, R7): P paired with a and b in every order, first writes failing > C with a user id, number-only: nothing reaches a city or binds; X's sends reach a, never P's holder 690ms
+   → wrong cases:
+order A1 B2 A3 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B2 B4 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 A3 B2 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 A3 B4 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B4 B2 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B4 A3 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A1 A3 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A1 B4 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A3 A1 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A3 B4 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 B4 A1 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 B4 A3 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 A1 B2 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 A1 B4 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B2 A1 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B2 B4 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B4 A1 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B4 B2 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A1 B2 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A1 A3 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 B2 A1 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 B2 A3 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A3 A1 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A3 B2 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+: expected [ …(24) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T1, round 4b finding 1 (R1, R2, R2b, R6, R7): P paired with a and b in every order, first writes failing > C without a user id, Meta's shape: a's to X, b's to Y, media likewise; X's sends reach a, never P's holder 654ms
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+ × test/bsuid-orders.test.ts > T1, round 4b finding 1 (R1, R2, R2b, R6, R7): P paired with a and b in every order, first writes failing > C without a user id, number-only: nothing reaches a city or binds; X's sends reach a, never P's holder 635ms
+   → wrong cases:
+order A1 B2 A3 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B2 B4 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 A3 B2 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 A3 B4 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B4 B2 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B4 A3 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A1 A3 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A1 B4 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A3 A1 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A3 B4 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 B4 A1 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 B4 A3 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 A1 B2 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 A1 B4 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B2 A1 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B2 B4 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B4 A1 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B4 B2 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A1 B2 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A1 A3 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 B2 A1 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 B2 A3 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A3 A1 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A3 B2 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+: expected [ …(24) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3: A bound on (Q, a), a stranger pairs Q at T1; C unbound before the retry; C with a user id, Meta's shape: never X 15ms
+ × test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3: A bound on (Q, a), a stranger pairs Q at T1; C unbound before the retry; C with a user id, number-only: nothing reaches a city or binds 17ms
+   → wrong cases:
+message 1: ["x"] (expected [])
+message 2: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3: A bound on (Q, a), a stranger pairs Q at T1; C unbound before the retry; C without a user id, Meta's shape: never X 11ms
+ × test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3: A bound on (Q, a), a stranger pairs Q at T1; C unbound before the retry; C without a user id, number-only: nothing reaches a city or binds 14ms
+   → wrong cases:
+message 1: ["x"] (expected [])
+message 2: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3b: the same with C standing; C with a user id, Meta's shape: never X 13ms
+ × test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3b: the same with C standing; C with a user id, number-only: nothing reaches a city or binds 16ms
+   → wrong cases:
+message 1: ["x"] (expected [])
+message 2: ["w"] (expected [])
+message 3: ["w"] (expected [])
+C's image's media: ["w"] (expected [])
+: expected [ …(4) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3b: the same with C standing; C without a user id, Meta's shape: never X 12ms
+ × test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3b: the same with C standing; C without a user id, number-only: nothing reaches a city or binds 14ms
+   → wrong cases:
+message 1: ["x"] (expected [])
+message 2: ["w"] (expected [])
+message 3: ["w"] (expected [])
+C's image's media: ["w"] (expected [])
+: expected [ …(4) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3c: A's notice at T1 moves A to Q, which phone-only C2 holds in V; C unbound; C with a user id, Meta's shape: never X 15ms
+ × test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3c: A's notice at T1 moves A to Q, which phone-only C2 holds in V; C unbound; C with a user id, number-only: nothing reaches a city or binds 19ms
+   → wrong cases:
+message 2: ["w"] (expected [])
+: expected [ 'message 2: ["w"] (expected [])' ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3c: A's notice at T1 moves A to Q, which phone-only C2 holds in V; C unbound; C without a user id, Meta's shape: never X 11ms
+ × test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3c: A's notice at T1 moves A to Q, which phone-only C2 holds in V; C unbound; C without a user id, number-only: nothing reaches a city or binds 14ms
+   → wrong cases:
+message 2: ["w"] (expected [])
+: expected [ 'message 2: ["w"] (expected [])' ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > X re-mints its code; C with a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X 19ms
+   → wrong cases:
+C after the retry: false (expected true)
+C at the end: false (expected true)
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > X re-mints its code; C with a user id, number-only: nothing reaches a city or binds 17ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > X re-mints its code; C without a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X 22ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+C after the retry: false (expected true)
+the live code text: ["w"] (expected ["x"])
+the newcomer's binding: "city_8d6dd42478ed9f0a2759ae69" (expected "city_6529c47fd2866d049bad5688")
+C at the end: false (expected true)
+new bindings: 0 (expected 1)
+: expected [ …(6) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > X re-mints its code; C without a user id, number-only: nothing reaches a city or binds 15ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > another user spends the code; C with a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X 19ms
+   → wrong cases:
+C after the retry: false (expected true)
+C at the end: false (expected true)
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > another user spends the code; C with a user id, number-only: nothing reaches a city or binds 20ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+new bindings: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > another user spends the code; C without a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X 16ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+C after the retry: false (expected true)
+the live code text: ["w"] (expected ["x"])
+the newcomer's binding: "city_1f30b4fd27cf1e6fdac5cd32" (expected "city_9507bdac39de8c10efd29862")
+C at the end: false (expected true)
+new bindings: 1 (expected 2)
+: expected [ …(6) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > another user spends the code; C without a user id, number-only: nothing reaches a city or binds 16ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+new bindings: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > the newcomer binds with X's re-minted code; C with a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X 16ms
+   → wrong cases:
+C after the retry: false (expected true)
+C at the end: false (expected true)
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > the newcomer binds with X's re-minted code; C with a user id, number-only: nothing reaches a city or binds 16ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > the newcomer binds with X's re-minted code; C without a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X 13ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+C after the retry: false (expected true)
+the live code text: ["w"] (expected ["x"])
+the newcomer's binding: "city_69a91378124af7f1bd091073" (expected "city_57d20e9c2e0009fb1cce8822")
+C at the end: false (expected true)
+new bindings: 0 (expected 1)
+: expected [ …(6) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > the newcomer binds with X's re-minted code; C without a user id, number-only: nothing reaches a city or binds 14ms
+   → wrong cases:
+the retry: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T4, round 4b finding 4 (R9): the newcomer texts a six-digit typo, then X's live code > C with a user id, Meta's shape: the typo reaches no city; the code binds to X; C unchanged 15ms
+   → wrong cases:
+C: false (expected true)
+: expected [ 'C: false (expected true)' ] to deeply equal []
+ × test/bsuid-orders.test.ts > T4, round 4b finding 4 (R9): the newcomer texts a six-digit typo, then X's live code > C with a user id, number-only: nothing reaches a city or binds 16ms
+   → wrong cases:
+the typo: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T4, round 4b finding 4 (R9): the newcomer texts a six-digit typo, then X's live code > C without a user id, Meta's shape: the typo reaches no city; the code binds to X; C unchanged 11ms
+   → wrong cases:
+the typo: ["w"] (expected [])
+the live code text: ["w"] (expected ["x"])
+the newcomer's binding: "city_2b71f3bd69ee745fa89cde9a" (expected "city_ad424b419e065d50cbe9c439")
+C: false (expected true)
+new bindings: 0 (expected 1)
+: expected [ …(5) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T4, round 4b finding 4 (R9): the newcomer texts a six-digit typo, then X's live code > C without a user id, number-only: nothing reaches a city or binds 12ms
+   → wrong cases:
+the typo: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image's first write fails, retried after the notice; C with a user id, Meta's shape: X, with media; never W 13ms
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+ × test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image's first write fails, retried after the notice; C with a user id, number-only: nothing reaches a city or binds 38ms
+   → wrong cases:
+A's image: ["w"] (expected [])
+A's image's media: ["w"] (expected [])
+the pairing: ["w"] (expected [])
+the notice: ["w"] (expected [])
+: expected [ …(4) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image's first write fails, retried after the notice; C without a user id, Meta's shape: X, with media; never W 14ms
+   → wrong cases:
+A's image: [] (expected ["x"])
+A's image's media: [] (expected ["x"])
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image's first write fails, retried after the notice; C without a user id, number-only: nothing reaches a city or binds 15ms
+   → wrong cases:
+A's image: ["w"] (expected [])
+A's image's media: ["w"] (expected [])
+the pairing: ["w"] (expected [])
+the notice: ["w"] (expected [])
+: expected [ …(4) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image on time; C with a user id, Meta's shape: X, with media; never W 14ms
+ × test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image on time; C with a user id, number-only: nothing reaches a city or binds 18ms
+   → wrong cases:
+A's image: ["w"] (expected [])
+A's image's media: ["w"] (expected [])
+the pairing: ["w"] (expected [])
+the notice: ["w"] (expected [])
+: expected [ …(4) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image on time; C without a user id, Meta's shape: X, with media; never W 12ms
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+ × test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image on time; C without a user id, number-only: nothing reaches a city or binds 15ms
+   → wrong cases:
+A's image: ["w"] (expected [])
+A's image's media: ["w"] (expected [])
+the pairing: ["w"] (expected [])
+the notice: ["w"] (expected [])
+: expected [ …(4) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T6, new: a→a2 (T1) fails until a2→a3 (T2) lands; then a→a2 is replayed > Meta's shape: A answers to a3, and replays change nothing 11ms
+   → wrong cases:
+A's message under a3: [] (expected ["x"])
+canned lines: 1 (expected 0)
+A's current user id: ["US.13811327361917563685"] (expected ["US.09048654210487542537"])
+X's send to A's conversation: recipient null (expected "US.09048654210487542537"); to "5503977429825" (expected null)
+canned lines after the replays: 1 (expected 0)
+: expected [ …(5) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T6, new: a→a2 (T1) fails until a2→a3 (T2) lands; then a→a2 is replayed > number-only: nothing reaches a city or re-keys 12ms
+   → wrong cases:
+canned lines: 1 (expected 0)
+X's send to A's conversation: recipient null (expected "US.38347085530972455493"); to "5534442320480" (expected null)
+canned lines after the replays: 1 (expected 0)
+first notice: ["x"] (expected [])
+: expected [ Array(4) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T7, new: P's pairing with a (T2) fails; A's image (T3) arrives on time; T2 lands > C with a user id, Meta's shape: X, with media; never W 25ms
+ × test/bsuid-orders.test.ts > T7, new: P's pairing with a (T2) fails; A's image (T3) arrives on time; T2 lands > C with a user id, number-only: nothing reaches a city or binds 15ms
+   → wrong cases:
+A's image: ["w"] (expected [])
+A's image's media: ["w"] (expected [])
+the pairing: ["w"] (expected [])
+: expected [ …(3) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T7, new: P's pairing with a (T2) fails; A's image (T3) arrives on time; T2 lands > C without a user id, Meta's shape: X, with media; never W 13ms
+ × test/bsuid-orders.test.ts > T7, new: P's pairing with a (T2) fails; A's image (T3) arrives on time; T2 lands > C without a user id, number-only: nothing reaches a city or binds 13ms
+   → wrong cases:
+A's image: ["w"] (expected [])
+A's image's media: ["w"] (expected [])
+the pairing: ["w"] (expected [])
+: expected [ …(3) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; X unbinds A; the code text first; Meta's shape: never Y; no city once A is unbound 12ms
+   → wrong cases:
+A's message to X: ["y"] (expected [])
+Y holds anything of A's: 2 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; X unbinds A; the code text first; number-only: nothing reaches a city or binds 10ms
+   → wrong cases:
+A's message to X: ["y"] (expected [])
+Y holds anything of A's: 2 (expected 0)
+bindings in Y: 1 (expected 0)
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(4) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; X unbinds A; the message first; Meta's shape: never Y; no city once A is unbound 10ms
+   → wrong cases:
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; X unbinds A; the message first; number-only: nothing reaches a city or binds 9ms
+   → wrong cases:
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; a notice replaces a; the code text first; Meta's shape: never Y; X while A stands 10ms
+   → wrong cases:
+A's message to X: [] (expected ["x"])
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; a notice replaces a; the code text first; number-only: nothing reaches a city or binds 10ms
+   → wrong cases:
+A's message to X: ["x"] (expected [])
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; a notice replaces a; the message first; Meta's shape: never Y; X while A stands 9ms
+   → wrong cases:
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; a notice replaces a; the message first; number-only: nothing reaches a city or binds 9ms
+   → wrong cases:
+A's message to X: ["x"] (expected [])
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; X unbinds A; the code text first; Meta's shape: never Y; no city once A is unbound 9ms
+   → wrong cases:
+A's message to X: ["y"] (expected [])
+Y holds anything of A's: 2 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; X unbinds A; the code text first; number-only: nothing reaches a city or binds 10ms
+   → wrong cases:
+A's message to X: ["y"] (expected [])
+Y holds anything of A's: 2 (expected 0)
+bindings in Y: 1 (expected 0)
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(4) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; X unbinds A; the message first; Meta's shape: never Y; no city once A is unbound 9ms
+   → wrong cases:
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; X unbinds A; the message first; number-only: nothing reaches a city or binds 15ms
+   → wrong cases:
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; a notice replaces a; the code text first; Meta's shape: never Y; X while A stands 10ms
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; a notice replaces a; the code text first; number-only: nothing reaches a city or binds 10ms
+   → wrong cases:
+A's message to X: ["x"] (expected [])
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+ ✓ test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; a notice replaces a; the message first; Meta's shape: never Y; X while A stands 9ms
+ × test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; a notice replaces a; the message first; number-only: nothing reaches a city or binds 29ms
+   → wrong cases:
+A's message to X: ["x"] (expected [])
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+
+ Test Files  1 failed (1)
+      Tests  48 failed | 14 passed (62)
+   Start at  01:15:39
+   Duration  3.99s (transform 44ms, setup 54ms, import 38ms, tests 3.56s, environment 1ms)
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 48 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid-orders.test.ts > T1, round 4b finding 1 (R1, R2, R2b, R6, R7): P paired with a and b in every order, first writes failing > C with a user id, Meta's shape: a's to X, b's to Y, media likewise; X's sends reach a, never P's holder
+AssertionError: wrong cases:
+order A1 B2 A3 B4: cUnchanged false (expected true)
+order A1 B2 B4 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)
+order A1 A3 B2 B4: cUnchanged false (expected true)
+order A1 A3 B4 B2: cUnchanged false (expected true)
+order A1 B4 B2 A3: cUnchanged false (expected true)
+order A1 B4 A3 B2: cUnchanged false (expected true)
+order B2 A1 A3 B4: cUnchanged false (expected true)
+order B2 A1 B4 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)
+order B2 A3 A1 B4: cUnchanged false (expected true)
+order B2 A3 B4 A1: cUnchanged false (expected true)
+order B2 B4 A1 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)
+order B2 B4 A3 A1: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)
+order A3 A1 B2 B4: cUnchanged false (expected true)
+order A3 A1 B4 B2: cUnchanged false (expected true)
+order A3 B2 A1 B4: cUnchanged false (expected true)
+order A3 B2 B4 A1: cUnchanged false (expected true)
+order A3 B4 A1 B2: cUnchanged false (expected true)
+order A3 B4 B2 A1: cUnchanged false (expected true)
+order B4 A1 B2 A3: cUnchanged false (expected true)
+order B4 A1 A3 B2: cUnchanged false (expected true)
+order B4 B2 A1 A3: cUnchanged false (expected true)
+order B4 B2 A3 A1: cUnchanged false (expected true)
+order B4 A3 A1 B2: cUnchanged false (expected true)
+order B4 A3 B2 A1: cUnchanged false (expected true)
+: expected [ …(24) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "order A1 B2 A3 B4: cUnchanged false (expected true)",
++   "order A1 B2 B4 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)",
++   "order A1 A3 B2 B4: cUnchanged false (expected true)",
++   "order A1 A3 B4 B2: cUnchanged false (expected true)",
++   "order A1 B4 B2 A3: cUnchanged false (expected true)",
++   "order A1 B4 A3 B2: cUnchanged false (expected true)",
++   "order B2 A1 A3 B4: cUnchanged false (expected true)",
++   "order B2 A1 B4 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)",
++   "order B2 A3 A1 B4: cUnchanged false (expected true)",
++   "order B2 A3 B4 A1: cUnchanged false (expected true)",
++   "order B2 B4 A1 A3: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)",
++   "order B2 B4 A3 A1: xToPReachesOnlyA false (expected true); cUnchanged false (expected true)",
++   "order A3 A1 B2 B4: cUnchanged false (expected true)",
++   "order A3 A1 B4 B2: cUnchanged false (expected true)",
++   "order A3 B2 A1 B4: cUnchanged false (expected true)",
++   "order A3 B2 B4 A1: cUnchanged false (expected true)",
++   "order A3 B4 A1 B2: cUnchanged false (expected true)",
++   "order A3 B4 B2 A1: cUnchanged false (expected true)",
++   "order B4 A1 B2 A3: cUnchanged false (expected true)",
++   "order B4 A1 A3 B2: cUnchanged false (expected true)",
++   "order B4 B2 A1 A3: cUnchanged false (expected true)",
++   "order B4 B2 A3 A1: cUnchanged false (expected true)",
++   "order B4 A3 A1 B2: cUnchanged false (expected true)",
++   "order B4 A3 B2 A1: cUnchanged false (expected true)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:235:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T1, round 4b finding 1 (R1, R2, R2b, R6, R7): P paired with a and b in every order, first writes failing > C with a user id, number-only: nothing reaches a city or binds; X's sends reach a, never P's holder
+ FAIL  test/bsuid-orders.test.ts > T1, round 4b finding 1 (R1, R2, R2b, R6, R7): P paired with a and b in every order, first writes failing > C without a user id, number-only: nothing reaches a city or binds; X's sends reach a, never P's holder
+AssertionError: wrong cases:
+order A1 B2 A3 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B2 B4 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 A3 B2 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 A3 B4 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B4 B2 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A1 B4 A3 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A1 A3 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A1 B4 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A3 A1 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 A3 B4 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 B4 A1 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B2 B4 A3 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 A1 B2 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 A1 B4 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B2 A1 B4: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B2 B4 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B4 A1 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order A3 B4 B2 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A1 B2 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A1 A3 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 B2 A1 A3: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 B2 A3 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A3 A1 B2: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+order B4 A3 B2 A1: a1 ["w"] (expected []); b2 ["w"] (expected []); a3 ["w"] (expected []); b4 ["w"] (expected []); a3Media ["w"] (expected []); b4Media ["w"] (expected [])
+: expected [ …(24) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "order A1 B2 A3 B4: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A1 B2 B4 A3: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A1 A3 B2 B4: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A1 A3 B4 B2: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A1 B4 B2 A3: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A1 B4 A3 B2: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B2 A1 A3 B4: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B2 A1 B4 A3: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B2 A3 A1 B4: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B2 A3 B4 A1: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B2 B4 A1 A3: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B2 B4 A3 A1: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A3 A1 B2 B4: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A3 A1 B4 B2: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A3 B2 A1 B4: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A3 B2 B4 A1: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A3 B4 A1 B2: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order A3 B4 B2 A1: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B4 A1 B2 A3: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B4 A1 A3 B2: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B4 B2 A1 A3: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B4 B2 A3 A1: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B4 A3 A1 B2: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++   "order B4 A3 B2 A1: a1 [\"w\"] (expected []); b2 [\"w\"] (expected []); a3 [\"w\"] (expected []); b4 [\"w\"] (expected []); a3Media [\"w\"] (expected []); b4Media [\"w\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:235:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3: A bound on (Q, a), a stranger pairs Q at T1; C unbound before the retry; C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3: A bound on (Q, a), a stranger pairs Q at T1; C unbound before the retry; C without a user id, number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+message 1: ["x"] (expected [])
+message 2: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "message 1: [\"x\"] (expected [])",
++   "message 2: [\"w\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:295:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3b: the same with C standing; C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3b: the same with C standing; C without a user id, number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+message 1: ["x"] (expected [])
+message 2: ["w"] (expected [])
+message 3: ["w"] (expected [])
+C's image's media: ["w"] (expected [])
+: expected [ …(4) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "message 1: [\"x\"] (expected [])",
++   "message 2: [\"w\"] (expected [])",
++   "message 3: [\"w\"] (expected [])",
++   "C's image's media: [\"w\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:295:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3c: A's notice at T1 moves A to Q, which phone-only C2 holds in V; C unbound; C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image from P fails; P paired with a; C unbound; the retry > R3c: A's notice at T1 moves A to Q, which phone-only C2 holds in V; C unbound; C without a user id, number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+message 2: ["w"] (expected [])
+: expected [ 'message 2: ["w"] (expected [])' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "message 2: [\"w\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:295:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > X re-mints its code; C with a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > another user spends the code; C with a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > the newcomer binds with X's re-minted code; C with a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X
+AssertionError: wrong cases:
+C after the retry: false (expected true)
+C at the end: false (expected true)
+: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "C after the retry: false (expected true)",
++   "C at the end: false (expected true)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:341:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > X re-mints its code; C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > X re-mints its code; C without a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > the newcomer binds with X's re-minted code; C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > the newcomer binds with X's re-minted code; C without a user id, number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+the retry: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "the retry: [\"w\"] (expected [])",
++   "the live code text: [\"w\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:341:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > X re-mints its code; C without a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X
+AssertionError: wrong cases:
+the retry: ["w"] (expected [])
+C after the retry: false (expected true)
+the live code text: ["w"] (expected ["x"])
+the newcomer's binding: "city_8d6dd42478ed9f0a2759ae69" (expected "city_6529c47fd2866d049bad5688")
+C at the end: false (expected true)
+new bindings: 0 (expected 1)
+: expected [ …(6) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "the retry: [\"w\"] (expected [])",
++   "C after the retry: false (expected true)",
++   "the live code text: [\"w\"] (expected [\"x\"])",
++   "the newcomer's binding: \"city_8d6dd42478ed9f0a2759ae69\" (expected \"city_6529c47fd2866d049bad5688\")",
++   "C at the end: false (expected true)",
++   "new bindings: 0 (expected 1)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:341:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > another user spends the code; C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > another user spends the code; C without a user id, number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+the retry: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+new bindings: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "the retry: [\"w\"] (expected [])",
++   "the live code text: [\"w\"] (expected [])",
++   "new bindings: 1 (expected 0)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:341:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > another user spends the code; C without a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X
+AssertionError: wrong cases:
+the retry: ["w"] (expected [])
+C after the retry: false (expected true)
+the live code text: ["w"] (expected ["x"])
+the newcomer's binding: "city_1f30b4fd27cf1e6fdac5cd32" (expected "city_9507bdac39de8c10efd29862")
+C at the end: false (expected true)
+new bindings: 1 (expected 2)
+: expected [ …(6) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "the retry: [\"w\"] (expected [])",
++   "C after the retry: false (expected true)",
++   "the live code text: [\"w\"] (expected [\"x\"])",
++   "the newcomer's binding: \"city_1f30b4fd27cf1e6fdac5cd32\" (expected \"city_9507bdac39de8c10efd29862\")",
++   "C at the end: false (expected true)",
++   "new bindings: 1 (expected 2)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:341:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T3, round 4b finding 3 (R4, R4b, R8): a newcomer's code text beside P fails; the code dies; the retry > the newcomer binds with X's re-minted code; C without a user id, Meta's shape: the retry reaches no city; C unchanged; the live code binds to X
+AssertionError: wrong cases:
+the retry: ["w"] (expected [])
+C after the retry: false (expected true)
+the live code text: ["w"] (expected ["x"])
+the newcomer's binding: "city_69a91378124af7f1bd091073" (expected "city_57d20e9c2e0009fb1cce8822")
+C at the end: false (expected true)
+new bindings: 0 (expected 1)
+: expected [ …(6) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "the retry: [\"w\"] (expected [])",
++   "C after the retry: false (expected true)",
++   "the live code text: [\"w\"] (expected [\"x\"])",
++   "the newcomer's binding: \"city_69a91378124af7f1bd091073\" (expected \"city_57d20e9c2e0009fb1cce8822\")",
++   "C at the end: false (expected true)",
++   "new bindings: 0 (expected 1)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:341:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T4, round 4b finding 4 (R9): the newcomer texts a six-digit typo, then X's live code > C with a user id, Meta's shape: the typo reaches no city; the code binds to X; C unchanged
+AssertionError: wrong cases:
+C: false (expected true)
+: expected [ 'C: false (expected true)' ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "C: false (expected true)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:368:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T4, round 4b finding 4 (R9): the newcomer texts a six-digit typo, then X's live code > C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T4, round 4b finding 4 (R9): the newcomer texts a six-digit typo, then X's live code > C without a user id, number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+the typo: ["w"] (expected [])
+the live code text: ["w"] (expected [])
+: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "the typo: [\"w\"] (expected [])",
++   "the live code text: [\"w\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:368:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T4, round 4b finding 4 (R9): the newcomer texts a six-digit typo, then X's live code > C without a user id, Meta's shape: the typo reaches no city; the code binds to X; C unchanged
+AssertionError: wrong cases:
+the typo: ["w"] (expected [])
+the live code text: ["w"] (expected ["x"])
+the newcomer's binding: "city_2b71f3bd69ee745fa89cde9a" (expected "city_ad424b419e065d50cbe9c439")
+C: false (expected true)
+new bindings: 0 (expected 1)
+: expected [ …(5) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "the typo: [\"w\"] (expected [])",
++   "the live code text: [\"w\"] (expected [\"x\"])",
++   "the newcomer's binding: \"city_2b71f3bd69ee745fa89cde9a\" (expected \"city_ad424b419e065d50cbe9c439\")",
++   "C: false (expected true)",
++   "new bindings: 0 (expected 1)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:368:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image's first write fails, retried after the notice; C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image's first write fails, retried after the notice; C without a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image on time; C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image on time; C without a user id, number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+A's image: ["w"] (expected [])
+A's image's media: ["w"] (expected [])
+the pairing: ["w"] (expected [])
+the notice: ["w"] (expected [])
+: expected [ …(4) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "A's image: [\"w\"] (expected [])",
++   "A's image's media: [\"w\"] (expected [])",
++   "the pairing: [\"w\"] (expected [])",
++   "the notice: [\"w\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:400:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T5, gate r3 (round 4 scope 1): P paired with a (T2); A's image (T3) fails; A's notice (T4); the retry, C standing > the image's first write fails, retried after the notice; C without a user id, Meta's shape: X, with media; never W
+AssertionError: wrong cases:
+A's image: [] (expected ["x"])
+A's image's media: [] (expected ["x"])
+: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "A's image: [] (expected [\"x\"])",
++   "A's image's media: [] (expected [\"x\"])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:400:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T6, new: a→a2 (T1) fails until a2→a3 (T2) lands; then a→a2 is replayed > Meta's shape: A answers to a3, and replays change nothing
+AssertionError: wrong cases:
+A's message under a3: [] (expected ["x"])
+canned lines: 1 (expected 0)
+A's current user id: ["US.13811327361917563685"] (expected ["US.09048654210487542537"])
+X's send to A's conversation: recipient null (expected "US.09048654210487542537"); to "5503977429825" (expected null)
+canned lines after the replays: 1 (expected 0)
+: expected [ …(5) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "A's message under a3: [] (expected [\"x\"])",
++   "canned lines: 1 (expected 0)",
++   "A's current user id: [\"US.13811327361917563685\"] (expected [\"US.09048654210487542537\"])",
++   "X's send to A's conversation: recipient null (expected \"US.09048654210487542537\"); to \"5503977429825\" (expected null)",
++   "canned lines after the replays: 1 (expected 0)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:441:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T6, new: a→a2 (T1) fails until a2→a3 (T2) lands; then a→a2 is replayed > number-only: nothing reaches a city or re-keys
+AssertionError: wrong cases:
+canned lines: 1 (expected 0)
+X's send to A's conversation: recipient null (expected "US.38347085530972455493"); to "5534442320480" (expected null)
+canned lines after the replays: 1 (expected 0)
+first notice: ["x"] (expected [])
+: expected [ Array(4) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "canned lines: 1 (expected 0)",
++   "X's send to A's conversation: recipient null (expected \"US.38347085530972455493\"); to \"5534442320480\" (expected null)",
++   "canned lines after the replays: 1 (expected 0)",
++   "first notice: [\"x\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:441:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T7, new: P's pairing with a (T2) fails; A's image (T3) arrives on time; T2 lands > C with a user id, number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T7, new: P's pairing with a (T2) fails; A's image (T3) arrives on time; T2 lands > C without a user id, number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+A's image: ["w"] (expected [])
+A's image's media: ["w"] (expected [])
+the pairing: ["w"] (expected [])
+: expected [ …(3) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "A's image: [\"w\"] (expected [])",
++   "A's image's media: [\"w\"] (expected [])",
++   "the pairing: [\"w\"] (expected [])",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:465:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; X unbinds A; the code text first; Meta's shape: never Y; no city once A is unbound
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; X unbinds A; the code text first; Meta's shape: never Y; no city once A is unbound
+AssertionError: wrong cases:
+A's message to X: ["y"] (expected [])
+Y holds anything of A's: 2 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "A's message to X: [\"y\"] (expected [])",
++   "Y holds anything of A's: 2 (expected 0)",
++   "bindings in Y: 1 (expected 0)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:510:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; X unbinds A; the code text first; number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; X unbinds A; the code text first; number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+A's message to X: ["y"] (expected [])
+Y holds anything of A's: 2 (expected 0)
+bindings in Y: 1 (expected 0)
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(4) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "A's message to X: [\"y\"] (expected [])",
++   "Y holds anything of A's: 2 (expected 0)",
++   "bindings in Y: 1 (expected 0)",
++   "bindings of P anywhere: 1 (expected 0)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:510:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; X unbinds A; the message first; Meta's shape: never Y; no city once A is unbound
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; a notice replaces a; the message first; Meta's shape: never Y; X while A stands
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; X unbinds A; the message first; Meta's shape: never Y; no city once A is unbound
+AssertionError: wrong cases:
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "Y holds anything of A's: 1 (expected 0)",
++   "bindings in Y: 1 (expected 0)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:510:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; X unbinds A; the message first; number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; X unbinds A; the message first; number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "Y holds anything of A's: 1 (expected 0)",
++   "bindings in Y: 1 (expected 0)",
++   "bindings of P anywhere: 1 (expected 0)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:510:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; a notice replaces a; the code text first; Meta's shape: never Y; X while A stands
+AssertionError: wrong cases:
+A's message to X: [] (expected ["x"])
+Y holds anything of A's: 1 (expected 0)
+bindings in Y: 1 (expected 0)
+: expected [ …(3) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "A's message to X: [] (expected [\"x\"])",
++   "Y holds anything of A's: 1 (expected 0)",
++   "bindings in Y: 1 (expected 0)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:510:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/48]⎯
+
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; a notice replaces a; the code text first; number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text before A binds to X; a notice replaces a; the message first; number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; a notice replaces a; the code text first; number-only: nothing reaches a city or binds
+ FAIL  test/bsuid-orders.test.ts > T8, new: A's code text for Y fails, before or after A binds to X; A's message to X fails; X unbinds A, or a notice replaces a; both retried > the code text after A binds to X; a notice replaces a; the message first; number-only: nothing reaches a city or binds
+AssertionError: wrong cases:
+A's message to X: ["x"] (expected [])
+bindings of P anywhere: 1 (expected 0)
+: expected [ …(2) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "A's message to X: [\"x\"] (expected [])",
++   "bindings of P anywhere: 1 (expected 0)",
++ ]
+
+ ❯ Table.assertNone test/bsuid-orders.test.ts:179:68
+    177|   }
+    178|   assertNone() {
+    179|     expect(this.wrong, `wrong cases:\n${this.wrong.join("\n")}\n`).toE…
+       |                                                                    ^
+    180|   }
+    181| }
+ ❯ test/bsuid-orders.test.ts:510:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/48]⎯
+
+
+exit status 1

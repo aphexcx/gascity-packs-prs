@@ -161,7 +161,7 @@ test('(11g) clear-gap prints the gap and the head, rebases the watermark; a SIGK
   await deliver(r, A, 'wamid.G1');
   r.gc.restore(backup);
   await r.pumpUntil(() => gapLine(r, A), { stepMs: 5000, what: 'the scheduled read finds the gap' });
-  const cleared = await adapterRequest(r.socket, 'POST', '/inbound/clear-gap', { wa_id: A });
+  const cleared = await adapterRequest(r.socket, 'POST', '/inbound/clear-gap', { conversation_id: A });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.json.gap.watermark_sequence, 2);
   assert.equal(cleared.json.head.sequence, 1);
@@ -180,7 +180,7 @@ test('(11g) clear-gap prints the gap and the head, rebases the watermark; a SIGK
   await deliver(r, A, 'wamid.G2');
   assert.equal(r.journal().filter((l) => l.t === 'watermark' && l.conversation_id === A).at(-1).sequence, 2);
   assert.equal(r.journal().filter((l) => l.t === 'watermark' && l.conversation_id === A).at(-1).provider_message_id, 'wamid.G2');
-  const empty = await adapterRequest(r.socket, 'POST', '/inbound/clear-gap', { wa_id: A });
+  const empty = await adapterRequest(r.socket, 'POST', '/inbound/clear-gap', { conversation_id: A });
   assert.equal(empty.status, 404, 'no gap to clear');
 });
 

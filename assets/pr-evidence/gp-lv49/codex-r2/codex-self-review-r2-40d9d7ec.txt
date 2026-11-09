@@ -1,0 +1,14 @@
+# codex-gate exec: prompt /Users/tailor512/city/assets/pr-evidence/gp-lv49/codex-r2-prompt.md (3620 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs; model gpt-6-astra; 2026-11-06T07:56:46Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+
+Three MAJOR findings remain:
+
+1. **MAJOR — Notices can route through a phone-matched contact.** [gateway.ts:250](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway/src/gateway.ts:250) prefers `fromUserId`, which the parser can populate from a contact matched by phone number. A payload containing another holder’s contact for the notice’s old number therefore routes the notice to that holder’s city—even without `previous_user_id`. This violates point 1. For notices, use `change.previousUserId` exclusively; test shared contacts with both present and absent previous ids.
+
+2. **MAJOR — Late links do not extend unbind protection backward.** [gateway.ts:328](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway/src/gateway.ts:328) propagates records only from old id to new id. Within one day: an invite for X under `a` fails; the `a→b` notice fails; the user binds Y under `b`; Y unbinds; the notice lands; the original invite retries. Only `b` has an unbind record, so `stranger(a)` succeeds, binds X, re-keys to `b`, and sends a welcome. A pre-unbind invite has created another binding, contrary to T8’s protection. Newly discovered predecessor ids need the applicable unbind cutoff too.
+
+3. **MAJOR — Re-keying ignores the unbind cutoff.** [gateway.ts:313](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway/src/gateway.ts:313) follows links without checking their stamps. In the retired-id-reuse scenario already covered by `bsuid.test.ts:1565`: A’s `a→a2` notice fails; A is unbound; B’s later `b→a` notice lands; A’s old notice retries. It re-keys B’s binding to `a2`, despite predating `a`’s unbind. B’s city can then receive A’s new messages/media and send to A. Apply the binding/id time-span checks when following re-key links.
+
+Tests, typecheck, and builds: **not run (sandbox)**. Head transcripts report **223/223 passing**, typecheck clean, and Wrangler dry run successful. Findings above are from static review; no files were changed.
+
+VERDICT: BLOCK

@@ -1,0 +1,8 @@
+# gp-0g2s typecheck (tsc --noEmit)
+# HEAD 43f649474c5a9e1d7ab21fc413094695459b2edd
+# 2026-11-05T00:01:37Z pnpm typecheck (cwd whatsapp/gateway) -> exit 0
+# src sha256: {'src/gateway.ts': 'a164b71d9389', 'src/meta.ts': '861279d6cecb', 'src/window.ts': 'dfbd088efebf', 'src/index.ts': 'b7f65f18c48e'}
+# 0003 present: True
+
+pnpm wrapper: verify-deps off for run typecheck (round 3)
+$ tsc -p tsconfig.json --noEmit

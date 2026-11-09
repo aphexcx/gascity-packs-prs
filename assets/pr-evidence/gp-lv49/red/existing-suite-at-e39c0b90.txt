@@ -1,0 +1,20 @@
+# The existing suite with the RED commit's harness additions, on e39c0b90's source: unchanged, all green
+
+$ pnpm exec vitest run test/gateway.test.ts test/bsuid.test.ts test/meta.test.ts
+
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+
+ Test Files  3 passed (3)
+      Tests  150 passed (150)
+   Start at  01:15:44
+   Duration  1.32s (transform 187ms, setup 171ms, import 268ms, tests 1.45s, environment 0ms)
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+exit status 0

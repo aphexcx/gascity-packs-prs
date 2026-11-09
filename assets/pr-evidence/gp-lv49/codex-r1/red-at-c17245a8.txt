@@ -1,0 +1,49 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+ ❯ test/bsuid.test.ts (60 tests | 2 failed | 58 skipped) 60ms
+     × a notice landing after an unbind extends the unbind's record to the id it reveals: what the owner wrote under the new id while bound binds nothing and reaches no city (codex self-review r1, finding 1) 21ms
+     × a chain of number changes of any length within the retry window still leads to its binding: no depth limit makes an owned id a stranger's (codex self-review r1, finding 3) 38ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > a notice landing after an unbind extends the unbind's record to the id it reveals: what the owner wrote under the new id while bound binds nothing and reaches no city (codex self-review r1, finding 1)
+AssertionError: expected { n: 1 } to deeply equal { n: +0 }
+
+- Expected
++ Received
+
+  {
+-   "n": 0,
++   "n": 1,
+  }
+
+ ❯ test/bsuid.test.ts:1617:107
+    1615|     t.clock.now = T0 + 5 * HOUR;
+    1616|     for (const m of [change, code, image]) expect((await t.webhook(m))…
+    1617|     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHER…
+       |                                                                                                           ^
+    1618|     const wamids = [code, image].map((m) => m.entry[0].changes[0].valu…
+    1619|     for (const city of [x, y]) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's unbind, a notice naming no previous id, and an owner with no user id (gp-lv49) > a chain of number changes of any length within the retry window still leads to its binding: no depth limit makes an owned id a stranger's (codex self-review r1, finding 3)
+AssertionError: expected [ 'wamid.IN151df49e1ced', …(20) ] to include 'wamid.171a4585c384'
+ ❯ test/bsuid.test.ts:1650:18
+    1648|     for (const m of [early, code]) expect((await t.webhook(m)).status)…
+    1649|     const held = (await t.inbox(x)).body.deliveries.map((d: any) => d.…
+    1650|     expect(held).toContain(early.entry[0].changes[0].value.messages[0]…
+       |                  ^
+    1651|     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHER…
+    1652|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 58 skipped (60)
+   Start at  01:50:47
+   Duration  480ms (transform 60ms, setup 53ms, import 69ms, tests 60ms, environment 1ms)
+

@@ -1,5 +1,5 @@
 #!/bin/sh
-# gc whatsapp inbound clear-gap <wa_id>
+# gc whatsapp inbound clear-gap <conversation_id>
 #
 # A RESTORE GAP stands when the adapter's journal records gc accepting a
 # message the gc store no longer holds (a beads store restored from an older
@@ -15,18 +15,21 @@ WA_VERB="inbound clear-gap"
 wa_require curl
 wa_require jq
 
-wa_id="${1:-}"
-case "$wa_id" in
+conversation_id="${1:-}"
+case "$conversation_id" in
   -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
-  ''|-*) wa_usage_error "usage: gc whatsapp inbound clear-gap <wa_id>" ;;
+  ''|-*) wa_usage_error "usage: gc whatsapp inbound clear-gap <conversation_id>" ;;
 esac
 
-wa_call POST /inbound/clear-gap "$(jq -n --arg wa "$wa_id" '{wa_id: $wa}')"
+# The id goes under both names: conversation_id for this pack's adapter, wa_id
+# for an adapter process still running the PR 74 code until its restart after a
+# pack roll (gp-g02t).
+wa_call POST /inbound/clear-gap "$(jq -n --arg id "$conversation_id" '{conversation_id: $id, wa_id: $id}')"
 if [ "$WA_STATUS" -ge 400 ] 2>/dev/null; then
   wa_die "adapter answered HTTP $WA_STATUS: $(wa_error_of "$WA_BODY")"
 fi
 printf '%s' "$WA_BODY" | jq -r '
-  "Gap cleared for ...\(.gap.conversation_id | tostring | .[-4:]):",
+  "Gap cleared for ...\(.gap.conversation_id | tostring | gsub("[^0-9A-Za-z]"; "") | .[-4:]):",
   "  journal watermark: sequence \(.gap.watermark_sequence), accepted \(.gap.watermark_accepted_at // "?")",
   "  gc store head:     sequence \(.gap.head_sequence // "unknown") at \(.gap.head_created_at // "-") when found",
   (if .head then "  watermark rebased to the store head now: sequence \(.head.sequence) (\(.head.created_at))"

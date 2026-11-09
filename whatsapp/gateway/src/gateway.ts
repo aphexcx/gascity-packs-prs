@@ -6,20 +6,30 @@
  *
  * Durability: the Worker keeps nothing between requests. Meta is answered 200 only after every D1
  * write for the payload has committed in one batch (a failure answers 500 and Meta redelivers), and
- * the UNIQUE (city_id, wamid, status) index makes any redelivery one row. Routing is decided
- * INSIDE that transaction (INSERT ... SELECT ... FROM phones), never from a read taken before it, so
- * a bind that lands between the read and the write cannot misroute a message.
+ * the UNIQUE (wamid, status) index makes any redelivery one row, of the city that first received
+ * it. Routing is decided INSIDE that transaction (INSERT ... SELECT ... FROM phones), never from a
+ * read taken before it, so a bind that lands between the read and the write cannot misroute a
+ * message.
  *
- * Logs: fixed event names and counts only. Never a body, a phone number, a profile name, a code, a
- * token or a secret, and never an error's message (a parse error can quote its input).
+ * Owners: Meta names a WhatsApp user by a wa_id (a phone number) and a user_id (a business-scoped
+ * user id); since early April 2026 every message carries the user_id. An owner row is keyed by its
+ * conversation_id, set once at the bind and never changed. A message routes by its user_id alone,
+ * never by its number, and every send goes to a user_id: the design of record,
+ * whatsapp/docs/design-bsuid-pairing-and-spans.md (README.md, "Business-scoped user ids").
+ *
+ * Logs: fixed event names and counts only. Never a body, a phone number, a user id, a username, a
+ * profile name, a code, a token or a secret, and never an error's message (a parse error can quote
+ * its input).
  */
 import {
+  BSUID,
   GraphError,
   graphMarkRead,
   graphMedia,
   graphSend,
   type GraphClient,
   type InboundMessage,
+  type InboundStatus,
   MAX_TEXT_CHARS,
   parseWebhook,
   sameSecret,
@@ -40,6 +50,14 @@ export const MAX_PENDING = 5000;
 export const HOLD_SECONDS = 7 * DAY;
 /** How long a body-less row stays to dedup a late Meta redelivery (Meta retries up to 7 days). */
 export const TOMBSTONE_SECONDS = 8 * DAY;
+/**
+ * How long a notice's link, an unbind's record and a mark naming no binding are kept, from their
+ * stamp: no message they may decide (one Meta stamped at or before it) passes the stale filter
+ * later than this.
+ */
+export const EVIDENCE_SECONDS = TOMBSTONE_SECONDS;
+/** How long a counted wrong code's wamid is kept: as long as Meta may redeliver it. */
+const CODE_WAMIDS_KEEP_SECONDS = TOMBSTONE_SECONDS;
 /** Meta keeps a webhook media id for 7 days. */
 export const MEDIA_SECONDS = 7 * DAY;
 export const INVITE_SECONDS = DAY;
@@ -215,10 +233,116 @@ async function readJson(request: Request): Promise<Obj> {
   return v;
 }
 
+/** A send's `to`: a user_id exactly as given, or a phone number's digits (a leading + dropped). */
 function parseTo(v: unknown): string {
-  const s = typeof v === "string" ? v.replace(/^\+/, "") : "";
+  if (typeof v !== "string") throw new HttpError(400, "bad_request");
+  if (BSUID.test(v)) return v;
+  const s = v.replace(/^\+/, "");
   if (!/^\d{6,20}$/.test(s)) throw new HttpError(400, "bad_request");
   return s;
+}
+
+/**
+ * The ids a message names its sender by. A number-change notice is routed by its previous user_id
+ * alone: never by a contacts entry the parse matched by its old number, which can be the number's
+ * next holder (the codex self-review r2, finding 1).
+ */
+function senderOf(m: InboundMessage): { wa: string | null; user: string | null } {
+  return { wa: m.from, user: m.change ? m.change.previousUserId : m.fromUserId };
+}
+
+/*
+ * Who a message is from: the design of record (whatsapp/docs/design-bsuid-pairing-and-spans.md,
+ * section 2). Every decision below reads its sender's user_id and Meta's stamp of the message,
+ * never a phone number. A message naming no user_id (and a notice naming no previous_user_id)
+ * reaches no city and binds nothing: a number can change hands without the gateway seeing it, and
+ * the pairing that would say so may still be in flight.
+ *
+ * A binding (a phones row) answers to its current user_id and to each user_id a chain of notice
+ * links ends at it from (links: old id -> new id, at the notice's stamp). It answers to an id from
+ * its invite text (bound_stamp) or that id's last unbind, whichever is later, until the notice
+ * that replaces the id. One id, one binding: a chain stops at the first id a binding answers to
+ * now, a link to an id another binding answers to is never recorded, and a code binds only an id
+ * no binding answers to.
+ *
+ * walkFrom(id) is that chain: each id from the given one along the links, with `until`, the stamp
+ * of the notice that replaced the given id (NULL while it is current), stopping at the first id
+ * that is some binding's current user_id. Every fragment below joins it to phones. It has no
+ * depth limit: an id has at most one link out (links' key), so the chain is a path, and UNION's
+ * set semantics end it should Meta ever link back into it. A depth limit would read a long chain
+ * as unowned and let a code bind its first id a second time (the codex self-review r1, finding 3).
+ */
+const walkFrom = (id: string) =>
+  `WITH RECURSIVE walk(id, until) AS (
+     SELECT ${id}, NULL
+     UNION
+     SELECT l.new_id, COALESCE(walk.until, l.stamp) FROM walk JOIN links l ON l.old_id = walk.id
+     WHERE NOT EXISTS (SELECT 1 FROM phones h WHERE h.user_id = walk.id))`;
+/** The binding the user id answers to now, at any stamp: the one it is, or its chain ends at. */
+const holder = (id: string) => `(${walkFrom(id)} SELECT p.conversation_id FROM walk JOIN phones p ON p.user_id = walk.id LIMIT 1)`;
+/**
+ * The unbind floor of a user id: the gateway's clock at the last unbind of any id linked to it,
+ * in either direction (its link component), or NULL. One fragment, read by every decision that
+ * asks whether the owner behind an id was unbound: the route, the stranger test and the re-key.
+ * An unbind records the ids its binding answered to; a notice that lands after it, linking an
+ * earlier or a later id to one of them, joins that id to the record's component, so what the
+ * owner wrote under any of its ids before the unbind reaches no city and binds nothing (point 2;
+ * the codex self-review r1 finding 1 and r2 findings 2 and 3). Two people share a component only
+ * if Meta reissues a retired user id; the floor then fails closed for both.
+ */
+const floorOf = (id: string) =>
+  `(WITH RECURSIVE comp(id) AS (
+      SELECT ${id}
+      UNION
+      SELECT CASE WHEN l.old_id = comp.id THEN l.new_id ELSE l.old_id END FROM comp JOIN links l ON l.old_id = comp.id OR l.new_id = comp.id)
+    SELECT MAX(u.unbound_at) FROM comp JOIN unbinds u ON u.user_id = comp.id)`;
+/**
+ * The binding a message routes to: the one answering to its user id at Meta's stamp, or NULL. The
+ * stamp is at or after the binding's invite text and after the id's last unbind, and at or before
+ * the notice that replaced the id (when one did).
+ */
+const route = (id: string, stamp: string) =>
+  `(${walkFrom(id)} SELECT p.conversation_id FROM walk JOIN phones p ON p.user_id = walk.id
+     WHERE (walk.until IS NULL OR ${stamp} <= walk.until) AND ${stamp} >= COALESCE(p.bound_stamp, 0)
+       AND ${stamp} > COALESCE(${floorOf(id)}, -1)
+     LIMIT 1)`;
+/**
+ * A stranger: a user id no binding answers to, writing after the id's last unbind. Its live code
+ * binds; any other text hears the canned line. A message under a known id that no span holds
+ * (stamped before the binding's invite text, or after the notice that replaced the id, or at or
+ * before the id's unbind) is no stranger's: it reaches no city, binds nothing and is counted.
+ */
+const stranger = (id: string, stamp: string) =>
+  `(${id} IS NOT NULL AND ${holder(id)} IS NULL AND ${stamp} > COALESCE(${floorOf(id)}, -1))`;
+/**
+ * The re-key, for the binding whose current user id is ?1: along the links from it, to the newest
+ * id no other binding answers to, the one with no further link to follow. A link is reached when
+ * its old id becomes a binding's, by the notice that links to it or by a bind under it, and both
+ * run this one statement (point 2). No depth limit, as walkFrom; a chain that loops has no end,
+ * and the binding keeps its id. It follows only a link Meta stamped after the unbind floor of the
+ * binding's id: a notice from before an unbind is the unbound owner's, never the binding's that
+ * holds the id now (the codex self-review r2, finding 3).
+ */
+const REKEY = `UPDATE phones SET user_id = COALESCE((
+     WITH RECURSIVE fwd(id) AS (
+       SELECT ?1
+       UNION
+       SELECT l.new_id FROM fwd JOIN links l ON l.old_id = fwd.id
+       WHERE l.stamp > COALESCE(${floorOf("?1")}, -1) AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id AND o.user_id <> ?1))
+     SELECT f.id FROM fwd f
+     WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.old_id = f.id AND l.stamp > COALESCE(${floorOf("?1")}, -1)
+                         AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id AND o.user_id <> ?1))
+     LIMIT 1), ?1)
+   WHERE user_id = ?1`;
+/** The number a binding shows (the admin view, a delivery omitting it): its id's newest mark. */
+const shownNumber = (row: string) =>
+  `(CASE WHEN ${row}.user_id IS NULL THEN ${row}.wa_id
+         ELSE (SELECT k.number FROM marks k WHERE k.user_id = ${row}.user_id ORDER BY k.stamp DESC, k.number LIMIT 1) END)`;
+
+interface OwnerRow {
+  conversation_id: string;
+  user_id: string | null;
+  city_id: string;
 }
 
 function parseSend(body: Obj): SendRequest {
@@ -255,10 +379,14 @@ interface Plan {
   statements: D1PreparedStatement[];
   /** The index where each group starts: one message's (or one status's) statements, never split. */
   groupStarts: number[];
-  /** Statement indexes whose one changed row means "this payload bound this phone". */
-  binds: Array<{ index: number; wa: string }>;
+  /** Statement indexes whose one changed row means "the text whose wamid this is bound an owner, told at id". */
+  binds: Array<{ index: number; id: string; wamid: string }>;
   /** Statement indexes whose one changed row means "send this stranger the canned line now". */
-  canned: Array<{ index: number; wa: string }>;
+  canned: Array<{ index: number; id: string }>;
+  /** Statement indexes whose one changed row means "a message that reached no city and is no stranger's, counted". */
+  unrouted: number[];
+  /** Number-change notices naming no previous user id: they link nothing, and the owner needs a new invite. */
+  noPreviousId: number;
   /** Statuses no send has claimed yet (read before the write): kept apart for adoption. */
   orphanedStatuses: number;
   /** Messages Meta stamped longer ago than any dedup row lives: dropped and counted. */
@@ -368,6 +496,7 @@ export function createGateway(deps: Deps) {
       ["ignored_changes", batch.ignored],
       ["orphaned_statuses", plan.orphanedStatuses],
       ["stale_messages", plan.stale],
+      ["notices_without_previous_id", plan.noPreviousId],
     ] as const) {
       if (n > 0) plan.statements.push(bumpStatement(name, n));
     }
@@ -391,15 +520,17 @@ export function createGateway(deps: Deps) {
     let canned = 0;
     for (const b of plan.binds) {
       if (!committed(b.index)) continue;
-      const city = await db
-        .prepare("SELECT c.name FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.wa_id = ?")
-        .bind(b.wa)
-        .first<{ name: string }>();
-      if (await tell(b.wa, `You're connected to ${city?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
+      // The welcome goes to the binding's current user id, read after the commit (a link waiting
+      // from the bound id may have re-keyed it).
+      const bound = await db
+        .prepare("SELECT c.name, p.user_id FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.bound_wamid = ?")
+        .bind(b.wamid)
+        .first<{ name: string; user_id: string | null }>();
+      if (await tell(bound?.user_id ?? b.id, `You're connected to ${bound?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
     }
     for (const c of plan.canned) {
       if (!committed(c.index)) continue;
-      if (await tell(c.wa, `This number serves ${cfg.displayName} cities. Ask your city for an invite code.`, "canned")) {
+      if (await tell(c.id, `This number serves ${cfg.displayName} cities. Ask your city for an invite code.`, "canned")) {
         canned += 1;
       }
     }
@@ -413,6 +544,7 @@ export function createGateway(deps: Deps) {
       orphaned_statuses: plan.orphanedStatuses,
       stale: plan.stale,
       bound: plan.binds.filter((b) => committed(b.index)).length,
+      unrouted: plan.unrouted.filter(committed).length,
       welcomed,
       canned,
     });
@@ -436,10 +568,10 @@ export function createGateway(deps: Deps) {
     return ranges;
   }
 
-  /** One gateway-authored text (the welcome, the canned line). Never throws. */
-  async function tell(wa: string, text: string, kind: "welcome" | "canned"): Promise<boolean> {
+  /** One gateway-authored text (the welcome, the canned line) to a user id, in `recipient`. Never throws. */
+  async function tell(id: string, text: string, kind: "welcome" | "canned"): Promise<boolean> {
     try {
-      await graphSend({ ...graph(), timeoutMs: TELL_TIMEOUT_MS }, sendBody(wa, { type: "text", text }));
+      await graphSend({ ...graph(), timeoutMs: TELL_TIMEOUT_MS }, sendBody(id, { type: "text", text }));
       return true;
     } catch (e) {
       log({
@@ -452,16 +584,14 @@ export function createGateway(deps: Deps) {
     }
   }
 
-  async function planWebhook(
-    messages: InboundMessage[],
-    statuses: Array<{ wamid: string; status: string; recipientId: string | null; raw: Obj }>,
-    now: number,
-  ): Promise<Plan> {
+  async function planWebhook(messages: InboundMessage[], statuses: InboundStatus[], now: number): Promise<Plan> {
     const plan: Plan = {
       statements: [],
       groupStarts: [],
       binds: [],
       canned: [],
+      unrouted: [],
+      noPreviousId: 0,
       orphanedStatuses: 0,
       stale: 0,
       overCap: false,
@@ -471,25 +601,25 @@ export function createGateway(deps: Deps) {
     // be a copy whose dedup row is gone, so it is dropped and counted, never delivered again.
     const fresh = messages.filter((m) => m.timestamp === null || m.timestamp > now - TOMBSTONE_SECONDS);
     plan.stale = messages.length - fresh.length;
-    messages = fresh;
+    // A payload's number-change notices are planned first: a message in the same payload under the
+    // id a notice brings routes by the link the notice records, whatever order Meta listed them in.
+    messages = [...fresh.filter((m) => m.change), ...fresh.filter((m) => !m.change)];
     const each = async <T>(sql: string, values: string[], ...extra: unknown[]): Promise<T[]> =>
       values.length
         ? (await db.prepare(sql).bind(JSON.stringify(values), ...extra).all<T>()).results
         : [];
 
-    // Reads taken before the write, for the 5,000 cap and the stranger paths only. The write
-    // itself routes from the tables as they stand inside its own transaction.
-    const senders = [...new Set(messages.map((m) => m.from))];
-    const bound = new Map(
-      (
-        await each<{ wa_id: string; city_id: string }>(
-          "SELECT wa_id, city_id FROM phones WHERE wa_id IN (SELECT value FROM json_each(?1))",
-          senders,
-        )
-      ).map((r) => [r.wa_id, r.city_id]),
+    // Reads taken before the write, for the 5,000 cap and the stranger paths only: the bindings
+    // whose current user_id a message names. The write itself routes from the tables as they
+    // stand inside its own transaction, through the links as well.
+    const ids = messages.map(senderOf);
+    const userIds = [...new Set(ids.map((s) => s.user).filter((v): v is string => v !== null))];
+    const rows = (
+      await each<OwnerRow>("SELECT conversation_id, user_id, city_id FROM phones WHERE user_id IN (SELECT value FROM json_each(?1))", userIds)
     );
+    const owners = ids.map((s) => rows.find((r) => s.user !== null && r.user_id === s.user));
     const codes = [
-      ...new Set(messages.filter((m) => !bound.has(m.from)).map(inviteCodeIn).filter((c): c is string => c !== null)),
+      ...new Set(messages.filter((_, i) => !owners[i]).map(inviteCodeIn).filter((c): c is string => c !== null)),
     ];
     const codeCities = await each<{ city_id: string }>(
       "SELECT city_id FROM invite_codes WHERE code IN (SELECT value FROM json_each(?1)) AND used_at IS NULL",
@@ -503,7 +633,13 @@ export function createGateway(deps: Deps) {
         )
       ).map((r) => [r.wamid, r.city_id]),
     );
-    const cities = [...new Set([...bound.values(), ...codeCities.map((r) => r.city_id), ...statusCities.values()])];
+    const cities = [
+      ...new Set([
+        ...owners.flatMap((o) => (o ? [o.city_id] : [])),
+        ...codeCities.map((r) => r.city_id),
+        ...statusCities.values(),
+      ]),
+    ];
     const held = await each<{ n: number }>(
       "SELECT COUNT(*) AS n FROM deliveries WHERE body IS NOT NULL AND city_id IN (SELECT value FROM json_each(?1)) GROUP BY city_id",
       cities,
@@ -514,99 +650,215 @@ export function createGateway(deps: Deps) {
     }
 
     const push = (s: D1PreparedStatement) => plan.statements.push(s) - 1;
-    for (const m of messages) {
+    for (const [i, m] of messages.entries()) {
+      const { wa, user } = ids[i] ?? { wa: null, user: null };
+      if (wa === null && user === null && !m.change) continue; // parseWebhook yields only a notice naming no id
       plan.groupStarts.push(plan.statements.length);
+      // The window's clock and the invite's expiry read Meta's stamp clamped to the gateway's
+      // clock (at); who held an id reads Meta's own stamps (stamp), all on one clock.
       const at = Math.min(m.timestamp ?? now, now);
+      const stamp = m.timestamp ?? now;
       const body = JSON.stringify(m.raw);
-      const code = bound.has(m.from) ? null : inviteCodeIn(m);
-      if (code !== null) {
-        // A stranger's code attempt: counted per day and once per wamid (a redelivery is not a
-        // second attempt), then the bind, conditional on a code that was live when Meta stamped
-        // the text and on the attempt count, never on this read.
+      const owned = owners[i] !== undefined;
+      // Only a user id binds, hears the welcome or the canned line, or counts a code attempt:
+      // every send goes to a user id (design note, section 2, point 3).
+      const code = owned || user === null ? null : inviteCodeIn(m);
+      if (wa !== null && m.fromUserId !== null && !m.change) {
+        // Meta pairs this number with this user id at the stamp: the number's high-water mark
+        // moves to it, unless Meta stamped the message below the mark (a late retry). The mark
+        // decides only which binding shows the number, never a route (point 4), so it moves
+        // whoever sent the message: an owner, a stranger, a code text.
         push(
           db
             .prepare(
-              `INSERT INTO unknown_senders (wa_id, code_attempts, attempts_since, last_code_wamid)
-               SELECT ?1, 1, ?2, ?4 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1)
-               ON CONFLICT (wa_id) DO UPDATE SET
-                 code_attempts = CASE WHEN last_code_wamid IS ?4 THEN code_attempts
-                                      WHEN attempts_since <= ?3 THEN 1 ELSE code_attempts + 1 END,
-                 attempts_since = CASE WHEN last_code_wamid IS ?4 THEN attempts_since
-                                       WHEN attempts_since <= ?3 THEN ?2 ELSE attempts_since END,
-                 last_code_wamid = ?4`,
+              `INSERT INTO marks (number, user_id, stamp) VALUES (?1, ?2, ?3)
+               ON CONFLICT (number) DO UPDATE SET user_id = excluded.user_id, stamp = excluded.stamp WHERE excluded.stamp >= marks.stamp`,
             )
-            .bind(m.from, now, now - DAY, m.wamid),
+            .bind(wa, m.fromUserId, stamp),
         );
+      }
+      if (code !== null && user !== null) {
+        // A stranger's code attempt: counted per day and once per wamid (a redelivery of any text
+        // already counted is not a second attempt), then the bind, conditional on a code that was
+        // live when Meta stamped the text and on the attempt count, never on this read. The wamid
+        // is recorded after the count, so the count reads it unrecorded the first time only. A
+        // stranger is keyed by its user id.
+        push(
+          db
+            .prepare(
+              `INSERT INTO unknown_senders (sender_key, code_attempts, attempts_since)
+               SELECT ?1, 1, ?2 WHERE ${stranger("?1", "?5")}
+               ON CONFLICT (sender_key) DO UPDATE SET
+                 code_attempts = CASE WHEN EXISTS (SELECT 1 FROM code_attempt_wamids WHERE wamid = ?4) THEN code_attempts
+                                      WHEN attempts_since <= ?3 THEN 1 ELSE code_attempts + 1 END,
+                 attempts_since = CASE WHEN EXISTS (SELECT 1 FROM code_attempt_wamids WHERE wamid = ?4) THEN attempts_since
+                                       WHEN attempts_since <= ?3 THEN ?2 ELSE attempts_since END`,
+            )
+            .bind(user, now, now - DAY, m.wamid, stamp),
+        );
+        push(db.prepare("INSERT OR IGNORE INTO code_attempt_wamids (wamid, counted_at) VALUES (?1, ?2)").bind(m.wamid, now));
+        // The bind: only a stranger's user id, one no binding answers to now (by its own id or a
+        // chain of links, so a previous id of a standing binding never binds a second one) and
+        // Meta stamped after the id's last unbind (a text the owner sent while bound elsewhere is
+        // that binding's, never a new one's: the design note's T8). The number beside it never
+        // matters: a phone number Meta pairs with a new user id is no claim on it (no adoption,
+        // point 5). The row holds no number (the mark shows one), and its conversation_id is the
+        // user id, never the number (gp-g02t; README rule 1): a number names its owner only while
+        // that owner is bound and no one else shows it, so a key taken from one would outlive the
+        // owner and be handed to whoever binds on that number next. It answers to the id from this
+        // text's stamp. The rows below find it by the wamid that bound it.
         const bindIndex = push(
           db
             .prepare(
-              `INSERT INTO phones (wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at)
-               SELECT ?1, i.city_id, ?2, ?3, ?4, ?5 FROM invite_codes i
-               WHERE i.code = ?6 AND i.used_at IS NULL AND i.expires_at > ?5
-                 AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE wa_id = ?1), 0) <= ?7
-               ON CONFLICT (wa_id) DO NOTHING`,
+              `INSERT INTO phones (conversation_id, wa_id, user_id, username, city_id, profile_name, bound_at, bound_wamid, last_inbound_at, bound_stamp)
+               SELECT ?2, NULL, ?2, ?3, i.city_id, ?4, ?5, ?6, ?7, ?10
+               FROM invite_codes i
+               WHERE i.code = ?8 AND i.used_at IS NULL AND i.expires_at > ?7
+                 AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE sender_key = ?2), 0) <= ?9
+                 AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = ?2)
+                 AND ${stranger("?2", "?10")}
+               ON CONFLICT DO NOTHING`,
             )
-            .bind(m.from, m.profileName, now, m.wamid, at, code, MAX_CODE_ATTEMPTS),
+            .bind(wa, user, m.username, m.profileName, now, m.wamid, at, code, MAX_CODE_ATTEMPTS, stamp),
         );
         push(
           db
             .prepare(
               `UPDATE invite_codes SET used_at = ?1
-               WHERE code = ?2 AND used_at IS NULL
-                 AND EXISTS (SELECT 1 FROM phones WHERE wa_id = ?3 AND bound_wamid = ?4)`,
+               WHERE code = ?2 AND used_at IS NULL AND EXISTS (SELECT 1 FROM phones WHERE bound_wamid = ?3)`,
             )
-            .bind(now, code, m.from, m.wamid),
+            .bind(now, code, m.wamid),
         );
         push(
           db
             .prepare(
-              `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
-               SELECT city_id, ?1, 'joined', ?2, '', ?3, ?4, ?5 FROM phones WHERE wa_id = ?3 AND bound_wamid = ?2`,
+              `INSERT OR IGNORE INTO deliveries
+                 (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
+               SELECT city_id, ?1, 'joined', ?2, '', ?3, ?4, ?5, conversation_id, ?6, ?7 FROM phones WHERE bound_wamid = ?2`,
             )
-            .bind(now, m.wamid, m.from, m.profileName, body),
+            .bind(now, m.wamid, wa, user, m.username, m.profileName, body),
         );
-        plan.binds.push({ index: bindIndex, wa: m.from });
+        // A link already waiting from the bound id (its notice landed before this text) is reached
+        // now: the new binding is re-keyed along it, as a notice's own landing would.
+        push(db.prepare(REKEY).bind(user));
+        plan.binds.push({ index: bindIndex, id: user, wamid: m.wamid });
       }
-      // The message itself, routed by the phone's binding as it stands inside this transaction.
-      // After a bind by this very text its wamid is already the joined row's, so this is one row.
+      // The message itself, routed to the binding answering to its user id when Meta stamped it,
+      // as the tables stand inside this transaction (point 1). After a bind by this very text its
+      // wamid is already the joined row's, so this is one row. A wamid any city already holds is
+      // that city's: a retry after the phone moved cities is no new row. A number the message
+      // omits is the one the binding shows (its mark).
       push(
         db
           .prepare(
-            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
-             SELECT city_id, ?1, 'message', ?2, '', ?3, ?4, ?5 FROM phones WHERE wa_id = ?3`,
+            `INSERT OR IGNORE INTO deliveries
+               (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
+             SELECT p.city_id, ?1, 'message', ?2, '', COALESCE(?3, ${shownNumber("p")}), COALESCE(?4, p.user_id), ?5, p.conversation_id, ?6, ?7
+             FROM phones p WHERE p.conversation_id = ${route("?4", "?8")}`,
           )
-          .bind(now, m.wamid, m.from, m.profileName, body),
+          .bind(now, m.wamid, wa, user, m.username, m.profileName, body, stamp),
       );
+      // A message that reaches no city and is no stranger's hears nothing and is counted, in the
+      // stats and on the payload's log line: one naming no user id, a known id's message no span
+      // holds (stamped before its binding's invite text, after the notice that replaced the id, or
+      // at or before the id's unbind), and a notice no binding answers to (point 7: counted, never
+      // held or refused).
+      plan.unrouted.push(push(
+        db
+          .prepare(
+            `INSERT INTO stats (name, value) SELECT 'unrouted_messages', 1
+             WHERE ${route("?1", "?2")} IS NULL AND (?3 OR NOT ${stranger("?1", "?2")})
+             ON CONFLICT (name) DO UPDATE SET value = value + 1`,
+          )
+          .bind(user, stamp, m.change ? 1 : 0),
+      ));
       if (m.mediaId) {
+        // The media goes to the city that holds the message's wamid, from when it first did: never
+        // to a city that holds the phone only since (a retry after the phone moved cities).
         push(
           db
-            .prepare("INSERT OR IGNORE INTO media (city_id, media_id, received_at) SELECT city_id, ?1, ?2 FROM phones WHERE wa_id = ?3")
-            .bind(m.mediaId, now, m.from),
+            .prepare(
+              `INSERT OR IGNORE INTO media (city_id, media_id, received_at)
+               SELECT city_id, ?1, received_at FROM deliveries WHERE wamid = ?2 AND status = ''`,
+            )
+            .bind(m.mediaId, m.wamid),
         );
       }
+      // The routed binding's window moves on any of its messages, under its current id or a
+      // previous one, never back. Its names follow a message under its current id only: a retry
+      // under a previous id is older than them. No id is ever filled or taken: a row's user id
+      // changes only by a notice's link (point 5, no adoption).
       push(
         db
           .prepare(
             `UPDATE phones SET
-               profile_name = COALESCE(?1, profile_name),
-               last_inbound_at = CASE WHEN ?2 THEN MAX(COALESCE(last_inbound_at, 0), ?3) ELSE last_inbound_at END
-             WHERE wa_id = ?4`,
+               last_inbound_at = CASE WHEN ?3 THEN MAX(COALESCE(last_inbound_at, 0), ?4) ELSE last_inbound_at END,
+               profile_name = CASE WHEN user_id = ?5 THEN COALESCE(?1, profile_name) ELSE profile_name END,
+               username = CASE WHEN user_id = ?5 THEN COALESCE(?2, username) ELSE username END
+             WHERE conversation_id = ${route("?5", "?6")}`,
           )
-          .bind(m.profileName, movesWindow(m.type) ? 1 : 0, at, m.from),
+          .bind(m.profileName, m.username, movesWindow(m.type) ? 1 : 0, at, user, stamp),
       );
-      if (!bound.has(m.from)) {
-        // A stranger hears the canned line at most once per 7 days, claimed before it is sent.
+      if (m.change) {
+        // A number change (point 2). The notice becomes a link from its previous user id to its
+        // new one, whatever order Meta delivers notices in: one link per old id, so a replay
+        // changes nothing, and never a link to an id another binding answers to (one id, one
+        // binding). A notice naming no previous user id links nothing: the owner is re-invited,
+        // and the count tells the operator so.
+        const { previousUserId, userId, waId } = m.change;
+        if (previousUserId !== null && userId !== null) {
+          push(
+            db
+              .prepare(
+                `INSERT OR IGNORE INTO links (old_id, new_id, stamp)
+                 SELECT ?1, ?2, ?3 WHERE ?1 <> ?2 AND ${holder("?2")} IS NULL`,
+              )
+              .bind(previousUserId, userId, stamp),
+          );
+          // A link a binding reaches re-keys it: from its current id, along the links, to the
+          // newest id no other binding answers to. A link waiting for its old id's own notice is
+          // reached when that one lands, by this same statement.
+          push(db.prepare(REKEY).bind(previousUserId));
+        }
+        // The mark: the new number shows the new id from the notice's stamp, the old number shows
+        // nobody, each unless Meta already paired it later (point 4).
+        if (waId !== null && userId !== null) {
+          push(
+            db
+              .prepare(
+                `INSERT INTO marks (number, user_id, stamp) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (number) DO UPDATE SET user_id = excluded.user_id, stamp = excluded.stamp WHERE excluded.stamp >= marks.stamp`,
+              )
+              .bind(waId, userId, stamp),
+          );
+        }
+        if (wa !== null && wa !== waId) {
+          push(
+            db
+              .prepare(
+                `INSERT INTO marks (number, user_id, stamp) VALUES (?1, NULL, ?2)
+                 ON CONFLICT (number) DO UPDATE SET user_id = NULL, stamp = excluded.stamp WHERE excluded.stamp >= marks.stamp`,
+              )
+              .bind(wa, stamp),
+          );
+        }
+        if (previousUserId === null) plan.noPreviousId += 1;
+      }
+      if (!owned && !m.change && user !== null) {
+        // A stranger hears the canned line at its user id at most once per 7 days, claimed before
+        // it is sent. A number change is Meta's notice, not the user writing: never answered. A
+        // message naming no user id hears nothing: the gateway sends only to user ids.
         const cannedIndex = push(
           db
             .prepare(
-              `INSERT INTO unknown_senders (wa_id, last_replied_at)
-               SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1)
-               ON CONFLICT (wa_id) DO UPDATE SET last_replied_at = excluded.last_replied_at
+              `INSERT INTO unknown_senders (sender_key, last_replied_at)
+               SELECT ?1, ?2 WHERE ${stranger("?1", "?4")}
+               ON CONFLICT (sender_key) DO UPDATE SET last_replied_at = excluded.last_replied_at
                WHERE unknown_senders.last_replied_at IS NULL OR unknown_senders.last_replied_at <= ?3`,
             )
-            .bind(m.from, now, now - CANNED_EVERY_SECONDS),
+            .bind(user, now, now - CANNED_EVERY_SECONDS, stamp),
         );
-        plan.canned.push({ index: cannedIndex, wa: m.from });
+        plan.canned.push({ index: cannedIndex, id: user });
       }
     }
     for (const s of statuses) {
@@ -615,21 +867,25 @@ export function createGateway(deps: Deps) {
       // Routed to the city whose send recorded this wamid; when no send has recorded it yet (Meta's
       // "sent" can beat the send's own write), kept apart for that send to adopt. Exactly one of the
       // two applies, decided inside the transaction.
+      // The delivery's conversation_id is the owner the send went to (a v1 send recorded none and
+      // went to the wa_id that is its owner's key).
       push(
         db
           .prepare(
-            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
-             SELECT city_id, ?1, 'status', ?2, ?3, ?4, NULL, ?5 FROM sends WHERE wamid = ?2 LIMIT 1`,
+            `INSERT OR IGNORE INTO deliveries
+               (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
+             SELECT city_id, ?1, 'status', ?2, ?3, ?4, ?5, ?7, COALESCE(conversation_id, ?4, ?5), NULL, ?6
+             FROM sends WHERE wamid = ?2 LIMIT 1`,
           )
-          .bind(now, s.wamid, s.status, s.recipientId, JSON.stringify(s.raw)),
+          .bind(now, s.wamid, s.status, s.recipientId, s.recipientUserId, JSON.stringify(s.raw), s.username),
       );
       push(
         db
           .prepare(
-            `INSERT OR IGNORE INTO orphan_statuses (wamid, status, received_at, recipient_id, body)
-             SELECT ?2, ?3, ?1, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM sends WHERE wamid = ?2)`,
+            `INSERT OR IGNORE INTO orphan_statuses (wamid, status, received_at, recipient_id, recipient_user_id, username, body)
+             SELECT ?2, ?3, ?1, ?4, ?5, ?7, ?6 WHERE NOT EXISTS (SELECT 1 FROM sends WHERE wamid = ?2)`,
           )
-          .bind(now, s.wamid, s.status, s.recipientId, JSON.stringify(s.raw)),
+          .bind(now, s.wamid, s.status, s.recipientId, s.recipientUserId, JSON.stringify(s.raw), s.username),
       );
     }
     return plan;
@@ -697,16 +953,31 @@ export function createGateway(deps: Deps) {
     const limit = intParam(url, "limit", 100, 1, 200);
     const { results } = await db
       .prepare(
-        `SELECT id, received_at, kind, wa_id, profile_name, body FROM deliveries
-         WHERE city_id = ?1 AND body IS NOT NULL AND id > ?2 ORDER BY id LIMIT ?3`,
+        // A row the v1 Worker wrote (between migration 0002 and this code's deploy) has no
+        // conversation_id; its wa_id is its owner's key.
+        `SELECT id, received_at, kind, wa_id, user_id, username, COALESCE(conversation_id, wa_id) AS conversation_id, profile_name, body
+         FROM deliveries WHERE city_id = ?1 AND body IS NOT NULL AND id > ?2 ORDER BY id LIMIT ?3`,
       )
       .bind(cityId, after, limit)
-      .all<{ id: number; received_at: number; kind: string; wa_id: string | null; profile_name: string | null; body: string }>();
+      .all<{
+        id: number;
+        received_at: number;
+        kind: string;
+        wa_id: string | null;
+        user_id: string | null;
+        username: string | null;
+        conversation_id: string | null;
+        profile_name: string | null;
+        body: string;
+      }>();
     const deliveries = results.map((r) => ({
       id: r.id,
       received_at: r.received_at,
       kind: r.kind,
       wa_id: r.wa_id,
+      user_id: r.user_id,
+      username: r.username,
+      conversation_id: r.conversation_id,
       profile_name: r.profile_name,
       message: JSON.parse(r.body) as unknown,
     }));
@@ -730,7 +1001,8 @@ export function createGateway(deps: Deps) {
     // late Meta redelivery is still one row.
     const r = await db
       .prepare(
-        `UPDATE deliveries SET body = NULL, wa_id = NULL, profile_name = NULL, acked_at = ?1
+        `UPDATE deliveries SET body = NULL, wa_id = NULL, user_id = NULL, username = NULL, conversation_id = NULL,
+           profile_name = NULL, acked_at = ?1
          WHERE city_id = ?2 AND body IS NOT NULL AND id IN (SELECT value FROM json_each(?3))`,
       )
       .bind(deps.now(), cityId, JSON.stringify(ids))
@@ -747,11 +1019,18 @@ export function createGateway(deps: Deps) {
     if (!key) throw new HttpError(400, "bad_request");
     const req = parseSend(body);
     const now = deps.now();
-    const phone = await db
-      .prepare("SELECT last_inbound_at FROM phones WHERE wa_id = ? AND city_id = ?")
+    // `to` names THIS city's owners by their conversation_id (the id the box files one under), by
+    // their current user_id, or by a number one shows: the number whose newest pairing (its mark)
+    // is with the owner's current user_id. The rows are every owner it names.
+    const { results: named } = await db
+      .prepare(
+        `SELECT conversation_id, user_id, last_inbound_at FROM phones p
+         WHERE city_id = ?2 AND (conversation_id = ?1 OR user_id = ?1
+           OR EXISTS (SELECT 1 FROM marks k WHERE k.number = ?1 AND k.user_id = p.user_id)) LIMIT 2`,
+      )
       .bind(to, cityId)
-      .first<{ last_inbound_at: number | null }>();
-    if (!phone) {
+      .all<{ conversation_id: string; user_id: string | null; last_inbound_at: number | null }>();
+    if (named.length === 0) {
       log({ event: "send_refused", reason: "not_bound" });
       throw new HttpError(403, "not_bound");
     }
@@ -762,17 +1041,45 @@ export function createGateway(deps: Deps) {
       .bind(cityId, key)
       .first<{ wamid: string | null; state: string; created_at: number }>();
     if (prior) return repeatAnswer(prior, now);
-    if (req.type !== "template" && !windowOpen(phone.last_inbound_at, now)) {
+    // A `to` naming two owners (one's conversation_id, kept from a phone number it no longer
+    // holds, and the number another shows now: a recycled number) is refused, and nothing is
+    // sent: the box may mean either, and a guess hands one owner's message to the other. A box
+    // may resend to the owner's current id; the pack's adapter sends to user ids from GET
+    // /v1/window and never names a number (gp-g02t). (gp-0g2s; the mayor's rule R1.)
+    // The box files an owner under its conversation_id, so the answer names the owner `to` keys by
+    // its current user_id (null when it has none), and the box can resend at once; GET /v1/window
+    // shows the same id. Both rows are this city's own owners; the answer carries neither the
+    // number nor the other owner. (gp-w376; the Fable read r1 MINOR 2.)
+    if (named.length > 1) {
+      log({ event: "send_refused", reason: "ambiguous_recipient" });
+      const keyed = named.find((o) => o.conversation_id === to);
+      throw new HttpError(409, "ambiguous_recipient", {
+        hint: "send to the owner's current id",
+        owner_user_id: keyed?.user_id ?? null,
+      });
+    }
+    const owner = named[0]!;
+    // Every send goes to the owner's current user id, in Meta's `recipient`, whatever `to` named
+    // it by (design note, section 2, point 3): a number can change hands without the gateway
+    // seeing it, a user id cannot. An owner with none (one PR 73 bound by its number alone, which
+    // the mayor unbinds and re-invites at the deploy) has no address.
+    const address = owner.user_id;
+    if (!address) {
+      log({ event: "send_refused", reason: "not_bound" });
+      throw new HttpError(403, "not_bound");
+    }
+    if (req.type !== "template" && !windowOpen(owner.last_inbound_at, now)) {
       log({ event: "send_refused", reason: "window_closed", type: req.type });
       throw new HttpError(422, "window_closed");
     }
     const client = graph();
     const claim = await db
       .prepare(
-        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at) VALUES (?1, ?2, NULL, 'claimed', ?3, ?4)
+        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at, conversation_id)
+         VALUES (?1, ?2, NULL, 'claimed', ?3, ?4, ?5)
          ON CONFLICT (city_id, idempotency_key) DO NOTHING`,
       )
-      .bind(cityId, key, req.type, now)
+      .bind(cityId, key, req.type, now, owner.conversation_id)
       .run();
     if (changes(claim) !== 1) {
       const raced = await db
@@ -784,7 +1091,7 @@ export function createGateway(deps: Deps) {
     }
     let wamid: string;
     try {
-      wamid = await graphSend(client, sendBody(to, req));
+      wamid = await graphSend(client, sendBody(address, req));
     } catch (e) {
       if (!(e instanceof GraphError)) throw e;
       log({ event: "send_failed", type: req.type, meta_status: e.status, meta_code: e.code });
@@ -812,11 +1119,13 @@ export function createGateway(deps: Deps) {
           .bind(wamid, cityId, key),
         db
           .prepare(
-            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
-             SELECT ?1, received_at, 'status', wamid, status, recipient_id, NULL, body FROM orphan_statuses WHERE wamid = ?2
+            `INSERT OR IGNORE INTO deliveries
+               (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
+             SELECT ?1, received_at, 'status', wamid, status, recipient_id, recipient_user_id, username, ?3, NULL, body
+             FROM orphan_statuses WHERE wamid = ?2
              ORDER BY received_at, rowid`,
           )
-          .bind(cityId, wamid),
+          .bind(cityId, wamid, owner.conversation_id),
         db.prepare("DELETE FROM orphan_statuses WHERE wamid = ?").bind(wamid),
       ]);
     } catch (e) {
@@ -859,12 +1168,13 @@ export function createGateway(deps: Deps) {
   async function windows(request: Request): Promise<Response> {
     const cityId = await cityOf(request);
     const { results } = await db
-      .prepare("SELECT wa_id, last_inbound_at FROM phones WHERE city_id = ? ORDER BY bound_at, wa_id")
+      .prepare("SELECT conversation_id, user_id, last_inbound_at FROM phones WHERE city_id = ? ORDER BY bound_at, conversation_id")
       .bind(cityId)
-      .all<{ wa_id: string; last_inbound_at: number | null }>();
+      .all<{ conversation_id: string; user_id: string | null; last_inbound_at: number | null }>();
     return json({
       windows: results.map((r) => ({
-        conversation_id: r.wa_id,
+        conversation_id: r.conversation_id,
+        user_id: r.user_id,
         last_inbound_at: r.last_inbound_at,
         window_closes_at: windowClosesAt(r.last_inbound_at),
       })),
@@ -926,8 +1236,14 @@ export function createGateway(deps: Deps) {
            (SELECT COUNT(*) FROM credentials k WHERE k.city_id = c.id AND k.revoked_at IS NULL) AS credentials
          FROM cities c ORDER BY c.created_at, c.id`,
       ),
-      // Only the last four digits ever leave D1 on this route.
-      db.prepare("SELECT city_id, substr(wa_id, -4) AS last4 FROM phones ORDER BY bound_at"),
+      // Only the last four digits of a phone number ever leave D1 on this route: the number the
+      // owner shows (its user id's newest mark). An owner that shows none shows as "id", never
+      // any part of its user_id.
+      db.prepare(
+        `SELECT city_id, CASE WHEN n IS NULL THEN 'id' ELSE substr(n, -4) END AS last4
+         FROM (SELECT p.city_id, p.bound_at, p.conversation_id, ${shownNumber("p")} AS n FROM phones p)
+         ORDER BY bound_at, conversation_id`,
+      ),
       db.prepare("SELECT name, value FROM stats ORDER BY name"),
     ]);
     const last4 = new Map<string, string[]>();
@@ -941,6 +1257,37 @@ export function createGateway(deps: Deps) {
       })),
       counters: Object.fromEntries(((stats?.results ?? []) as Array<{ name: string; value: number }>).map((s) => [s.name, s.value])),
     });
+  }
+
+  /**
+   * The operator's unbind (README, "Unbind an owner"): every binding `id` names (its
+   * conversation_id, its current user_id, or the number a binding PR 73 made holds) is deleted,
+   * and every user id it answered to in the last 8 days, its current one and each its links
+   * reached, is recorded first, in the same batch. A message Meta stamped at or before that is the
+   * unbound binding's: it reaches no city and binds nothing, so no later binding takes what the
+   * owner wrote before the unbind (the design note's T8).
+   */
+  async function unbindOwner(request: Request): Promise<Response> {
+    await requireAdmin(request);
+    const body = await readJson(request);
+    const id = boundedString(body.id, 1, 256);
+    if (!id) throw new HttpError(400, "bad_request");
+    const now = deps.now();
+    const [, gone] = await db.batch([
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO unbinds (user_id, unbound_at)
+           WITH RECURSIVE answered(id) AS (
+             SELECT user_id FROM phones WHERE (conversation_id = ?1 OR user_id = ?1 OR wa_id = ?1) AND user_id IS NOT NULL
+             UNION
+             SELECT l.old_id FROM answered JOIN links l ON l.new_id = answered.id)
+           SELECT id, ?2 FROM answered`,
+        )
+        .bind(id, now),
+      db.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR user_id = ?1 OR wa_id = ?1").bind(id),
+    ]);
+    log({ event: "owner_unbound", bindings: changes(gone) });
+    return json({ unbound: changes(gone) });
   }
 
   // ---------------------------------------------------------------- Router
@@ -958,6 +1305,7 @@ export function createGateway(deps: Deps) {
     "/v1/window": { GET: (r) => windows(r) },
     "/v1/admin/enroll-codes": { POST: (r) => mintEnrollCode(r) },
     "/v1/admin/cities": { GET: (r) => listCities(r) },
+    "/v1/admin/unbind": { POST: (r) => unbindOwner(r) },
   };
   const MEDIA_PREFIX = "/v1/media/";
 
@@ -984,12 +1332,36 @@ export function createGateway(deps: Deps) {
     }
   }
 
-  /** The daily cron: bodies past the hold, body-less rows past the dedup day, aged codes and keys. */
+  /**
+   * The daily cron: bodies past the hold, body-less rows past the dedup day, aged codes and keys,
+   * counted code wamids Meta can no longer redeliver, and the evidence no message Meta may still
+   * deliver can need (8 days from its stamp): notice links, unbind records, and marks that name no
+   * binding (a mark naming a binding's current id is the number it shows, kept while it is).
+   */
   async function maintain(): Promise<Record<string, number>> {
     const now = deps.now();
+    // A link past its 8 days may still join an id to an unbind whose own 8 days run later (a
+    // notice that landed after the unbind; the codex self-review r3, finding 1). Before it goes,
+    // its component's floor is written on both its ids, so the record outlives the link exactly as
+    // long as the unbind's own record does.
+    const { results: expiring } = await db
+      .prepare("SELECT old_id, new_id FROM links WHERE stamp <= ?")
+      .bind(now - EVIDENCE_SECONDS)
+      .all<{ old_id: string; new_id: string }>();
+    const carry = expiring.flatMap((l) =>
+      [l.old_id, l.new_id].map((id) =>
+        db
+          .prepare(`INSERT OR IGNORE INTO unbinds (user_id, unbound_at) SELECT ?1, f FROM (SELECT ${floorOf("?1")} AS f) WHERE f IS NOT NULL`)
+          .bind(id),
+      ),
+    );
+    if (carry.length) await db.batch(carry);
     const results = await db.batch([
       db
-        .prepare("UPDATE deliveries SET body = NULL, wa_id = NULL, profile_name = NULL WHERE body IS NOT NULL AND received_at <= ?")
+        .prepare(
+          `UPDATE deliveries SET body = NULL, wa_id = NULL, user_id = NULL, username = NULL, conversation_id = NULL, profile_name = NULL
+           WHERE body IS NOT NULL AND received_at <= ?`,
+        )
         .bind(now - HOLD_SECONDS),
       db.prepare("DELETE FROM deliveries WHERE received_at <= ?").bind(now - TOMBSTONE_SECONDS),
       db.prepare("DELETE FROM media WHERE received_at <= ?").bind(now - MEDIA_SECONDS),
@@ -1000,8 +1372,24 @@ export function createGateway(deps: Deps) {
       db.prepare("DELETE FROM enroll_codes WHERE expires_at <= ?").bind(now - ENROLL_CODES_KEEP_SECONDS),
       db.prepare("DELETE FROM sends WHERE created_at <= ?").bind(now - SENDS_KEEP_SECONDS),
       db.prepare("DELETE FROM orphan_statuses WHERE received_at <= ?").bind(now - ORPHAN_SECONDS),
+      // A body-less row keeps no id: one the v1 Worker acknowledged after migration 0002 kept the
+      // conversation_id the migration wrote.
+      db.prepare(
+        `UPDATE deliveries SET wa_id = NULL, user_id = NULL, username = NULL, conversation_id = NULL, profile_name = NULL
+         WHERE body IS NULL AND COALESCE(wa_id, user_id, username, conversation_id, profile_name) IS NOT NULL`,
+      ),
+      db.prepare("DELETE FROM code_attempt_wamids WHERE counted_at <= ?").bind(now - CODE_WAMIDS_KEEP_SECONDS),
+      db.prepare("DELETE FROM links WHERE stamp <= ?").bind(now - EVIDENCE_SECONDS),
+      db.prepare("DELETE FROM unbinds WHERE unbound_at <= ?").bind(now - EVIDENCE_SECONDS),
+      db
+        .prepare(
+          `DELETE FROM marks WHERE stamp <= ?1
+             AND (user_id IS NULL OR NOT EXISTS (SELECT 1 FROM phones p WHERE p.user_id = marks.user_id))`,
+        )
+        .bind(now - EVIDENCE_SECONDS),
     ]);
-    const [bodies, rows, mediaRows, strangers, invitesGone, enrollGone, sendsGone, orphansGone] = results.map(changes);
+    const [bodies, rows, mediaRows, strangers, invitesGone, enrollGone, sendsGone, orphansGone, idsLeft, codeWamidsGone, linksGone, unbindsGone, marksGone] =
+      results.map(changes);
     return {
       bodies_expired: bodies ?? 0,
       rows_deleted: rows ?? 0,
@@ -1011,6 +1399,11 @@ export function createGateway(deps: Deps) {
       enroll_codes_deleted: enrollGone ?? 0,
       sends_deleted: sendsGone ?? 0,
       orphan_statuses_deleted: orphansGone ?? 0,
+      stray_ids_cleared: idsLeft ?? 0,
+      code_wamids_deleted: codeWamidsGone ?? 0,
+      links_deleted: linksGone ?? 0,
+      unbinds_deleted: unbindsGone ?? 0,
+      marks_deleted: marksGone ?? 0,
     };
   }
 

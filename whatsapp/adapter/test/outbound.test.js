@@ -19,7 +19,7 @@ import { createGatewayClient } from '../src/gateway.js';
 import { conversationRef, createGcClient } from '../src/gc.js';
 import { createLedger } from '../src/ledger.js';
 import {
-  chunkText, createPublisher, outboundChunkChars, templateKey, textChunkKey,
+  PROGRESS_FILE, chunkText, createPublisher, outboundChunkChars, templateKey, textChunkKey,
 } from '../src/outbound.js';
 
 const CITY = 'testcity';
@@ -48,8 +48,10 @@ function sendJSON(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-// The fake gateway: the contract v1's POST /v1/send. Every request is kept in
-// `requests`; a send that reaches "Meta" is kept in `metaCalls`. A repeated
+// The fake gateway: the contract v1's POST /v1/send, and GET /v1/window in
+// PR 73's shape (no user_id field), which the publisher reads before each send
+// (gp-g02t): a bound phone is its own recipient. Every send request is kept in
+// `requests` (a window read in `windowReads`); a send that reaches "Meta" is kept in `metaCalls`. A repeated
 // idempotency key answers the remembered answer without a Meta call. A text or
 // reaction to a phone whose window is closed answers 422 window_closed; a
 // template is never refused on the window and never opens it.
@@ -59,6 +61,8 @@ async function startFakeGateway(t, { bound = [PHONE, OTHER] } = {}) {
     window: new Map(),
     answers: new Map(),
     requests: [],
+    windowReads: 0,
+    listed: new Set(), // listed by GET /v1/window though the send refuses them (a race with an unbind)
     metaCalls: [],
     failChunk: null, // { index, status, times }
     delayMs: 0,
@@ -67,6 +71,10 @@ async function startFakeGateway(t, { bound = [PHONE, OTHER] } = {}) {
   const server = http.createServer(async (req, res) => {
     const raw = await readBody(req);
     if (req.headers.authorization !== `Bearer ${CREDENTIAL}`) return sendJSON(res, 401, { error: 'unauthorized' });
+    if (req.method === 'GET' && req.url === '/v1/window') {
+      gw.windowReads += 1;
+      return sendJSON(res, 200, { windows: [...new Set([...gw.bound, ...gw.listed])].map((id) => ({ conversation_id: id, last_inbound_at: null, window_closes_at: null })) });
+    }
     if (req.method !== 'POST' || req.url !== '/v1/send') return sendJSON(res, 404, { error: 'not_found' });
     const body = JSON.parse(raw.toString('utf8'));
     gw.requests.push(body);
@@ -143,7 +151,7 @@ async function setup(t, { bound, log } = {}) {
     const ledger = createLedger({ stateDir, clock, log });
     const pub = createPublisher({
       stateDir, gateway, gc, city: CITY, clock, ledger, log,
-      onWindowClosed: (waId) => closed.push(waId),
+      onWindowClosed: (conversationId) => closed.push(conversationId),
     });
     gcFake.publisher = pub;
     return { ledger, pub };
@@ -276,6 +284,32 @@ test('the same idempotency key yields one gateway send and the same receipt', as
   assert.equal(s.gw.requests.length, 2);
 });
 
+// gp-g02t: the progress entry names its conversation under conversation_id;
+// an entry written before names the same value under wa_id (the old field).
+test('a progress entry written before gp-g02t (its conversation under wa_id) still answers its receipt to the same key and conversation, and conflicts for another', async (t) => {
+  const s = await setup(t);
+  s.gw.window.set(PHONE, true);
+  const first = await s.pub.handlePublish(publishBody('hello owner', { key: 'gc-old' }));
+  const update = await s.pub.handlePublishUpdate(JSON.stringify({ to: PHONE, text: 'Weekly numbers are in.', idempotency_key: 'gc-old-u' }));
+  assert.deepEqual([first.json.delivered, update.json.delivered], [true, true], JSON.stringify(update.json));
+  const file = path.join(s.stateDir, PROGRESS_FILE);
+  const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const key of ['gc-old', 'gc-old-u']) {
+    const { conversation_id: conversationId, ...rest } = stored.entries[key];
+    assert.equal(conversationId, PHONE, 'the entry names its conversation under conversation_id');
+    stored.entries[key] = { ...rest, wa_id: conversationId };
+  }
+  fs.writeFileSync(file, `${JSON.stringify(stored)}\n`);
+  const requests = s.gw.requests.length;
+  const { pub } = s.make();
+  const again = await pub.handlePublish(publishBody('hello owner', { key: 'gc-old' }));
+  const againUpdate = await pub.handlePublishUpdate(JSON.stringify({ to: PHONE, text: 'Weekly numbers are in.', idempotency_key: 'gc-old-u' }));
+  assert.deepEqual([again.json, againUpdate.json.message_id], [first.json, update.json.message_id], 'the settled receipts');
+  const other = await pub.handlePublish(publishBody('hello owner', { to: OTHER, key: 'gc-old' }));
+  assert.equal(other.status, 409, 'the same key for another conversation is a conflict');
+  assert.equal(s.gw.requests.length, requests, 'no gateway call');
+});
+
 test('a mid-chunk failure resumes at the failed chunk', async (t) => {
   const s = await setup(t);
   s.gw.window.set(PHONE, true);
@@ -324,6 +358,15 @@ test('403 not bound maps to permanent with reason not_bound; a 401 maps to auth'
   assert.equal(answer.json.delivered, false);
   assert.equal(answer.json.failure_kind, 'permanent');
   assert.equal(answer.json.metadata.reason, 'not_bound');
+  // gp-g02t: refused here (the window lists no such owner), nothing asked of the send.
+  assert.deepEqual([answer.json.metadata.recipient, answer.json.metadata.gateway_status, s.gw.requests.length], ['not_listed', undefined, 0]);
+  // The gateway's own 403 (the window still listed the owner when the send was refused).
+  s.gw.listed.add(OTHER);
+  const raced = await s.pub.handlePublish(publishBody('hi', { to: OTHER, key: 'gc-nb2' }));
+  assert.deepEqual(
+    [raced.json.delivered, raced.json.failure_kind, raced.json.metadata.reason, raced.json.metadata.gateway_status, raced.json.metadata.recipient],
+    [false, 'permanent', 'not_bound', '403', undefined],
+  );
 
   const revoked = createPublisher({
     stateDir: s.stateDir,
@@ -353,7 +396,7 @@ test('publish without session attribution is refused', async (t) => {
   assert.equal(legacy.json.delivered, true);
 });
 
-test('sends to one wa_id are serialized: a second publish waits for every chunk of the first', async (t) => {
+test('sends to one conversation are serialized: a second publish waits for every chunk of the first', async (t) => {
   const s = await setup(t);
   s.gw.window.set(PHONE, true);
   s.gw.window.set(OTHER, true);

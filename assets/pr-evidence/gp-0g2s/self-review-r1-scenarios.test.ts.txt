@@ -1,0 +1,278 @@
+/**
+ * Self-review r1 scenarios for gp-0g2s (735e5373). Each test asserts the CURRENT behaviour, so a
+ * green run reproduces the finding; the comment says what should happen instead.
+ */
+import { env } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
+import { bsuid, changeAs, flakyDb, HOUR, mediaPayload, phone, setup, T0, textAs, textPayload, uniq } from "./harness.js";
+
+const wamidOf = (p: any): string => p.entry[0].changes[0].value.messages[0].id;
+const notice = (from: string | null, previousUser: string, newUser: string, newWa: string | null, ts: number) =>
+  changeAs(newWa ? "user_changed_number" : "user_changed_user_id", { from, previousUser, newUser, newWa }, { wamid: `wamid.${uniq()}`, ts });
+
+async function owners(...ids: string[]) {
+  const { results } = await env.DB.prepare(
+    `SELECT conversation_id, wa_id, user_id, city_id FROM phones
+     WHERE conversation_id IN (SELECT value FROM json_each(?1)) OR wa_id IN (SELECT value FROM json_each(?1))
+        OR user_id IN (SELECT value FROM json_each(?1))
+     ORDER BY bound_at, conversation_id`,
+  )
+    .bind(JSON.stringify(ids))
+    .all();
+  return results;
+}
+
+describe("R1: a never-stored wamid after unbind/rebind goes to the new city (PR 73 MAJOR, the first-delivery-failed order)", () => {
+  it("S1a: same owner (wa+user) moves city; its message whose first delivery failed is delivered to the NEW city, media granted there", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const first = await t.enrollCity();
+    const second = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(first, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const before = textAs({ wa: p, user: a }, "for the FIRST city's mayor only", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    const mediaId = `9${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    t.graph.media.set(mediaId, { mime: "image/jpeg", bytes: new Uint8Array([255, 216, 255]) });
+    const image = mediaPayload("image", p, mediaId, { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(image)).status).toBe(500);
+    // README "Unbind an owner"; the owner joins the second city.
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(p).run();
+    t.clock.now = T0 + 2 * HOUR;
+    await t.joinAs(second, { wa: p, user: a });
+    t.clock.now = T0 + 3 * HOUR;
+    expect((await t.webhook(before)).status).toBe(200);
+    expect((await t.webhook(image)).status).toBe(200);
+    const got = (await t.inbox(second)).body.deliveries;
+    // CURRENT: the second city receives the first city's message and its image.
+    expect(got.some((d: any) => d.message?.id === wamidOf(before))).toBe(true);
+    expect(got.some((d: any) => d.message?.id === wamidOf(image))).toBe(true);
+    expect((await t.call("GET", `/v1/media/${mediaId}`, { token: second.token })).status).toBe(200);
+  });
+
+  it("S1b: phone-only shape, a DIFFERENT person binds the number in another city: the old owner's failed-then-retried message lands there", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const first = await t.enrollCity();
+    const second = await t.enrollCity();
+    const p = phone();
+    await t.join(first, p);
+    t.clock.now = T0 + HOUR;
+    const before = textPayload(p, "A's words for city one", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR, name: "A" });
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(p).run();
+    t.clock.now = T0 + 2 * HOUR;
+    await t.join(second, p);
+    t.clock.now = T0 + 3 * HOUR;
+    expect((await t.webhook(before)).status).toBe(200);
+    expect((await t.inbox(second)).body.deliveries.some((d: any) => d.message?.id === wamidOf(before))).toBe(true);
+  });
+});
+
+describe("R2: an alias whose binding is gone falls through to ownerKey (README: 'names nobody ... nothing reaches the next city')", () => {
+  it("S2: number change, unbind, the number binds in another city; a phone-only retry stamped before the change lands in the other city and rewrites its holder's profile_name", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const first = await t.enrollCity();
+    const second = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(first, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const legacy = textPayload(p, "A, today's shape, before the change", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR, name: "A's name" });
+    flaky.arm(0);
+    expect((await t.webhook(legacy)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    const q = phone();
+    const a2 = bsuid();
+    expect((await t.webhook(notice(p, a, a2, q, t.clock.now))).status).toBe(200);
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?2 OR user_id = ?3").bind(p, q, a2).run();
+    t.clock.now = T0 + 3 * HOUR;
+    const c = bsuid();
+    await t.joinAs(second, { wa: p, user: c }, { name: "C" });
+    t.clock.now = T0 + 4 * HOUR;
+    expect((await t.webhook(legacy)).status).toBe(200);
+    const d = (await t.inbox(second)).body.deliveries.find((x: any) => x.message?.id === wamidOf(legacy));
+    // CURRENT: delivered to the second city under C's conversation.
+    expect(d).toMatchObject({ conversation_id: p, wa_id: p, user_id: c });
+    expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(p).first()).toEqual({ profile_name: "A's name" });
+  });
+});
+
+describe("R3: the stale-number strip keeps no alias", () => {
+  it("S3: the new holder of P binds before A's notice lands (strip), so A's phone-only pre-change retry goes to B", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const legacy = textPayload(p, "A, today's shape", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(legacy)).status).toBe(500);
+    const q = phone();
+    const a2 = bsuid();
+    const late = notice(p, a, a2, q, T0 + 2 * HOUR);
+    flaky.arm(0);
+    t.clock.now = T0 + 2 * HOUR;
+    expect((await t.webhook(late)).status).toBe(500); // the notice's first delivery fails
+    t.clock.now = T0 + 3 * HOUR;
+    const b = bsuid();
+    await t.joinAs(city, { wa: p, user: b });
+    t.clock.now = T0 + 4 * HOUR;
+    expect(await owners(p, a, b)).toEqual([
+      { conversation_id: p, wa_id: null, user_id: a, city_id: city.id },
+      { conversation_id: b, wa_id: p, user_id: b, city_id: city.id },
+    ]);
+    expect((await t.webhook(late)).status).toBe(200);
+    // CURRENT: the late notice (from = P, previous_user_id = a: a pairing that is history) runs
+    // the stale-number strip before any alias of a exists, so B loses P; the notice's plain UPDATE
+    // then refills A's wa_id with P, and the re-key moves A to Q. B is left with no number.
+    expect(await owners(p, q, a2, b)).toEqual([
+      { conversation_id: p, wa_id: q, user_id: a2, city_id: city.id },
+      { conversation_id: b, wa_id: null, user_id: b, city_id: city.id },
+    ]);
+    // B's own message in today's shape (the number alone) is now a stranger's: canned line, not delivered.
+    const calls = t.graph.sends().length;
+    const mine = await t.say(p, "B, today's shape");
+    expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === mine.wamid)).toBe(false);
+    expect(t.graph.sends().length).toBe(calls + 1);
+  });
+});
+
+describe("R4: a redelivered notice is not alias-guarded in the change block", () => {
+  it("S4: notice 1 redelivered after A's second change re-keys a phone-only holder of A's first number onto A's old ids", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const other = await t.enrollCity();
+    const a = bsuid();
+    // A is a username owner (conversation_id a), later shows phone P.
+    await t.joinAs(city, { user: a });
+    const p = phone();
+    await t.sayAs({ wa: p, user: a }, "now with my phone");
+    expect(await owners(a)).toEqual([{ conversation_id: a, wa_id: p, user_id: a, city_id: city.id }]);
+    t.clock.now = T0 + HOUR;
+    const q = phone();
+    const a2 = bsuid();
+    const n1 = notice(p, a, a2, q, t.clock.now);
+    expect((await t.webhook(n1)).status).toBe(200);
+    // B binds phone-only on P (P is nobody's conversation_id).
+    t.clock.now = T0 + 2 * HOUR;
+    await t.join(other, p);
+    expect(await owners(p)).toEqual([{ conversation_id: p, wa_id: p, user_id: null, city_id: other.id }]);
+    t.clock.now = T0 + 3 * HOUR;
+    const r = phone();
+    const a3 = bsuid();
+    expect((await t.webhook(notice(q, a2, a3, r, t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 4 * HOUR;
+    expect((await t.webhook(n1)).status).toBe(200); // Meta redelivers notice 1
+    // CURRENT: B's row now carries A's old ids (Q, a2); B's city's sends to B go to Q.
+    expect(await owners(p)).toEqual([{ conversation_id: p, wa_id: q, user_id: a2, city_id: other.id }]);
+    await t.say(p, "B writes"); // makes the window open for a text? B's row no longer has P; use a template
+    const s = await t.send(other, { to: p, idempotency_key: uniq(), type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } });
+    expect(s.status).toBe(200);
+    expect(t.graph.sends().at(-1)!.body).toMatchObject({ to: q });
+  });
+});
+
+describe("R6: README rule 7's resend advice ('the user_id of its newest delivery') after the 409", () => {
+  it("S6: right after A's number change, A's newest delivery is the notice, carrying A's OLD user_id; a resend to it answers 403 not_bound", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a });
+    const q = phone();
+    const a2 = bsuid();
+    t.clock.now = T0 + HOUR;
+    expect((await t.webhook(notice(p, a, a2, q, t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 2 * HOUR;
+    const b = bsuid();
+    await t.joinAs(city, { wa: p, user: b });
+    const template = { type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } };
+    expect((await t.send(city, { to: p, idempotency_key: uniq(), ...template })).status).toBe(409);
+    const newest = (await t.inbox(city)).body.deliveries.filter((d: any) => d.conversation_id === p).at(-1);
+    expect(newest).toMatchObject({ kind: "message", user_id: a });
+    expect(newest.message.type).toBe("system");
+    const r = await t.send(city, { to: newest.user_id, idempotency_key: uniq(), ...template });
+    expect([r.status, r.body.error]).toEqual([403, "not_bound"]);
+    // GET /v1/window does give the current one.
+    expect((await t.window(city)).body.windows.find((w: any) => w.conversation_id === p).user_id).toBe(a2);
+  });
+});
+
+describe("R7: the alias-window UPDATE's MAX is the only thing keeping an old retry from rewinding the window", () => {
+  it("S7: the owner writes under its new ids, then the pre-change retry lands: the window stays at the newer stamp (pins MAX; mutation M1 survives the suite)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const before = textAs({ wa: p, user: a }, "before", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    const q = phone();
+    const a2 = bsuid();
+    t.clock.now = T0 + 2 * HOUR;
+    expect((await t.webhook(notice(p, a, a2, q, t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 3 * HOUR;
+    await t.sayAs({ wa: q, user: a2 }, "after, new ids");
+    t.clock.now = T0 + 4 * HOUR;
+    expect((await t.webhook(before)).status).toBe(200);
+    expect((await t.window(city)).body.windows.find((w: any) => w.conversation_id === p).last_inbound_at).toBe(T0 + 3 * HOUR);
+  });
+});
+
+describe("R8: the alias ORDER BY is pinned only by wamid luck", () => {
+  it("S8: one number two owners left in turn, with the earlier binding's wamid sorting AFTER the later one's: a retry still goes to the owner that held it then (mutation M4 survives the suite)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a }, { wamid: `wamid.ZZZ${uniq()}` });
+    t.clock.now = T0 + HOUR;
+    const fromA = textPayload(p, "A's, today's shape", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(fromA)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    expect((await t.webhook(notice(p, a, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 3 * HOUR;
+    const b = bsuid();
+    await t.joinAs(city, { wa: p, user: b }, { wamid: `wamid.AAA${uniq()}` });
+    t.clock.now = T0 + 5 * HOUR;
+    expect((await t.webhook(notice(p, b, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 6 * HOUR;
+    expect((await t.webhook(fromA)).status).toBe(200);
+    expect((await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(fromA))).toMatchObject({ conversation_id: p });
+  });
+});
+
+describe("R5: a retry with no timestamp is never alias-routed", () => {
+  it("S5: Meta's retry with the timestamp missing, under the old ids after the change, is a stranger's: lost with 200 and a canned line to the old number", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const before = textAs({ wa: p, user: a }, "no stamp", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    delete before.entry[0].changes[0].value.messages[0].timestamp;
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    expect((await t.webhook(notice(p, a, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 3 * HOUR;
+    expect((await t.webhook(before)).status).toBe(200);
+    expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === wamidOf(before))).toBe(false);
+  });
+});

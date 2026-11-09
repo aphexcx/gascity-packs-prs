@@ -1,5 +1,5 @@
 // outbound.js — the mayor's replies out to WhatsApp: POST /publish (from gc,
-// and from `gc whatsapp publish --to <wa_id> --text` through gc's
+// and from `gc whatsapp publish --to <conversation_id> --text` through gc's
 // /svc/whatsapp proxy) and POST /publish-update (from `gc whatsapp publish
 // --update`), on the WeCom pack's outbound shape (chunking, per-key chunk
 // progress, per-chat serialization, the CLI's transcript recording).
@@ -38,17 +38,33 @@
 // A lost progress write is therefore safe: the retry re-asks the gateway
 // under the same chunk key and gets the same answer.
 //
-// THE RECIPIENT. A number the gateway finds naming two owners (409
-// ambiguous_recipient, PR 76's rule R1) is the permanent gateway_refused with
-// metadata.gateway_error ambiguous_recipient and the gateway's hint, never
-// resent: see failure().
+// THE RECIPIENT (gp-g02t; the mayor's (A), 12:05Z 11/6). A reply names its
+// conversation, the key the inbound side files the owner under (render.js
+// conversationOf). A conversation id that is a phone number names its owner
+// alone only while that owner is bound and no other owner of the city shows
+// the number, since PR 76's send resolves `to` by conversation_id, user_id or
+// a shown number. So each publish and each update reads GET /v1/window once
+// and sends to the user id of the entry whose conversation_id is the
+// conversation (the design of record: every send goes to a user id):
+//   - no such entry (the owner unbound, or not a conversation id at all):
+//     not_bound, nothing sent;
+//   - an entry whose user_id is null (an owner PR 73 bound by number alone):
+//     not_bound, nothing sent;
+//   - an entry with no user_id field (PR 73's gateway): the conversation id,
+//     that contract's owner key.
+// The gateway key stays bound to the conversation id. A number change that
+// lands between the read and the send answers 403 not_bound; a retry under
+// the same key reads the window again. An id the gateway still finds naming
+// two owners (409 ambiguous_recipient, PR 76's rule R1) is the permanent
+// gateway_refused with metadata.gateway_error ambiguous_recipient and the
+// gateway's hint, never resent: see failure().
 //
 // THE CLI'S TRANSCRIPT. gc records the outbound transcript for its own
 // publishes (HandleOutbound, step 6). A CLI publish reaches this adapter
 // directly, so the adapter records it the way the WeCom adapter records
 // media: after delivery it POSTs gc's /extmsg/outbound on the same
 // conversation as the inbound envelope (conversationRef: account_id
-// dynasty, conversation_id the wa_id) with the SAME idempotency key; gc
+// dynasty, conversation_id the owner's) with the SAME idempotency key; gc
 // calls this adapter's /publish back with that key, which answers the
 // settled receipt without re-sending, and then appends the transcript
 // entry. A CLI publish is marked metadata.origin = "cli" (gc's own wire
@@ -111,7 +127,7 @@ const sha256Hex = (s) => crypto.createHash('sha256').update(String(s)).digest('h
 // Opus read r2's MAJOR 1 on PR 74). The gateway remembers one answer per key
 // per city for 30 days and answers a repeat with it, with no Meta call and
 // whoever the recipient. The progress store below refuses a caller key
-// reused for another phone, text or verb, but only while it remembers the
+// reused for another conversation, text or verb, but only while it remembers the
 // key (7 days or 1024 keys). So a gateway key names exactly the message the
 // store checks: the operation in its own namespace (a text chunk and a
 // template never share a key: an update keyed "K:0" and a text keyed "K"
@@ -133,9 +149,13 @@ const str = (v) => (typeof v === 'string' ? v.trim() : '');
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
-// The per-key progress store: key -> {endpoint, wa_id, text_sha256,
+// The per-key progress store: key -> {endpoint, conversation_id, text_sha256,
 // transcript_sha256?, chunks, delivered, message_ids, receipt?, recording?,
 // updated_at}. Bounded by age and count; rewritten atomically on change.
+// An entry written before gp-g02t names its conversation under wa_id, that
+// field's old name; the value was always the conversation id gc (or the
+// operator's --to) named, and entryConversation reads either.
+const entryConversation = (entry) => (Object.hasOwn(entry, 'conversation_id') ? entry.conversation_id : entry.wa_id);
 function createProgressStore({ file, clock, log, cap = 1024, ttlMs = 7 * DAY_MS }) {
   const entries = new Map();
   try {
@@ -203,17 +223,17 @@ export function createPublisher({
 }) {
   const progress = createProgressStore({ file: path.join(stateDir, PROGRESS_FILE), clock, log });
   const updatesFile = path.join(stateDir, UPDATES_FILE);
-  const inflight = new Map(); // key -> { promise, waId, textSha, endpoint }
+  const inflight = new Map(); // key -> { promise, conversationId, textSha, endpoint }
 
-  // Per-wa_id serialization: two publishes to one phone never interleave
-  // their chunks; different phones stay concurrent.
+  // Per-conversation serialization: two publishes to one owner never
+  // interleave their chunks; different owners stay concurrent.
   const chains = new Map();
-  function chain(waId, fn) {
-    const prev = chains.get(waId) ?? Promise.resolve();
+  function chain(conversationId, fn) {
+    const prev = chains.get(conversationId) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(fn);
-    chains.set(waId, next);
+    chains.set(conversationId, next);
     next.catch(() => {}).then(() => {
-      if (chains.get(waId) === next) chains.delete(waId);
+      if (chains.get(conversationId) === next) chains.delete(conversationId);
     });
     return next;
   }
@@ -228,14 +248,14 @@ export function createPublisher({
         delivered: false,
         failure_kind: 'permanent',
         idempotency_key: key,
-        error: 'this idempotency key was already used for a different message (another phone, text or verb); use a fresh key',
+        error: 'this idempotency key was already used for a different message (another conversation, text or verb); use a fresh key',
         metadata: { reason: 'idempotency_conflict' },
       },
     };
   }
 
   // failure maps a gateway error to gc's receipt, answered 200.
-  function failure(err, { waId, conversation, key, chunks, delivered }) {
+  function failure(err, { conversationId, conversation, key, chunks, delivered }) {
     let kind = 'permanent';
     let reason = 'gateway_refused';
     let hint = '';
@@ -243,25 +263,31 @@ export function createPublisher({
     if (err?.status === 422 && err.json?.error === 'window_closed') {
       reason = 'window_closed';
       hint = 'The 24-hour WhatsApp window for this conversation is closed: Meta refuses a free-form message until the owner writes again. '
-        + `An actual update goes as the approved template: gc whatsapp publish --update --to ${waId} --text "<the update>". `
+        + `An actual update goes as the approved template: gc whatsapp publish --update --to ${conversationId} --text "<the update>". `
         + 'Otherwise wait for the owner\'s next message; this reply can then be retried with the same idempotency key.';
     } else if (err?.status === 409 && err.json?.error === 'ambiguous_recipient') {
-      // PR 76's rule R1 (gp-0g2s): the number names two owners of this city
-      // (a recycled number) and the gateway sent nothing. Its remedy, a resend
-      // to the user_id of the owner's GET /v1/window entry, needs the owner
-      // this conversation means; conversations here are keyed by phone number
-      // until the conversation_id keying lands, and after a recycle the new
-      // owner's messages sit in the number's conversation while the number's
-      // window entry is the old owner's. A guess would hand one owner's
-      // message to the other, so the refusal stands (gateway_refused, the
-      // ambiguity named; the mayor's word on gp-szj9, 00:34Z 11/5).
+      // PR 76's rule R1 (gp-0g2s): `to` names two owners of this city and the
+      // gateway sent nothing. Since gp-g02t a send names the owner's user id
+      // from the window (THE RECIPIENT), which names one owner. A `to` is a
+      // phone number only when the window read came from PR 73's gateway and
+      // the send reached PR 76's, in the minutes of the deploy: this is the
+      // guard for that. Refused, never resent (gateway_refused, the ambiguity
+      // named).
       gatewayError = 'ambiguous_recipient';
       const gatewayHint = typeof err.json.hint === 'string' && err.json.hint ? ` (the gateway's hint: "${err.json.hint}")` : '';
-      hint = `The gateway found two owners of this city on this phone number (a recycled number) and sent nothing${gatewayHint}. `
-        + 'This adapter keys conversations by phone number, so it cannot tell which owner this conversation means and does not resend.';
+      hint = `The gateway found two owners of this city answering to this conversation's id (a phone number another owner of this city now shows: a recycled number) and sent nothing${gatewayHint}. `
+        + 'This adapter does not resend.';
     } else if (err?.status === 403) {
       reason = 'not_bound';
-      hint = 'This phone is not bound to this city at the gateway; the owner joins by texting a code from gc whatsapp invite to the Dynasty number.';
+      if (err.recipient === 'not_listed') {
+        hint = `The gateway lists no owner of this city under ${conversationId} (unbound, or not a conversation id): nothing was sent. `
+          + 'Name the conversation id gc shows (whatsapp/<conversation_id>); an unbound owner joins again with a code from gc whatsapp invite.';
+      } else if (err.recipient === 'no_user_id') {
+        hint = 'This owner was bound by its phone number alone (PR 73) and has no WhatsApp user id, so nothing can be sent to it: '
+          + 'unbind it and give it a new invite code (the gateway README, Deploy step 7).';
+      } else {
+        hint = 'This conversation is not bound to this city at the gateway; the owner joins by texting a code from gc whatsapp invite to the Dynasty number.';
+      }
     } else if (err?.status === 401 || err?.auth) {
       kind = 'auth';
       reason = 'not_enrolled';
@@ -288,15 +314,43 @@ export function createPublisher({
       reason = 'gateway_unavailable';
       hint = 'Retry with the same idempotency key: delivered chunks are never sent again.';
     }
-    log(`send to …${lastFour(waId)} failed at chunk ${delivered + 1}/${chunks}: ${reason} (${err?.status ?? 'no answer'})`);
+    log(`send to …${lastFour(conversationId)} failed at chunk ${delivered + 1}/${chunks}: ${reason} (${err?.status ?? 'no answer'})`);
     const metadata = { reason, chunks: String(chunks), chunks_delivered: String(delivered) };
     if (gatewayError) metadata.gateway_error = gatewayError;
     if (hint) metadata.hint = hint;
-    if (Number.isInteger(err?.status)) metadata.gateway_status = String(err.status);
+    if (err?.recipient) metadata.recipient = err.recipient; // refused here: the gateway answered nothing
+    else if (Number.isInteger(err?.status)) metadata.gateway_status = String(err.status);
     return {
       status: 200,
       json: { conversation, delivered: false, failure_kind: kind, idempotency_key: key, error: hint || reason, metadata },
     };
+  }
+
+  // THE RECIPIENT AT SEND TIME (header). One GET /v1/window; the entry whose
+  // conversation_id is the conversation names the owner.
+  async function recipientFor(conversationId) {
+    const answer = await gateway.window();
+    const entries = Array.isArray(answer?.windows) ? answer.windows : [];
+    const entry = entries.find((w) => isObject(w) && String(w.conversation_id) === conversationId);
+    if (!entry) return { refused: 'not_listed' };
+    if (!Object.hasOwn(entry, 'user_id')) return { to: conversationId }; // PR 73's window: its owner key
+    const userId = typeof entry.user_id === 'string' ? entry.user_id.trim() : '';
+    return userId ? { to: userId } : { refused: 'no_user_id' };
+  }
+
+  // Resolves the recipient, then sends to it; a failed read or a refusal is
+  // gc's receipt (failure()), and nothing is sent.
+  async function toOwner(context, send) {
+    let resolved;
+    try {
+      resolved = await recipientFor(context.conversationId);
+    } catch (err) {
+      return failure(err, context);
+    }
+    if (resolved.refused) {
+      return failure(Object.assign(new Error('no recipient'), { status: 403, recipient: resolved.refused }), context);
+    }
+    return send(resolved.to);
   }
 
   // Runs one key's work once: a concurrent call with the same key awaits
@@ -304,7 +358,7 @@ export function createPublisher({
   async function once(key, fingerprint, conversation, work) {
     const running = inflight.get(key);
     if (running) {
-      if (running.waId !== fingerprint.waId || running.textSha !== fingerprint.textSha || running.endpoint !== fingerprint.endpoint) {
+      if (running.conversationId !== fingerprint.conversationId || running.textSha !== fingerprint.textSha || running.endpoint !== fingerprint.endpoint) {
         return conflict(conversation, key);
       }
       return clone(await running.promise);
@@ -318,30 +372,30 @@ export function createPublisher({
     }
   }
 
-  async function sendChunks({ key, waId, text, textSha, conversation }) {
+  async function sendChunks({ key, conversationId, to, text, textSha, conversation }) {
     const chunks = chunkText(text);
     let entry = progress.get(key);
     if (entry?.receipt) return { status: 200, json: entry.receipt };
     if (!entry) {
-      entry = { endpoint: 'publish', wa_id: waId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [] };
+      entry = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [] };
     }
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer;
       try {
-        answer = await gateway.send({ to: waId, idempotency_key: textChunkKey(key, waId, text, i), type: 'text', text: chunks[i] });
+        answer = await gateway.send({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] });
         if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
         if (err?.status === 422 && err.json?.error === 'window_closed') {
-          ledger?.noteWindowClosed?.(waId, clock());
-          try { onWindowClosed(waId); } catch (hookErr) { log(`onWindowClosed hook failed: ${hookErr?.message ?? hookErr}`); }
+          ledger?.noteWindowClosed?.(conversationId, clock());
+          try { onWindowClosed(conversationId); } catch (hookErr) { log(`onWindowClosed hook failed: ${hookErr?.message ?? hookErr}`); }
         }
-        return failure(err, { waId, conversation, key, chunks: chunks.length, delivered: entry.delivered });
+        return failure(err, { conversationId, conversation, key, chunks: chunks.length, delivered: entry.delivered });
       }
       const messageId = str(answer.message_id);
       entry.message_ids[i] = messageId;
       entry.delivered = i + 1;
-      ledger?.noteSend?.(waId, { type: 'text', message_id: messageId, at: clock() });
+      ledger?.noteSend?.(conversationId, { type: 'text', message_id: messageId, at: clock() });
       if (entry.delivered < chunks.length) progress.save(key, entry);
     }
     entry.receipt = {
@@ -352,7 +406,7 @@ export function createPublisher({
       metadata: { chunks: String(chunks.length), message_ids: entry.message_ids.join(',') },
     };
     progress.save(key, entry);
-    log(`publish to …${lastFour(waId)} delivered (${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
+    log(`publish to …${lastFour(conversationId)} delivered (${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
     return { status: 200, json: entry.receipt };
   }
 
@@ -360,31 +414,31 @@ export function createPublisher({
   // under the same key. 'attempting' is written before the POST so a
   // concurrent or post-crash retry never posts twice; only a DEFINITE miss
   // (gc answered, nothing appended) may be re-attempted by a later retry.
-  async function recordTranscript({ key, entry, sessionId, waId, text }) {
+  async function recordTranscript({ key, entry, sessionId, conversationId, text }) {
     entry.recording = 'attempting';
     progress.save(key, entry);
     try {
       const result = await gc.recordOutbound({
         session_id: sessionId,
-        conversation: conversationRef(city, waId),
+        conversation: conversationRef(city, conversationId),
         text,
         idempotency_key: key,
       });
       entry.recording = (result?.TranscriptEntry ?? result?.transcript_entry) ? 'recorded' : 'not_recorded';
-      if (entry.recording !== 'recorded') log(`transcript for …${lastFour(waId)}: gc recorded no entry`);
+      if (entry.recording !== 'recorded') log(`transcript for …${lastFour(conversationId)}: gc recorded no entry`);
     } catch (err) {
       entry.recording = Number.isInteger(err?.status) ? 'not_recorded' : 'unknown';
-      log(`transcript for …${lastFour(waId)}: recording failed (${err?.status ?? 'no answer'}); the send stands`);
+      log(`transcript for …${lastFour(conversationId)}: recording failed (${err?.status ?? 'no answer'}); the send stands`);
     }
     progress.save(key, entry);
     return entry.recording;
   }
 
-  async function withTranscript(answer, { key, sessionId, waId, text }) {
+  async function withTranscript(answer, { key, sessionId, conversationId, text }) {
     const entry = progress.get(key);
     if (answer.status !== 200 || !answer.json.delivered || !entry?.receipt) return answer;
     const recordable = entry.recording === undefined || entry.recording === 'not_recorded';
-    const outcome = recordable ? await recordTranscript({ key, entry, sessionId, waId, text }) : entry.recording;
+    const outcome = recordable ? await recordTranscript({ key, entry, sessionId, conversationId, text }) : entry.recording;
     const json = { ...answer.json, transcript_recorded: outcome === 'recorded' };
     if (outcome !== 'recorded') {
       json.transcript_note = outcome === 'not_recorded'
@@ -402,14 +456,14 @@ export function createPublisher({
       const metadata = isObject(pub.metadata) ? pub.metadata : {};
       const sessionId = str(pub.session_id) || str(metadata.source_session_id);
       if (!sessionId) return { status: 400, json: { error: ATTRIBUTION_ERROR } };
-      const waId = str(pub.conversation?.conversation_id);
-      if (!waId) return bad('conversation.conversation_id (the wa_id) is required');
+      const conversationId = str(pub.conversation?.conversation_id);
+      if (!conversationId) return bad('conversation.conversation_id (the owner\'s conversation id) is required');
       if (typeof pub.text !== 'string' || !pub.text.trim()) return bad('text is required');
       if (pub.idempotency_key !== undefined && (typeof pub.idempotency_key !== 'string' || !pub.idempotency_key)) {
         return bad('idempotency_key must be a non-empty string when given');
       }
       const key = pub.idempotency_key || `whatsapp-${crypto.randomUUID()}`;
-      const conversation = { ...conversationRef(city, waId), ...pub.conversation, conversation_id: waId };
+      const conversation = { ...conversationRef(city, conversationId), ...pub.conversation, conversation_id: conversationId };
       const textSha = sha256Hex(pub.text);
       const cli = metadata.origin === 'cli';
 
@@ -417,36 +471,39 @@ export function createPublisher({
       // for a CLI publish (or an update) under the same key, never re-send.
       const entry = progress.get(key);
       if (entry) {
-        const same = entry.wa_id === waId && (
+        const same = entryConversation(entry) === conversationId && (
           (entry.endpoint === 'publish' && entry.text_sha256 === textSha)
           || (entry.receipt && entry.transcript_sha256 === textSha)
         );
         if (!same) return conflict(conversation, key);
         if (entry.receipt) {
           const answer = { status: 200, json: clone(entry.receipt) };
-          return cli ? withTranscript(answer, { key, sessionId, waId, text: pub.text }) : answer;
+          return cli ? withTranscript(answer, { key, sessionId, conversationId, text: pub.text }) : answer;
         }
       }
 
-      const answer = await once(key, { waId, textSha, endpoint: 'publish' }, conversation,
-        () => chain(waId, () => sendChunks({ key, waId, text: pub.text, textSha, conversation })));
-      return cli ? withTranscript(answer, { key, sessionId, waId, text: pub.text }) : answer;
+      const answer = await once(key, { conversationId, textSha, endpoint: 'publish' }, conversation,
+        () => chain(conversationId, () => toOwner(
+          { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
+          (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation }),
+        )));
+      return cli ? withTranscript(answer, { key, sessionId, conversationId, text: pub.text }) : answer;
     } catch (err) {
       log(`publish failed inside the adapter: ${err?.message ?? err}`);
       return { status: 500, json: { delivered: false, failure_kind: 'transient', error: 'internal adapter error; retry with the same idempotency key' } };
     }
   }
 
-  async function sendUpdate({ key, to, text, textSha, conversation }) {
+  async function sendUpdate({ key, to, recipient, text, textSha, conversation }) {
     const existing = progress.get(key);
     if (existing?.receipt) return { status: 200, json: existing.receipt };
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
     let answer;
     try {
-      answer = await gateway.send({ to, idempotency_key: templateKey(key, to, template), type: 'template', template });
+      answer = await gateway.send({ to: recipient, idempotency_key: templateKey(key, to, template), type: 'template', template });
       if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
     } catch (err) {
-      return failure(err, { waId: to, conversation, key, chunks: 1, delivered: 0 });
+      return failure(err, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
     }
     const messageId = str(answer.message_id);
     const at = clock();
@@ -469,7 +526,7 @@ export function createPublisher({
     ledger?.noteSend?.(to, { type: 'template', message_id: messageId, at });
     const entry = {
       endpoint: 'update',
-      wa_id: to,
+      conversation_id: to,
       text_sha256: textSha,
       transcript_sha256: sha256Hex(updateTranscriptText(text)),
       chunks: 1,
@@ -494,7 +551,7 @@ export function createPublisher({
       try { body = JSON.parse(raw); } catch { return bad('invalid JSON'); }
       if (!isObject(body)) return bad('the body must be a JSON object');
       const to = str(body.to);
-      if (!to) return bad('to (the owner\'s wa_id) is required');
+      if (!to) return bad('to (the owner\'s conversation id) is required');
       if (typeof body.text !== 'string' || !body.text.trim()) {
         return bad('text is required: the update template carries one text parameter');
       }
@@ -509,14 +566,16 @@ export function createPublisher({
 
       const entry = progress.get(key);
       if (entry) {
-        if (entry.endpoint !== 'update' || entry.wa_id !== to || entry.text_sha256 !== textSha) return conflict(conversation, key);
+        if (entry.endpoint !== 'update' || entryConversation(entry) !== to || entry.text_sha256 !== textSha) return conflict(conversation, key);
         if (entry.receipt) {
           const answer = { status: 200, json: clone(entry.receipt) };
-          return sessionId ? withTranscript(answer, { key, sessionId, waId: to, text: updateTranscriptText(text) }) : answer;
+          return sessionId ? withTranscript(answer, { key, sessionId, conversationId: to, text: updateTranscriptText(text) }) : answer;
         }
       }
 
-      if (!inflight.has(key) && ledger?.windowOpen?.(to)) {
+      // The recipient first (an unbound owner's conversation is not_bound,
+      // whatever the box's ledger says of its window), then the window.
+      const windowOpen = () => {
         const closes = ledger.windowClosesAt(to);
         return {
           status: 409,
@@ -524,15 +583,17 @@ export function createPublisher({
             conversation,
             delivered: false,
             failure_kind: 'permanent',
-            error: `the 24-hour window for this phone is open until ${new Date(closes).toISOString()}: a free-form reply is cheaper than the template; send it with gc whatsapp publish --to ${to} --text "<the reply>"`,
+            error: `the 24-hour window for this conversation is open until ${new Date(closes).toISOString()}: a free-form reply is cheaper than the template; send it with gc whatsapp publish --to ${to} --text "<the reply>"`,
             metadata: { reason: 'window_open', window_closes_at: new Date(closes).toISOString() },
           },
         };
-      }
-
-      const answer = await once(key, { waId: to, textSha, endpoint: 'update' }, conversation,
-        () => chain(to, () => sendUpdate({ key, to, text, textSha, conversation })));
-      return sessionId ? withTranscript(answer, { key, sessionId, waId: to, text: updateTranscriptText(text) }) : answer;
+      };
+      const answer = await once(key, { conversationId: to, textSha, endpoint: 'update' }, conversation,
+        () => chain(to, () => toOwner(
+          { conversationId: to, conversation, key, chunks: 1, delivered: 0 },
+          (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation })),
+        )));
+      return sessionId ? withTranscript(answer, { key, sessionId, conversationId: to, text: updateTranscriptText(text) }) : answer;
     } catch (err) {
       log(`publish-update failed inside the adapter: ${err?.message ?? err}`);
       return { status: 500, json: { delivered: false, failure_kind: 'transient', error: 'internal adapter error; retry with the same idempotency key' } };

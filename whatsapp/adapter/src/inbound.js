@@ -24,7 +24,7 @@ import { ackOwed, entryState } from './journal.js';
 import { toMs } from './ledger.js';
 import { pasteFound, probeShape } from './evidence.js';
 import {
-  inboundAtMs, lastFour, pmidOfRid, providerMessageId, renderMessage, ridFor, statusOf,
+  conversationOf, inboundAtMs, lastFour, pmidOfRid, providerMessageId, renderMessage, ridFor, statusOf,
 } from './render.js';
 
 export const READBACK_FAST_MS = 5000;
@@ -195,7 +195,7 @@ export function createInbound({
       // Every pending entry is read back at once; the schedule is the fold's.
       if (entryState(e) === 'accepted:pending') nextAt.set(e.rid, 0);
       // A kill between a join's received line and its bind loses nothing.
-      if (e.kind === 'joined' && e.received?.envelope) bindJoined(e.rid, e.received.envelope);
+      if (e.kind === 'joined' && e.received?.envelope) bindJoined(e.rid);
     }
     watermarkWanted = true;
     compact('start');
@@ -203,8 +203,10 @@ export function createInbound({
     void driveAcks(true);
   }
 
-  // The invite's keeper fields (consent, hours, zone) move onto the phone
-  // that joined with its code. Called at the join's first sight, at every
+  // The invite's keeper fields (consent, hours, zone) move onto the owner
+  // that joined with its code, keyed by the received line's conversation
+  // (the keeper's rows are the gateway's GET /v1/window conversation_ids).
+  // Called at the join's first sight, at every
   // later sight, at startup for every joined entry in the journal, and at
   // every poll for each bind still owed: keeper.bindInvite is idempotent.
   // A failed keeper write is never swallowed (the codex gate r1's MINOR on
@@ -214,17 +216,19 @@ export function createInbound({
   // across a restart too.
   const emptyCodeSeen = new Set();
   const bindOwed = new Set();
-  function bindJoined(rid, delivery) {
-    if (delivery?.kind !== 'joined' || !keeper?.bindInvite) return;
-    const who = `${ref(rid)} (…${lastFour(delivery.wa_id)})`;
+  function bindJoined(rid) {
+    const e = entries().get(rid);
+    const delivery = e?.received?.envelope;
+    if (e?.kind !== 'joined' || !delivery || !keeper?.bindInvite) return;
+    const who = `${ref(rid)} (…${lastFour(e.conversationId)})`;
     const code = String(delivery.message?.text?.body ?? delivery.message?.code ?? '').trim();
     if (!code) {
-      if (!emptyCodeSeen.has(rid)) log(`${who}: joined with no invite code; the keeper stays OFF for that phone until gc whatsapp consent --on`);
+      if (!emptyCodeSeen.has(rid)) log(`${who}: joined with no invite code; the keeper stays OFF for that conversation until gc whatsapp consent --on`);
       emptyCodeSeen.add(rid);
       return;
     }
     try {
-      keeper.bindInvite(code, String(delivery.wa_id));
+      keeper.bindInvite(code, e.conversationId);
     } catch (err) {
       if (!bindOwed.has(rid)) log(`${who}: the invite's keeper fields were not bound (${err?.message ?? err}); the join stays unacknowledged until the bind is saved (retried at every poll)`);
       bindOwed.add(rid);
@@ -238,8 +242,7 @@ export function createInbound({
 
   function retryOwedBinds() {
     for (const rid of [...bindOwed]) {
-      const envelope = entries().get(rid)?.received?.envelope;
-      if (envelope) bindJoined(rid, envelope);
+      if (entries().get(rid)?.received?.envelope) bindJoined(rid);
       else bindOwed.delete(rid); // no entry left to bind from
     }
   }
@@ -287,10 +290,14 @@ export function createInbound({
 
   async function takeDelivery(delivery) {
     const pmid = providerMessageId(delivery);
-    if (!pmid || delivery?.id === undefined || !delivery.wa_id) {
+    // THE OWNER'S KEY (render.js conversationOf): PR 76's conversation_id, or
+    // the contract v1's wa_id. A delivery with a number and no owner is
+    // never filed under the number.
+    const conversationId = conversationOf(delivery);
+    if (!pmid || delivery?.id === undefined || !conversationId) {
       if (!malformedSeen.has(delivery?.id)) {
         malformedSeen.add(delivery?.id);
-        log(`gateway delivery ${JSON.stringify(delivery?.id)} has no message id or wa_id; left unacknowledged`);
+        log(`gateway delivery ${JSON.stringify(delivery?.id)} has no message id or no conversation id; left unacknowledged`);
       }
       return false;
     }
@@ -315,7 +322,7 @@ export function createInbound({
         rid,
         delivery_id: delivery.id,
         kind: delivery.kind,
-        wa_id: String(delivery.wa_id),
+        conversation_id: conversationId,
         profile_name: delivery.profile_name ?? '',
         envelope: delivery,
         received_at: delivery.received_at ?? null,
@@ -326,7 +333,7 @@ export function createInbound({
         // Dead-lettered by a journal that is gone (its ack never confirmed):
         // the file line is the record. Dead again, ack owed, never posted.
         log(`${ref(rid)}: already dead-lettered (${verdict.recovery_reason}) by a lost journal; ack owed, never posted`);
-        bindJoined(rid, delivery);
+        bindJoined(rid);
         oweAck(rid);
         return true;
       }
@@ -337,12 +344,12 @@ export function createInbound({
       // reaction included, never on a system notice or an unsupported type
       // (the gateway's reading 7, update 2); the gateway stays the authority.
       if (delivery.kind === 'joined' || (delivery.kind === 'message' && WINDOW_TYPES.has(String(delivery.message?.type ?? '')))) {
-        ledger?.noteInbound?.(String(delivery.wa_id), inboundAtMs(delivery));
+        ledger?.noteInbound?.(conversationId, inboundAtMs(delivery));
       }
-      bindJoined(rid, delivery);
+      bindJoined(rid);
       return true;
     }
-    bindJoined(rid, delivery); // every sight: a no-op once bound
+    bindJoined(rid); // every sight: a no-op once bound
     // The gateway re-reads everything unacknowledged: the fold decides.
     // A dead entry whose ack failed meets its dead line here, never the
     // no-entry branch (the gate r7's second rule).
@@ -523,7 +530,7 @@ export function createInbound({
   function boundaryFor(conversationId) {
     let boundary = journal.watermarks.get(conversationId)?.sequence ?? 0;
     for (const e of entries().values()) {
-      if (e.waId === conversationId && Number.isSafeInteger(e.accepted?.sequence) && e.accepted.sequence > boundary) {
+      if (e.conversationId === conversationId && Number.isSafeInteger(e.accepted?.sequence) && e.accepted.sequence > boundary) {
         boundary = e.accepted.sequence;
       }
     }
@@ -532,14 +539,14 @@ export function createInbound({
 
   async function postEntry(rid, { marked, reposts }) {
     const e = entries().get(rid);
-    const message = await renderMessage(e.received.envelope, { city, marked, media });
+    const message = await renderMessage(e.received.envelope, { city, conversationId: e.conversationId, marked, media });
     killPoint('before-posted', rid);
     const posted = journal.append({
       t: 'posted',
       rid,
       at: clock(),
       reposts,
-      boundary: boundaryFor(e.waId),
+      boundary: boundaryFor(e.conversationId),
       marked: Boolean(marked),
     });
     killPoint('after-posted', rid);
@@ -593,7 +600,7 @@ export function createInbound({
       return;
     }
     const firstAcceptance = !e.everAccepted;
-    const watermarkBefore = journal.watermarks.get(e.waId)?.sequence;
+    const watermarkBefore = journal.watermarks.get(e.conversationId)?.sequence;
     journal.append({
       t: 'accepted',
       rid,
@@ -609,9 +616,9 @@ export function createInbound({
     killPoint('after-accepted', rid);
     // The accepted line raised the watermark in the fold; the explicit
     // watermark line is what survives the compaction of that rid.
-    const wm = journal.watermarks.get(e.waId);
+    const wm = journal.watermarks.get(e.conversationId);
     if (wm && wm.sequence !== watermarkBefore) {
-      journal.append({ t: 'watermark', conversation_id: e.waId, ...wm });
+      journal.append({ t: 'watermark', conversation_id: e.conversationId, ...wm });
     }
     // On gc's first acceptance the owner sees the read receipt (the blue
     // ticks and the typing indicator). Best effort: it changes no state.
@@ -719,10 +726,10 @@ export function createInbound({
   async function lookup(e) {
     const pmid = pmidOfRid(e.rid);
     const boundary = e.firstPosted?.boundary ?? 0;
-    if (await scanTranscript(e.waId, boundary, pmid)) return true;
+    if (await scanTranscript(e.conversationId, boundary, pmid)) return true;
     // The pass from zero decides: a store rebuilt or restored restarts the
     // conversation at next_sequence 1, below any boundary.
-    if (boundary > 0 && await scanTranscript(e.waId, 0, pmid)) return true;
+    if (boundary > 0 && await scanTranscript(e.conversationId, 0, pmid)) return true;
     return false;
   }
 
@@ -784,7 +791,7 @@ export function createInbound({
         throw err;
       }
       const shape = probeShape(answer);
-      const found = pasteFound(answer, e.waId, pmid);
+      const found = pasteFound(answer, e.conversationId, pmid);
       journal.append({ t: 'probe', rid, session_id: sessionId, shape, found });
       if (shape === 'pane') log(`${ref(rid)}: session ${sessionId} answered a terminal snapshot (format text): no evidence`);
       if (found) return true;
@@ -817,11 +824,11 @@ export function createInbound({
   async function deadLetter(rid, reason, { detail = '' } = {}) {
     const e = entries().get(rid);
     const reads = readCounts.get(rid);
-    deadLetters.write(e.waId, {
+    deadLetters.write(e.conversationId, {
       rid,
       reason,
       detail,
-      wa_id: e.waId,
+      conversation_id: e.conversationId,
       delivery_id: e.deliveryId,
       envelope: e.received?.envelope,
       receipt_id: e.accepted?.receipt_id ?? '',
@@ -897,8 +904,8 @@ export function createInbound({
     const bySender = new Map();
     for (const e of entries().values()) {
       if (!e.received) continue;
-      if (!bySender.has(e.waId)) bySender.set(e.waId, []);
-      bySender.get(e.waId).push(e);
+      if (!bySender.has(e.conversationId)) bySender.set(e.conversationId, []);
+      bySender.get(e.conversationId).push(e);
     }
     for (const list of bySender.values()) list.sort((a, b) => Number(a.deliveryId) - Number(b.deliveryId));
     return bySender;
@@ -933,13 +940,13 @@ export function createInbound({
       void scheduledWatermarkRead();
     }
 
-    for (const [waId, list] of chains()) {
-      if (senderBusy.has(waId)) continue;
+    for (const [conversationId, list] of chains()) {
+      if (senderBusy.has(conversationId)) continue;
       const head = list.find((e) => CHAIN_STATES.has(entryState(e)));
       if (!head || ridBusy.has(head.rid)) continue;
       if ((nextAt.get(head.rid) ?? 0) > now) continue;
-      senderBusy.add(waId);
-      runRid(head.rid, () => advance(head.rid), () => senderBusy.delete(waId));
+      senderBusy.add(conversationId);
+      runRid(head.rid, () => advance(head.rid), () => senderBusy.delete(conversationId));
     }
 
     for (const e of entries().values()) {
@@ -970,7 +977,7 @@ export function createInbound({
     if (entryState(e) !== 'held') return { status: 409, json: { error: `${ref(rid)} is not a terminal hold (state ${entryState(e)})` } };
     const info = {
       ref: ref(rid),
-      wa_id_last4: lastFour(e.waId),
+      conversation_last4: lastFour(e.conversationId),
       receipt_id: e.held?.receipt_id ?? e.accepted?.receipt_id ?? '',
       held_at: e.held?.at ?? null,
     };
@@ -987,14 +994,13 @@ export function createInbound({
 
   // Serialized with the watermark reads, so a read in flight can never write
   // a gap from the watermark the clear just rebased.
-  function clearGap(waId) {
-    const run = watermarkChain.catch(() => {}).then(() => clearGapNow(waId));
+  function clearGap(conversationId) {
+    const run = watermarkChain.catch(() => {}).then(() => clearGapNow(String(conversationId)));
     watermarkChain = run.catch(() => {});
     return run;
   }
 
-  async function clearGapNow(waId) {
-    const conversationId = String(waId);
+  async function clearGapNow(conversationId) {
     const gap = journal.gaps.get(conversationId);
     if (!gap) return { status: 404, json: { error: `no restore gap stands for ...${lastFour(conversationId)}` } };
     const headPage = await gc.transcript({ scopeId: city, conversationId, limit: 1, order: 'desc' });
@@ -1029,7 +1035,7 @@ export function createInbound({
     for (const e of entries().values()) {
       const state = entryState(e);
       counts[state] = (counts[state] ?? 0) + 1;
-      if (state === 'held') held.push({ ref: ref(e.rid), wa_id_last4: lastFour(e.waId), receipt_id: e.held?.receipt_id ?? e.accepted?.receipt_id ?? '', held_at: e.held?.at ?? null });
+      if (state === 'held') held.push({ ref: ref(e.rid), conversation_last4: lastFour(e.conversationId), receipt_id: e.held?.receipt_id ?? e.accepted?.receipt_id ?? '', held_at: e.held?.at ?? null });
     }
     return {
       auth_failed: authFailed,

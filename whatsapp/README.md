@@ -77,6 +77,23 @@ per rid) BEFORE anything leaves the box:
 on gc's **delivered** word the ack to the gateway by delivery id →
 `acknowledged`.
 
+**The owner's key (gp-g02t).** Each delivery belongs to the owner the
+gateway names by its `conversation_id` (PR 76's inbox): fixed when the owner
+binds (the owner's user id; for an owner PR 73 bound, its number), the same
+after a number change, and never shared by two owners, a recycled number
+included. The `received` line records it, and every later step reads
+it from there: the gc conversation (`whatsapp/<conversation_id>`) and the
+actor, the per-owner chain, the watermark, the lookup and the paste probe, the
+dead letter, the window ledger, the keeper's bind and the media directory.
+The `wa_id` is only the number the delivery shows (null for an owner known by
+WhatsApp user id alone): the actor's display name when there is no profile
+name, never a key. A delivery whose `conversation_id` is null or empty is left
+unacknowledged. A delivery from the gateway contract v1 (PR 73), which has no
+`conversation_id` field, is keyed by its `wa_id`, that contract's owner key:
+the boxes run it until the gateway's deploy (this adapter rolls first). A
+`received` line the PR 74 adapter wrote names its conversation by `wa_id` and
+is read that way (tolerated, never rewritten).
+
 - **pending** is read back (`GET /extmsg/inbound/receipts/{id}`) every 5 s
   for 10 min, every 60 s to the hour, then every 5 min, with no cutoff but the
   **24-hour pending deadline** (dead letter `pending_deadline`, then the ack).
@@ -113,9 +130,9 @@ on gc's **delivered** word the ack to the gateway by delivery id →
   and again before any plain post. A watermark the store no longer holds is a
   RESTORE GAP (the `restore` doctor row), and while any gap stands every
   in-doubt message of every conversation takes the marked path.
-  `gc whatsapp inbound clear-gap <wa_id>` rebases the watermark to the store.
+  `gc whatsapp inbound clear-gap <conversation_id>` rebases the watermark to the store.
 - **THE DEAD ENTRY IS AN ACK OWED (design round 8, the gate r7's second
-  finding)**: every dead letter writes `inbound_dead_letter/<wa_id>.jsonl`
+  finding)**: every dead letter writes `inbound_dead_letter/<conversation_id>.jsonl`
   (0600, with the envelope) first, then the journal's `dead` line, then the
   ack; compaction drops only `acknowledged` entries, so a dead entry whose ack
   failed survives every compaction and its ack is re-driven at every start and
@@ -131,23 +148,27 @@ to <path>; Read that path to view it" block (voice notes transcribed inline).
 ## Outbound, the window, and the update template
 
 gc publishes the mayor's replies through `/publish` (session attribution
-required). Text is chunked at 4096 characters, serialized per phone, and sent
+required). Text is chunked at 4096 characters, serialized per conversation, and sent
 per chunk under `text:<sha256 of the idempotency key, the recipient and the
 whole text>:<n>`, so a retry resumes at the failed chunk; an update goes under
 `template:<sha256 of the key, the recipient, the template name, language and
 parameters>`, a namespace no text chunk shares. A key reused for another
 owner or another message is therefore another gateway key, even once the
 adapter's own record of the key (7 days or 1,024 keys) is gone and the
-gateway's (30 days) is not. A number the gateway finds naming two owners of
-the city (a recycled number: 409 `ambiguous_recipient`, nothing sent) is
-gc's permanent publish error, `metadata.reason gateway_refused` with
-`metadata.gateway_error ambiguous_recipient` and a hint naming the ambiguity,
-never resent: conversations here are keyed by phone number, so after a
-recycle the adapter cannot tell which owner a conversation means (the resend
-to the owner's `user_id` waits for the `conversation_id` keying). WhatsApp's 24-hour window (24 h after the owner's last message, minus a
+gateway's (30 days) is not. **The recipient** (gp-g02t): each publish and
+each update reads the gateway's `GET /v1/window` once and sends to the user id
+of the entry whose `conversation_id` is the conversation, never to a number (a
+number may name another owner once its owner is unbound or it is recycled). A
+conversation the window no longer lists (its owner unbound, or not a
+conversation id at all), or lists with no user id (an owner PR 73 bound by
+number alone), is gc's permanent publish error `metadata.reason not_bound`
+with `metadata.recipient` saying why, and nothing is sent. PR 73's window has
+no user ids; there the send names the conversation id itself. A 409
+`ambiguous_recipient` (nothing sent) is `metadata.reason gateway_refused` with
+`metadata.gateway_error ambiguous_recipient` and a hint, never resent. WhatsApp's 24-hour window (24 h after the owner's last message, minus a
 120-second margin) is the gateway's to enforce: a free-form send outside it
 answers gc's permanent publish error with `metadata.reason window_closed` and
-a hint naming the update verb. `gc whatsapp publish --update --to <wa_id>
+a hint naming the update verb. `gc whatsapp publish --update --to <conversation_id>
 --text ...` sends the one approved utility template (`dynasty_update`, "Your
 city has an update: {{1}}"), refused while the window is open (409) or with
 empty text (400), journaled with its text to `<city>/.gc/whatsapp/updates.jsonl`.
@@ -158,7 +179,7 @@ does. Whether a text is an actual update is the mayor's skill rule (Afik:
 ## The window-keeper
 
 For a conversation whose business consented (`gc whatsapp invite
---proactive-consent`, or `gc whatsapp consent <wa_id> --on`), the adapter
+--proactive-consent`, or `gc whatsapp consent <conversation_id> --on`), the adapter
 reads the gateway's `GET /v1/window` once a minute and raises keeper events
 into the mayor's session (actor "Dynasty window-keeper", `is_bot: true`): the
 daily update (two hours before close of business, or at
@@ -166,24 +187,26 @@ daily update (two hours before close of business, or at
 minutes before the window closes, kept inside the business's hours. State in
 `<city>/.gc/whatsapp/keeper.json`, written before each event; a failed window
 read is retried on the ladder (1, 5, 15, 60 s) and the last good read is
-stamped in the file for the doctor row. The `consent` and `hours` verbs take
-a joined phone in any form and print the last four digits the adapter
-matched. The mayor never replies to a keeper event; it publishes a real
+stamped in the file for the doctor row, with the conversations it listed: a
+conversation the last good read did not list (its owner unbound) raises
+nothing. The `consent` and `hours` verbs take a joined conversation's id (a
+user id whole, a number in any form) and print the last four digits the
+adapter matched. The mayor never replies to a keeper event; it publishes a real
 update or nothing.
 
 ## The verbs
 
 | Verb | What it does |
 | --- | --- |
-| `gc whatsapp publish --to <wa_id> --text-file <path>` | free-form text inside the window |
-| `gc whatsapp publish --update --to <wa_id> --text "..."` | the update template outside the window |
+| `gc whatsapp publish --to <conversation_id> --text-file <path>` | free-form text inside the window |
+| `gc whatsapp publish --update --to <conversation_id> --text "..."` | the update template outside the window |
 | `gc whatsapp invite [--proactive-consent] [--hours "Mon-Fri 09:00-18:00"] [--tz <zone>]` | a 6-digit, 24-hour invite code and the two lines the owner is told |
-| `gc whatsapp consent <wa_id> --off\|--on` | the keeper's consent; `--off` on the owner's word, at once |
-| `gc whatsapp hours <wa_id> --hours "..." --tz <zone>` \| `--clear` | the keeper's business hours; `--clear` removes them |
+| `gc whatsapp consent <conversation_id> --off\|--on` | the keeper's consent; `--off` on the owner's word, at once |
+| `gc whatsapp hours <conversation_id> --hours "..." --tz <zone>` \| `--clear` | the keeper's business hours; `--clear` removes them |
 | `gc whatsapp enroll --code <code> --name <city>` | enroll once; writes the credential 0600, prints nothing secret |
 | `gc whatsapp status` | enrollment, polls, entries, windows, keeper, holds, gaps, dead letters |
 | `gc whatsapp inbound resolve <rid> --delivered\|--dead` | the operator's way out of a terminal hold |
-| `gc whatsapp inbound clear-gap <wa_id>` | clear a restore gap and rebase the watermark |
+| `gc whatsapp inbound clear-gap <conversation_id>` | clear a restore gap and rebase the watermark |
 
 ## Doctor rows
 

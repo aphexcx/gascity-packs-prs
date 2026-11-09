@@ -10,8 +10,12 @@ import { signatureHeader } from "../src/meta.js";
 import audioFixture from "./fixtures/audio.json";
 import imageFixture from "./fixtures/image.json";
 import reactionFixture from "./fixtures/reaction.json";
+import statusBsuidFixture from "./fixtures/status-delivered-bsuid.json";
 import statusFixture from "./fixtures/status-sent.json";
+import changedNumberFixture from "./fixtures/system-user-changed-number.json";
+import changedUserIdFixture from "./fixtures/system-user-changed-user-id.json";
 import textFixture from "./fixtures/text.json";
+import textPhoneBsuidFixture from "./fixtures/text-phone-bsuid.json";
 
 export const PNID = "106540352242922";
 export const SECRETS = {
@@ -35,6 +39,44 @@ export function uniq(): string {
 export function phone(): string {
   const n = crypto.getRandomValues(new Uint32Array(2));
   return `55${String(n[0]).padStart(10, "0").slice(0, 6)}${String(n[1]).padStart(10, "0").slice(0, 5)}`;
+}
+
+/** A fresh business-scoped user id in the shape of Meta's examples: a country code, a period, 20 digits. */
+export function bsuid(): string {
+  const n = crypto.getRandomValues(new Uint32Array(2));
+  return `US.${String(n[0]).padStart(10, "0")}${String(n[1]).padStart(10, "0")}`;
+}
+
+const usersByPhone = new Map<string, string>();
+
+/**
+ * The user id Meta names the person on this phone by: one per phone, the same for every payload
+ * of a test file. Since early April 2026 Meta puts it on every message ("BSUID will be assigned
+ * to the user_id parameter and appear in all messages webhooks"; the design note, section 2), so
+ * the payload builders below that take a number carry it too. numberOnly() strips it.
+ */
+export function userOf(wa: string): string {
+  let user = usersByPhone.get(wa);
+  if (!user) {
+    user = bsuid();
+    usersByPhone.set(wa, user);
+  }
+  return user;
+}
+
+/** Meta's shape since April 2026 on a payload built from a number-only fixture: the sender's user id beside its number. */
+function withUser(p: any, from: string) {
+  const value = p.entry[0].changes[0].value;
+  value.contacts[0].user_id = userOf(from);
+  value.messages[0].from_user_id = userOf(from);
+  return p;
+}
+
+/** The ids a payload names its WhatsApp user by; one left out is deleted, as Meta omits it. */
+export interface Ids {
+  wa?: string | null;
+  user?: string | null;
+  username?: string | null;
 }
 
 export interface GraphCall {
@@ -164,7 +206,7 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
-/** Meta's text fixture, re-addressed. */
+/** Meta's text fixture, re-addressed, with the phone's user id (userOf). */
 export function textPayload(from: string, text: string, o: InboundOpts & { wamid: string; ts: number }) {
   const p = clone(textFixture) as any;
   const value = p.entry[0].changes[0].value;
@@ -173,25 +215,27 @@ export function textPayload(from: string, text: string, o: InboundOpts & { wamid
   value.contacts[0].profile.name = o.name ?? "Owner Name";
   Object.assign(value.messages[0], { from, id: o.wamid, timestamp: String(o.ts) });
   value.messages[0].text.body = text;
-  return p;
+  return withUser(p, from);
 }
 
+/** Meta's reaction fixture, re-addressed, with the phone's user id (userOf). */
 export function reactionPayload(from: string, target: string, o: { wamid: string; ts: number }) {
   const p = clone(reactionFixture) as any;
   const value = p.entry[0].changes[0].value;
   value.contacts[0].wa_id = from;
   Object.assign(value.messages[0], { from, id: o.wamid, timestamp: String(o.ts) });
   value.messages[0].reaction.message_id = target;
-  return p;
+  return withUser(p, from);
 }
 
+/** Meta's image or audio fixture, re-addressed, with the phone's user id (userOf). */
 export function mediaPayload(kind: "image" | "audio", from: string, mediaId: string, o: { wamid: string; ts: number }) {
   const p = clone(kind === "image" ? imageFixture : audioFixture) as any;
   const value = p.entry[0].changes[0].value;
   value.contacts[0].wa_id = from;
   Object.assign(value.messages[0], { from, id: o.wamid, timestamp: String(o.ts) });
   value.messages[0][kind].id = mediaId;
-  return p;
+  return withUser(p, from);
 }
 
 export function statusPayload(wamid: string, status: string, recipient: string, ts: number) {
@@ -203,6 +247,137 @@ export function statusPayload(wamid: string, status: string, recipient: string, 
     timestamp: String(ts),
   });
   return p;
+}
+
+/** Meta's text with both ids (text-phone-bsuid.json), re-addressed to these ids. */
+export function textAs(ids: Ids, text: string, o: InboundOpts & { wamid: string; ts: number }) {
+  const p = clone(textPhoneBsuidFixture) as any;
+  const value = p.entry[0].changes[0].value;
+  value.metadata.phone_number_id = o.pnid ?? PNID;
+  const contact = value.contacts[0];
+  const m = value.messages[0];
+  contact.profile.name = o.name ?? "Owner Name";
+  if (ids.username) contact.profile.username = ids.username;
+  if (ids.wa) {
+    contact.wa_id = ids.wa;
+    m.from = ids.wa;
+  } else {
+    delete contact.wa_id;
+    delete m.from;
+  }
+  if (ids.user) {
+    contact.user_id = ids.user;
+    m.from_user_id = ids.user;
+  } else {
+    delete contact.user_id;
+    delete m.from_user_id;
+  }
+  Object.assign(m, { id: o.wamid, timestamp: String(o.ts) });
+  m.text.body = text;
+  return p;
+}
+
+/** Meta's delivered-to-a-BSUID status (status-delivered-bsuid.json), re-addressed to these ids. */
+export function statusAs(wamid: string, status: string, ids: Ids, ts: number) {
+  const p = clone(statusBsuidFixture) as any;
+  const value = p.entry[0].changes[0].value;
+  const s = value.statuses[0];
+  Object.assign(s, { id: wamid, status, timestamp: String(ts) });
+  if (ids.wa) {
+    s.recipient_id = ids.wa;
+    value.contacts[0].wa_id = ids.wa;
+  }
+  if (ids.user) {
+    s.recipient_user_id = ids.user;
+    value.contacts[0].user_id = ids.user;
+  } else {
+    delete s.recipient_user_id;
+    delete value.contacts[0].user_id;
+  }
+  return p;
+}
+
+/** A number-change system notice (Meta's syntax block, filled; SOURCES.md), re-addressed. */
+export function changeAs(
+  type: "user_changed_number" | "user_changed_user_id",
+  ids: { from?: string | null; previousUser: string; newUser: string; newWa?: string | null },
+  o: { wamid: string; ts: number },
+) {
+  const p = clone(type === "user_changed_number" ? changedNumberFixture : changedUserIdFixture) as any;
+  const m = p.entry[0].changes[0].value.messages[0];
+  Object.assign(m, { id: o.wamid, timestamp: String(o.ts) });
+  if (ids.from) m.from = ids.from;
+  else delete m.from;
+  m.system.user_id = ids.newUser;
+  m.system.previous_user_id = ids.previousUser;
+  if (ids.newWa) m.system.wa_id = ids.newWa;
+  else delete m.system.wa_id;
+  m.system.body = `User changed from ${ids.from ?? ids.previousUser} to ${ids.newWa ?? ids.newUser}`;
+  return p;
+}
+
+/** Meta's image fixture, re-addressed to these ids (either may be absent, as in Meta's BSUID payloads). */
+export function imageAs(ids: Ids, mediaId: string, o: { wamid: string; ts: number }) {
+  const p = clone(imageFixture) as any;
+  const value = p.entry[0].changes[0].value;
+  const contact = value.contacts[0];
+  const m = value.messages[0];
+  if (ids.wa) {
+    contact.wa_id = ids.wa;
+    m.from = ids.wa;
+  } else {
+    delete contact.wa_id;
+    delete m.from;
+  }
+  if (ids.user) {
+    contact.user_id = ids.user;
+    m.from_user_id = ids.user;
+  } else {
+    delete contact.user_id;
+    delete m.from_user_id;
+  }
+  Object.assign(m, { id: o.wamid, timestamp: String(o.ts) });
+  m.image.id = mediaId;
+  return p;
+}
+
+/**
+ * The same payload as a message naming no user id: every from_user_id and contacts user_id
+ * dropped, and on a number-change notice its system.user_id and system.previous_user_id. This is
+ * the shape the design note's acceptance tests call number-only (design-bsuid-pairing-and-spans.md
+ * section 4): a message Meta has not sent since early April 2026, kept as the hostile form.
+ */
+export function numberOnly<T>(payload: T): T {
+  const p = clone(payload) as any;
+  for (const entry of p.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const value = change.value ?? {};
+      for (const c of value.contacts ?? []) delete c.user_id;
+      for (const m of value.messages ?? []) {
+        delete m.from_user_id;
+        if (m.system) {
+          delete m.system.user_id;
+          delete m.system.previous_user_id;
+        }
+      }
+    }
+  }
+  return p;
+}
+
+/**
+ * An owner row as PR 73's gateway (schema v1, then 0002) leaves one: bound by its phone number
+ * alone, with no user_id. The code of this branch binds no such row, so a test that needs one
+ * writes it straight to D1, as the deployed gateway would have.
+ */
+export async function legacyBind(db: D1Database, cityId: string, wa: string, at = T0): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO phones (conversation_id, wa_id, user_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at)
+       VALUES (?1, ?1, NULL, ?2, 'Legacy Owner', ?3, ?4, ?3)`,
+    )
+    .bind(wa, cityId, at, `wamid.LEGACY${uniq()}`)
+    .run();
 }
 
 export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database } = {}) {
@@ -277,6 +452,13 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
     return { res, wamid };
   }
 
+  /** A text from a user named by these ids (either may be absent, as in Meta's BSUID payloads). */
+  async function sayAs(ids: Ids, text: string, o: InboundOpts = {}) {
+    const wamid = o.wamid ?? `wamid.IN${uniq()}`;
+    const res = await webhook(textAs(ids, text, { ...o, wamid, ts: o.ts ?? clock.now }));
+    return { res, wamid };
+  }
+
   async function invite(city: City): Promise<string> {
     const r = await call("POST", "/v1/invites", { token: city.token });
     if (r.status !== 200) throw new Error(`invites answered ${r.status}`);
@@ -291,11 +473,37 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
     return wa;
   }
 
+  /** Binds an owner named by these ids to the city by its invite code. */
+  async function joinAs(city: City, ids: Ids, o: InboundOpts = {}): Promise<void> {
+    const code = await invite(city);
+    const { res } = await sayAs(ids, code, o);
+    if (res.status !== 200) throw new Error(`join webhook answered ${res.status}`);
+  }
+
   const inbox = (city: City, query = "") => call("GET", `/v1/inbox${query}`, { token: city.token });
   const ack = (city: City, ids: unknown) => call("POST", "/v1/inbox/ack", { token: city.token, body: { ids } });
   const send = (city: City, body: Record<string, unknown>) =>
     call("POST", "/v1/send", { token: city.token, body });
   const window = (city: City) => call("GET", "/v1/window", { token: city.token });
+
+  /**
+   * The operator's unbind, as the README's runbook gives it at this head: POST /v1/admin/unbind
+   * (the write that records every id the binding answered to, gp-lv49). Where that route does not
+   * exist (404 not_found, PR 76's draft at e39c0b90), the runbook is the raw DELETE of
+   * README :565 there, and the test runs that instead. Any other answer fails the test.
+   */
+  async function unbind(id: string): Promise<{ route: "admin" | "raw-delete" }> {
+    const r = await admin("POST", "/v1/admin/unbind", { id });
+    if (r.status === 200) return { route: "admin" };
+    if (r.status !== 404 || r.body?.error !== "not_found") throw new Error(`unbind answered ${r.status}`);
+    await deps.db.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1 OR user_id = ?1").bind(id).run();
+    return { route: "raw-delete" };
+  }
+
+  /** A counter's value (0 when it was never bumped). */
+  async function stat(name: string): Promise<number> {
+    return (await deps.db.prepare("SELECT value FROM stats WHERE name = ?").bind(name).first<{ value: number }>())?.value ?? 0;
+  }
 
   /** Every held delivery of the city, oldest first, read straight from D1. */
   async function held(city: City) {
@@ -319,12 +527,16 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
     enrollCity,
     webhook,
     say,
+    sayAs,
     invite,
     join,
+    joinAs,
     inbox,
     ack,
     send,
     window,
     held,
+    unbind,
+    stat,
   };
 }

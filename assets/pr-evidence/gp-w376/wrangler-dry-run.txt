@@ -1,0 +1,19 @@
+# gp-w376 wrangler dry run (no login)
+# HEAD 1d85f5bad5541710d9993da9d0fe80e2039ec6fd
+# tree: HEAD as committed
+# 2026-11-05T01:10:00Z pnpm exec wrangler deploy --dry-run --outdir dist (cwd whatsapp/gateway) -> exit 0
+# sha256: {'src/gateway.ts': 'a190e3345a66', 'src/meta.ts': '861279d6cecb', 'src/window.ts': 'dfbd088efebf', 'src/index.ts': 'b7f65f18c48e', 'migrations/0003_retries.sql': '4d3cf69aea02', 'test/bsuid.test.ts': '0d2e81d781ef'}
+
+
+ ⛅️ wrangler 4.154.0 (update available 4.157.0)
+───────────────────────────────────────────────
+Total Upload: 54.77 KiB / gzip: 14.11 KiB
+Your Worker has access to the following bindings:
+Binding                                                      Resource                  
+env.DB (whatsapp-gateway)                                    D1 Database               
+env.PUBLIC_URL ("https://whatsapp.dynasty.computer")         Environment Variable      
+env.DISPLAY_NAME ("Dynasty")                                 Environment Variable      
+env.GRAPH_VERSION ("v26.0")                                  Environment Variable      
+
+--dry-run: exiting now.
+pnpm wrapper: verify-deps off for exec (round 3)
