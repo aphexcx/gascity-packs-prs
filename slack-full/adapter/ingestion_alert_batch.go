@@ -7,15 +7,17 @@ import (
 	"time"
 )
 
-// Persist the original receipt set before mail. Its identity must survive a
+// Persist the original message/target set before mail. Its identity survives a
 // crash, new arrivals, and individual members gaining proof or completion.
 type ingestionAlertBatch struct {
-	ID      string    `json:"id"`
-	Channel string    `json:"channel"`
-	Members []string  `json:"members"`
-	Created time.Time `json:"created"`
-	Sent    bool      `json:"sent,omitempty"`
-	All     bool      `json:"all,omitempty"` // completion references the prepared membership
+	ID       string                   `json:"id"`
+	Channel  string                   `json:"channel"`
+	Members  []string                 `json:"members"`
+	Created  time.Time                `json:"created"`
+	Sent     bool                     `json:"sent,omitempty"`
+	All      bool                     `json:"all,omitempty"` // completion references the prepared membership
+	Version  int                      `json:"version,omitempty"`
+	Coverage []ingestionAlertCoverage `json:"coverage,omitempty"`
 }
 
 // Leave ample room below the journal scanner's 1 MiB record ceiling and
@@ -55,6 +57,9 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 				selected = append(selected, r)
 			}
 		}
+		if batch.Version >= ingestionAlertCoverageVersion {
+			selected = selectIngestionCoverage(selected, batch.Coverage)
+		}
 		if len(selected) > 0 {
 			// Do not fold new arrivals into an ambiguously accepted mail: gc
 			// could deduplicate it and never deliver those new lines. Recover
@@ -74,6 +79,8 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 		candidate := append(chosen, r)
 		members := ingestionAlertMembers(candidate)
 		plan := ingestionAlertBatch{ID: ingestionAlertID(members), Channel: channel, Members: members, Created: o.now()}
+		plan.Version, plan.Coverage = ingestionAlertCoverageVersion, ingestionCoverageFor(candidate)
+		plan.ID = ingestionCoverageID(plan.Coverage)
 		encoded, err := json.Marshal(inboundJournalRecord{Phase: "ingestion_batch", TS: o.now(), AlertBatch: &plan})
 		if err != nil {
 			return ingestionAlertBatch{}, nil, err
@@ -105,15 +112,24 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 }
 
 func (o *ingestionObserver) finishAlertBatch(batch ingestionAlertBatch, rows []inboundJournalRecord, sent bool) error {
-	// One fsynced record establishes completion for every mailed receipt
+	// One fsynced record establishes coverage for every mailed message
 	// before the compatibility per-member rows are written individually.
 	members := ingestionAlertMembers(rows)
-	if len(members) == len(batch.Members) && ingestionAlertID(members) == ingestionAlertID(batch.Members) {
+	coverage := ingestionCoverageFor(rows)
+	same := len(members) == len(batch.Members) && ingestionAlertID(members) == ingestionAlertID(batch.Members)
+	if batch.Version >= ingestionAlertCoverageVersion {
+		same = ingestionCoverageID(coverage) == ingestionCoverageID(batch.Coverage)
+	}
+	if same {
 		// A legacy plan can be close to the reader ceiling. Refer to its
 		// durable membership rather than repeat it with extra completion fields.
 		batch.All, batch.Members = true, nil
+		batch.Coverage = nil
 	} else {
 		batch.Members = members
+		if batch.Version >= ingestionAlertCoverageVersion {
+			batch.Coverage = coverage
+		}
 	}
 	batch.Sent = sent
 	return o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_done", AlertBatch: &batch})

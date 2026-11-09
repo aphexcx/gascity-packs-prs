@@ -1,0 +1,1 @@
+env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k react_sends_calling_session	exit=1

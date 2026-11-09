@@ -368,6 +368,7 @@ func TestIngestionSessionHand(t *testing.T) {
 		name, kind, channel, thread, session string
 		offset                               time.Duration
 		remove, rejected, restart, wantSeen  bool
+		unattributed                         bool
 	}{
 		{name: "reaction_after_handoff", kind: "reaction", offset: time.Minute, wantSeen: true},
 		{name: "reaction_before_handoff_tolerance", kind: "reaction", offset: -time.Minute},
@@ -375,6 +376,9 @@ func TestIngestionSessionHand(t *testing.T) {
 		{name: "reaction_removed", kind: "reaction", offset: time.Minute, remove: true},
 		{name: "reaction_failed", kind: "reaction", offset: time.Minute, rejected: true},
 		{name: "reaction_restart", kind: "reaction", offset: time.Minute, restart: true, wantSeen: true},
+		{name: "reaction_other_session", kind: "reaction", session: "s2", offset: time.Minute},
+		{name: "reaction_unattributed", kind: "reaction", unattributed: true, offset: time.Minute},
+		{name: "reaction_legacy_restart", kind: "reaction", unattributed: true, offset: time.Minute, restart: true},
 		{name: "reply_in_thread", kind: "reply", offset: time.Minute, wantSeen: true},
 		{name: "reply_to_inbound_own_id", kind: "reply", thread: "100.1", offset: time.Minute, wantSeen: true},
 		{name: "reply_other_thread", kind: "reply", thread: "other", offset: time.Minute},
@@ -414,7 +418,11 @@ func TestIngestionSessionHand(t *testing.T) {
 				oldBase := slackAPIBase
 				slackAPIBase = server.URL
 				t.Cleanup(func() { slackAPIBase = oldBase })
-				body, _ := json.Marshal(reactRequest{Conversation: conversationRef{ConversationID: channel}, MessageID: r.MessageTS, Emoji: "eyes", Remove: tc.remove})
+				if tc.unattributed {
+					session = ""
+				}
+				body, _ := json.Marshal(map[string]any{"conversation": conversationRef{ConversationID: channel},
+					"message_id": r.MessageTS, "emoji": "eyes", "remove": tc.remove, "session_id": session})
 				response := httptest.NewRecorder()
 				handleReact(cfg)(response, httptest.NewRequest(http.MethodPost, "/react", strings.NewReader(string(body))))
 				if response.Code != http.StatusOK {

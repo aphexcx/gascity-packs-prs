@@ -1515,6 +1515,7 @@ type reactRequest struct {
 	Conversation conversationRef `json:"conversation"`
 	MessageID    string          `json:"message_id"`
 	Emoji        string          `json:"emoji"`
+	SessionID    string          `json:"session_id,omitempty"`
 	// Remove selects reactions.remove instead of reactions.add
 	// (hq-xizo). Absent or false preserves the historical add-only
 	// behavior, so existing callers are unaffected.
@@ -3271,7 +3272,7 @@ func handleReact(cfg config) http.HandlerFunc {
 		if receipt.Delivered && !req.Remove {
 			cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 				Kind: "reaction", Source: "session_react", Channel: req.Conversation.ConversationID,
-				MessageTS: req.MessageID, Emoji: emoji,
+				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")

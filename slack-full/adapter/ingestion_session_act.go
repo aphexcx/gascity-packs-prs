@@ -43,7 +43,7 @@ func (j *inboundJournal) recordSessionAct(act ingestionSessionAct) {
 }
 
 func validIngestionAct(act ingestionSessionAct) bool {
-	if act.Channel == "" || act.MessageTS == "" || act.Timestamp.IsZero() {
+	if act.Channel == "" || act.MessageTS == "" || act.SessionID == "" || act.Timestamp.IsZero() {
 		return false
 	}
 	return (act.Kind == "reaction" && act.Source == "session_react" && act.Emoji != "") ||
@@ -87,7 +87,7 @@ func sessionActEvidence(act ingestionSessionAct, r inboundJournalRecord) *ingest
 		session = r.TargetSessions[0]
 	}
 	if act.Kind == "reaction" {
-		if act.MessageTS != r.MessageTS {
+		if act.MessageTS != r.MessageTS || act.SessionID != session {
 			return nil
 		}
 	} else {

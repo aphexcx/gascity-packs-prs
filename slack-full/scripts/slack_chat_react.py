@@ -66,6 +66,15 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     explicit = bool(args.conversation_id) or bool(args.message_id)
+    session_id = (args.session or "").strip()
+    if not session_id:
+        try:
+            session_id = common.current_session_id()
+        except common.GCAPIError as exc:
+            # Operator calls can still react explicitly, but an unattributed
+            # reaction is never ingestion proof for an agent session.
+            if not explicit:
+                raise SystemExit(str(exc)) from exc
     if explicit:
         if not (args.conversation_id and args.message_id):
             raise SystemExit(
@@ -74,12 +83,6 @@ def main(argv: list[str]) -> int:
         conv_id = args.conversation_id
         msg_id = args.message_id
     else:
-        session_id = (args.session or "").strip()
-        if not session_id:
-            try:
-                session_id = common.current_session_id()
-            except common.GCAPIError as exc:
-                raise SystemExit(str(exc)) from exc
         match = common.find_latest_inbound_message_id_for_session(session_id)
         if match is None:
             raise SystemExit(
@@ -95,6 +98,7 @@ def main(argv: list[str]) -> int:
             message_id=msg_id,
             emoji=args.emoji,
             remove=args.remove,
+            session_id=session_id,
         )
     except common.AdapterError as exc:
         raise SystemExit(str(exc)) from exc

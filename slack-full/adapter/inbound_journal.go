@@ -35,32 +35,35 @@ type inboundJournal struct {
 }
 
 type inboundJournalRecord struct {
-	Phase              string               `json:"phase"`
-	TS                 time.Time            `json:"ts"`
-	Provider           string               `json:"provider,omitempty"`
-	Channel            string               `json:"channel"`
-	ThreadTS           string               `json:"thread_ts,omitempty"`
-	MessageTS          string               `json:"message_ts"`
-	Target             string               `json:"target"`
-	TargetSessions     []string             `json:"target_sessions,omitempty"`
-	HandoffSessions    []string             `json:"handoff_sessions"`
-	CanonicalSessionID string               `json:"canonical_session_id,omitempty"`
-	Bytes              int                  `json:"bytes"`
-	Mode               string               `json:"mode"`
-	ReceiptID          string               `json:"receipt_id,omitempty"`
-	Status             string               `json:"status"`
-	Windows            []injectionWindow    `json:"windows"`
-	UnseenWindows      []injectionWindow    `json:"-"` // recomputed for mail; never replaces durable membership
-	PayloadSHA256      string               `json:"payload_sha256,omitempty"`
-	ProofKind          string               `json:"proof_kind,omitempty"`
-	DeliveredAt        time.Time            `json:"delivered_at,omitempty"`
-	StartedAt          time.Time            `json:"started_at,omitempty"`
-	Evidence           *ingestionEvidence   `json:"ingestion_evidence,omitempty"`
-	Alerted            bool                 `json:"alerted,omitempty"`
-	Late               bool                 `json:"late,omitempty"`
-	SessionAct         *ingestionSessionAct `json:"session_act,omitempty"`
-	AlertBatch         *ingestionAlertBatch `json:"alert_batch,omitempty"`
-	AlertBatchID       string               `json:"alert_batch_id,omitempty"`
+	Phase              string                   `json:"phase"`
+	TS                 time.Time                `json:"ts"`
+	Provider           string                   `json:"provider,omitempty"`
+	Channel            string                   `json:"channel"`
+	ThreadTS           string                   `json:"thread_ts,omitempty"`
+	MessageTS          string                   `json:"message_ts"`
+	Target             string                   `json:"target"`
+	TargetSessions     []string                 `json:"target_sessions,omitempty"`
+	HandoffSessions    []string                 `json:"handoff_sessions"`
+	CanonicalSessionID string                   `json:"canonical_session_id,omitempty"`
+	Bytes              int                      `json:"bytes"`
+	Mode               string                   `json:"mode"`
+	ReceiptID          string                   `json:"receipt_id,omitempty"`
+	Status             string                   `json:"status"`
+	Windows            []injectionWindow        `json:"windows"`
+	UnseenWindows      []injectionWindow        `json:"-"` // recomputed for mail; never replaces durable membership
+	PayloadSHA256      string                   `json:"payload_sha256,omitempty"`
+	ProofKind          string                   `json:"proof_kind,omitempty"`
+	DeliveredAt        time.Time                `json:"delivered_at,omitempty"`
+	StartedAt          time.Time                `json:"started_at,omitempty"`
+	Evidence           *ingestionEvidence       `json:"ingestion_evidence,omitempty"`
+	Alerted            bool                     `json:"alerted,omitempty"`
+	Late               bool                     `json:"late,omitempty"`
+	SessionAct         *ingestionSessionAct     `json:"session_act,omitempty"`
+	AlertBatch         *ingestionAlertBatch     `json:"alert_batch,omitempty"`
+	AlertBatchID       string                   `json:"alert_batch_id,omitempty"`
+	AlertVersion       int                      `json:"alert_version,omitempty"`
+	AlertCoverage      []ingestionAlertCoverage `json:"alert_coverage,omitempty"`
+	AlertSelection     []ingestionAlertCoverage `json:"-"` // exact message/target pairs in this mail
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {

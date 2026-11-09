@@ -40,7 +40,7 @@ func TestIngestionCoalescedSessionActs(t *testing.T) {
 					now = at.Add(time.Duration(i+1) * time.Minute)
 					w := r.Windows[i]
 					if kind == "reaction" {
-						j.recordSessionAct(ingestionSessionAct{Kind: kind, Source: "session_react", Channel: r.Channel, MessageTS: w.MessageTS, Emoji: "eyes"})
+						j.recordSessionAct(ingestionSessionAct{Kind: kind, Source: "session_react", Channel: r.Channel, MessageTS: w.MessageTS, Emoji: "eyes", SessionID: "s1"})
 					} else {
 						recordDeliveredPublish(config{inboundJournal: j}, r.Channel, w.ThreadTS, fmt.Sprintf("%d.000000", now.Unix()), "s1")
 					}
@@ -133,14 +133,16 @@ func TestIngestionCoalescedFanoutRetryAndLateProof(t *testing.T) {
 	if err := o.step(context.Background()); err == nil {
 		t.Fatal("expected mail failure")
 	}
-	// A now has global reaction proof; only B for s1 still lacks proof.
-	j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel, MessageTS: "100.1", Emoji: "eyes"})
+	// Both targets now react to A; only B for s1 still lacks proof.
+	for _, session := range r.TargetSessions {
+		j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel, MessageTS: "100.1", Emoji: "eyes", SessionID: session})
+	}
 	j = &inboundJournal{dir: j.dir, now: func() time.Time { return now }}
 	o.cfg.inboundJournal = j
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel, MessageTS: "200.1", Emoji: "eyes"})
+	j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel, MessageTS: "200.1", Emoji: "eyes", SessionID: "s1"})
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +170,7 @@ func TestIngestionSessionActDelayedConfirmation(t *testing.T) {
 				r := ingestionTestRecord("100.1", at.Add(2*time.Minute), "delayed confirmation")
 				r.StartedAt = at
 				if kind == "reaction" {
-					j.recordSessionAct(ingestionSessionAct{Kind: kind, Source: "session_react", Channel: r.Channel, MessageTS: r.MessageTS, Emoji: "eyes"})
+					j.recordSessionAct(ingestionSessionAct{Kind: kind, Source: "session_react", Channel: r.Channel, MessageTS: r.MessageTS, Emoji: "eyes", SessionID: "s1"})
 				} else {
 					recordDeliveredPublish(config{inboundJournal: j}, r.Channel, r.ThreadTS, fmt.Sprintf("%d.000000", now.Unix()), "s1")
 				}
@@ -206,9 +208,16 @@ func TestIngestionSessionActSourcesAndRoot(t *testing.T) {
 	if sessionActEvidence(reply, r) != nil {
 		t.Fatal("reply outside late horizon accepted")
 	}
+	for _, session := range []string{"canonical", "s1", ""} {
+		act := ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel,
+			MessageTS: r.MessageTS, Emoji: "eyes", SessionID: session, Timestamp: at.Add(time.Minute)}
+		if (sessionActEvidence(act, r) != nil) != (session == "canonical") {
+			t.Fatalf("reaction attribution ignored pinned canonical session: %q", session)
+		}
+	}
 	for _, source := range []string{"company_admission", "busy_reaction", ""} {
 		act := ingestionSessionAct{Kind: "reaction", Source: source, Channel: r.Channel,
-			MessageTS: r.MessageTS, Emoji: "eyes", Timestamp: at.Add(time.Minute)}
+			MessageTS: r.MessageTS, Emoji: "eyes", SessionID: "canonical", Timestamp: at.Add(time.Minute)}
 		if sessionActEvidence(act, r) != nil {
 			t.Fatalf("automatic source %q became proof", source)
 		}
@@ -264,7 +273,7 @@ func TestIngestionSessionActCacheOverflowKeepsDurableProof(t *testing.T) {
 			message = r.MessageTS
 		}
 		act := ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel,
-			MessageTS: message, Emoji: "eyes", Timestamp: at.Add(time.Minute)}
+			MessageTS: message, Emoji: "eyes", SessionID: "s1", Timestamp: at.Add(time.Minute)}
 		row := inboundJournalRecord{Phase: "reaction", TS: act.Timestamp, SessionAct: &act}
 		b, err := json.Marshal(row)
 		if err != nil {
@@ -291,7 +300,7 @@ func TestIngestionSessionActClockToleranceSurvivesMidnight(t *testing.T) {
 	now := at.Add(-10 * time.Second)
 	j := &inboundJournal{dir: t.TempDir(), retentionDays: 1, now: func() time.Time { return now }}
 	r := ingestionTestRecord("100.1", at, "body")
-	j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel, MessageTS: r.MessageTS, Emoji: "eyes"})
+	j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel, MessageTS: r.MessageTS, Emoji: "eyes", SessionID: "s1"})
 	now = at
 	if err := j.append(r); err != nil {
 		t.Fatal(err)
@@ -327,7 +336,7 @@ func TestIngestionSessionActDuringPassSuppressesBatchMember(t *testing.T) {
 	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
 		fetch: func(_ context.Context, session string) ([]json.RawMessage, error) {
 			if session == "s2" {
-				j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel, MessageTS: r.MessageTS, Emoji: "eyes"})
+				j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Source: "session_react", Channel: r.Channel, MessageTS: r.MessageTS, Emoji: "eyes", SessionID: "s1"})
 			}
 			return nil, nil
 		}, notify: func(_ context.Context, batch []inboundJournalRecord) error {

@@ -6,10 +6,10 @@ Measured 2026-11-09 from the assigned lane at base
 ## Sources and method
 
 - Read all seven retained inbound journals, `20261103.jsonl` through
-  `20261109.jsonl`, under `/Users/tailor512/city/.gc/slack/inbound-journal/`.
+  `20261109.jsonl`, under `$GC_CITY_PATH/.gc/slack/inbound-journal/`.
   Select `status=delivered_unseen, alerted=true`: 18 receipt rows.
 - Correlate the service log at
-  `/Users/tailor512/city/.gc/services/slack/logs/service.log` with each receipt's
+  `$GC_CITY_PATH/.gc/services/slack/logs/service.log` with each receipt's
   channel, message/root timestamp, target session, hand-off and alert time.
   Its timestamps are America/Chicago; journal timestamps are UTC. On these
   dates the offset is six hours. `measure.py` performs the conversion.

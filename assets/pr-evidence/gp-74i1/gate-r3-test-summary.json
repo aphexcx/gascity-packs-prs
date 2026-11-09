@@ -1,0 +1,20 @@
+{
+  "final-full": {
+    "top_level_passes": 1463,
+    "passes_including_subtests": 12937,
+    "skips": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement",
+      "TestRegistrationStartupDelayedPort"
+    ],
+    "failures": []
+  },
+  "final-race": {
+    "top_level_passes": 51,
+    "passes_including_subtests": 113,
+    "skips": [
+      "TestIngestionLiveBusySessionProof"
+    ],
+    "failures": []
+  }
+}

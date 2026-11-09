@@ -27,12 +27,13 @@ original quoted-context windows.
 
 A complete rendered input, a successful explicit `/react` add on the inbound
 message, or a confirmed session `/publish` reply into its thread can mark the
-receipt `ingested`. Reply proof must belong to the target session and its Slack
+receipt `ingested`. Both acts must belong to the target session. A reply's Slack
 timestamp must follow the inbound message's timestamp; the clock tolerance
 cannot make an older reply cover a later input. A top-level inbound uses its
-own message timestamp as the thread root. Explicit reactions
-are bot actions through `/react` (that endpoint does not carry caller session
-identity). Company admission eyes and automatic busy reactions do not count.
+own message timestamp as the thread root. The reaction CLI sends its calling
+session ID in current and explicit-message modes. An unattributed reaction,
+including a legacy journal row without a session, is not proof. Company
+admission eyes and automatic busy reactions do not count.
 Failed reactions, reaction removals, and replies to another thread do not count.
 
 For a coalesced receipt, every constituent message needs a qualifying reaction
@@ -43,7 +44,7 @@ proof kind and timestamp. A partial receipt remains unresolved, and its alert
 names only the members still lacking proof across the unresolved targets.
 
 The adapter journals successful acts with their source, channel, message/thread,
-emoji or session, and timestamp, never their text. Reaction time is the adapter
+session, emoji where applicable, and timestamp, never their text. Reaction time is the adapter
 clock; reply time is Slack's original publish timestamp, including on a later
 idempotent replay. Acts must fall between the saved send start (`StartedAt`)
 minus the existing 30-second clock tolerance and the two-hour proof horizon
@@ -69,10 +70,16 @@ appends `delivered_unseen`. Each observer pass sends at most one
 `gc mail send mayor --dedup ...` per channel, with a count in the subject and
 each message timestamp, thread and receipt in the body. Target sessions stay
 in the journal so delayed fanout cannot enlarge a retry's mail payload.
-Fanout targets share one line per uncovered message. Before mail, the journal saves the
-sorted original receipt set and its stable batch dedup key. Recovery reuses
-that key even if a member completed or gained proof; new arrivals wait for the
-next pass rather than being hidden by deduplication of the earlier mail.
+Fanout targets share one line per uncovered message. Before mail, the journal saves
+the exact message/target pairs and their stable batch dedup key. Completion records
+which messages were named, their target attribution and their mail batch. A message
+already named is not mailed again for a late target. A different, previously covered
+message that becomes unread for a late target gets a new mail: if s1 has answered B
+and only A was alerted, a later s2 with neither seen triggers B without repeating A.
+Recovery retries only the saved message/target set under its original key, even if
+a member completed or gained proof; new members wait for the next pass. The
+`alerted` flag in versioned rows settles that target's alert decision, never other
+messages or targets. Only legacy unversioned rows retain receipt-wide coverage.
 New batches are limited to a 64 KiB journal-record/mail-body budget; larger
 backlogs drain over successive passes. This stays below both the journal
 reader's 1 MiB line ceiling and command argument limits. A single receipt that

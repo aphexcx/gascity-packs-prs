@@ -170,6 +170,15 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 	rows := make(map[string]inboundJournalRecord)
 	days := make(map[string]ingestionRecordDays)
 	alerted := make(map[string]bool)
+	coverage := make(map[string][]ingestionAlertCoverage)
+	rememberCoverage := func(members []ingestionAlertCoverage, batchID string) {
+		for _, c := range members {
+			if c.BatchID == "" {
+				c.BatchID = batchID
+			}
+			coverage[c.Receipt] = mergeIngestionCoverage(coverage[c.Receipt], []ingestionAlertCoverage{c})
+		}
+	}
 	started := make(map[string]time.Time)
 	held := make(map[string]bool)
 	concluded := make(map[string]bool)
@@ -213,11 +222,16 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 				} else if r.Phase == "ingestion_batch_done" {
 					if batch.All {
 						batch.Members = j.preparedBatches[batch.ID].Members
+						batch.Coverage = j.preparedBatches[batch.ID].Coverage
 					}
 					delete(j.preparedBatches, batch.ID)
 					if batch.Sent {
-						for _, member := range batch.Members {
-							alerted[member] = true
+						if batch.Version >= ingestionAlertCoverageVersion {
+							rememberCoverage(batch.Coverage, batch.ID)
+						} else {
+							for _, member := range batch.Members {
+								alerted[member] = true
+							}
 						}
 					}
 				}
@@ -240,7 +254,8 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" && len(r.HandoffSessions) == 0 {
 				continue
 			}
-			if r.Alerted {
+			rememberCoverage(r.AlertCoverage, r.AlertBatchID)
+			if r.Alerted && r.AlertVersion < ingestionAlertCoverageVersion {
 				alerted[ingestionKey(r, "")] = true
 			}
 			targets := r.TargetSessions
@@ -290,8 +305,18 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 	}
 	for key, r := range rows {
 		r.StartedAt = started[ingestionKey(r, "")]
+		r.AlertCoverage = mergeIngestionCoverage(r.AlertCoverage, coverage[ingestionKey(r, "")])
+		if len(r.AlertCoverage) > 0 {
+			r.AlertVersion = ingestionAlertCoverageVersion
+			if ingestionAllMessagesAlerted(r) {
+				r.Alerted = true
+			}
+		}
 		if alerted[ingestionKey(r, "")] {
 			r.Alerted = true
+			// Keep the legacy receipt-wide meaning when retention carries
+			// this verdict beyond the original unversioned completion row.
+			r.AlertVersion = 0
 		}
 		rows[key] = r
 	}
@@ -425,7 +450,18 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 				}
 				continue
 			}
-			r.UnseenWindows = missing
+			r.UnseenWindows = make([]injectionWindow, 0, len(missing))
+			for _, w := range missing {
+				if !ingestionMessageAlerted(r, w) {
+					r.UnseenWindows = append(r.UnseenWindows, w)
+				}
+			}
+			if len(r.UnseenWindows) == 0 {
+				if err := o.recordAlertResult(r, nil); err != nil {
+					return err
+				}
+				continue
+			}
 			unseen = append(unseen, r)
 		}
 		batch, unseen, err := o.prepareAlertBatch(channel, unseen)
@@ -450,8 +486,7 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			return err
 		}
 		for _, r := range unseen {
-			r.Alerted, r.Phase = true, "ingestion_alert"
-			if err := o.cfg.inboundJournal.append(r); err != nil {
+			if err := o.recordAlertResult(r, ingestionCoverageFor([]inboundJournalRecord{r})); err != nil {
 				return err
 			}
 		}
@@ -478,11 +513,13 @@ func ingestionAlertRows(rows []inboundJournalRecord) []inboundJournalRecord {
 	for _, r := range rows {
 		key := ingestionKey(r, "")
 		if old, ok := unique[key]; ok {
+			old.AlertSelection = append(old.AlertSelection, ingestionCoverageFor([]inboundJournalRecord{r})...)
 			old.TargetSessions = append(old.TargetSessions, r.TargetSessions...)
 			old.UnseenWindows = append(ingestionAlertWindows(old), ingestionAlertWindows(r)...)
 			unique[key] = old
 		} else {
 			r.TargetSessions = append([]string(nil), r.TargetSessions...)
+			r.AlertSelection = ingestionCoverageFor([]inboundJournalRecord{r})
 			unique[key] = r
 		}
 	}

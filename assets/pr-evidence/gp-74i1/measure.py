@@ -2,6 +2,7 @@
 import datetime as dt
 import json
 import math
+import os
 import pathlib
 import re
 from zoneinfo import ZoneInfo
@@ -14,7 +15,7 @@ def timestamp(value):
 
 data = json.loads((HERE / "journal-measure.json").read_text())
 acts = []
-log = pathlib.Path("/Users/tailor512/city/.gc/services/slack/logs/service.log")
+log = pathlib.Path(os.environ["GC_CITY_PATH"]) / ".gc/services/slack/logs/service.log"
 for number, line in enumerate(log.open(), 1):
     match = re.match(r"(\d{4}/\d\d/\d\d \d\d:\d\d:\d\d) (react|publish): (.*)", line)
     if not match:

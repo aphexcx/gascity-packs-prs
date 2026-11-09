@@ -172,3 +172,68 @@ The `gate-r2-*` manifests, compressed logs and parsed test summary retain this
 round's results. The mayor gates only `7caf2238..NEW` and reads the whole PR
 with Fable. The lane sends READY and drains without closing the bead; the
 mayor owns the roll and observation week.
+
+## Mayor gate round 3: durable message coverage and reaction attribution
+
+The mayor's gate round 2 blocked `42ec11578d80d2b0134ba0b79c0268071a96ff28`
+on partial alerts hiding unread messages from late fanout targets. The Fable
+read of that whole head also blocked reactions without caller attribution.
+Both findings are addressed in this round. The mayor clarified the alert rule:
+mail each message once across fanout, retaining which targets lacked proof
+when that message was included. A previously mailed A is not repeated for s2;
+a previously unmailed B becomes eligible when s2 receives it without proof.
+
+Versioned batch plans and completion records now retain exact message/target
+pairs. Each durable coverage entry identifies its original batch, and receipt
+replay unions only those named messages. Versioned `alerted` flags settle the
+individual target's alert decision; they do not propagate to late targets.
+Legacy unversioned flags retain their old meaning. Retention carries the
+coverage with verdicts, and restart repairs incomplete member rows from the
+atomic batch completion. A retry remains restricted to its saved membership
+and dedup key; newly eligible members receive a separate batch on a later pass.
+The existing 64 KiB limits and visible error for an oversized single receipt
+remain in force, now accounting for coverage metadata as well.
+
+The reaction CLI forwards the calling session ID in both current-message and
+explicit-message modes. The adapter persists it and matches it against the
+target's pinned canonical identity, like reply proof. Wrong-session and
+unattributed reactions, including legacy rows, cannot prove ingestion.
+Explicit operator reactions still work without a session but provide no
+session proof. Automatic company admission eyes remain excluded; an observer
+regression now drives the actual admission-ack path before checking the alarm.
+The measurement script uses `GC_CITY_PATH`, and the baseline document uses
+generic city-relative references in place of the three home paths.
+
+The late-fanout regression first failed in all four variants: live, restart,
+crash after atomic completion, and retention across midnight. The reaction
+handler regressions first failed for wrong-session, unattributed and legacy
+restarted acts. Four CLI request-boundary cases first failed for missing
+session IDs. All now pass. Additional coverage checks exact target/batch
+attribution and keeps newly unread B out of an ambiguously accepted A retry.
+
+Self-review by the implementing Codex model traced the version boundary,
+coverage union, partial retry selection, exact target attribution through
+mail grouping, atomic completion repair, retention carry, canonical reaction
+matching, legacy missing identities, and explicit operator compatibility.
+No remaining correctness finding was identified. The journal still owns
+durable facts and the observer owns verdicts and mail; the new coverage helper
+stays inside that boundary. The CLI only transports caller identity. The
+three-minute window and two-hour horizon are unchanged. This self-review does
+not substitute for the mayor's pending gate round 3 and Fable delta read.
+
+Validation from the respective module directories:
+
+- Go 1.27.3 darwin/arm64, `go test -json ./...`: 1,463 top-level passes
+  (12,937 including subtests), three opt-in skips, exit 0.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  51 top-level passes (113 including subtests), one opt-in skip, exit 0.
+- From `slack-full`, the Makefile's uv-managed interpreter:
+  `env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q`:
+  948 passed, two skipped, exit 0. Two existing Python fork deprecation warnings
+  came from the outbound multiprocess test. Node/pnpm were not used.
+
+The `gate-r3-*` artifacts retain the command manifests, compressed test logs
+and parsed counts. Public logs normalize local lane/home paths; original
+unmodified logs remain in the lane's external staging evidence. The PR stays
+draft. READY hands this head to the mayor for gates, the authorized pin roll,
+and the observation week; the lane drains without closing the bead.
