@@ -1,0 +1,74 @@
+{
+  "round4-base-red": {
+    "top_level": {
+      "pass": 1,
+      "fail": 3,
+      "skip": 0
+    },
+    "including_subtests": {
+      "pass": 1,
+      "fail": 26,
+      "skip": 0
+    }
+  },
+  "round4-focused-final": {
+    "top_level": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    },
+    "including_subtests": {
+      "pass": 27,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  "round4-edges": {
+    "top_level": {
+      "pass": 1,
+      "fail": 1,
+      "skip": 0
+    },
+    "including_subtests": {
+      "pass": 21,
+      "fail": 2,
+      "skip": 0
+    }
+  },
+  "round4-retention-red": {
+    "top_level": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    },
+    "including_subtests": {
+      "pass": 0,
+      "fail": 4,
+      "skip": 0
+    }
+  },
+  "round4-full": {
+    "top_level": {
+      "pass": 1467,
+      "fail": 0,
+      "skip": 3
+    },
+    "including_subtests": {
+      "pass": 12964,
+      "fail": 0,
+      "skip": 3
+    }
+  },
+  "round4-race": {
+    "top_level": {
+      "pass": 55,
+      "fail": 0,
+      "skip": 1
+    },
+    "including_subtests": {
+      "pass": 140,
+      "fail": 0,
+      "skip": 1
+    }
+  }
+}

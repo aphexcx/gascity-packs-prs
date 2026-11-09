@@ -73,17 +73,29 @@ in the journal so delayed fanout cannot enlarge a retry's mail payload.
 Fanout targets share one line per uncovered message. Before mail, the journal saves
 the exact message/target pairs and their stable batch dedup key. Completion records
 which messages were named, their target attribution and their mail batch. A message
-already named is not mailed again for a late target. A different, previously covered
-message that becomes unread for a late target gets a new mail: if s1 has answered B
+is mailed once across targets: a line already named is not mailed again for a late
+target. The targets record attribution, not separate mail entitlements. A different
+message previously seen only by the first target gets a new mail: if s1 has answered B
 and only A was alerted, a later s2 with neither seen triggers B without repeating A.
 Recovery retries only the saved message/target set under its original key, even if
-a member completed or gained proof; new members wait for the next pass. The
+a member completed or gained proof; new members wait for the next pass. If gc
+accepted the original mail but its response was lost, recovery preserves the
+entire original coverage, including members that gained proof before the retry.
+When every member has proof, completion records that original coverage as
+`unconfirmed` without claiming this pass sent another mail (`sent` stays false).
+The adapter cannot distinguish an accepted mail from a lost attempt; this is
+durable ambiguous-acceptance coverage, not a new confirmed delivery. The
 `alerted` flag in versioned rows settles that target's alert decision, never other
 messages or targets. Only legacy unversioned rows retain receipt-wide coverage.
 New batches are limited to a 64 KiB journal-record/mail-body budget; larger
 backlogs drain over successive passes. This stays below both the journal
-reader's 1 MiB line ceiling and command argument limits. A single receipt that
-cannot fit produces a visible retryable error without blocking other channels.
+reader's 1 MiB line ceiling and command argument limits. A receipt with too many
+message/target pairs is split into bounded saved plans. Named messages stay
+covered across targets; unnamed messages remain eligible on the next pass.
+Each target's journal row stores only its own coverage. Retention carries shared
+coverage once in separate `ingestion_coverage` rows before its source expires.
+A single pair that cannot fit produces a visible retryable error without blocking
+other channels.
 An oversized batch saved by an older adapter retries under its original dedup
 key, with a bounded receipt prefix, omitted count and journal batch ID; the
 saved membership remains complete. It is not split into new mail identities.

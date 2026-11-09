@@ -225,7 +225,7 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 						batch.Coverage = j.preparedBatches[batch.ID].Coverage
 					}
 					delete(j.preparedBatches, batch.ID)
-					if batch.Sent {
+					if batch.Sent || batch.Unconfirmed {
 						if batch.Version >= ingestionAlertCoverageVersion {
 							rememberCoverage(batch.Coverage, batch.ID)
 						} else {
@@ -235,6 +235,10 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 						}
 					}
 				}
+				continue
+			}
+			if r.Phase == "ingestion_coverage" {
+				rememberCoverage(r.AlertCoverage, "")
 				continue
 			}
 			// Old rows lack a complete payload fingerprint. Do not fabricate

@@ -116,7 +116,10 @@ deliveries also log their registry label.
   confirmed replies from the target session as durable proof, surviving
   adapter restarts and excluding automatic admission acknowledgements.
   Newly unseen receipts are combined into one mail per channel per observer
-  pass, with each receipt still recorded individually. The three-minute
+  pass, with each receipt still recorded individually. Ambiguous mail retries
+  preserve the original message coverage, including members that later gain
+  proof. Large fanout receipts use bounded plans and target rows retain only
+  their own attribution. The three-minute
   initial deadline and two-hour late-proof horizon remain unchanged (gp-74i1).
 
 - Compile a session-scoped native test stub for the CLI and adapter fixtures;

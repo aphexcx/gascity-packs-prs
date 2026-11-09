@@ -237,3 +237,70 @@ and parsed counts. Public logs normalize local lane/home paths; original
 unmodified logs remain in the lane's external staging evidence. The PR stays
 draft. READY hands this head to the mayor for gates, the authorized pin roll,
 and the observation week; the lane drains without closing the bead.
+
+## Mayor gate round 4: preserve accepted coverage and bound fanout
+
+Round 3's gate blocked `e8c9737d1ac3bc7f0e5105e96e6d084cb1de776b` because
+an ambiguously accepted A+B mail could complete its retry with only B's
+coverage after A gained proof. The Opus read also identified the all-proven
+completion, repeated shared coverage in target rows, and a single receipt
+whose target pairs could exceed the saved-plan budget indefinitely.
+
+Recovery now completes against the original durable membership. This includes
+members that gained proof, since being mailed and being seen are independent
+facts. If all original members have proof, the completion preserves coverage
+with `unconfirmed=true` and `sent=false`: no new send is claimed. This retains
+the ambiguity of an earlier attempt whose acknowledgement was lost. Fresh
+batches still complete with exactly the coverage actually sent. After closing
+an all-proven recovered batch, selection waits until the next pass reconstructs
+the coverage; a late target cannot re-mail those lines using stale state.
+
+The once rule is per message across targets. Targets identify who lacked proof
+when a line was named; they do not create separate mail entitlements. A single
+receipt over the 64 KiB plan budget is split by message/target pair, retaining
+explicit attribution. The saved plan and the actual mail use the same bounded
+selection. Already named messages cover subsequent fanout; unnamed messages
+remain eligible for a later pass with a new identity. Tests exercise both
+300 targets of one message and 300 distinct messages in one receipt.
+
+Individual journal rows serialize only their target's coverage. Replay still
+unions the shared coverage for decisions. Before retention deletes source
+records, it preserves attribution needed by surviving observations in separate
+bounded `ingestion_coverage` rows. This also covers a newer target whose row
+survives after the original target's own verdict expires.
+
+The final focused tests were run against the previous head's production files
+as well as the fix: 26 test/subtest failures on the base, one passing fresh-batch
+control; all 27 tests/subtests pass with the fix. The scenarios include A or B
+gaining proof, both gaining proof, a second timeout, restart before retry,
+restart after a deduplicated retry before completion, late targets before and
+after recovery, retention with the original target surviving, and retention
+with only a newer target surviving. Assertions check original target/batch
+attribution, no repeated channel line, and no hidden newcomer. The fresh-batch
+control confirms unsent rows receive no coverage.
+
+Self-review by the implementing Codex model traced the persisted plan, recovery
+selection, completion, replay, per-target serialization, and pruning. Two
+additional failure paths were reproduced and fixed during that review: a late
+target present during all-proven completion, and coverage disappearing after
+only the newer target survived retention. Splitting exact pairs was chosen over
+eliding target identities so recovery retains the same attribution contract.
+No external side effect is inferred as confirmed from a timeout. The remaining
+uncertainty is explicit in the completion record and documentation. The initial
+three-minute window, two-hour horizon, and rollout gate are unchanged. The
+mayor's Codex gate and Opus delta read on this head follow READY.
+
+Validation from `slack-full/adapter`, Go 1.27.3 darwin/arm64:
+
+- `go test -json ./...`: 1,467 top-level passes (12,964 including subtests),
+  three opt-in skips, zero failures, exit 0.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  55 top-level passes (140 including subtests), one opt-in skip, zero failures,
+  exit 0.
+- `go vet ./...` and `git diff --check`: exit 0.
+- No Python or Node implementation changed in this round; Node/pnpm were not
+  used. The preceding round's 948 passing Python tests are historical evidence,
+  not a new execution claimed for this delta.
+
+The `round4-*` compressed logs, parsed summary and command manifests retain
+the new checks. Raw logs and mutable routing/GitHub snapshots stay local.

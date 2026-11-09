@@ -141,6 +141,9 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 		now = j.now().UTC()
 	}
 	r.TS = now
+	if len(r.TargetSessions) > 0 {
+		r.AlertCoverage = ingestionTargetCoverage(r)
+	}
 	data, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -254,12 +257,29 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	// that would otherwise be deleted before their newer rows. Preserve all
 	// timestamps, proof and alert state; fsync before removing any source.
 	var carry []byte
+	var carryCoverage []ingestionAlertCoverage
 	for key, observation := range observations {
 		d := recordDays[key]
+		// Shared attribution may have come from an older target whose own
+		// verdict is expiring. Preserve it for every surviving target too.
+		if d.latest >= cutoff {
+			carryCoverage = mergeIngestionCoverage(carryCoverage, observation.AlertCoverage)
+		}
 		if !ingestionSettled(observation, now) || d.selected >= cutoff || d.latest < cutoff {
 			continue
 		}
+		// Carry shared attribution once, separately from the individual
+		// target verdicts, before deleting the original batch's source day.
+		observation.AlertCoverage = ingestionTargetCoverage(observation)
 		b, err := json.Marshal(observation)
+		if err != nil {
+			return err
+		}
+		carry = append(append(carry, b...), '\n')
+	}
+	for _, c := range carryCoverage {
+		// One pair per record also bounds a carry across many old batches.
+		b, err := json.Marshal(inboundJournalRecord{Phase: "ingestion_coverage", TS: now, AlertCoverage: []ingestionAlertCoverage{c}})
 		if err != nil {
 			return err
 		}

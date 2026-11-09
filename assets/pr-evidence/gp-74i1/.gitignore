@@ -18,3 +18,10 @@ round2-inbox.json
 gate-r2-pr-*.json
 gate-r2-provenance-before.json
 round2-pr-body.md
+# Round-four mutable claim and GitHub snapshots.
+resume-bead.json
+round4-pr-before.json
+round4-pr-after.json
+round4-pr-body.md
+round4-bead-latest.json
+round4-completion.tsv

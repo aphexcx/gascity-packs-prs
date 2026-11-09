@@ -69,6 +69,22 @@ func ingestionCoverageID(coverage []ingestionAlertCoverage) string {
 	return ingestionAlertID(keys)
 }
 
+// Reconstructed state shares channel-wide coverage for decisions. A durable
+// target row carries only its own attribution; the batch records carry the set.
+func ingestionTargetCoverage(r inboundJournalRecord) []ingestionAlertCoverage {
+	targets := make(map[string]bool, len(r.TargetSessions))
+	for _, session := range r.TargetSessions {
+		targets[session] = true
+	}
+	var own []ingestionAlertCoverage
+	for _, c := range r.AlertCoverage {
+		if targets[c.Session] {
+			own = append(own, c)
+		}
+	}
+	return own
+}
+
 func ingestionMessageAlerted(r inboundJournalRecord, w injectionWindow) bool {
 	for _, c := range r.AlertCoverage {
 		if c.Receipt == ingestionKey(r, "") && c.MessageTS == w.MessageTS && c.ThreadTS == w.ThreadTS {

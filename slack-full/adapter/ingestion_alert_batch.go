@@ -18,6 +18,10 @@ type ingestionAlertBatch struct {
 	All      bool                     `json:"all,omitempty"` // completion references the prepared membership
 	Version  int                      `json:"version,omitempty"`
 	Coverage []ingestionAlertCoverage `json:"coverage,omitempty"`
+	// A recovered plan may already have reached gc even when no retry is
+	// needed. Keep that uncertainty separate from this pass's Sent result.
+	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	recovered   bool
 }
 
 // Leave ample room below the journal scanner's 1 MiB record ceiling and
@@ -47,6 +51,7 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 		if batch.Channel != channel {
 			continue
 		}
+		batch.recovered = true
 		members := make(map[string]bool, len(batch.Members))
 		for _, member := range batch.Members {
 			members[member] = true
@@ -69,42 +74,60 @@ func (o *ingestionObserver) prepareAlertBatch(channel string, unseen []inboundJo
 		if err := o.finishAlertBatch(batch, nil, false); err != nil {
 			return ingestionAlertBatch{}, nil, err
 		}
+		// Reconstruct the newly completed coverage before selecting another
+		// batch. A late target in unseen may share these already named lines.
+		return ingestionAlertBatch{}, nil, nil
 	}
 	if len(unseen) == 0 {
 		return ingestionAlertBatch{}, nil, nil
 	}
 	var chosen []inboundJournalRecord
 	var batch ingestionAlertBatch
-	for _, r := range ingestionAlertRows(unseen) {
-		candidate := append(chosen, r)
-		members := ingestionAlertMembers(candidate)
-		plan := ingestionAlertBatch{ID: ingestionAlertID(members), Channel: channel, Members: members, Created: o.now()}
-		plan.Version, plan.Coverage = ingestionAlertCoverageVersion, ingestionCoverageFor(candidate)
+	planFor := func(candidate []inboundJournalRecord) (ingestionAlertBatch, bool, error) {
+		plan := ingestionAlertBatch{Channel: channel, Members: ingestionAlertMembers(candidate), Created: o.now(),
+			Version: ingestionAlertCoverageVersion, Coverage: ingestionCoverageFor(candidate)}
 		plan.ID = ingestionCoverageID(plan.Coverage)
 		encoded, err := json.Marshal(inboundJournalRecord{Phase: "ingestion_batch", TS: o.now(), AlertBatch: &plan})
+		_, body := ingestionAlertMessageWithBudget(candidate, 0)
+		// Reserve space for the completion flag and timestamp formatting.
+		return plan, len(encoded)+256 <= ingestionAlertBatchBudget && len(body) <= ingestionAlertBatchBudget, err
+	}
+	for _, r := range ingestionAlertRows(unseen) {
+		candidate := append(chosen, r)
+		plan, fits, err := planFor(candidate)
 		if err != nil {
 			return ingestionAlertBatch{}, nil, err
 		}
-		_, body := ingestionAlertMessageWithBudget(candidate, 0)
-		// Reserve space for the completion flag and timestamp formatting.
-		if len(encoded)+256 > ingestionAlertBatchBudget || len(body) > ingestionAlertBatchBudget {
+		if !fits {
 			if len(chosen) == 0 {
-				return ingestionAlertBatch{}, nil, fmt.Errorf("single ingestion alert exceeds %d-byte batch budget", ingestionAlertBatchBudget)
+				// Even one receipt can exceed the budget through fanout. Save
+				// a bounded prefix of its message/target pairs instead. The
+				// channel-wide once rule covers named messages for later targets;
+				// other messages remain eligible under a new identity next pass.
+				coverage := ingestionCoverageFor([]inboundJournalRecord{r})
+				low, high := 1, len(coverage)
+				for low <= high {
+					n := low + (high-low)/2
+					part := selectIngestionCoverage([]inboundJournalRecord{r}, coverage[:n])
+					partial, fits, err := planFor(part)
+					if err != nil {
+						return ingestionAlertBatch{}, nil, err
+					}
+					if fits {
+						chosen, batch, low = part, partial, n+1
+					} else {
+						high = n - 1
+					}
+				}
+				if len(chosen) == 0 {
+					return ingestionAlertBatch{}, nil, fmt.Errorf("single ingestion alert member exceeds %d-byte batch budget", ingestionAlertBatchBudget)
+				}
 			}
 			break
 		}
 		chosen, batch = candidate, plan
 	}
-	members := make(map[string]bool, len(batch.Members))
-	for _, member := range batch.Members {
-		members[member] = true
-	}
-	var selected []inboundJournalRecord
-	for _, r := range unseen {
-		if members[ingestionKey(r, "")] {
-			selected = append(selected, r)
-		}
-	}
+	selected := selectIngestionCoverage(unseen, batch.Coverage)
 	if err := o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch", AlertBatch: &batch}); err != nil {
 		return ingestionAlertBatch{}, nil, err
 	}
@@ -116,8 +139,8 @@ func (o *ingestionObserver) finishAlertBatch(batch ingestionAlertBatch, rows []i
 	// before the compatibility per-member rows are written individually.
 	members := ingestionAlertMembers(rows)
 	coverage := ingestionCoverageFor(rows)
-	same := len(members) == len(batch.Members) && ingestionAlertID(members) == ingestionAlertID(batch.Members)
-	if batch.Version >= ingestionAlertCoverageVersion {
+	same := batch.recovered || (len(members) == len(batch.Members) && ingestionAlertID(members) == ingestionAlertID(batch.Members))
+	if batch.Version >= ingestionAlertCoverageVersion && !batch.recovered {
 		same = ingestionCoverageID(coverage) == ingestionCoverageID(batch.Coverage)
 	}
 	if same {
@@ -132,5 +155,6 @@ func (o *ingestionObserver) finishAlertBatch(batch ingestionAlertBatch, rows []i
 		}
 	}
 	batch.Sent = sent
+	batch.Unconfirmed = batch.recovered && !sent
 	return o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_done", AlertBatch: &batch})
 }
