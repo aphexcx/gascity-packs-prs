@@ -24,6 +24,7 @@ import urllib.parse
 from typing import Any
 
 import slack_intake_common as common
+import slack_room_hold as room_hold
 
 
 # Reply protocol delivered to each newly-bound participant. Sent on every
@@ -80,6 +81,7 @@ message @mentions your bot user, addresses your handle (@{handle}: ...), or is
 a reply in a thread you posted in. Everything else in the room stays silent
 for you — read it on demand with:
   gc slack read --conversation-id {conversation_id}
+{hold_notice}
 
 Reply protocol when you receive a `Slack mention-only room delivery` reminder:
 
@@ -466,6 +468,9 @@ def main(argv: list[str]) -> int:
                              "conflict check keeps reading the stale local record and refuses. "
                              "A session gc still reports as actively bound to the room is "
                              "refused regardless.")
+    parser.add_argument("--no-group-hold", action="store_true",
+                        help="With --mentions-only: skip the gc group hold and default-route "
+                             "unbind; register with the adapter alone (existing holds remain).")
     parser.add_argument("--no-protocol-nudge", action="store_true",
                         help="Skip auto-delivery of the slack reply-protocol nudge "
                              "(react first, threaded reply, ack) to each newly-bound "
@@ -493,13 +498,21 @@ def main(argv: list[str]) -> int:
                              "required, because this removal is destructive and must not be "
                              "reachable by forgetting a flag.")
     args = parser.parse_args(argv)
+    if args.no_group_hold and not args.mentions_only:
+        parser.error("--no-group-hold requires --mentions-only")
 
+    # Ambient binds must take the same lock as holds, including their config
+    # reads and writes, so a second invocation sees the first one's result.
+    with room_hold.bind_room_lock(common.pack_state_dir()):
+        return _bind_room(args)
+
+
+def _bind_room(args: argparse.Namespace) -> int:
     binding_key = f"{args.kind}:{args.conversation_id}"
     # Before any API call: a rejected declaration must not have created a
     # group, upserted a participant, or touched the binding table.
-    # A mention-only registration lives in the adapter's registry and never
-    # touches gc's direct-binding table, so it needs no owner declaration
-    # (jg-vobf70); every ambient bind declares one (#313).
+    # Mention-only may remove a default-route binding after inspecting live
+    # routing, but never an explicit owner. Every ambient bind declares one.
     binding_owner = ""
     if not args.mentions_only:
         binding_owner = resolve_binding_authority(args, binding_key)
@@ -603,8 +616,9 @@ def main(argv: list[str]) -> int:
         "default_handle": default_handle,
         "fanout_policy": fanout_policy,
         "participants": list(merged_participants.values()),
-        "binding_owner": binding_owner or (prior_rec.get("binding_owner") or None),
+        "binding_owner": binding_owner or None,
         "binding_record": (reconciled["binding"] or {}).get("ID", "") or None,
+        "group_held": False,
     }
     if prior_mention_only:
         cfg["bindings"][binding_key]["mention_only_participants"] = prior_mention_only
@@ -843,9 +857,8 @@ def _main_mentions_only(
        `gc slack status` and the registry file).
     5. Deliver the mention-only reply-protocol nudge.
 
-    No gc group, participant, or /extmsg/bind call is made: a gc member
-    would be woken for every message, which is exactly what this mode
-    exists to avoid.
+    No gc participant or /extmsg/bind call is made. Unless opted out, hold an
+    otherwise ambient-free room in an empty group and remove default routing.
     """
     bad = mention_only_incompatible_flags(args)
     if bad:
@@ -891,6 +904,15 @@ def _main_mentions_only(
             "(gc group participant / binding owner) — a gc member is woken for every "
             "message, so mention-only cannot be layered on top. " + hint)
 
+    if not args.no_group_hold:
+        try:
+            routing = room_hold.inspect_room(conv, common.gc_get)
+        except (common.GCAPIError, room_hold.RoomHoldError) as exc:
+            raise SystemExit(f"inspect mention-only room routing: {exc}") from exc
+        for session in sessions:
+            if session_identity_set(session) & set(routing.ambient_participants):
+                raise SystemExit(f"{session}: already bound AMBIENTLY to {args.conversation_id} in gc")
+
     registered: list[dict[str, Any]] = []
     records: list[dict[str, Any]] = []
     for handle, session in participants:
@@ -922,6 +944,30 @@ def _main_mentions_only(
 
     rec = record_mention_only_binding(
         cfg, binding_key=binding_key, kind=args.kind, conv=conv, records=records)
+    unbound: list[Any] = []
+    hold_error = ""
+    if not args.no_group_hold:
+        # Persist the adapter registration even if a later gc operation fails,
+        # but never leave a stale successful hold claim behind on that failure.
+        rec["group_held"] = False
+        rec["hold_status"] = "pending: group hold not verified"
+        rec["unbind_filter"] = room_hold.UNBIND_FILTER
+        common.save_pack_config(cfg)
+        try:
+            routing, unbound = room_hold.hold_room(conv, common.gc_get, common.gc_post)
+        except room_hold.RoomHoldChanged as exc:
+            routing, unbound = exc.state, exc.unbound
+            hold_error = str(exc)
+            print(f"hold: {hold_error}", file=sys.stderr)
+        except (common.GCAPIError, room_hold.RoomHoldError) as exc:
+            raise SystemExit(f"mention-only registered, but group hold failed: {exc}") from exc
+        rec["group_held"] = routing.held and not hold_error
+        rec["hold_status"] = hold_error or routing.description
+        rec["ambient_participants"] = routing.ambient_participants
+        rec["group_id"] = routing.group_id or None
+        report_unbound(unbound)
+    else:
+        rec.setdefault("group_held", False)
     common.save_pack_config(cfg)
 
     nudged: list[str] = []
@@ -931,7 +977,10 @@ def _main_mentions_only(
             try:
                 deliver_protocol_nudge(
                     r["session_id"], args.conversation_id,
-                    template=MENTION_ONLY_NUDGE_TEMPLATE, handle=r["handle"])
+                    template=MENTION_ONLY_NUDGE_TEMPLATE, handle=r["handle"],
+                    hold_notice=("While the zero-participant group hold stands, "
+                                 "ambient lines reach no gc session."
+                                 if rec["group_held"] and not args.no_group_hold else ""))
                 nudged.append(r["session_id"])
             except Exception as exc:  # noqa: BLE001 — best-effort, never abort bind
                 nudge_failures.append(f"{r['session_id']}: {exc}")
@@ -940,6 +989,11 @@ def _main_mentions_only(
         "binding_key": binding_key,
         "delivery_mode": "mentions_only",
         "conversation_id": args.conversation_id,
+        "group_held": rec["group_held"],
+        "group_id": rec.get("group_id"),
+        "hold": rec.get("hold_status"),
+        "unbind_filter": None if args.no_group_hold else room_hold.UNBIND_FILTER,
+        "unbound_bindings": unbound,
         "mention_only_participants": rec.get("mention_only_participants", []),
         "adapter": registered,
         "protocol_nudge": {
@@ -948,7 +1002,7 @@ def _main_mentions_only(
             "skipped": args.no_protocol_nudge,
         },
     }, indent=2, default=str))
-    return 0
+    return 1 if hold_error else 0
 
 
 if __name__ == "__main__":
