@@ -370,7 +370,7 @@ func TestRunScript(t *testing.T) {
 			dir, script := launcherFixture(t)
 			home := filepath.Join(dir, "home")
 			envPath := filepath.Join(home, ".config", "gc-gchat-adapter", "env")
-			environment := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+			environment := []string{"PATH=" + filepath.Join(dir, "tools"), "HOME=" + home}
 			switch layout {
 			case "explicit":
 				envPath = filepath.Join(dir, "explicit env")
@@ -382,7 +382,7 @@ func TestRunScript(t *testing.T) {
 			writeFile(t, envPath, "LAUNCHER_VALUE='exported value'\n")
 			execute := func() string {
 				t.Helper()
-				cmd := exec.CommandContext(t.Context(), "sh", script)
+				cmd := exec.CommandContext(t.Context(), "bash", script)
 				cmd.Env = environment
 				cmd.Dir = dir
 				output, err := cmd.CombinedOutput()
@@ -419,8 +419,8 @@ func TestRunScript(t *testing.T) {
 func TestRunScriptMissingEnv(t *testing.T) {
 	dir, script := launcherFixture(t)
 	envPath := filepath.Join(dir, "missing-env")
-	cmd := exec.CommandContext(t.Context(), "sh", script)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GC_GCHAT_ADAPTER_ENV=" + envPath}
+	cmd := exec.CommandContext(t.Context(), "bash", script)
+	cmd.Env = []string{"PATH=" + filepath.Join(dir, "tools"), "GC_GCHAT_ADAPTER_ENV=" + envPath}
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("missing env succeeded: %s", output)
@@ -438,6 +438,20 @@ func TestRunScriptMissingEnv(t *testing.T) {
 func launcherFixture(t *testing.T) (dir, script string) {
 	t.Helper()
 	dir = t.TempDir()
+	// Keep the source-build fixture independent of installed PATH adapters.
+	tools := filepath.Join(dir, "tools")
+	if err := os.Mkdir(tools, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"bash", "dirname", "basename", "find", "cat", "chmod"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(tools, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	script = filepath.Join(dir, "adapter", "run.sh")
 	contents, err := os.ReadFile("../../run.sh")
 	if err != nil {

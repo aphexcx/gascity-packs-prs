@@ -14,6 +14,14 @@ from urllib.parse import parse_qs, urlsplit
 PACK = Path(__file__).resolve().parents[1]
 
 
+def isolated_path(root):
+    tools = root / "tools"
+    tools.mkdir()
+    for name in ("sh", "bash", "dirname", "basename", "find", "sed", "printenv", "curl", "jq"):
+        (tools / name).symlink_to(shutil.which(name))
+    return str(tools)
+
+
 class FixtureIsolationTest(unittest.TestCase):
     def test_no_go_fixture_names_live_ports_or_executes_gc_directly(self):
         for source in (PACK / "adapter").rglob("*_test.go"):
@@ -51,7 +59,7 @@ class AuthCommandTest(unittest.TestCase):
         binary = adapter / "gc-gchat-adapter"
         binary.write_text('#!/bin/sh\nprintf "%s\\n" "$@" "env=${GC_GCHAT_ADAPTER_ENV:-}" "secrets=${GC_SERVICE_SECRETS_DIR:-}" "project=${GCHAT_PROJECT_ID:-}" "state=${GCHAT_STATE_FILE:-}" "source=${GCHAT_TOKEN_SOURCE:-oauth}"\n')
         binary.chmod(0o755)
-        self.env = {"PATH": os.environ["PATH"], "HOME": str(self.root),
+        self.env = {"PATH": isolated_path(self.root), "HOME": str(self.root),
                     "GC_PACK_DIR": str(self.pack)}
 
     def run_auth(self, *args):
@@ -76,8 +84,9 @@ class AuthCommandTest(unittest.TestCase):
         self.env.update(GC_GCHAT_ADAPTER_ENV=str(env), GCHAT_STATE_FILE=override, GCHAT_TOKEN_SOURCE="oauth")
         run = self.pack / "adapter/run.sh"
         shutil.copyfile(PACK / "adapter/run.sh", run)
+        self.env["GC_GCHAT_ADAPTER_BIN"] = str(self.pack / "adapter/gc-gchat-adapter")
         for command in (["sh", str(self.pack / "commands/auth.sh"), "--check"],
-                        ["sh", str(run)]):
+                        ["bash", str(run)]):
             with self.subTest(command=command[-1]):
                 result = subprocess.run(command, env=self.env, text=True, capture_output=True,
                                         cwd=self.root, timeout=10)
@@ -355,6 +364,7 @@ class DoctorTest(ProxyFixture):
     # Use the same in-process proxy, but only inherit the fixture helpers.
     def setUp(self):
         super().setUp()
+        self.env["PATH"] = isolated_path(self.root)
         self.pack = self.root / "pack"
         shutil.copytree(PACK / "commands", self.pack / "commands")
         if (PACK / "doctor").exists():

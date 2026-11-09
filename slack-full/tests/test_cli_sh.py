@@ -38,7 +38,8 @@ if [ "${GO_STUB_FAIL:-}" = 1 ]; then
   echo 'simulated compile failure' >&2
   exit 23
 fi
-printf '%s\\n' '#!/bin/sh' 'printf "<%s>\\n" "$@"' \
+# Use sh's executable-text fallback without the legacy #! signature.
+printf '%s\\n' ': compiled CLI stand-in' 'printf "<%s>\\n" "$@"' \
   'exit "${CLI_STUB_EXIT:-0}"' > "$3"
 /bin/chmod +x "$3"
 """
@@ -292,4 +293,6 @@ def test_cli_build_heals_doctor_binaries_row(harness, native_binary):
     assert run().returncode == 0
     after = doctor()
     assert after.returncode == 0
-    assert after.stdout.strip() == "adapter and CLI binaries built"
+    assert after.stdout.splitlines() == [
+        "adapter: local", "cli: local", "adapter and CLI binaries available"
+    ]

@@ -1,12 +1,24 @@
 #!/bin/sh
-# Pack caches are materialized git-only; build the ignored CLI on first use.
+# Prefer a prebuilt CLI; git-only pack caches can build the local fallback.
 set -eu
 
 log() { printf 'gc-slack-cli _cli.sh: %s\n' "$*" >&2; }
 
-pack_dir="$(CDPATH= cd -- "${GC_PACK_DIR:?missing Gas City pack context}" && pwd -P)"
+pack_dir="$(CDPATH='' cd -- "${GC_PACK_DIR:?missing Gas City pack context}" && pwd -P)"
 cli_dir="$pack_dir/cli"
 cli_bin="$cli_dir/gc-slack-cli"
+
+# shellcheck source-path=SCRIPTDIR source=_resolve.sh
+. "$pack_dir/commands/_resolve.sh"
+
+prebuilt_bin=$(slack_cli_prebuilt_bin)
+if [ -n "$prebuilt_bin" ]; then
+  case "$prebuilt_bin" in
+    /*) ;;
+    *) prebuilt_bin="$PWD/$prebuilt_bin" ;;
+  esac
+  exec "$prebuilt_bin" "$@"
+fi
 
 manual_fix() {
   log "manual fix: (cd \"$cli_dir\" && tmp=\$(mktemp .gc-slack-cli.build.XXXXXX) && trap 'rm -f \"\$tmp\"' 0 && go build -o \"\$tmp\" . && mv -f \"\$tmp\" gc-slack-cli)"
@@ -14,7 +26,7 @@ manual_fix() {
 
 # A legacy env-wrapper script at this path is not the compiled CLI.
 # Only trust the fast path when reading the signature succeeds.
-if [ -x "$cli_bin" ] && magic="$(head -c 2 "$cli_bin")" && [ "$magic" != '#!' ]; then
+if slack_binary_is_native "$cli_bin"; then
   exec "$cli_bin" "$@"
 fi
 

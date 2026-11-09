@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 set -eu
 
 if [ -n "${GC_GCHAT_ADAPTER_ENV:-}" ]; then
@@ -30,11 +30,17 @@ fi
 . "$(dirname "$0")/../commands/runtime.sh"
 gchat_source_env "$env_file"
 
-cd "$(dirname "$0")"
-if [ ! -x ./gc-gchat-adapter ]; then
-    ./build.sh
-elif [ -n "$(find . -type f \( -name '*.go' -o -name go.mod -o -name go.sum -o -name build.sh \) -newer ./gc-gchat-adapter -print -quit)" ]; then
-    ./build.sh
+# Resolve before changing directories: PATH and an explicit override may be
+# relative to the supervisor's working directory. Ignore shell functions.
+GC_PACK_DIR=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P)
+adapter_bin=$(gchat_adapter_bin)
+# Keep the prebuilt logging/cwd behavior even when PATH or the override names
+# the pack-local file. The shared resolver alone selects the executable.
+if [ -n "${GC_GCHAT_ADAPTER_BIN:-}" ] || type -P gc-gchat-adapter >/dev/null 2>&1; then
+    adapter_version=$("$adapter_bin" version)
+    printf '%s\n' "gc-gchat-adapter run.sh: using $adapter_bin (version $adapter_version)" >&2
+    exec "$adapter_bin" serve
 fi
 
-exec ./gc-gchat-adapter serve
+cd "$(dirname "$0")"
+exec "$adapter_bin" serve
