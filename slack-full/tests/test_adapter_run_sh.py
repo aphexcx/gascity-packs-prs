@@ -112,6 +112,10 @@ def harness(tmp_path: pathlib.Path):
     go = stub_bin / "go"
     go.write_text(GO_STUB)
     go.chmod(0o755)
+    # PATH-first startup must not discover a real installed adapter during tests.
+    for name in ("bash", "dirname", "basename", "sed", "head", "mkdir",
+                 "chmod", "id", "mv", "rm"):
+        (stub_bin / name).symlink_to(shutil.which(name))
 
     # A HOME the tests own: the defaulted env-file path must resolve
     # somewhere hermetic and absent, never the developer's real one.
@@ -126,13 +130,14 @@ def harness(tmp_path: pathlib.Path):
         drop_env: list[str] | None = None,
     ):
         env = dict(os.environ)
-        env["PATH"] = f"{stub_bin}:{env['PATH']}"
+        env["PATH"] = str(stub_bin)
         env["GO_STUB_LOG"] = str(go_log)
         env["HOME"] = str(fake_home)
         env["XDG_CONFIG_HOME"] = str(fake_home / ".config")
         # An explicitly set but missing GC_SLACK_ADAPTER_ENV is fatal by
         # design, so the "no env file" baseline is the defaulted path.
         env.pop("GC_SLACK_ADAPTER_ENV", None)
+        env.pop("GC_SLACK_ADAPTER_BIN", None)
         if env_file is not None:
             env["GC_SLACK_ADAPTER_ENV"] = str(env_file)
         env.update(extra_env or {})

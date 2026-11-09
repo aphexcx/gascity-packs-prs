@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-11-09
 
+- Prefer a prebuilt adapter on PATH (or GC_GCHAT_ADAPTER_BIN) before building;
+  stamp the pack version into local and Linux release binaries.
 - Keep unrecognized per-space history 403s scoped to that space; reserve credential holds for 401 and scope errors.
 - Preserve supported nonempty path and endpoint overrides in shell launchers; keep authentication mode file-based, matching the binary.
 - Bound subscription create, get, list, renew, and reactivate requests to the two-minute operation timeout.
@@ -19,8 +21,6 @@
   type carry application/vnd.google-apps.file, other untyped attachments
   application/octet-stream, and the text line omits an empty "()". The fake gc
   now enforces gc's rule so the suite catches it.
-
-## 0.5.0
 
 - Bound inbound attachments: `media.max_attachments` (default 20) caps the
   files one message downloads and `media.max_total_bytes` (default 2 GiB) caps

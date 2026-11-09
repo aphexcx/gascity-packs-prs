@@ -4,7 +4,7 @@
 # holder the city trusts (GCHAT_TOKEN_SOURCE=keyholder), as on a boxboxbox box.
 [pack]
 name = "gchat"
-version = "0.4.1"
+version = "0.5.0"
 schema = 2
 
 [[service]]

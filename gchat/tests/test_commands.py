@@ -76,8 +76,9 @@ class AuthCommandTest(unittest.TestCase):
         self.env.update(GC_GCHAT_ADAPTER_ENV=str(env), GCHAT_STATE_FILE=override, GCHAT_TOKEN_SOURCE="oauth")
         run = self.pack / "adapter/run.sh"
         shutil.copyfile(PACK / "adapter/run.sh", run)
+        self.env["GC_GCHAT_ADAPTER_BIN"] = str(self.pack / "adapter/gc-gchat-adapter")
         for command in (["sh", str(self.pack / "commands/auth.sh"), "--check"],
-                        ["sh", str(run)]):
+                        ["bash", str(run)]):
             with self.subTest(command=command[-1]):
                 result = subprocess.run(command, env=self.env, text=True, capture_output=True,
                                         cwd=self.root, timeout=10)

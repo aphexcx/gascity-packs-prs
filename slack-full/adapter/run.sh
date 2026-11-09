@@ -107,6 +107,25 @@ else
   log "continuing with the inherited environment (adapter exits at startup if SLACK_WORKSPACE_ID / SLACK_BOT_TOKEN / GC_CITY_NAME are unset)"
 fi
 
+# Prefer the installed release binary over a local build. An explicit path
+# must be usable; silently falling back would hide a deployment error.
+adapter_bin="${GC_SLACK_ADAPTER_BIN:-}"
+if [[ -n "$adapter_bin" ]]; then
+  if [[ ! -f "$adapter_bin" || ! -x "$adapter_bin" ]]; then
+    log "ERROR: GC_SLACK_ADAPTER_BIN=$adapter_bin is not an executable file"
+    exit 1
+  fi
+else
+  adapter_bin="$(type -P gc-slack-adapter 2>/dev/null || true)"
+fi
+if [[ -n "$adapter_bin" ]]; then
+  # This adapter has no version subcommand: invoking it with 'version' would
+  # start a second service. Only gchat can report its binary version here.
+  adapter_bin="$(cd "$(dirname "$adapter_bin")" && pwd)/$(basename "$adapter_bin")"
+  log "using $adapter_bin (binary version reporting unavailable)"
+  exec "$adapter_bin" "$@"
+fi
+
 adapter_bin="$bin_dir/gc-slack-adapter"
 
 # Fast path (idempotent): a previously built binary — exec, no build.
@@ -185,6 +204,8 @@ private_build_dir() {
   uid="$(id -u)" || return 1
   tmp_root="${TMPDIR:-/tmp}"
   dir="${tmp_root%/}/$1-$uid"
+  # Only the leaf is private; TMPDIR is an existing shared parent.
+  # shellcheck disable=SC2174
   mkdir -p -m 700 "$dir" 2>/dev/null || true
   if [[ -L "$dir" || ! -d "$dir" || ! -O "$dir" ]] || ! chmod 700 "$dir"; then
     log "ERROR: $dir is not a private directory owned by this user; refusing to build with it"
