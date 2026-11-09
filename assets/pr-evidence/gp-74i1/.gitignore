@@ -6,3 +6,8 @@ bead*.json
 mayor-ruling.txt
 # Compressed test logs and parsed summaries are committed instead.
 *.jsonl
+# Mutable GitHub snapshots and the publication body stay local.
+pr-status.json
+pr-checks.json
+ci-status.json
+pr-body.md

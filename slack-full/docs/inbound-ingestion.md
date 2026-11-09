@@ -27,8 +27,10 @@ original quoted-context windows.
 
 A complete rendered input, a successful explicit `/react` add on the inbound
 message, or a confirmed session `/publish` reply into its thread can mark the
-receipt `ingested`. Reply proof must belong to the target session; a top-level
-inbound uses its own message timestamp as the thread root. Explicit reactions
+receipt `ingested`. Reply proof must belong to the target session and its Slack
+timestamp must follow the inbound message's timestamp; the clock tolerance
+cannot make an older reply cover a later input. A top-level inbound uses its
+own message timestamp as the thread root. Explicit reactions
 are bot actions through `/react` (that endpoint does not carry caller session
 identity). Company admission eyes and automatic busy reactions do not count.
 Failed reactions, reaction removals, and replies to another thread do not count.
@@ -56,10 +58,13 @@ After checking rendered input and session acts, three minutes without proof
 appends `delivered_unseen`. Each observer pass sends at most one
 `gc mail send mayor --dedup ...` per channel, with a count in the subject and
 each message timestamp, thread, receipt and missing target in the body.
-Fanout members share one receipt line; the dedup key covers the sorted receipt
-set. Each receipt's successful alert is
-recorded durably; restart reconstructs pending work and completed alerts from
-the journal. Failed mail is retried
+Fanout members share one receipt line. Before mail, the journal saves the
+sorted original receipt set and its stable batch dedup key. Recovery reuses
+that key even if a member completed or gained proof; new arrivals wait for the
+next pass rather than being hidden by deduplication of the earlier mail.
+Successful mail writes one atomic batch-completion record before the individual
+receipt completion rows. Restart repairs missing individual rows without
+mailing again, including after the late-proof horizon. Failed mail is retried
 on the next pass and logged; it does not prevent other receipts being checked.
 The mail command and each target's transcript fetch have ten-second limits.
 The normal alert latency is the three-minute window plus one polling pass.

@@ -31,6 +31,7 @@ type inboundJournal struct {
 	now                 func() time.Time
 	sessionActs         map[string]ingestionSessionAct
 	sessionActsOverflow bool
+	preparedBatches     map[string]ingestionAlertBatch
 }
 
 type inboundJournalRecord struct {
@@ -57,6 +58,8 @@ type inboundJournalRecord struct {
 	Alerted            bool                 `json:"alerted,omitempty"`
 	Late               bool                 `json:"late,omitempty"`
 	SessionAct         *ingestionSessionAct `json:"session_act,omitempty"`
+	AlertBatch         *ingestionAlertBatch `json:"alert_batch,omitempty"`
+	AlertBatchID       string               `json:"alert_batch_id,omitempty"`
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {

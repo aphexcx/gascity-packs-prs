@@ -376,6 +376,7 @@ func TestIngestionSessionHand(t *testing.T) {
 		{name: "reaction_failed", kind: "reaction", offset: time.Minute, rejected: true},
 		{name: "reaction_restart", kind: "reaction", offset: time.Minute, restart: true, wantSeen: true},
 		{name: "reply_in_thread", kind: "reply", offset: time.Minute, wantSeen: true},
+		{name: "reply_to_inbound_own_id", kind: "reply", thread: "100.1", offset: time.Minute, wantSeen: true},
 		{name: "reply_other_thread", kind: "reply", thread: "other", offset: time.Minute},
 		{name: "reply_other_session", kind: "reply", session: "s2", offset: time.Minute},
 		{name: "reply_before_handoff", kind: "reply", offset: -time.Minute},

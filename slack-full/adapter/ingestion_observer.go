@@ -44,11 +44,12 @@ type ingestionEvidence struct {
 }
 
 type ingestionObserver struct {
-	cfg      config
-	now      func() time.Time
-	fetch    func(context.Context, string) ([]json.RawMessage, error)
-	notify   func(context.Context, []inboundJournalRecord) error
-	resolved map[string]string
+	cfg             config
+	now             func() time.Time
+	fetch           func(context.Context, string) ([]json.RawMessage, error)
+	notify          func(context.Context, []inboundJournalRecord) error
+	resolved        map[string]string
+	preparedBatches []ingestionAlertBatch
 }
 
 func ingestionDigest(text string) string {
@@ -114,8 +115,20 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 		now = o.now()
 	}
 	rows, _, _, err := j.ingestionStateLocked(now)
+	o.preparedBatches = nil
+	for _, batch := range j.preparedBatches {
+		o.preparedBatches = append(o.preparedBatches, batch)
+	}
+	sort.Slice(o.preparedBatches, func(i, k int) bool {
+		a, b := o.preparedBatches[i], o.preparedBatches[k]
+		if a.Created.Equal(b.Created) {
+			return a.ID < b.ID
+		}
+		return a.Created.Before(b.Created)
+	})
 	for key, row := range rows {
-		if ingestionSettled(row, now) {
+		needsCompletion := row.Status == "delivered_unseen" && row.Alerted && row.Phase != "ingestion_alert"
+		if ingestionSettled(row, now) && !needsCompletion {
 			delete(rows, key)
 		}
 	}
@@ -148,6 +161,7 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 	sort.Strings(paths)
 	j.sessionActs = make(map[string]ingestionSessionAct)
 	j.sessionActsOverflow = false
+	j.preparedBatches = make(map[string]ingestionAlertBatch)
 	rows := make(map[string]inboundJournalRecord)
 	days := make(map[string]ingestionRecordDays)
 	alerted := make(map[string]bool)
@@ -185,6 +199,20 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			}
 			if r.SessionAct != nil {
 				j.cacheSessionActLocked(*r.SessionAct)
+				continue
+			}
+			if r.AlertBatch != nil {
+				batch := *r.AlertBatch
+				if r.Phase == "ingestion_batch" {
+					j.preparedBatches[batch.ID] = batch
+				} else if r.Phase == "ingestion_batch_done" {
+					delete(j.preparedBatches, batch.ID)
+					if batch.Sent {
+						for _, member := range batch.Members {
+							alerted[member] = true
+						}
+					}
+				}
 				continue
 			}
 			// Old rows lack a complete payload fingerprint. Do not fabricate
@@ -230,8 +258,9 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 					// restart a handoff's original observation deadline.
 					handoff := earlierIngestionTime(old.DeliveredAt, copy.DeliveredAt)
 					canonical := old.CanonicalSessionID
+					completion := copy.Status == "delivered_unseen" && copy.Alerted && copy.Phase == "ingestion_alert"
 					if old.Status == "ingested" ||
-						(old.Status == "delivered_unseen" && copy.Status != "ingested") ||
+						(old.Status == "delivered_unseen" && copy.Status != "ingested" && !completion) ||
 						(copy.Status != "ingested" && copy.Status != "delivered_unseen" && old.TS.After(copy.TS)) {
 						copy = old
 						recordDays.selected = days[key].selected
@@ -297,6 +326,18 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			return ctx.Err()
 		}
 		r := rows[key]
+		if r.Alerted && r.Status == "delivered_unseen" && r.Phase != "ingestion_alert" {
+			// A durable batch completion may outlive a crash during its
+			// per-member appends. Restore those rows without another mail,
+			// including after the normal late-proof horizon has expired.
+			r.Phase = "ingestion_alert"
+			if err := o.cfg.inboundJournal.append(r); err != nil {
+				return err
+			}
+			if ingestionSettled(r, o.now()) {
+				continue
+			}
+		}
 		session := r.TargetSessions[0]
 		if r.CanonicalSessionID != "" {
 			session = r.CanonicalSessionID
@@ -352,6 +393,11 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 		}
 	}
 	channels := make([]string, 0, len(batches))
+	for _, batch := range o.preparedBatches {
+		if _, exists := batches[batch.Channel]; !exists {
+			batches[batch.Channel] = nil
+		}
+	}
 	for channel := range batches {
 		channels = append(channels, channel)
 	}
@@ -373,15 +419,25 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			}
 			unseen = append(unseen, r)
 		}
+		batch, unseen, err := o.prepareAlertBatch(channel, unseen)
+		if err != nil {
+			return err
+		}
 		if len(unseen) == 0 {
 			continue
 		}
+		for i := range unseen {
+			unseen[i].AlertBatchID = batch.ID
+		}
 		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := o.notify(mailCtx, ingestionAlertRows(unseen))
+		err = o.notify(mailCtx, ingestionAlertRows(unseen))
 		cancel()
 		if err != nil {
 			failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
 			continue
+		}
+		if err := o.finishAlertBatch(batch, unseen, true); err != nil {
+			return err
 		}
 		for _, r := range unseen {
 			r.Alerted, r.Phase = true, "ingestion_alert"
@@ -531,13 +587,14 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 	if len(rows) == 0 {
 		return nil
 	}
-	var keys, lines []string
+	var lines []string
 	for _, r := range rows {
-		keys = append(keys, ingestionKey(r, ""))
 		lines = append(lines, fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s sessions=%s handoff=%s", r.MessageTS, r.ThreadTS, r.ReceiptID, strings.Join(r.TargetSessions, ","), r.DeliveredAt.UTC().Format(time.RFC3339)))
 	}
-	encodedKeys, _ := json.Marshal(keys)
-	key := ingestionDigest(string(encodedKeys))
+	key := rows[0].AlertBatchID
+	if key == "" {
+		key = ingestionAlertID(ingestionAlertMembers(rows))
+	}
 	subject := fmt.Sprintf("Slack delivered_unseen: %d lines in %s", len(rows), rows[0].Channel)
 	body := fmt.Sprintf("%s\n%s\nNo rendered input, explicit session reaction, or session reply was found within %s of hand-off. Read these Slack threads now. Transport delivery is not ingestion; the dead-letter file is unchanged.", subject, strings.Join(lines, "\n"), ingestionWindow)
 	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", subject, "-m", body)

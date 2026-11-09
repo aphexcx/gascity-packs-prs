@@ -32,6 +32,36 @@ func TestIngestionSessionActSourcesAndRoot(t *testing.T) {
 	}
 }
 
+func TestIngestionReplyCannotCoverLaterInbound(t *testing.T) {
+	for _, replay := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delayed_replay_%t", replay), func(t *testing.T) {
+			at := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+			now := at
+			j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+			r := ingestionTestRecord(fmt.Sprintf("%d.000000", at.Add(10*time.Second).Unix()), at.Add(20*time.Second), "new inbound")
+			if replay {
+				now = at.Add(time.Minute)
+			}
+			recordDeliveredPublish(config{inboundJournal: j}, r.Channel, r.ThreadTS, fmt.Sprintf("%d.000000", at.Unix()), "s1")
+			now = r.DeliveredAt
+			if err := j.append(r); err != nil {
+				t.Fatal(err)
+			}
+			now = r.DeliveredAt.Add(ingestionWindow + time.Second)
+			alerts := 0
+			o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
+				fetch:  func(context.Context, string) ([]json.RawMessage, error) { return nil, nil },
+				notify: func(context.Context, []inboundJournalRecord) error { alerts++; return nil }}
+			if err := o.step(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if alerts != 1 {
+				t.Fatal("older reply suppressed newer unread input")
+			}
+		})
+	}
+}
+
 func TestIngestionSessionActCacheOverflowKeepsDurableProof(t *testing.T) {
 	at := time.Now().UTC()
 	now := at.Add(ingestionWindow + time.Second)

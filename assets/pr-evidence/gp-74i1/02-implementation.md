@@ -8,14 +8,18 @@ The three-minute initial deadline remains unchanged by mayor ruling
 `ci-wisp-gozwdyu`.
 
 The adapter records facts only after delivery success. Reply timestamps come
-from Slack's original message ID, so a delayed idempotent replay cannot make
-an old reply cover a new inbound. Replaying the inbound journal reconstructs
+from Slack's original message ID and must follow the inbound's Slack timestamp,
+so a delayed idempotent replay cannot make an old reply cover a new inbound.
+Replaying the inbound journal reconstructs
 the bounded act cache; overflow uses a bounded disk lookup instead of losing
 proof. Retention preserves the 30-second tolerance across midnight.
 
 Each pass groups newly eligible receipts by channel and folds fanout targets
 into one line per receipt. The sorted receipt set determines the mail dedup
-key. Successful mail marks every member individually. Failed mail leaves
+key, which is saved with its membership before sending. A successful send
+writes one atomic batch completion before marking members individually;
+restart repairs any missing individual rows. A retry recovers its original
+batch before considering new arrivals on the next pass. Failed mail leaves
 members retryable and does not prevent another channel's mail. A second act
 check before sending catches proof recorded during other transcript fetches.
 
@@ -27,7 +31,7 @@ so its proof is explicitly a bot action through that endpoint. Publish proof
 matches the target's pinned canonical session. Automatic company reactions
 use a different path and never write the session-act marker.
 
-Validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
+Initial revision validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
 
 - Baseline ingestion suite: 31 top-level passes, one opt-in live test skipped.
 - New regression tests failed before implementation: the positive reaction,
@@ -45,3 +49,24 @@ No Python product code changed; no pnpm/Node tests were run.
 The live Slack pack remains pinned to its existing revision until Afik
 authorizes the citadel pin bump. The mayor owns the Fable/Opus review stages,
 rollout and seven-day observation. The three source papercuts remain open.
+
+## Codex round 1 corrections
+
+Round 1 reviewed `f82365a45d2ba81b99987f106e273965de638b22` and returned BLOCK
+with two major findings: an older reply could cover a newer input via the
+30-second tolerance, and partial batch completion could change the recovery
+dedup key. The changes above address both. New regressions cover ordinary and
+delayed old replies, a crash after mail acceptance with one completed member
+and a new arrival, and a crash after atomic completion before zero or one
+individual completion rows. Recovery repairs the individual rows even after
+the observation horizon. The old-reply test failed before the correction.
+
+The expanded focused race suite passes 41 top-level tests (77 with subtests),
+with one opt-in live test skipped. The first correction run exposed completion
+phase preservation in the existing journal reducer; preserving completed rows
+resolved those failures and kept the existing late-proof cases green.
+
+Final round-2 validation: full adapter suite 1,453 top-level passes (12,902
+including subtests), three skips; focused race suite 41 top-level passes (78
+including subtests), one skip. Both exit 0. This includes the existing
+own-message-ID reply form that Slack normalizes to the root thread.

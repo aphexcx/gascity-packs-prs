@@ -127,5 +127,163 @@
         "Elapsed": 3.7560000000000002
       }
     ]
+  },
+  "r2-red-go": {
+    "command_manifest": "go test -json -run ^TestIngestionReplyCannotCoverLaterInbound$ ./... exit=1",
+    "all_test_results": {
+      "fail": 3
+    },
+    "top_level": {
+      "fail": 1
+    },
+    "skipped": [],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.114
+      },
+      {
+        "Action": "fail",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 0.265
+      }
+    ]
+  },
+  "r2-race-go": {
+    "command_manifest": "go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./... exit=1",
+    "all_test_results": {
+      "pass": 72,
+      "fail": 5,
+      "skip": 1
+    },
+    "top_level": {
+      "pass": 38,
+      "fail": 3,
+      "skip": 1
+    },
+    "skipped": [
+      "TestIngestionLiveBusySessionProof"
+    ],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0
+      },
+      {
+        "Action": "fail",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 3.002
+      }
+    ]
+  },
+  "r2-race-fixed-go": {
+    "command_manifest": "go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./... exit=0",
+    "all_test_results": {
+      "pass": 77,
+      "skip": 1
+    },
+    "top_level": {
+      "pass": 41,
+      "skip": 1
+    },
+    "skipped": [
+      "TestIngestionLiveBusySessionProof"
+    ],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 4.275
+      }
+    ]
+  },
+  "r2-full-go": {
+    "command_manifest": "go test -json ./... exit=0",
+    "all_test_results": {
+      "pass": 12901,
+      "skip": 3
+    },
+    "top_level": {
+      "pass": 1453,
+      "skip": 3
+    },
+    "skipped": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement",
+      "TestRegistrationStartupDelayedPort"
+    ],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.002
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 92.302
+      }
+    ]
+  },
+  "r2-final-full-go": {
+    "command_manifest": "go test -json ./... exit=0",
+    "all_test_results": {
+      "pass": 12902,
+      "skip": 3
+    },
+    "top_level": {
+      "pass": 1453,
+      "skip": 3
+    },
+    "skipped": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement",
+      "TestRegistrationStartupDelayedPort"
+    ],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.002
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 95.858
+      }
+    ]
+  },
+  "r2-final-race-go": {
+    "command_manifest": "go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./... exit=0",
+    "all_test_results": {
+      "pass": 78,
+      "skip": 1
+    },
+    "top_level": {
+      "pass": 41,
+      "skip": 1
+    },
+    "skipped": [
+      "TestIngestionLiveBusySessionProof"
+    ],
+    "package": [
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0
+      },
+      {
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 8.946
+      }
+    ]
   }
 }

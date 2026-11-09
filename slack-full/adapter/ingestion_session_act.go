@@ -91,7 +91,10 @@ func sessionActEvidence(act ingestionSessionAct, r inboundJournalRecord) *ingest
 		if thread == "" {
 			thread = r.MessageTS
 		}
-		if act.ThreadTS != thread || act.SessionID != session {
+		// Slack also accepts a reply's own message ID as thread_ts and
+		// normalizes it to the root, as the busy-reaction registry does.
+		matchesThread := act.ThreadTS == thread || act.ThreadTS == r.MessageTS
+		if !matchesThread || act.SessionID != session || compareSlackTS(act.MessageTS, r.MessageTS) <= 0 {
 			return nil
 		}
 	}
