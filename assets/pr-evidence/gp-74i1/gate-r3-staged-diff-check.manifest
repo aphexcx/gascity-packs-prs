@@ -1,0 +1,1 @@
+git diff --cached --check -- slack-full assets/pr-evidence/gp-74i1	exit=0

@@ -1,0 +1,68 @@
+{
+  "round6-red": {
+    "top_level": {
+      "fail": 3
+    },
+    "including_subtests": {
+      "fail": 9,
+      "pass": 1
+    }
+  },
+  "round6-source-red": {
+    "top_level": {
+      "fail": 1
+    },
+    "including_subtests": {
+      "fail": 1
+    }
+  },
+  "round6-legacy-red": {
+    "top_level": {
+      "fail": 1
+    },
+    "including_subtests": {
+      "fail": 2,
+      "pass": 1
+    }
+  },
+  "round6-proof-retention-red": {
+    "top_level": {
+      "fail": 1
+    },
+    "including_subtests": {
+      "fail": 1
+    }
+  },
+  "round6-pipe-deadline-red": {
+    "top_level": {
+      "fail": 1
+    },
+    "including_subtests": {
+      "pass": 4,
+      "fail": 2
+    }
+  },
+  "round6-full": {
+    "top_level": {
+      "pass": 1480,
+      "skip": 3
+    },
+    "including_subtests": {
+      "pass": 13033,
+      "skip": 3
+    }
+  },
+  "new_regressions": {
+    "pass": 37
+  },
+  "round6-race": {
+    "top_level": {
+      "pass": 68,
+      "skip": 1
+    },
+    "including_subtests": {
+      "pass": 209,
+      "skip": 1
+    }
+  }
+}

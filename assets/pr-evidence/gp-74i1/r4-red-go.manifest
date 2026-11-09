@@ -1,0 +1,1 @@
+go test -json -run ^TestIngestionBatch(RetryPayloadCannotGrowWithFanout|LegacyOversizeStillRecovers)$ ./... exit=1

@@ -30,7 +30,7 @@ func TestIngestionLongToolReturnSupersedesUnseenWithinBound(t *testing.T) {
 			alerts := 0
 			o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
 				fetch:  func(context.Context, string) ([]json.RawMessage, error) { return transcript, nil },
-				notify: func(context.Context, inboundJournalRecord) error { alerts++; return nil }}
+				notify: func(context.Context, []inboundJournalRecord) error { alerts++; return nil }}
 			now = at.Add(ingestionWindow + time.Second)
 			if err := o.step(context.Background()); err != nil {
 				t.Fatal(err)

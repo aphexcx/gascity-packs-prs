@@ -30,7 +30,7 @@ func TestIngestionSettledFanoutSurvivesMidnightUntilFollowUpEnds(t *testing.T) {
 				fetch: func(context.Context, string) ([]json.RawMessage, error) {
 					return []json.RawMessage{entry}, nil
 				},
-				notify: func(context.Context, inboundJournalRecord) error { alerts++; return nil }}
+				notify: func(context.Context, []inboundJournalRecord) error { alerts++; return nil }}
 			now = at.Add(ingestionWindow + time.Second)
 			if err := o.step(context.Background()); err != nil {
 				t.Fatal(err)

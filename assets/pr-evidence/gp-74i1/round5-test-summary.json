@@ -1,0 +1,67 @@
+{
+  "round5-base-red": {
+    "top_level": {
+      "pass": 0,
+      "fail": 5,
+      "skip": 0
+    },
+    "including_subtests": {
+      "pass": 6,
+      "fail": 25,
+      "skip": 0
+    }
+  },
+  "round5-full": {
+    "top_level": {
+      "pass": 1472,
+      "fail": 0,
+      "skip": 3
+    },
+    "including_subtests": {
+      "pass": 12996,
+      "fail": 0,
+      "skip": 3
+    }
+  },
+  "new_regressions": {
+    "pass": 32,
+    "fail": 0,
+    "skip": 0
+  },
+  "round5-race": {
+    "top_level": {
+      "pass": 60,
+      "fail": 0,
+      "skip": 1
+    },
+    "including_subtests": {
+      "pass": 172,
+      "fail": 0,
+      "skip": 1
+    }
+  },
+  "round5-attempt-red": {
+    "top_level": {
+      "pass": 0,
+      "fail": 3,
+      "skip": 0
+    },
+    "including_subtests": {
+      "pass": 2,
+      "fail": 9,
+      "skip": 0
+    }
+  },
+  "round5-red": {
+    "top_level": {
+      "pass": 0,
+      "fail": 2,
+      "skip": 0
+    },
+    "including_subtests": {
+      "pass": 2,
+      "fail": 8,
+      "skip": 0
+    }
+  }
+}

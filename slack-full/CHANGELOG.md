@@ -112,6 +112,25 @@ deliveries also log their registry label.
 
 ### Fixed
 
+- Ingestion alarms now accept successful explicit message reactions and
+  confirmed replies from the target session as durable proof, surviving
+  adapter restarts and excluding automatic admission acknowledgements.
+  Newly unseen receipts are combined into one mail per channel per observer
+  pass, with each receipt still recorded individually. Ambiguous mail retries
+  preserve the original message coverage, including members that later gain
+  proof. Large fanout receipts use bounded plans and target rows retain only
+  their own attribution. Retention copies only coverage whose last source is
+  actually deleted, so protected segments cannot cause repeated journal growth.
+  Durable attempt state records exact sent pairs, distinguishes definite
+  refusals from ambiguous sends, and atomically replaces one bounded sidecar
+  per plan. Attempt updates leave journal segments untouched; completed and
+  orphan sidecars are removed, and abandoned temporary files are swept.
+  A channel's state-write failure does not prevent other channels from mailing.
+  Refusals back off from five seconds to five minutes across restarts;
+  completed mail commands wait at most one second for inherited output pipes.
+  The three-minute
+  initial deadline and two-hour late-proof horizon remain unchanged (gp-74i1).
+
 - Compile a session-scoped native test stub for the CLI and adapter fixtures;
   Ubuntu 26.04's uutils `echo` rejects their renamed executable paths (gp-f7wy).
 

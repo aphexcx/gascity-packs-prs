@@ -1,0 +1,1 @@
+go test . -run '^TestIngestion(CoveragePrune|NotifyAcceptanceRecovery|BatchAttemptIsDurableBeforeNotify|MailRefusalRetainsExitOutput)' -count=1 -json [8416780c; mechanical prune extraction only]	1

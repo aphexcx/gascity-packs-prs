@@ -1,0 +1,25 @@
+usage: slack_chat_react.py [-h] [--session SESSION] [--current]
+                           [--conversation-id CONVERSATION_ID]
+                           [--message-id MESSAGE_ID] [--emoji EMOJI]
+                           [--remove]
+
+Add an emoji reaction to the latest inbound Slack message for this session, or
+to an explicit (channel, ts) pair.
+
+options:
+  -h, --help            show this help message and exit
+  --session SESSION     Override session id; claims that session's identity
+                        for ingestion proof
+  --current             React on the latest inbound message routed to this
+                        session (resolved via gc transcript). This is the
+                        default — pass it for clarity or omit it; if
+                        --conversation-id is given, explicit mode wins.
+  --conversation-id CONVERSATION_ID
+                        Slack channel id (explicit mode; requires --message-
+                        id).
+  --message-id MESSAGE_ID
+                        Slack message ts (explicit mode; requires
+                        --conversation-id).
+  --emoji EMOJI         Emoji name without colons (default: eyes).
+  --remove              Remove the reaction instead of adding it (adapter maps
+                        this to Slack reactions.remove).

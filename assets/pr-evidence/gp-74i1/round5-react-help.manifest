@@ -1,0 +1,1 @@
+uv run --with pytest --with pyyaml --with jsonschema python3 scripts/slack_chat_react.py --help	0

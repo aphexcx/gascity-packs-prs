@@ -1,0 +1,438 @@
+{
+  "alerts": [
+    {
+      "receipt_id": "ir-87615-50",
+      "channel": "C0ASAPRETDK",
+      "message_ts": "1793948327.314169",
+      "thread_ts": "1793944295.340749",
+      "delivered_at": "2026-11-06T06:58:49.292377Z",
+      "ts": "2026-11-06T07:01:54.20786Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": []
+    },
+    {
+      "receipt_id": "ir-34177-7",
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794045587.926179",
+      "thread_ts": "1794016781.412049",
+      "delivered_at": "2026-11-07T09:59:58.601071Z",
+      "ts": "2026-11-07T10:03:03.731146Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": []
+    },
+    {
+      "receipt_id": "ir-34177-10",
+      "channel": "C0AMHQ74ZLK",
+      "message_ts": "1794047550.590319",
+      "thread_ts": null,
+      "delivered_at": "2026-11-07T10:32:35.306711Z",
+      "ts": "2026-11-07T10:35:38.770537Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-07T10:33:07+00:00",
+          "kind": "react",
+          "line": 123404,
+          "op": "reactions.add",
+          "conv": "C0AMHQ74ZLK",
+          "ts": "1794047550.590319"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-14",
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794063933.743159",
+      "thread_ts": "1794025817.986829",
+      "delivered_at": "2026-11-07T15:05:46.081891Z",
+      "ts": "2026-11-07T15:08:48.728783Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-07T15:07:17+00:00",
+          "kind": "publish",
+          "line": 123607,
+          "conv": "C0CCMJ1DU02",
+          "reply_to": "1794025817.986829",
+          "session": "ci-wisp-k95"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-39",
+      "channel": "C0CACRS0162",
+      "message_ts": "1794159381.215279",
+      "thread_ts": "1794106182.256469",
+      "delivered_at": "2026-11-08T17:36:34.02987Z",
+      "ts": "2026-11-08T17:39:39.424309Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T17:38:31+00:00",
+          "kind": "publish",
+          "line": 124984,
+          "conv": "C0CACRS0162",
+          "reply_to": "1794106182.256469",
+          "session": "ci-wisp-k95"
+        },
+        {
+          "at": "2026-11-08T17:38:33+00:00",
+          "kind": "react",
+          "line": 124985,
+          "op": "reactions.add",
+          "conv": "C0CACRS0162",
+          "ts": "1794159381.215279"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-40",
+      "channel": "C0CACRS0162",
+      "message_ts": "1794159412.634159",
+      "thread_ts": "1794106182.256469",
+      "delivered_at": "2026-11-08T17:37:02.826312Z",
+      "ts": "2026-11-08T17:40:04.439585Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T17:38:31+00:00",
+          "kind": "publish",
+          "line": 124984,
+          "conv": "C0CACRS0162",
+          "reply_to": "1794106182.256469",
+          "session": "ci-wisp-k95"
+        },
+        {
+          "at": "2026-11-08T17:38:34+00:00",
+          "kind": "react",
+          "line": 124986,
+          "op": "reactions.add",
+          "conv": "C0CACRS0162",
+          "ts": "1794159412.634159"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-41",
+      "channel": "C0CACRS0162",
+      "message_ts": "1794159424.547469",
+      "thread_ts": "1794106182.256469",
+      "delivered_at": "2026-11-08T17:37:14.677662Z",
+      "ts": "2026-11-08T17:40:19.208713Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T17:38:31+00:00",
+          "kind": "publish",
+          "line": 124984,
+          "conv": "C0CACRS0162",
+          "reply_to": "1794106182.256469",
+          "session": "ci-wisp-k95"
+        },
+        {
+          "at": "2026-11-08T17:38:35+00:00",
+          "kind": "react",
+          "line": 124987,
+          "op": "reactions.add",
+          "conv": "C0CACRS0162",
+          "ts": "1794159424.547469"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-42",
+      "channel": "C0CACRS0162",
+      "message_ts": "1794161439.068439",
+      "thread_ts": "1794106182.256469",
+      "delivered_at": "2026-11-08T18:10:51.570262Z",
+      "ts": "2026-11-08T18:13:54.289797Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T18:12:01+00:00",
+          "kind": "publish",
+          "line": 125011,
+          "conv": "C0CACRS0162",
+          "reply_to": "1794106182.256469",
+          "session": "ci-wisp-k95"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-53",
+      "channel": "C0CACRS0162",
+      "message_ts": "1794168260.845629",
+      "thread_ts": "1794106182.256469",
+      "delivered_at": "2026-11-08T20:04:31.430554Z",
+      "ts": "2026-11-08T20:07:34.216736Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": []
+    },
+    {
+      "receipt_id": "ir-34177-57",
+      "channel": "C0BKF28CYUE",
+      "message_ts": "1794181291.507919",
+      "thread_ts": "1788066815.872599",
+      "delivered_at": "2026-11-08T23:41:46.787994Z",
+      "ts": "2026-11-08T23:44:49.358326Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T23:43:30+00:00",
+          "kind": "react",
+          "line": 125269,
+          "op": "reactions.add",
+          "conv": "C0BKF28CYUE",
+          "ts": "1794181291.507919"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-61",
+      "channel": "C0AMHQ74ZLK",
+      "message_ts": "1794181804.000289",
+      "thread_ts": "1794047550.590319",
+      "delivered_at": "2026-11-08T23:50:13.817079Z",
+      "ts": "2026-11-08T23:53:19.341946Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T23:51:33+00:00",
+          "kind": "react",
+          "line": 125288,
+          "op": "reactions.add",
+          "conv": "C0AMHQ74ZLK",
+          "ts": "1794181804.000289"
+        },
+        {
+          "at": "2026-11-08T23:51:34+00:00",
+          "kind": "publish",
+          "line": 125290,
+          "conv": "C0AMHQ74ZLK",
+          "reply_to": "1794047550.590319",
+          "session": "ci-wisp-k95"
+        },
+        {
+          "at": "2026-11-08T23:52:21+00:00",
+          "kind": "react",
+          "line": 125300,
+          "op": "reactions.add",
+          "conv": "C0AMHQ74ZLK",
+          "ts": "1794181804.000289"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-71",
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182138.935059",
+      "thread_ts": "1794016781.412049",
+      "delivered_at": "2026-11-08T23:55:51.240517Z",
+      "ts": "2026-11-08T23:58:54.402231Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": []
+    },
+    {
+      "receipt_id": "ir-34177-72",
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182172.506869",
+      "thread_ts": "1794016781.412049",
+      "delivered_at": "2026-11-08T23:56:23.236143Z",
+      "ts": "2026-11-08T23:59:24.415498Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T23:59:02+00:00",
+          "kind": "react",
+          "line": 125345,
+          "op": "reactions.add",
+          "conv": "C0CCMJ1DU02",
+          "ts": "1794182172.506869"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-73",
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182191.156699",
+      "thread_ts": "1794016781.412049",
+      "delivered_at": "2026-11-08T23:56:40.857145Z",
+      "ts": "2026-11-08T23:59:44.431803Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T23:59:03+00:00",
+          "kind": "react",
+          "line": 125346,
+          "op": "reactions.add",
+          "conv": "C0CCMJ1DU02",
+          "ts": "1794182191.156699"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-74",
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182219.663679",
+      "thread_ts": "1794016781.412049",
+      "delivered_at": "2026-11-08T23:57:09.446326Z",
+      "ts": "2026-11-09T00:00:14.500553Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T23:59:03+00:00",
+          "kind": "react",
+          "line": 125347,
+          "op": "reactions.add",
+          "conv": "C0CCMJ1DU02",
+          "ts": "1794182219.663679"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-75",
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182250.463389",
+      "thread_ts": "1794016781.412049",
+      "delivered_at": "2026-11-08T23:57:34.535595Z",
+      "ts": "2026-11-09T00:00:39.49419Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T23:59:04+00:00",
+          "kind": "react",
+          "line": 125349,
+          "op": "reactions.add",
+          "conv": "C0CCMJ1DU02",
+          "ts": "1794182250.463389"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-76",
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182277.390449",
+      "thread_ts": "1794016781.412049",
+      "delivered_at": "2026-11-08T23:57:59.541755Z",
+      "ts": "2026-11-09T00:01:04.516485Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-08T23:59:24+00:00",
+          "kind": "react",
+          "line": 125350,
+          "op": "reactions.add",
+          "conv": "C0CCMJ1DU02",
+          "ts": "1794182277.390449"
+        }
+      ]
+    },
+    {
+      "receipt_id": "ir-34177-90",
+      "channel": "C0AMHQ74ZLK",
+      "message_ts": "1794188916.796289",
+      "thread_ts": "1794047550.590319",
+      "delivered_at": "2026-11-09T01:48:46.665782Z",
+      "ts": "2026-11-09T01:51:49.447749Z",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "calls_before_alert": [
+        {
+          "at": "2026-11-09T01:50:00+00:00",
+          "kind": "react",
+          "line": 125449,
+          "op": "reactions.add",
+          "conv": "C0AMHQ74ZLK",
+          "ts": "1794188916.796289"
+        }
+      ]
+    }
+  ],
+  "late": [
+    {
+      "receipt_id": "ir-34177-57",
+      "delivered_at": "2026-11-08T23:41:46.787994Z",
+      "proof_at": "2026-11-08T23:49:16.849Z",
+      "proof_lag_seconds": 450.061,
+      "observed_lag_seconds": 456.435
+    },
+    {
+      "receipt_id": "ir-34177-71",
+      "delivered_at": "2026-11-08T23:55:51.240517Z",
+      "proof_at": "2026-11-09T00:09:23.562Z",
+      "proof_lag_seconds": 812.321,
+      "observed_lag_seconds": 817.078
+    },
+    {
+      "receipt_id": "ir-34177-72",
+      "delivered_at": "2026-11-08T23:56:23.236143Z",
+      "proof_at": "2026-11-09T00:09:32.21Z",
+      "proof_lag_seconds": 788.974,
+      "observed_lag_seconds": 790.103
+    },
+    {
+      "receipt_id": "ir-34177-73",
+      "delivered_at": "2026-11-08T23:56:40.857145Z",
+      "proof_at": "2026-11-09T00:09:37.717Z",
+      "proof_lag_seconds": 776.86,
+      "observed_lag_seconds": 777.338
+    },
+    {
+      "receipt_id": "ir-34177-74",
+      "delivered_at": "2026-11-08T23:57:09.446326Z",
+      "proof_at": "2026-11-09T00:09:42.116Z",
+      "proof_lag_seconds": 752.67,
+      "observed_lag_seconds": 753.942
+    },
+    {
+      "receipt_id": "ir-34177-75",
+      "delivered_at": "2026-11-08T23:57:34.535595Z",
+      "proof_at": "2026-11-09T00:09:45.925Z",
+      "proof_lag_seconds": 731.389,
+      "observed_lag_seconds": 733.736
+    },
+    {
+      "receipt_id": "ir-34177-76",
+      "delivered_at": "2026-11-08T23:57:59.541755Z",
+      "proof_at": "2026-11-09T00:09:49.843Z",
+      "proof_lag_seconds": 710.301,
+      "observed_lag_seconds": 713.717
+    }
+  ],
+  "late_proof_p95_seconds": 812.321
+}

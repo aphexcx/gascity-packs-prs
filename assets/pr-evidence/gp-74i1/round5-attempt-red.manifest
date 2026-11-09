@@ -1,0 +1,1 @@
+go test . -run '^TestIngestion(NotifyAcceptanceRecovery|BatchAttemptIsDurableBeforeNotify|MailRefusalRetainsExitOutput)$' -count=1 -json	1

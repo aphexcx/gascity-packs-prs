@@ -1,0 +1,603 @@
+# gp-74i1 implementation and self-review
+
+The observer accepts explicit `/react` additions and confirmed session replies
+as durable ingestion facts. Reaction removal, Slack failure, automatic
+admission/busy acknowledgements, another channel/thread/session, and acts
+outside the hand-off tolerance or two-hour horizon cannot establish proof.
+The three-minute initial deadline remains unchanged by mayor ruling
+`ci-wisp-gozwdyu`.
+
+The adapter records facts only after delivery success. Reply timestamps come
+from Slack's original message ID and must follow the inbound's Slack timestamp,
+so a delayed idempotent replay cannot make an old reply cover a new inbound.
+Replaying the inbound journal reconstructs
+the bounded act cache; overflow uses a bounded disk lookup instead of losing
+proof. Retention preserves the 30-second tolerance across midnight.
+
+Each pass groups newly eligible receipts by channel and folds fanout targets
+into one line per receipt. The sorted receipt set determines the mail dedup
+key, which is saved with its membership before sending. A successful send
+writes one atomic batch completion before marking members individually;
+restart repairs any missing individual rows. A retry recovers its original
+batch before considering new arrivals on the next pass. Failed mail leaves
+members retryable and does not prevent another channel's mail. A second act
+check before sending catches proof recorded during other transcript fetches.
+
+Self-review traced success, benign `already_reacted`, failure and removal
+through the reaction handler; confirmed and replayed publishes through
+`recordDeliveredPublish`; journal restoration, capacity overflow and pruning;
+and batch failure/restart. `/react` currently carries no caller session ID,
+so its proof is explicitly a bot action through that endpoint. Publish proof
+matches the target's pinned canonical session. Automatic company reactions
+use a different path and never write the session-act marker.
+
+Initial revision validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
+
+- Baseline ingestion suite: 31 top-level passes, one opt-in live test skipped.
+- New regression tests failed before implementation: the positive reaction,
+  reply and restart cases still alarmed; three receipts produced three mails.
+- `go test -json ./...`: 1,450 top-level passes (12,894 including subtests),
+  three skipped, exit 0.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  38 top-level passes (70 including subtests), one skipped, exit 0.
+- `git diff --check -- slack-full`: exit 0.
+
+Each command has an exit-status manifest. `test-summary.json` parses test and
+package status fields; compressed JSONL logs retain the original output.
+No Python product code changed; no pnpm/Node tests were run.
+
+The live Slack pack remains pinned to its existing revision until Afik
+authorizes the citadel pin bump. The mayor owns the Fable/Opus review stages,
+rollout and seven-day observation. The three source papercuts remain open.
+
+## Codex round 1 corrections
+
+Round 1 reviewed `f82365a45d2ba81b99987f106e273965de638b22` and returned BLOCK
+with two major findings: an older reply could cover a newer input via the
+30-second tolerance, and partial batch completion could change the recovery
+dedup key. The changes above address both. New regressions cover ordinary and
+delayed old replies, a crash after mail acceptance with one completed member
+and a new arrival, and a crash after atomic completion before zero or one
+individual completion rows. Recovery repairs the individual rows even after
+the observation horizon. The old-reply test failed before the correction.
+
+The expanded focused race suite passes 41 top-level tests (77 with subtests),
+with one opt-in live test skipped. The first correction run exposed completion
+phase preservation in the existing journal reducer; preserving completed rows
+resolved those failures and kept the existing late-proof cases green.
+
+Final round-2 validation: full adapter suite 1,453 top-level passes (12,902
+including subtests), three skips; focused race suite 41 top-level passes (78
+including subtests), one skip. Both exit 0. This includes the existing
+own-message-ID reply form that Slack normalizes to the root thread.
+
+## Codex round 2 corrections
+
+Round 2 reviewed `3be099e2e9e655820a46a18d7cba73d980d27931` and returned BLOCK
+on an oversized batch exceeding the journal scanner's record limit and on
+retention pruning source rows between atomic batch completion and individual
+completion. Both failures were reproduced: 8,500 ordinary receipt keys made
+the scanner report `token too long`; a one-day-retention retry after the
+two-hour horizon lost both member rows when interrupted after batch completion.
+
+New batches now budget their serialized journal record and mail body to 64 KiB,
+leaving excess receipts eligible for later passes. Oversized single receipts
+fail visibly for their channel; other channels still proceed. Completed mail
+whose individual rows are pending remains unsettled for retention, preserving
+the source until each individual row is durable. Both regressions pass with
+the existing ingestion tests under the race detector: 43 top-level passes
+(80 with subtests), one opt-in live test skipped.
+
+Final round-3 full adapter suite: 1,455 top-level passes (12,904 including
+subtests), three opt-in skips, exit 0. The focused race suite and diff check
+also exit 0. The three-minute deadline and two-hour late-proof horizon remain
+unchanged; only incomplete durable completion writes extend retention.
+
+## Codex round 3 corrections
+
+Round 3 reviewed `a0f0536bbd413c16ade3a4fd8556e273fb4ba812` and returned BLOCK:
+delayed fanout could enlarge a saved batch's retry beyond the mail budget,
+and an older oversized batch could never recover. Both regressions failed
+before the fix. Mail now contains immutable receipt coordinates, leaving
+target sessions in the journal. Legacy oversized retries preserve their
+original dedup identity and full membership while the mail shows a bounded
+prefix, omitted count and saved journal batch ID. Full atomic completion
+references the prepared membership rather than repeating a near-limit record.
+
+The eight batch tests (including subtests) pass after the fix. The new retry
+test fails its first mail, adds 1,000 fanout targets, reconstructs the journal,
+and verifies successful recovery with the original key. The legacy test
+preserves all 1,500 receipts and checks bounded summary and completion writes.
+
+Round-4 validation on Go 1.27.3 darwin/arm64: `go test -json ./...` passes
+1,457 top-level tests (12,906 including subtests), with three opt-in skips.
+`go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...` passes
+45 top-level tests (82 including subtests), with one opt-in skip. Both commands
+ran from `slack-full/adapter` and exited 0. The scoped diff check also passed.
+
+During final review, main advanced to `ab8d7471` (PRs #81 and #83). The lane
+integrated it, preserving both independent changelog entries at the only
+conflict. The complete adapter tree is unchanged from the tested round-4
+commit, verified with `git diff --cached --exit-code HEAD -- slack-full/adapter`
+before integration; no Go tests needed to be repeated for this merge. The
+integration diff check and command manifest are recorded beside the test logs.
+
+## Mayor gate round 2: constituent coverage and delayed confirmation
+
+The mayor's independent gate round 1 reviewed `7caf22383ee42f599cd8f05723a28482e860564e`
+and returned BLOCK on two major findings. These are distinct from the earlier
+lane-local Codex rounds above. The binding round-2 ruling keeps this same PR
+and branch, with a new commit on top of that reviewed head.
+
+Session-act proof now requires coverage for every message in the receipt's
+`Windows`, each using its own message/thread coordinates and the shared saved
+send interval. Reactions and replies can combine to cover the receipt. The
+completing act supplies the compatibility proof kind and time; nested member
+evidence records each constituent's act without message text. An incomplete
+receipt remains unresolved. The mail names only uncovered messages, taking
+the union across unresolved fanout targets. That subset is transient; durable
+receipt membership and saved batch dedup identities remain intact.
+
+The lower bound now matches transcript proof: `StartedAt` minus 30 seconds,
+falling back to `DeliveredAt` for legacy records without a saved start. The
+upper bound remains delivery plus two hours. The three-minute initial alert
+deadline is unchanged. Documentation describes the same rule.
+
+The regressions first failed at the reviewed head: reacting only to the last
+coalesced member incorrectly suppressed its receipt; a mail for an entirely
+unseen receipt omitted the first constituent; and valid acts before delayed
+confirmation still alarmed. New cases cover two different threads, each
+partial direction, both reactions, mixed reply/reaction and both replies,
+with and without restart. Delayed-confirmation tests exercise reactions and
+replies at send+30s, send-30s and send-31s. Additional checks cover partial
+cache hits with durable overflow, fanout coverage union, failed-mail recovery
+with the original batch key, and late completion without another mail.
+
+Self-review by the implementing Codex model traced both proof checks, per-member
+matching, canonical session isolation, durable recovery, mail budgeting and
+fanout union. No remaining correctness finding was identified. This does not
+substitute for the mayor's pending gate round 2 or first Fable read. The module
+boundary is unchanged: the journal owns session-act facts and the observer
+owns receipt verdicts and mail; no new handler-side policy was introduced.
+
+Validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
+
+- `go test -json ./...`: 1,460 top-level passes (12,927 including subtests),
+  three opt-in skips, exit 0.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  48 top-level passes (103 including subtests), one opt-in skip, exit 0.
+- `git diff --check -- slack-full`: exit 0.
+
+The `gate-r2-*` manifests, compressed logs and parsed test summary retain this
+round's results. The mayor gates only `7caf2238..NEW` and reads the whole PR
+with Fable. The lane sends READY and drains without closing the bead; the
+mayor owns the roll and observation week.
+
+## Mayor gate round 3: durable message coverage and reaction attribution
+
+The mayor's gate round 2 blocked `42ec11578d80d2b0134ba0b79c0268071a96ff28`
+on partial alerts hiding unread messages from late fanout targets. The Fable
+read of that whole head also blocked reactions without caller attribution.
+Both findings are addressed in this round. The mayor clarified the alert rule:
+mail each message once across fanout, retaining which targets lacked proof
+when that message was included. A previously mailed A is not repeated for s2;
+a previously unmailed B becomes eligible when s2 receives it without proof.
+
+Versioned batch plans and completion records now retain exact message/target
+pairs. Each durable coverage entry identifies its original batch, and receipt
+replay unions only those named messages. Versioned `alerted` flags settle the
+individual target's alert decision; they do not propagate to late targets.
+Legacy unversioned flags retain their old meaning. Retention carries the
+coverage with verdicts, and restart repairs incomplete member rows from the
+atomic batch completion. A retry remains restricted to its saved membership
+and dedup key; newly eligible members receive a separate batch on a later pass.
+The existing 64 KiB limits and visible error for an oversized single receipt
+remain in force, now accounting for coverage metadata as well.
+
+The reaction CLI forwards the calling session ID in both current-message and
+explicit-message modes. The adapter persists it and matches it against the
+target's pinned canonical identity, like reply proof. Wrong-session and
+unattributed reactions, including legacy rows, cannot prove ingestion.
+Explicit operator reactions still work without a session but provide no
+session proof. Automatic company admission eyes remain excluded; an observer
+regression now drives the actual admission-ack path before checking the alarm.
+The measurement script uses `GC_CITY_PATH`, and the baseline document uses
+generic city-relative references in place of the three home paths.
+
+The late-fanout regression first failed in all four variants: live, restart,
+crash after atomic completion, and retention across midnight. The reaction
+handler regressions first failed for wrong-session, unattributed and legacy
+restarted acts. Four CLI request-boundary cases first failed for missing
+session IDs. All now pass. Additional coverage checks exact target/batch
+attribution and keeps newly unread B out of an ambiguously accepted A retry.
+
+Self-review by the implementing Codex model traced the version boundary,
+coverage union, partial retry selection, exact target attribution through
+mail grouping, atomic completion repair, retention carry, canonical reaction
+matching, legacy missing identities, and explicit operator compatibility.
+No remaining correctness finding was identified. The journal still owns
+durable facts and the observer owns verdicts and mail; the new coverage helper
+stays inside that boundary. The CLI only transports caller identity. The
+three-minute window and two-hour horizon are unchanged. This self-review does
+not substitute for the mayor's pending gate round 3 and Fable delta read.
+
+Validation from the respective module directories:
+
+- Go 1.27.3 darwin/arm64, `go test -json ./...`: 1,463 top-level passes
+  (12,937 including subtests), three opt-in skips, exit 0.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  51 top-level passes (113 including subtests), one opt-in skip, exit 0.
+- From `slack-full`, the Makefile's uv-managed interpreter:
+  `env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q`:
+  948 passed, two skipped, exit 0. Two existing Python fork deprecation warnings
+  came from the outbound multiprocess test. Node/pnpm were not used.
+
+The `gate-r3-*` artifacts retain the command manifests, compressed test logs
+and parsed counts. Public logs normalize local lane/home paths; original
+unmodified logs remain in the lane's external staging evidence. The PR stays
+draft. READY hands this head to the mayor for gates, the authorized pin roll,
+and the observation week; the lane drains without closing the bead.
+
+## Mayor gate round 4: preserve accepted coverage and bound fanout
+
+Round 3's gate blocked `e8c9737d1ac3bc7f0e5105e96e6d084cb1de776b` because
+an ambiguously accepted A+B mail could complete its retry with only B's
+coverage after A gained proof. The Opus read also identified the all-proven
+completion, repeated shared coverage in target rows, and a single receipt
+whose target pairs could exceed the saved-plan budget indefinitely.
+
+Recovery now completes against the original durable membership. This includes
+members that gained proof, since being mailed and being seen are independent
+facts. If all original members have proof, the completion preserves coverage
+with `unconfirmed=true` and `sent=false`: no new send is claimed. This retains
+the ambiguity of an earlier attempt whose acknowledgement was lost. Fresh
+batches still complete with exactly the coverage actually sent. After closing
+an all-proven recovered batch, selection waits until the next pass reconstructs
+the coverage; a late target cannot re-mail those lines using stale state.
+
+The once rule is per message across targets. Targets identify who lacked proof
+when a line was named; they do not create separate mail entitlements. A single
+receipt over the 64 KiB plan budget is split by message/target pair, retaining
+explicit attribution. The saved plan and the actual mail use the same bounded
+selection. Already named messages cover subsequent fanout; unnamed messages
+remain eligible for a later pass with a new identity. Tests exercise both
+300 targets of one message and 300 distinct messages in one receipt.
+
+Individual journal rows serialize only their target's coverage. Replay still
+unions the shared coverage for decisions. Before retention deletes source
+records, it preserves attribution needed by surviving observations in separate
+bounded `ingestion_coverage` rows. This also covers a newer target whose row
+survives after the original target's own verdict expires.
+
+The final focused tests were run against the previous head's production files
+as well as the fix: 26 test/subtest failures on the base, one passing fresh-batch
+control; all 27 tests/subtests pass with the fix. The scenarios include A or B
+gaining proof, both gaining proof, a second timeout, restart before retry,
+restart after a deduplicated retry before completion, late targets before and
+after recovery, retention with the original target surviving, and retention
+with only a newer target surviving. Assertions check original target/batch
+attribution, no repeated channel line, and no hidden newcomer. The fresh-batch
+control confirms unsent rows receive no coverage.
+
+Self-review by the implementing Codex model traced the persisted plan, recovery
+selection, completion, replay, per-target serialization, and pruning. Two
+additional failure paths were reproduced and fixed during that review: a late
+target present during all-proven completion, and coverage disappearing after
+only the newer target survived retention. Splitting exact pairs was chosen over
+eliding target identities so recovery retains the same attribution contract.
+Coverage from an ambiguous attempt is kept, not proven by the timeout. Round
+five marks it unconfirmed whenever the retry does not confirm every kept pair.
+Round six narrows that coverage to the exact union of attempts not definitely
+refused: a refused A+B plan followed by an ambiguous B-only retry keeps only B,
+so A remains eligible for a later unread target. The initial
+three-minute window, two-hour horizon, and rollout gate are unchanged. The
+mayor's Codex gate and Opus delta read on this head follow READY.
+
+Validation from `slack-full/adapter`, Go 1.27.3 darwin/arm64:
+
+- `go test -json ./...`: 1,467 top-level passes (12,964 including subtests),
+  three opt-in skips, zero failures, exit 0.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  55 top-level passes (140 including subtests), one opt-in skip, zero failures,
+  exit 0.
+- `go vet ./...` and `git diff --check`: exit 0.
+- No Python or Node implementation changed in this round; Node/pnpm were not
+  used. The preceding round's 948 passing Python tests are historical evidence,
+  not a new execution claimed for this delta.
+
+The `round4-*` compressed logs, parsed summary and command manifests retain
+the new checks. Raw logs and mutable routing/GitHub snapshots stay local.
+
+## Mayor gate round 5: deletion-driven retention and attempt evidence
+
+The gate and Opus read of `8416780c` identified repeated coverage copies while
+an expired segment was protected. With 300 pairs, the regression measured
+140,700 extra bytes on its first prune, even though no source was deleted.
+Pruning is now a separate locked operation, retaining the same append boundary.
+It computes the final protected cutoff and the actual deletions first. A pass
+that deletes nothing returns without writing carry records.
+
+Replay tracks the latest self-contained source day of each pair's original
+batch attribution. An `All` completion references the plan's day, not its own
+day, because it carries no coverage bytes. Pruning copies only attribution
+needed by surviving observations whose last source is in the deletion set.
+Already surviving pairs and prior carries are skipped. Shared attribution is
+still preserved when the original target expires but a newer target survives.
+The carry is synced before source removal; a restart after that sync but before
+all deletions does not repeat it.
+
+The addendum's refusal distinction is implemented with version-three plans and
+durable `ingestion_batch_attempt` / `ingestion_batch_refused` records. A plan
+with an outstanding ambiguous attempt reuses that marker on retry; its first
+attempt is already durable and a later refusal cannot invalidate it. A plan
+without an attempt, or one whose only attempt was definitely refused, gets no
+inferred original coverage. Its still-unseen original members retry as fresh
+delivery under the bounded saved identity, with coverage only for the lines
+actually sent. A previously proven but never mailed member remains eligible
+for a later target. This preserves the existing rule that an already-proven
+member does not generate an alarm merely because another member needs retry.
+
+The process boundary retains bounded stderr on `exec.ExitError` without logging
+it. Completed gc error replies, executable-start failures and connection refusal
+are definite failures. Timeout/cancellation after start, signal termination,
+connection resets, broken pipes and lost responses remain ambiguous. Replay
+remembers the state before each attempt, so a definite refusal of a retry does
+not clear a prior ambiguous attempt. Older plans lacking attempt markers remain
+conservative. Any completion retaining pairs beyond those confirmed this pass
+sets `unconfirmed`, including `sent=true` subset retries.
+
+The reaction CLI's `--session` help now explicitly says it claims that session's
+identity for ingestion proof. This is the missing round-four help item, not an
+additional authorization mechanism.
+
+Regression cases were observed against the prior production head with
+only the mechanical extraction of the existing prune body: 25 failing
+tests/subtests and six passing controls. The final set adds an untouched-plan
+restart control that retries the full plan exactly once. It covers 25 byte-stable protected
+prunes with 2 and 300 pairs, settlement and one carry, restarts before and after
+deletion, duplicate old batches, surviving standalone/batch/target sources,
+an old plan with a surviving `All` completion, and a retry after partial deletion.
+The mail sequence covers definite refusal, process-start failure, connection
+refusal, death before notify, timeout, reset, signal termination and refusal of
+a later retry, with one or all members gaining proof. It asserts no hidden or
+repeated line and the `Unconfirmed` field itself. Separate boundary tests verify
+the attempt is durable before notify and refusal stderr remains available.
+
+Self-review by the implementing Codex model traced source-day attribution,
+final-cutoff deletion, durable carry-before-delete, attempt replay, prior
+ambiguity across retries, fresh completion coverage and the legacy version
+boundary. Round-three and round-four tests remain unchanged. The journal owns
+durable evidence; the observer owns proof and mail decisions. No other service,
+rollout setting, deadline or late horizon changes in this round. The mayor's
+round-five gate and Opus delta read remain required after READY.
+
+Final validation used Go 1.27.3 on darwin/arm64 from `slack-full/adapter`:
+
+- `go test -json ./...`: 1,472 top-level passed, 3 skipped, zero failed;
+  12,996 passes including subtests. The new regression files contribute
+  32 passing tests/subtests.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  60 top-level passed, 1 skipped, zero failed; 172 passes including subtests.
+- `go vet ./...` and `git diff --check`: exit zero.
+
+From `slack-full`, `env -u GC_TEMPLATE uv run --with pytest --with pyyaml
+--with jsonschema python3 -m pytest tests -q` passed 948 tests with 2 skipped.
+Its two multiprocessing/fork deprecation warnings are pre-existing. The CLI
+help invocation also passed and displays the proof-identity wording. Node and
+pnpm were not used. Compressed logs, exact command/exit manifests and
+`round5-test-summary.json` accompany this record.
+
+An initial full Go run exposed an extra retry-attempt write shifting an existing
+completion crash test. Reusing the outstanding ambiguous marker fixed it; the
+unchanged round-three/four tests and the final full/race runs are green. The
+initial failure is retained in the city record, separate from the final logs.
+
+## Mayor gate round 6: exact attempts and bounded refusal state
+
+The round-five gate and Opus read found that a plan-level attempt marker could
+hide A after an A+B refusal followed by an ambiguous B-only retry. They also
+found that refusal markers grew forever while unresolved deliveries pinned
+retention. The new regressions reproduced both on `b363ad0e`: all four
+subset/restart cases hid A; 1,000 passes made 2,000 attempt/refusal rows and
+821,178 extra bytes. Lingering pipe children also delayed both successful and
+refused gc exits for more than four seconds, losing the exit classification.
+
+Version-four attempts store the exact current message/target pairs plus
+references to earlier ambiguous pairs in the immutable plan. Replay retains
+only their union, excluding the current attempt when it is definitely refused.
+Every changed retry subset gets a durable record before notification. An
+identical already-pending send can reuse that record; a later refusal retains
+the previous ambiguity. Completion uses that union plus the pairs confirmed
+this pass, with `unconfirmed` whenever some kept pairs remain uncertain.
+
+Round six used one reserved state row inside its owning journal segment.
+Round seven supersedes that mechanism with one atomic sidecar per plan under
+`attempts/`: no segment read, rewrite or reserved slot. The file records exact
+current pairs and a bounded union of earlier ambiguous pairs; it never expands
+legacy membership. The temporary file and its directory are synced before
+notification. Older ambiguous plans retain their conservative interpretation.
+
+The refusal counter caps at seven and persists the next eligible timestamp.
+Delays are 5, 10, 20, 40, 80 and 160 seconds, then five minutes. The 1,000-pass
+test observes 22 attempts, one live state row and zero byte growth after its
+first refusal, including restart halfway through and protected retention.
+It proves no send before eligibility and exactly one on the first eligible
+pass after service recovery. The mayor explicitly approved this interpretation
+of recovery: the client does not probe service availability during backoff.
+
+The process boundary sets `cmd.WaitDelay` to one second. A successful gc exit
+with an inherited pipe still open remains success; a nonzero completed exit
+remains a refusal. Direct tests exercise both cases and cancellation after
+process start. A red-first short-deadline case also proves that a completed
+refusal keeps its exit result when the context expires during pipe cleanup.
+A v2 plan reconstructed from the journal remains ambiguous.
+Source-day lookup now uses the pair without BatchID; a red-first test confirms
+that an already surviving pair under another batch is not copied again.
+
+Self-review injected errors before temporary-file creation and after write,
+file sync, close, rename and directory sync for the first attempt, a changed
+subset and a subset refusal: 18 boundaries, with segment rotation and restart.
+Each preserves readable state and recoverable coverage, and no notification
+runs after a failed attempt-state write. Another red-first check found that
+legacy receipt-only plans needed a reservation from their actual attempt;
+that compatibility fix is included. Legacy v0/v2 retry controls pass.
+
+A further retention-boundary check reproduced a repeated alert when proof
+settled the last observation at midnight: pruning deleted the pending plan
+before its `All` completion could refer to it. Active plans now protect their
+source day through completion. The regression verifies one named mail after
+proof, completion, pruning, restart and a later unread target.
+
+CodeQL on the first round-six commit (`666b9a3b`) flagged possible integer
+overflow in the replacement buffer's preallocation expression. The unchecked
+capacity arithmetic was removed; ordinary slice appends build the replacement.
+The full and race suites below were rerun after that correction, the
+retention-boundary fix and the completed-exit/deadline case.
+
+The mayor's two timing rulings authorize only clock advances in these existing
+fixtures; their assertions are unchanged:
+
+- `TestIngestionNotifyAcceptanceRecovery`.
+- `TestIngestionBatchRetryPayloadCannotGrowWithFanout`.
+- `TestIngestionMailExecDeduplicatesFanoutAndRetriesFailure`.
+
+All round-six addendum implementation items are done: exact attempt coverage
+and corrected wording, bounded state/backoff, pipe-wait bound, legacy and real
+process-boundary tests, and pair-keyed source lookup. Notes 4, 5 and 6 remain
+accepted unchanged. The baseline, three-minute window, two-hour horizon and
+rollout restrictions remain unchanged. The mayor's gate and Opus delta read
+on `b363ad0e..NEW` follow READY; this lane does not close the bead.
+
+Final validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
+
+- `go test -json ./...`: 1,480 top-level passed, 3 skipped, zero failed;
+  13,033 passes including subtests. The new file contributes 37 passing
+  tests/subtests.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  68 top-level passed, 1 skipped, zero failed; 209 passes including subtests.
+- `go vet ./...` and diff checks: exit zero.
+
+Python is unchanged in this delta; round five's 948 passes / 2 skips are
+retained rather than reported as a new run. Node/pnpm were not used.
+Compressed red/final logs, command/exit manifests and `round6-test-summary.json`
+accompany this record. Intermediate ingestion failures from the two remaining
+fixture clocks are retained in the city record.
+
+## Mayor gate round 7: per-plan attempt sidecars
+
+The round-six gate blocked on two defects in the in-segment state writer.
+The new regressions reproduced both on `b0155dc3`: an ordinary 6,000-receipt
+legacy attempt created a 1,283,521-byte journal line and stopped observation
+with `bufio.Scanner: token too long`; a valid final plan without a newline
+replayed successfully but its attempt failed with “no pending plan,” both
+on the same day and after midnight. The addendum's channel test also failed
+before its fix in all twelve cases: six write boundaries for the attempt
+and the refusal, with the second channel never mailed.
+
+Version-five plans use one sidecar under the journal's `attempts/` directory,
+named by a digest of the plan ID. It records both the plan and format versions,
+validates the plan identity/version on replay, and contains the exact last attempted pairs,
+the deduplicated union of earlier ambiguous pairs, attempt time, refusal flag,
+capped counter and next eligible retry time. Every eligible invocation replaces
+this file through temporary-file write, fsync, close, rename and directory sync.
+The attempts directory's parent is synced as well. No journal segment is read
+or rewritten by this writer, and no new attempt/refusal journal rows are emitted.
+The plan's existence comes from the same replay map used by the observer, or
+from a newly fsynced plan append. A successful completion is persisted before
+the sidecar is deleted. Journal directory entries are synced before either
+normal deletion or replay cleanup can discard completed retry evidence.
+
+The mayor's compatibility ruling scopes “no sidecar = never attempted” to
+version-five plans. V0/v2 retain their pre-upgrade uncertainty; v3/v4 attempt
+markers are read-only migration input. Exact legacy attempts are stored as
+computed at notification time, never expanded from receipt membership.
+The 6,000-receipt regression is retained even though the addendum permitted a
+smaller fixture: these legacy plans exist only in unrolled revisions of this PR.
+
+State-write failures are collected per channel, including a failed refusal
+write; later channels still mail. Completion-cleanup errors are also collected.
+Replay ignores and removes unknown or completed sidecars without parsing them.
+Startup replay sweeps abandoned temporary files, and ordinary pruning sweeps
+them even when no journal segment expires. Retention replay cleans orphan
+sidecars before deleting their completed plans. Pending plans and their sidecars
+survive protected retention, rotation and midnight.
+
+### Enumerated write-path self-review
+
+| New write path | Reader limits and rotation | Crash result and evidence |
+| --- | --- | --- |
+| Create `attempts/`, sync its parent, create a temporary file | No journal bytes or line framing; paths use a digest even for legacy IDs | Before create, after mkdir and after parent sync: no new attempt, retry the full plan; abandoned temp is ignored and swept |
+| Encode/write/sync/close attempt, then rename and sync its directory | 8 MiB hard sidecar cap; modern plans remain within 64 KiB; v0's 6,000 exact pairs fit; journal 1 MiB line and missing-newline semantics are untouched | Before rename: previous state survives. After rename: exact current pairs are ambiguous. Eight boundaries tested, with restart across midnight and forced segment rotation |
+| Replace refusal state | Same cap; one file, bounded union rather than attempt history; counter capped at seven; sidecar reads share the 64 MiB observation budget | Failed refusal persistence leaves the current send ambiguous; prior ambiguous pairs survive a later refusal. Existing subset tests and 24 transition/boundary cases remain green |
+| Append completion, sync journal directory, unlink sidecar, sync attempts directory | Completion still uses bounded pairs or an `All` plan reference; no attempt record added to JSONL; sync covers a new day/rotated completion segment | Four cleanup boundaries tested. A durable done row wins over a leftover sidecar, and restart repairs member rows without another mail |
+| Replay/prune cleanup | Unknown files are not decoded or charged as pending attempts; active files are bounded and counted with the journal's 64 MiB limit; invalid/oversize known state fails visibly | Temps never become attempts; completed/unknown sidecars are removed only after successful journal replay. Cleanup syncs the journal directory before removing retry evidence and syncs the attempts directory afterwards |
+
+The writer is also tested against an already over-budget journal: it touches
+only its sidecar, while the observer independently rejects the 64 MiB excess.
+Oversized writes preserve the previous sidecar; oversized, malformed, wrong-ID
+and wrong-version reads fail without deleting pending state. V0/v2 recovery
+tests remain unchanged; new v3/v4 migration cases prove that their markers
+remain readable and that migration emits no new in-journal attempt rows.
+Self-review found and closed the directory-durability gap between a rotated
+completion append and sidecar deletion, including the prune-inside-append path.
+
+Four earlier tests change only to follow the state's new home:
+
+- `TestIngestionRefusedThenAmbiguousSubset` reads the durable exact sidecar
+  before notify; its coverage and mail assertions are unchanged.
+- `TestIngestionRefusalStateBoundedAndBacksOff` counts sidecars, rejects new
+  attempt journal rows, and retains the 128 KiB bound across journal plus
+  sidecar. All backoff, restart and first-eligible-recovery assertions remain.
+- `TestIngestionAttemptReplacementCrashBoundaries` counts sidecars and rejects
+  new attempt rows, while retaining every mail/coverage assertion and adding
+  mkdir/parent-sync boundaries to its three transitions.
+- `TestIngestionBatchAttemptIsDurableBeforeNotify` inspects the sidecar's ID,
+  refusal state and timestamp instead of the last journal row.
+
+There are no clock or production-scheduling changes in round seven.
+
+### Duplicate-send measurement and addendum disposition
+
+The lane sent one scratch mail to itself twice, using
+`--dedup slack-ingestion:gp-74i1-round7-probe-b0155dc3`. Both exits were zero.
+The second send's stdout, verbatim:
+
+```text
+Suppressed duplicate of ci-wisp-yttr5ix to gascity-packs/implementation-worker-codex (dedup key "slack-ingestion:gp-74i1-round7-probe-b0155dc3")
+```
+
+Its stderr was empty (zero bytes). The command/exit manifests and separate
+stdout/stderr files are retained. No classifier change is needed and no scratch
+message was sent to Slack or to the mayor.
+
+All six addendum items are addressed: the legacy scope is documented; replay
+and retry agree on the unterminated final plan and state errors are isolated by
+channel; temp and orphan cleanup is tested; segment rewrites and per-attempt
+journal scans are gone; v3 markers retain their conservative migration meaning;
+the duplicate-send exit was measured as zero. The gate's BLOCK governs despite
+the Opus read's CLEAN verdict and lower grading. The mayor's new gate and read
+on `b0155dc3..NEW` follow READY. The bead remains open for the mayor's rollout
+and observation week; the PR remains draft.
+
+Final round-seven validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
+
+- `go test -json ./...`: **1,488** top-level passes, three skips, zero failures;
+  **13,091** passes including subtests.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  **76** top-level passes, one skip, zero failures; **267** including subtests.
+- The eight new test functions contribute **52** passing tests/subtests;
+  extending the existing transition matrix adds six more, **58** in total.
+- `go vet ./...` and diff checks: exit zero.
+- The 6,000-member fixture retains **774,404** journal bytes with zero bytes
+  added by the attempt. The 1,000-pass refusal fixture records **22** attempts,
+  **one** live sidecar (**385 bytes** maximum), **1,817** journal bytes and
+  **zero** journal growth after the first refusal, including restart.
+- The two red logs show 15 failing leaf cases before their respective fixes
+  (17 failed test/subtest results including the parent tests).
+
+Python is unchanged; round five's 948 passes / two skips remain prior evidence.
+Node/pnpm were not used. Compressed red/final JSONL logs, exact command/exit
+manifests and `round7-test-summary.json` accompany this record. The baseline
+remains 14 reconstructed false alarms / 18 alerted receipts, the initial
+window three minutes, and the late-proof horizon two hours. No live rollout
+or observation-week result is claimed.

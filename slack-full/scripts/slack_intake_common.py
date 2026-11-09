@@ -1171,6 +1171,7 @@ def react_via_adapter(
     message_id: str,
     emoji: str,
     remove: bool = False,
+    session_id: str = "",
 ) -> dict[str, Any]:
     """POST a reaction directly to the local adapter /react endpoint.
 
@@ -1187,6 +1188,8 @@ def react_via_adapter(
         "message_id": message_id,
         "emoji": emoji,
     }
+    if session_id:
+        body["session_id"] = session_id
     if remove:
         body["remove"] = True
     headers = _adapter_csrf_headers()

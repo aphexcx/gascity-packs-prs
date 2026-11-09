@@ -1,0 +1,1104 @@
+{
+  "alerts": [
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-06T07:01:54.20786Z",
+      "provider": "slack",
+      "channel": "C0ASAPRETDK",
+      "thread_ts": "1793944295.340749",
+      "message_ts": "1793948327.314169",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 462,
+      "mode": "full",
+      "receipt_id": "ir-87615-50",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1793948327.314169",
+          "thread_ts": "1793944295.340749",
+          "collapsed": 1,
+          "known": true,
+          "since_ts": "1793944865.580629",
+          "skipped_before_watermark": 8
+        }
+      ],
+      "payload_sha256": "71e68497df5fd0cbd75b5c8a097641b40d9245da79758b46f369bd2e359f64e0",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-06T06:58:49.292377Z",
+      "started_at": "2026-11-06T06:58:49.292377Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-07T10:03:03.731146Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794045587.926179",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 3433,
+      "mode": "full",
+      "receipt_id": "ir-34177-7",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794045587.926179",
+          "thread_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": false
+        }
+      ],
+      "payload_sha256": "f8fb885d2d9445b38a8c4a024beeddaa8234b13fc419b8353323480665e7a0f0",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-07T09:59:58.601071Z",
+      "started_at": "2026-11-07T09:59:58.601071Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-07T10:35:38.770537Z",
+      "provider": "slack",
+      "channel": "C0AMHQ74ZLK",
+      "message_ts": "1794047550.590319",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 1017,
+      "mode": "full",
+      "receipt_id": "ir-34177-10",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794047550.590319",
+          "collapsed": 0,
+          "known": true
+        }
+      ],
+      "payload_sha256": "3dc64ef0153a0846ed85e23d62201c65c138b96b3cee215e174728282e2531bf",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-07T10:32:35.306711Z",
+      "started_at": "2026-11-07T10:32:35.306711Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-07T15:08:48.728783Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794025817.986829",
+      "message_ts": "1794063933.743159",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 1919,
+      "mode": "full",
+      "receipt_id": "ir-34177-14",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794063933.743159",
+          "thread_ts": "1794025817.986829",
+          "oldest_quoted_ts": "1794025817.986829",
+          "newest_quoted_ts": "1794026012.627269",
+          "collapsed": 0,
+          "known": true
+        }
+      ],
+      "payload_sha256": "b2afc3ee8ebe94920e542ef9a69b7c24d6558c8f65c07b1cdf3089ef8a9421cc",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-07T15:05:46.081891Z",
+      "started_at": "2026-11-07T15:05:46.081891Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T17:39:39.424309Z",
+      "provider": "slack",
+      "channel": "C0CACRS0162",
+      "thread_ts": "1794106182.256469",
+      "message_ts": "1794159381.215279",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 1658,
+      "mode": "full",
+      "receipt_id": "ir-34177-39",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794159381.215279",
+          "thread_ts": "1794106182.256469",
+          "oldest_quoted_ts": "1794106283.225169",
+          "newest_quoted_ts": "1794106283.225169",
+          "collapsed": 1,
+          "known": true
+        }
+      ],
+      "payload_sha256": "4b5f5b0c988b216c11069f244f9cc09caa6580d355e46385399d792011612909",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T17:36:34.02987Z",
+      "started_at": "2026-11-08T17:36:34.02987Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T17:40:04.439585Z",
+      "provider": "slack",
+      "channel": "C0CACRS0162",
+      "thread_ts": "1794106182.256469",
+      "message_ts": "1794159412.634159",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 306,
+      "mode": "full",
+      "receipt_id": "ir-34177-40",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794159412.634159",
+          "thread_ts": "1794106182.256469",
+          "collapsed": 1,
+          "known": true,
+          "since_ts": "1794159381.215279",
+          "skipped_before_watermark": 2
+        }
+      ],
+      "payload_sha256": "fae91efb499737cde3f434d60402949c6d78ea3e64ca7910591db0f572c60968",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T17:37:02.826312Z",
+      "started_at": "2026-11-08T17:37:02.826312Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T17:40:19.208713Z",
+      "provider": "slack",
+      "channel": "C0CACRS0162",
+      "thread_ts": "1794106182.256469",
+      "message_ts": "1794159424.547469",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 310,
+      "mode": "full",
+      "receipt_id": "ir-34177-41",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794159424.547469",
+          "thread_ts": "1794106182.256469",
+          "collapsed": 1,
+          "known": true,
+          "since_ts": "1794159412.634159",
+          "skipped_before_watermark": 3
+        }
+      ],
+      "payload_sha256": "4c9c00b9bd984fff506b14ce66e32b4c24180e1f03c9f4875997ee74d1e568df",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T17:37:14.677662Z",
+      "started_at": "2026-11-08T17:37:14.677662Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T18:13:54.289797Z",
+      "provider": "slack",
+      "channel": "C0CACRS0162",
+      "thread_ts": "1794106182.256469",
+      "message_ts": "1794161439.068439",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 2930,
+      "mode": "full",
+      "receipt_id": "ir-34177-42",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794161439.068439",
+          "thread_ts": "1794106182.256469",
+          "oldest_quoted_ts": "1794159511.465839",
+          "newest_quoted_ts": "1794159671.175109",
+          "collapsed": 1,
+          "known": true,
+          "since_ts": "1794159424.547469",
+          "skipped_before_watermark": 4
+        }
+      ],
+      "payload_sha256": "7440d7b6fa60ddc3f9571e3f2e20d6daa37abec76b9c8ed16c04d8d0cebd5421",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T18:10:51.570262Z",
+      "started_at": "2026-11-08T18:10:51.570262Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T20:07:34.216736Z",
+      "provider": "slack",
+      "channel": "C0CACRS0162",
+      "thread_ts": "1794106182.256469",
+      "message_ts": "1794168260.845629",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 2955,
+      "mode": "full",
+      "receipt_id": "ir-34177-53",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794168260.845629",
+          "thread_ts": "1794106182.256469",
+          "collapsed": 0,
+          "known": false,
+          "since_ts": "1794161439.068439",
+          "skipped_before_watermark": 7
+        }
+      ],
+      "payload_sha256": "08ef0db778a0b1fc890eedb5f38e8ff9db0fd6acb46b0ad48ccd20d4bb9933e2",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T20:04:31.430554Z",
+      "started_at": "2026-11-08T20:04:31.430554Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T23:44:49.358326Z",
+      "provider": "slack",
+      "channel": "C0BKF28CYUE",
+      "thread_ts": "1788066815.872599",
+      "message_ts": "1794181291.507919",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 24714,
+      "mode": "full",
+      "receipt_id": "ir-34177-57",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794020550.003300",
+          "thread_ts": "1793936569.019749",
+          "collapsed": 0,
+          "known": false
+        },
+        {
+          "message_ts": "1794181291.507919",
+          "thread_ts": "1788066815.872599",
+          "oldest_quoted_ts": "1788066815.872599",
+          "newest_quoted_ts": "1794143623.205619",
+          "collapsed": 0,
+          "known": true
+        }
+      ],
+      "payload_sha256": "65213d59b4fcc9b901f3dcb27ac2aff9d3c65e38e62f98efe15f7874be87b990",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:41:46.787994Z",
+      "started_at": "2026-11-08T23:41:46.787994Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T23:53:19.341946Z",
+      "provider": "slack",
+      "channel": "C0AMHQ74ZLK",
+      "thread_ts": "1794047550.590319",
+      "message_ts": "1794181804.000289",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 2175,
+      "mode": "full",
+      "receipt_id": "ir-34177-61",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794181804.000289",
+          "thread_ts": "1794047550.590319",
+          "oldest_quoted_ts": "1794047973.194279",
+          "newest_quoted_ts": "1794047973.194279",
+          "collapsed": 1,
+          "known": true
+        }
+      ],
+      "payload_sha256": "b6c315be38b9ce0a7043d0de587f9e01cb36424f338a6882f6a0776a23ef7b8b",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:50:13.817079Z",
+      "started_at": "2026-11-08T23:50:13.817079Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T23:58:54.402231Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182138.935059",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 332,
+      "mode": "full",
+      "receipt_id": "ir-34177-71",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794182138.935059",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182108.411189",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "53622e43e812a0e35d3681386c1f993d0227a23590aecabddeeee13debbab47e",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:55:51.240517Z",
+      "started_at": "2026-11-08T23:55:51.240517Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T23:59:24.415498Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182172.506869",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 373,
+      "mode": "full",
+      "receipt_id": "ir-34177-72",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794182172.506869",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182138.935059",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "a6cd78f227b9ec511d9de8ed4dbb3684cef14e0d5e09a60253a1a6d8b811e33a",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:56:23.236143Z",
+      "started_at": "2026-11-08T23:56:23.236143Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-08T23:59:44.431803Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182191.156699",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 333,
+      "mode": "full",
+      "receipt_id": "ir-34177-73",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794182191.156699",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182172.506869",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "14c2f5ff296357a34909f1c0a9b49fac5715c73a9910d29ecea84713c5c1575c",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:56:40.857145Z",
+      "started_at": "2026-11-08T23:56:40.857145Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-09T00:00:14.500553Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182219.663679",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 353,
+      "mode": "full",
+      "receipt_id": "ir-34177-74",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794182219.663679",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182191.156699",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "4a2f77045fa6d45b2ab9e927aeb127e4e587693aaca65c32bfd0f782970228d5",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:57:09.446326Z",
+      "started_at": "2026-11-08T23:57:09.446326Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-09T00:00:39.49419Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182250.463389",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 702,
+      "mode": "full",
+      "receipt_id": "ir-34177-75",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794182244.593259",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182219.663679",
+          "skipped_before_watermark": 19
+        },
+        {
+          "message_ts": "1794182250.463389",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182244.593259",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "059c1f2e5ea9d3bb88ae3e8b00503326901c0e16a12c6085bac6c2fd93c4b35e",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:57:34.535595Z",
+      "started_at": "2026-11-08T23:57:34.535595Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-09T00:01:04.516485Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182277.390449",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 408,
+      "mode": "full",
+      "receipt_id": "ir-34177-76",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794182277.390449",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182250.463389",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "ccf80650e20426646cecb5df9d66288d8a822de0921ca559e309ddb38d8ad9cf",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:57:59.541755Z",
+      "started_at": "2026-11-08T23:57:59.541755Z",
+      "alerted": true
+    },
+    {
+      "phase": "ingestion_alert",
+      "ts": "2026-11-09T01:51:49.447749Z",
+      "provider": "slack",
+      "channel": "C0AMHQ74ZLK",
+      "thread_ts": "1794047550.590319",
+      "message_ts": "1794188916.796289",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 1336,
+      "mode": "full",
+      "receipt_id": "ir-34177-90",
+      "status": "delivered_unseen",
+      "windows": [
+        {
+          "message_ts": "1794188916.796289",
+          "thread_ts": "1794047550.590319",
+          "oldest_quoted_ts": "1794181894.092999",
+          "newest_quoted_ts": "1794182889.231969",
+          "collapsed": 1,
+          "known": true,
+          "since_ts": "1794181804.000289",
+          "skipped_before_watermark": 2
+        }
+      ],
+      "payload_sha256": "9615b10140479e2b35f4c42dba3bf6eb32b763dbff2d722b574219e13b3b1725",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-09T01:48:46.665782Z",
+      "started_at": "2026-11-09T01:48:46.665782Z",
+      "alerted": true
+    }
+  ],
+  "late": [
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-06T07:01:57.6777Z",
+      "provider": "slack",
+      "channel": "C0ASAPRETDK",
+      "thread_ts": "1793944295.340749",
+      "message_ts": "1793948327.314169",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 462,
+      "mode": "full",
+      "receipt_id": "ir-87615-50",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1793948327.314169",
+          "thread_ts": "1793944295.340749",
+          "collapsed": 1,
+          "known": true,
+          "since_ts": "1793944865.580629",
+          "skipped_before_watermark": 8
+        }
+      ],
+      "payload_sha256": "71e68497df5fd0cbd75b5c8a097641b40d9245da79758b46f369bd2e359f64e0",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-06T06:58:49.292377Z",
+      "started_at": "2026-11-06T06:58:49.292377Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "8315a31f-71da-458b-88f4-d444a3d9ef5a",
+        "timestamp": "2026-11-06T06:58:49.14Z",
+        "kind": "attachment"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-07T10:03:07.359112Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794045587.926179",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 3433,
+      "mode": "full",
+      "receipt_id": "ir-34177-7",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794045587.926179",
+          "thread_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": false
+        }
+      ],
+      "payload_sha256": "f8fb885d2d9445b38a8c4a024beeddaa8234b13fc419b8353323480665e7a0f0",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-07T09:59:58.601071Z",
+      "started_at": "2026-11-07T09:59:58.601071Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "a56fef43-a9c7-4649-9a74-a96342bb8015",
+        "timestamp": "2026-11-07T09:59:58.396Z",
+        "kind": "attachment"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-07T10:40:27.613432Z",
+      "provider": "slack",
+      "channel": "C0AMHQ74ZLK",
+      "message_ts": "1794047550.590319",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 1017,
+      "mode": "full",
+      "receipt_id": "ir-34177-10",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794047550.590319",
+          "collapsed": 0,
+          "known": true
+        }
+      ],
+      "payload_sha256": "3dc64ef0153a0846ed85e23d62201c65c138b96b3cee215e174728282e2531bf",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-07T10:32:35.306711Z",
+      "started_at": "2026-11-07T10:32:35.306711Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "eb7da589-591e-4ca0-80ac-03ce1759ae0a",
+        "timestamp": "2026-11-07T10:40:21.367Z",
+        "kind": "user"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-08T23:49:23.222922Z",
+      "provider": "slack",
+      "channel": "C0BKF28CYUE",
+      "thread_ts": "1788066815.872599",
+      "message_ts": "1794181291.507919",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 24714,
+      "mode": "full",
+      "receipt_id": "ir-34177-57",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794020550.003300",
+          "thread_ts": "1793936569.019749",
+          "collapsed": 0,
+          "known": false
+        },
+        {
+          "message_ts": "1794181291.507919",
+          "thread_ts": "1788066815.872599",
+          "oldest_quoted_ts": "1788066815.872599",
+          "newest_quoted_ts": "1794143623.205619",
+          "collapsed": 0,
+          "known": true
+        }
+      ],
+      "payload_sha256": "65213d59b4fcc9b901f3dcb27ac2aff9d3c65e38e62f98efe15f7874be87b990",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:41:46.787994Z",
+      "started_at": "2026-11-08T23:41:46.787994Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "b7c23125-063a-4997-9daf-95d349812928",
+        "timestamp": "2026-11-08T23:49:16.849Z",
+        "kind": "user"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-09T00:09:28.31875Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182138.935059",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 332,
+      "mode": "full",
+      "receipt_id": "ir-34177-71",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794182138.935059",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182108.411189",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "53622e43e812a0e35d3681386c1f993d0227a23590aecabddeeee13debbab47e",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:55:51.240517Z",
+      "started_at": "2026-11-08T23:55:51.240517Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "139d2d6c-9b58-4333-aa20-3e6a20980133",
+        "timestamp": "2026-11-09T00:09:23.562Z",
+        "kind": "user"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-09T00:09:33.33908Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182172.506869",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 373,
+      "mode": "full",
+      "receipt_id": "ir-34177-72",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794182172.506869",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182138.935059",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "a6cd78f227b9ec511d9de8ed4dbb3684cef14e0d5e09a60253a1a6d8b811e33a",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:56:23.236143Z",
+      "started_at": "2026-11-08T23:56:23.236143Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "95fb4db3-2feb-44eb-a333-ca2b16ecd2d3",
+        "timestamp": "2026-11-09T00:09:32.21Z",
+        "kind": "user"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-09T00:09:38.19503Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182191.156699",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 333,
+      "mode": "full",
+      "receipt_id": "ir-34177-73",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794182191.156699",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182172.506869",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "14c2f5ff296357a34909f1c0a9b49fac5715c73a9910d29ecea84713c5c1575c",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:56:40.857145Z",
+      "started_at": "2026-11-08T23:56:40.857145Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "e0a676b0-aa7d-41d0-9a38-20d34e037786",
+        "timestamp": "2026-11-09T00:09:37.717Z",
+        "kind": "user"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-09T00:09:43.388145Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182219.663679",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 353,
+      "mode": "full",
+      "receipt_id": "ir-34177-74",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794182219.663679",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182191.156699",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "4a2f77045fa6d45b2ab9e927aeb127e4e587693aaca65c32bfd0f782970228d5",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:57:09.446326Z",
+      "started_at": "2026-11-08T23:57:09.446326Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "02620613-9146-46d3-ad6e-ebc94d53c76c",
+        "timestamp": "2026-11-09T00:09:42.116Z",
+        "kind": "user"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-09T00:09:48.272079Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182250.463389",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 702,
+      "mode": "full",
+      "receipt_id": "ir-34177-75",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794182244.593259",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182219.663679",
+          "skipped_before_watermark": 19
+        },
+        {
+          "message_ts": "1794182250.463389",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182244.593259",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "059c1f2e5ea9d3bb88ae3e8b00503326901c0e16a12c6085bac6c2fd93c4b35e",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:57:34.535595Z",
+      "started_at": "2026-11-08T23:57:34.535595Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "6ab10745-a3df-4c65-984c-db14c75f3c74",
+        "timestamp": "2026-11-09T00:09:45.925Z",
+        "kind": "user"
+      },
+      "alerted": true,
+      "late": true
+    },
+    {
+      "phase": "ingestion",
+      "ts": "2026-11-09T00:09:53.258721Z",
+      "provider": "slack",
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "message_ts": "1794182277.390449",
+      "target": "",
+      "target_sessions": [
+        "ci-wisp-k95"
+      ],
+      "handoff_sessions": [
+        "ci-wisp-k95"
+      ],
+      "canonical_session_id": "ci-wisp-k95",
+      "bytes": 408,
+      "mode": "full",
+      "receipt_id": "ir-34177-76",
+      "status": "ingested",
+      "windows": [
+        {
+          "message_ts": "1794182277.390449",
+          "thread_ts": "1794016781.412049",
+          "oldest_quoted_ts": "1794016781.412049",
+          "newest_quoted_ts": "1794016781.412049",
+          "collapsed": 0,
+          "known": true,
+          "since_ts": "1794182250.463389",
+          "skipped_before_watermark": 19
+        }
+      ],
+      "payload_sha256": "ccf80650e20426646cecb5df9d66288d8a822de0921ca559e309ddb38d8ad9cf",
+      "proof_kind": "extmsg",
+      "delivered_at": "2026-11-08T23:57:59.541755Z",
+      "started_at": "2026-11-08T23:57:59.541755Z",
+      "ingestion_evidence": {
+        "session_id": "ci-wisp-k95",
+        "entry_id": "2be9fea6-9f41-47e0-a1e7-24a1aa44fe0a",
+        "timestamp": "2026-11-09T00:09:49.843Z",
+        "kind": "user"
+      },
+      "alerted": true,
+      "late": true
+    }
+  ]
+}

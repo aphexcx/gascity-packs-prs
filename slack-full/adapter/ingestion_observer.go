@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -37,18 +38,22 @@ const ingestionPendingTimingLimit = (receiptFollowUpReposts+1)*receiptFollowUpDe
 // These are session-side facts, not a transport receipt or model claim.
 // No transcript text is persisted in the journal.
 type ingestionEvidence struct {
-	SessionID string    `json:"session_id"`
-	EntryID   string    `json:"entry_id"`
-	Timestamp time.Time `json:"timestamp"`
-	Kind      string    `json:"kind"`
+	SessionID string              `json:"session_id"`
+	EntryID   string              `json:"entry_id"`
+	Timestamp time.Time           `json:"timestamp"`
+	Kind      string              `json:"kind"`
+	MessageTS string              `json:"message_ts,omitempty"`
+	ThreadTS  string              `json:"thread_ts,omitempty"`
+	Members   []ingestionEvidence `json:"members,omitempty"`
 }
 
 type ingestionObserver struct {
-	cfg      config
-	now      func() time.Time
-	fetch    func(context.Context, string) ([]json.RawMessage, error)
-	notify   func(context.Context, inboundJournalRecord) error
-	resolved map[string]string
+	cfg             config
+	now             func() time.Time
+	fetch           func(context.Context, string) ([]json.RawMessage, error)
+	notify          func(context.Context, []inboundJournalRecord) error
+	resolved        map[string]string
+	preparedBatches []ingestionAlertBatch
 }
 
 func ingestionDigest(text string) string {
@@ -114,8 +119,20 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 		now = o.now()
 	}
 	rows, _, _, err := j.ingestionStateLocked(now)
+	o.preparedBatches = nil
+	for _, batch := range j.preparedBatches {
+		o.preparedBatches = append(o.preparedBatches, batch)
+	}
+	sort.Slice(o.preparedBatches, func(i, k int) bool {
+		a, b := o.preparedBatches[i], o.preparedBatches[k]
+		if a.Created.Equal(b.Created) {
+			return a.ID < b.ID
+		}
+		return a.Created.Before(b.Created)
+	})
 	for key, row := range rows {
-		if ingestionSettled(row, now) {
+		needsCompletion := row.Status == "delivered_unseen" && row.Alerted && row.Phase != "ingestion_alert"
+		if ingestionSettled(row, now) && !needsCompletion {
 			delete(rows, key)
 		}
 	}
@@ -123,7 +140,9 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 }
 
 func ingestionSettled(r inboundJournalRecord, now time.Time) bool {
-	return r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted && !now.Before(r.DeliveredAt.Add(ingestionLateWindow)))
+	// Batch completion proves mail acceptance, but retention must preserve
+	// the source until its individual completion row is durable as well.
+	return r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted && r.Phase == "ingestion_alert" && !now.Before(r.DeliveredAt.Add(ingestionLateWindow)))
 }
 
 type ingestionRecordDays struct {
@@ -146,9 +165,28 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 		return nil, nil, time.Time{}, err
 	}
 	sort.Strings(paths)
+	j.sessionActs = make(map[string]ingestionSessionAct)
+	j.sessionActsOverflow = false
+	j.preparedBatches = make(map[string]ingestionAlertBatch)
+	j.coverageDays = make(map[string]string)
+	batchDays := make(map[string]string)
+	attemptBefore := make(map[string]bool)
 	rows := make(map[string]inboundJournalRecord)
 	days := make(map[string]ingestionRecordDays)
 	alerted := make(map[string]bool)
+	coverage := make(map[string][]ingestionAlertCoverage)
+	rememberCoverage := func(members []ingestionAlertCoverage, batchID, sourceDay string) {
+		for _, c := range members {
+			if c.BatchID == "" {
+				c.BatchID = batchID
+			}
+			key := ingestionCoverageKey(c)
+			if sourceDay > j.coverageDays[key] {
+				j.coverageDays[key] = sourceDay
+			}
+			coverage[c.Receipt] = mergeIngestionCoverage(coverage[c.Receipt], []ingestionAlertCoverage{c})
+		}
+	}
 	started := make(map[string]time.Time)
 	held := make(map[string]bool)
 	concluded := make(map[string]bool)
@@ -181,6 +219,76 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 				skipped++
 				continue
 			}
+			if r.SessionAct != nil {
+				j.cacheSessionActLocked(*r.SessionAct)
+				continue
+			}
+			if r.AlertBatch != nil {
+				batch := *r.AlertBatch
+				if r.Phase == "ingestion_batch" {
+					batch.attempted = batch.Version < ingestionAlertAttemptVersion
+					j.preparedBatches[batch.ID] = batch
+					batchDays[batch.ID] = day
+				} else if (r.Phase == "ingestion_batch_attempt" || r.Phase == "ingestion_batch_refused") && batch.Version >= ingestionAlertStateVersion {
+					if saved, ok := j.preparedBatches[batch.ID]; ok {
+						saved.possible = nil
+						for _, index := range batch.Prior {
+							if index < 0 || index >= len(saved.Coverage) {
+								f.Close()
+								return nil, nil, time.Time{}, fmt.Errorf("invalid ingestion attempt coverage reference")
+							}
+							saved.possible = append(saved.possible, saved.Coverage[index])
+						}
+						saved.refused = r.Phase == "ingestion_batch_refused"
+						if !saved.refused {
+							saved.possible = mergeIngestionCoverage(saved.possible, batch.Coverage)
+						}
+						saved.attempted = batch.PriorAll || len(saved.possible) > 0
+						saved.attempt = &ingestionAttemptState{ID: batch.ID, Coverage: batch.Coverage,
+							Refused: saved.refused, Refusals: batch.Refusals, RetryAt: batch.RetryAt}
+						j.preparedBatches[batch.ID] = saved
+					}
+				} else if r.Phase == "ingestion_batch_attempt" {
+					if saved, ok := j.preparedBatches[batch.ID]; ok {
+						attemptBefore[batch.ID] = saved.attempted
+						saved.attempted = true
+						j.preparedBatches[batch.ID] = saved
+					}
+				} else if r.Phase == "ingestion_batch_refused" {
+					if saved, ok := j.preparedBatches[batch.ID]; ok {
+						// Refusing this retry cannot disprove an older attempt.
+						saved.attempted = attemptBefore[batch.ID]
+						j.preparedBatches[batch.ID] = saved
+						delete(attemptBefore, batch.ID)
+					}
+				} else if r.Phase == "ingestion_batch_done" {
+					sourceDay := day
+					if batch.All {
+						batch.Members = j.preparedBatches[batch.ID].Members
+						batch.Coverage = j.preparedBatches[batch.ID].Coverage
+						// All references the plan's bytes. A surviving completion
+						// cannot replace an expiring plan as a coverage source.
+						sourceDay = batchDays[batch.ID]
+					}
+					delete(j.preparedBatches, batch.ID)
+					delete(batchDays, batch.ID)
+					delete(attemptBefore, batch.ID)
+					if batch.Sent || batch.Unconfirmed {
+						if batch.Version >= ingestionAlertCoverageVersion {
+							rememberCoverage(batch.Coverage, batch.ID, sourceDay)
+						} else {
+							for _, member := range batch.Members {
+								alerted[member] = true
+							}
+						}
+					}
+				}
+				continue
+			}
+			if r.Phase == "ingestion_coverage" {
+				rememberCoverage(r.AlertCoverage, "", day)
+				continue
+			}
 			// Old rows lack a complete payload fingerprint. Do not fabricate
 			// acknowledgements or flood the mailbox on the first upgrade.
 			if r.PayloadSHA256 == "" || r.TS.IsZero() {
@@ -198,7 +306,8 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" && len(r.HandoffSessions) == 0 {
 				continue
 			}
-			if r.Alerted {
+			rememberCoverage(r.AlertCoverage, r.AlertBatchID, day)
+			if r.Alerted && r.AlertVersion < ingestionAlertCoverageVersion {
 				alerted[ingestionKey(r, "")] = true
 			}
 			targets := r.TargetSessions
@@ -224,8 +333,9 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 					// restart a handoff's original observation deadline.
 					handoff := earlierIngestionTime(old.DeliveredAt, copy.DeliveredAt)
 					canonical := old.CanonicalSessionID
+					completion := copy.Status == "delivered_unseen" && copy.Alerted && copy.Phase == "ingestion_alert"
 					if old.Status == "ingested" ||
-						(old.Status == "delivered_unseen" && copy.Status != "ingested") ||
+						(old.Status == "delivered_unseen" && copy.Status != "ingested" && !completion) ||
 						(copy.Status != "ingested" && copy.Status != "delivered_unseen" && old.TS.After(copy.TS)) {
 						copy = old
 						recordDays.selected = days[key].selected
@@ -245,10 +355,30 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			return nil, nil, time.Time{}, err
 		}
 	}
+	for id, batch := range j.preparedBatches {
+		if batch.attempt == nil && batch.attempted {
+			// v1/v2 plans and v3 markers cannot identify a narrower attempt.
+			batch.possible = batch.Coverage
+			j.preparedBatches[id] = batch
+		}
+	}
+	if err := j.recoverAlertAttemptsLocked(&remaining); err != nil {
+		return nil, nil, time.Time{}, err
+	}
 	for key, r := range rows {
 		r.StartedAt = started[ingestionKey(r, "")]
+		r.AlertCoverage = mergeIngestionCoverage(r.AlertCoverage, coverage[ingestionKey(r, "")])
+		if len(r.AlertCoverage) > 0 {
+			r.AlertVersion = ingestionAlertCoverageVersion
+			if ingestionAllMessagesAlerted(r) {
+				r.Alerted = true
+			}
+		}
 		if alerted[ingestionKey(r, "")] {
 			r.Alerted = true
+			// Keep the legacy receipt-wide meaning when retention carries
+			// this verdict beyond the original unversioned completion row.
+			r.AlertVersion = 0
 		}
 		rows[key] = r
 	}
@@ -256,6 +386,14 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 	for identity := range held {
 		if !concluded[identity] && (pruningAt.IsZero() || pruningAt.Before(started[identity].Add(ingestionPendingTimingLimit))) {
 			receiptStart = earlierIngestionTime(receiptStart, started[identity])
+		}
+	}
+	// Proof can settle the last observation before the batch completion is
+	// appended. Its plan and attempt state must survive that intervening prune.
+	for id := range j.preparedBatches {
+		day, err := time.Parse("20060102", batchDays[id])
+		if err == nil {
+			receiptStart = earlierIngestionTime(receiptStart, day)
 		}
 	}
 	return rows, days, receiptStart, nil
@@ -279,7 +417,7 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 	// CanonicalSessionID remains pinned, but a new delivery may use a name
 	// reassigned to a different session since the previous pass.
 	o.resolved = make(map[string]string)
-	alerted := make(map[string]bool)
+	batches := make(map[string][]inboundJournalRecord)
 	keys := make([]string, 0, len(rows))
 	for key := range rows {
 		keys = append(keys, key)
@@ -291,6 +429,18 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			return ctx.Err()
 		}
 		r := rows[key]
+		if r.Alerted && r.Status == "delivered_unseen" && r.Phase != "ingestion_alert" {
+			// A durable batch completion may outlive a crash during its
+			// per-member appends. Restore those rows without another mail,
+			// including after the normal late-proof horizon has expired.
+			r.Phase = "ingestion_alert"
+			if err := o.cfg.inboundJournal.append(r); err != nil {
+				return err
+			}
+			if ingestionSettled(r, o.now()) {
+				continue
+			}
+		}
 		session := r.TargetSessions[0]
 		if r.CanonicalSessionID != "" {
 			session = r.CanonicalSessionID
@@ -317,13 +467,14 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 				break
 			}
 		}
-		if proof != nil {
-			if r.CanonicalSessionID != "" {
-				proof.SessionID = r.CanonicalSessionID
+		if proof == nil {
+			proof, _, err = o.cfg.inboundJournal.sessionActProof(r)
+			if err != nil {
+				return err
 			}
-			r.Late = !o.now().Before(r.DeliveredAt.Add(ingestionWindow))
-			r.Status, r.Phase, r.Evidence = "ingested", "ingestion", proof
-			if err := o.cfg.inboundJournal.append(r); err != nil {
+		}
+		if proof != nil {
+			if err := o.markIngested(r, proof); err != nil {
 				return err
 			}
 			continue
@@ -340,23 +491,135 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 				return err
 			}
 		}
-		alertKey := ingestionKey(r, "")
-		if !r.Alerted && !alerted[alertKey] {
-			mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err = o.notify(mailCtx, r)
-			cancel()
+		if !r.Alerted {
+			batches[r.Channel] = append(batches[r.Channel], r)
+		}
+	}
+	channels := make([]string, 0, len(batches))
+	for _, batch := range o.preparedBatches {
+		if _, exists := batches[batch.Channel]; !exists {
+			batches[batch.Channel] = nil
+		}
+	}
+	for channel := range batches {
+		channels = append(channels, channel)
+	}
+	sort.Strings(channels)
+	for _, channel := range channels {
+		var unseen []inboundJournalRecord
+		for _, r := range batches[channel] {
+			// Transcript fetches for other targets may have taken time. Observe
+			// successful acts arriving during this pass before sending mail.
+			proof, missing, err := o.cfg.inboundJournal.sessionActProof(r)
 			if err != nil {
-				failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
+				return err
+			}
+			if proof != nil {
+				if err := o.markIngested(r, proof); err != nil {
+					return err
+				}
 				continue
 			}
+			r.UnseenWindows = make([]injectionWindow, 0, len(missing))
+			for _, w := range missing {
+				if !ingestionMessageAlerted(r, w) {
+					r.UnseenWindows = append(r.UnseenWindows, w)
+				}
+			}
+			if len(r.UnseenWindows) == 0 {
+				if err := o.recordAlertResult(r, nil); err != nil {
+					return err
+				}
+				continue
+			}
+			unseen = append(unseen, r)
 		}
-		alerted[alertKey] = true
-		r.Alerted, r.Phase = true, "ingestion_alert"
-		if err := o.cfg.inboundJournal.append(r); err != nil {
-			return err
+		batch, unseen, err := o.prepareAlertBatch(channel, unseen)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("prepare unseen alert: %w", err))
+			continue
+		}
+		if len(unseen) == 0 {
+			continue
+		}
+		for i := range unseen {
+			unseen[i].AlertBatchID = batch.ID
+		}
+		attempt, err := o.beginAlertAttempt(batch, unseen)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("persist unseen attempt for %s: %w", channel, err))
+			continue
+		}
+		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err = o.notify(mailCtx, ingestionAlertRows(unseen))
+		cancel()
+		if err != nil {
+			if ingestionNotifyDefinitelyRefused(err) {
+				attempt.Refusals = min(attempt.Refusals+1, 7)
+				delay := min(5*time.Second<<uint(attempt.Refusals-1), 5*time.Minute)
+				attempt.RetryAt = o.now().Add(delay).UnixNano()
+				attempt.Refused = true
+				if recordErr := o.cfg.inboundJournal.writeAlertAttempt(attempt); recordErr != nil {
+					err = errors.Join(err, recordErr)
+				}
+			}
+			failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
+			continue
+		}
+		if err := o.finishAlertBatch(batch, unseen, true); err != nil {
+			failures = append(failures, fmt.Errorf("complete unseen alert for %s: %w", channel, err))
+			continue
+		}
+		for _, r := range unseen {
+			if err := o.recordAlertResult(r, ingestionCoverageFor([]inboundJournalRecord{r})); err != nil {
+				return err
+			}
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func (o *ingestionObserver) markIngested(r inboundJournalRecord, proof *ingestionEvidence) error {
+	if r.CanonicalSessionID != "" {
+		proof.SessionID = r.CanonicalSessionID
+	}
+	r.Late = !o.now().Before(r.DeliveredAt.Add(ingestionWindow))
+	r.Status, r.Phase, r.Evidence = "ingested", "ingestion", proof
+	if proof.Kind == "reaction" || proof.Kind == "reply" {
+		r.ProofKind = proof.Kind
+	}
+	return o.cfg.inboundJournal.append(r)
+}
+
+// One line per receipt, even when several fanout targets lack proof. Sorting
+// both receipts and sessions makes the set's mail dedup key deterministic.
+func ingestionAlertRows(rows []inboundJournalRecord) []inboundJournalRecord {
+	unique := make(map[string]inboundJournalRecord)
+	for _, r := range rows {
+		key := ingestionKey(r, "")
+		if old, ok := unique[key]; ok {
+			old.AlertSelection = append(old.AlertSelection, ingestionCoverageFor([]inboundJournalRecord{r})...)
+			old.TargetSessions = append(old.TargetSessions, r.TargetSessions...)
+			old.UnseenWindows = append(ingestionAlertWindows(old), ingestionAlertWindows(r)...)
+			unique[key] = old
+		} else {
+			r.TargetSessions = append([]string(nil), r.TargetSessions...)
+			r.AlertSelection = ingestionCoverageFor([]inboundJournalRecord{r})
+			unique[key] = r
+		}
+	}
+	keys := make([]string, 0, len(unique))
+	for key := range unique {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]inboundJournalRecord, 0, len(keys))
+	for _, key := range keys {
+		r := unique[key]
+		sort.Strings(r.TargetSessions)
+		result = append(result, r)
+	}
+	return result
 }
 
 func (o *ingestionObserver) fetchTranscript(ctx context.Context, session string) ([]json.RawMessage, error) {
@@ -452,13 +715,143 @@ func ingestionRead(ctx context.Context, u string, limit int64) ([]byte, error) {
 	return b, nil
 }
 
-func (o *ingestionObserver) mailUnseen(ctx context.Context, r inboundJournalRecord) error {
-	// Fanout members share one mailbox alert for this Slack receipt.
-	key := ingestionDigest(ingestionKey(r, ""))
-	body := fmt.Sprintf("Slack delivered_unseen: channel=%s message_ts=%s thread_ts=%s receipt=%s session=%s. No complete rendered session payload was found within %s of hand-off %s. Read this Slack thread now. Transport delivery is not ingestion; the dead-letter file is unchanged.", r.Channel, r.MessageTS, r.ThreadTS, r.ReceiptID, r.TargetSessions[0], ingestionWindow, r.DeliveredAt.UTC().Format(time.RFC3339))
-	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", "Slack delivered_unseen", "-m", body)
+func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJournalRecord) error {
+	rows = ingestionAlertRows(rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	key := rows[0].AlertBatchID
+	if key == "" {
+		key = ingestionAlertID(ingestionAlertMembers(rows))
+	}
+	subject, body := ingestionAlertMessage(rows)
+	if len(body) > ingestionAlertBatchBudget {
+		return ingestionNotifyRefusal{fmt.Errorf("ingestion alert exceeds %d-byte mail budget", ingestionAlertBatchBudget)}
+	}
+	if err := ctx.Err(); err != nil {
+		return ingestionNotifyRefusal{err} // No child process was started.
+	}
+	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", subject, "-m", body)
+	cmd.WaitDelay = time.Second
 	// Do not log CLI output, which may contain mailbox or provider data.
-	return cmd.Run()
+	// Output retains bounded stderr on ExitError for refusal classification.
+	_, err := cmd.Output()
+	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		// A completed exit remains authoritative if the context expires
+		// while waiting for inherited pipes. Signal termination is different.
+		if cmd.ProcessState.Success() {
+			return nil
+		}
+		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err() // Cancellation after start leaves acceptance ambiguous.
+	}
+	return err
+}
+
+type ingestionNotifyRefusal struct{ error }
+
+func ingestionNotifyDefinitelyRefused(err error) bool {
+	var refused ingestionNotifyRefusal
+	if errors.As(err, &refused) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true // The connection was never established.
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if exit.ExitCode() < 0 {
+			return false // Signal termination may have followed acceptance.
+		}
+		output := strings.ToLower(string(exit.Stderr))
+		for _, uncertain := range []string{"connection reset", "broken pipe", "eof", "timeout", "timed out", "deadline exceeded"} {
+			if strings.Contains(output, uncertain) {
+				return false // gc may have sent its request before losing the response.
+			}
+		}
+		return true // gc completed and returned a nonzero status.
+	}
+	var start *exec.Error
+	var path *os.PathError
+	return errors.As(err, &start) || errors.As(err, &path)
+}
+
+func ingestionAlertMessage(rows []inboundJournalRecord) (string, string) {
+	subject, body := ingestionAlertMessageWithBudget(rows, 0)
+	if len(body) <= ingestionAlertBatchBudget {
+		return subject, body
+	}
+	return ingestionAlertMessageWithBudget(rows, ingestionAlertBatchBudget)
+}
+
+// The union across unresolved fanout targets, in deterministic message order.
+func ingestionAlertWindows(r inboundJournalRecord) []injectionWindow {
+	windows := r.UnseenWindows
+	if windows == nil {
+		windows = ingestionMessageWindows(r)
+	}
+	unique := make(map[string]injectionWindow)
+	for _, w := range windows {
+		unique[w.MessageTS+"\x00"+w.ThreadTS] = w
+	}
+	keys := make([]string, 0, len(unique))
+	for key := range unique {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]injectionWindow, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, unique[key])
+	}
+	return result
+}
+
+// A zero budget measures a new batch without truncation. Saved legacy batches
+// may be larger; summarize those under their original dedup identity instead
+// of permanently failing the retry or inventing subset identities.
+func ingestionAlertMessageWithBudget(rows []inboundJournalRecord, budget int) (string, string) {
+	if len(rows) == 0 {
+		return "", ""
+	}
+	windows := make([][]injectionWindow, len(rows))
+	count := 0
+	for i, r := range rows {
+		windows[i] = ingestionAlertWindows(r)
+		count += len(windows[i])
+	}
+	subject := fmt.Sprintf("Slack delivered_unseen: %d lines in %s", count, rows[0].Channel)
+	footer := fmt.Sprintf("No rendered input, explicit session reaction, or session reply was found within %s of hand-off. Read these Slack threads now. Transport delivery is not ingestion; the dead-letter file is unchanged.", ingestionWindow)
+	key := rows[0].AlertBatchID
+	if key == "" {
+		key = ingestionAlertID(ingestionAlertMembers(rows))
+	}
+	omitted := func(n int) string {
+		return fmt.Sprintf("%d additional lines omitted from this mail; full receipt membership is in the inbound journal ingestion_batch id=%s.\n", n, key)
+	}
+	var body strings.Builder
+	body.WriteString(subject + "\n")
+	written := 0
+writeLines:
+	for i, r := range rows {
+		// Session fanout can grow after preparation. Only immutable receipt
+		// member coordinates belong in the retry payload; targets stay in the journal.
+		for _, w := range windows[i] {
+			line := fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s\n", w.MessageTS, w.ThreadTS, r.ReceiptID)
+			if budget > 0 && body.Len()+len(line)+len(footer)+len(omitted(count-written)) > budget {
+				body.WriteString(omitted(count - written))
+				break writeLines
+			}
+			body.WriteString(line)
+			written++
+		}
+	}
+	body.WriteString(footer)
+	return subject, body.String()
 }
 
 // Accept actual user input and rendered queued-command attachments only.

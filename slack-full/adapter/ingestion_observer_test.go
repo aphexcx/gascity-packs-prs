@@ -146,7 +146,8 @@ func TestIngestionThreeBusySessionLinesWithQuotedWindows(t *testing.T) {
 		}
 	}
 	mailCount, fetchCount := 0, 0
-	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now }, fetch: func(context.Context, string) ([]json.RawMessage, error) { fetchCount++; return messages, nil }, notify: func(_ context.Context, r inboundJournalRecord) error {
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now }, fetch: func(context.Context, string) ([]json.RawMessage, error) { fetchCount++; return messages, nil }, notify: func(_ context.Context, batch []inboundJournalRecord) error {
+		r := batch[0]
 		mailCount++
 		if r.MessageTS != "100.2" || r.Status != "delivered_unseen" || len(r.Windows) != 1 || r.Windows[0].Oldest != "99.1" {
 			t.Fatalf("wrong alert: %+v", r)
@@ -206,7 +207,7 @@ func TestIngestionAllThreeRenderedAndFanout(t *testing.T) {
 			return nil, errors.New("transcript unavailable")
 		}
 		return messages, nil
-	}, notify: func(context.Context, inboundJournalRecord) error { t.Fatal("mail before deadline"); return nil }}
+	}, notify: func(context.Context, []inboundJournalRecord) error { t.Fatal("mail before deadline"); return nil }}
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +249,7 @@ func TestIngestionFetchChecksIdentityAndMailFailureIsDurable(t *testing.T) {
 	}
 	o.cfg.inboundJournal, o.now = j, func() time.Time { return now }
 	o.fetch = func(context.Context, string) ([]json.RawMessage, error) { return nil, errors.New("offline") }
-	o.notify = func(context.Context, inboundJournalRecord) error { return errors.New("mail offline") }
+	o.notify = func(context.Context, []inboundJournalRecord) error { return errors.New("mail offline") }
 	if err := o.step(context.Background()); err == nil {
 		t.Fatal("mail failure swallowed")
 	}
@@ -261,7 +262,7 @@ func TestIngestionFetchChecksIdentityAndMailFailureIsDurable(t *testing.T) {
 			t.Fatalf("incorrect failure state %+v", row)
 		}
 	}
-	o.notify = func(context.Context, inboundJournalRecord) error { return nil }
+	o.notify = func(context.Context, []inboundJournalRecord) error { return nil }
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +341,7 @@ func TestIngestionReceiptAlertSharedAcrossTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	count := 0
-	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now }, fetch: func(context.Context, string) ([]json.RawMessage, error) { return nil, nil }, notify: func(context.Context, inboundJournalRecord) error { count++; return nil }}
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now }, fetch: func(context.Context, string) ([]json.RawMessage, error) { return nil, nil }, notify: func(context.Context, []inboundJournalRecord) error { count++; return nil }}
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -359,5 +360,135 @@ func TestIngestionReceiptAlertSharedAcrossTargets(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("late member resent alert: %d", count)
+	}
+}
+
+func TestIngestionSessionHand(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, channel, thread, session string
+		offset                               time.Duration
+		remove, rejected, restart, wantSeen  bool
+		unattributed                         bool
+	}{
+		{name: "reaction_after_handoff", kind: "reaction", offset: time.Minute, wantSeen: true},
+		{name: "reaction_before_handoff_tolerance", kind: "reaction", offset: -time.Minute},
+		{name: "reaction_other_channel", kind: "reaction", channel: "C2", offset: time.Minute},
+		{name: "reaction_removed", kind: "reaction", offset: time.Minute, remove: true},
+		{name: "reaction_failed", kind: "reaction", offset: time.Minute, rejected: true},
+		{name: "reaction_restart", kind: "reaction", offset: time.Minute, restart: true, wantSeen: true},
+		{name: "reaction_other_session", kind: "reaction", session: "s2", offset: time.Minute},
+		{name: "reaction_unattributed", kind: "reaction", unattributed: true, offset: time.Minute},
+		{name: "reaction_legacy_restart", kind: "reaction", unattributed: true, offset: time.Minute, restart: true},
+		{name: "reply_in_thread", kind: "reply", offset: time.Minute, wantSeen: true},
+		{name: "reply_to_inbound_own_id", kind: "reply", thread: "100.1", offset: time.Minute, wantSeen: true},
+		{name: "reply_other_thread", kind: "reply", thread: "other", offset: time.Minute},
+		{name: "reply_other_session", kind: "reply", session: "s2", offset: time.Minute},
+		{name: "reply_before_handoff", kind: "reply", offset: -time.Minute},
+		{name: "reply_restart", kind: "reply", offset: time.Minute, restart: true, wantSeen: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			at := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+			now := at
+			j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+			r := ingestionTestRecord("100.1", at, "private inbound text")
+			if err := j.append(r); err != nil {
+				t.Fatal(err)
+			}
+			cfg := config{inboundJournal: j, slackBotToken: "test-token"}
+			now = at.Add(tc.offset)
+			channel, thread, session := r.Channel, r.ThreadTS, "s1"
+			if tc.channel != "" {
+				channel = tc.channel
+			}
+			if tc.thread != "" {
+				thread = tc.thread
+			}
+			if tc.session != "" {
+				session = tc.session
+			}
+			if tc.kind == "reaction" {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					if tc.rejected {
+						_, _ = w.Write([]byte(`{"ok":false,"error":"message_not_found"}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"ok":true}`))
+				}))
+				t.Cleanup(server.Close)
+				oldBase := slackAPIBase
+				slackAPIBase = server.URL
+				t.Cleanup(func() { slackAPIBase = oldBase })
+				if tc.unattributed {
+					session = ""
+				}
+				body, _ := json.Marshal(map[string]any{"conversation": conversationRef{ConversationID: channel},
+					"message_id": r.MessageTS, "emoji": "eyes", "remove": tc.remove, "session_id": session})
+				response := httptest.NewRecorder()
+				handleReact(cfg)(response, httptest.NewRequest(http.MethodPost, "/react", strings.NewReader(string(body))))
+				if response.Code != http.StatusOK {
+					t.Fatalf("react: %d", response.Code)
+				}
+			} else {
+				recordDeliveredPublish(cfg, channel, thread, fmt.Sprintf("%d.000000", now.Unix()), session)
+			}
+			if tc.restart {
+				j = &inboundJournal{dir: j.dir, now: func() time.Time { return now }}
+				cfg.inboundJournal = j
+			}
+			now = at.Add(ingestionWindow + time.Second)
+			alerts := 0
+			o := &ingestionObserver{cfg: cfg, now: func() time.Time { return now },
+				fetch:  func(context.Context, string) ([]json.RawMessage, error) { return nil, nil },
+				notify: func(context.Context, []inboundJournalRecord) error { alerts++; return nil }}
+			if err := o.step(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if (alerts == 0) != tc.wantSeen {
+				t.Fatalf("alerts=%d wantSeen=%t", alerts, tc.wantSeen)
+			}
+			seen := false
+			for _, row := range ingestionJournalRows(t, j) {
+				if row.Status == "ingested" {
+					seen = true
+					if row.ProofKind != tc.kind || row.Evidence == nil || row.Evidence.Kind != tc.kind {
+						t.Fatalf("missing act evidence: %+v", row)
+					}
+				}
+			}
+			if seen != tc.wantSeen {
+				t.Fatalf("ingested=%t want=%t", seen, tc.wantSeen)
+			}
+		})
+	}
+}
+
+func TestIngestionChannelBurstOneMail(t *testing.T) {
+	at := time.Now().UTC()
+	now := at
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+	for i := 1; i <= 3; i++ {
+		if err := j.append(ingestionTestRecord(fmt.Sprintf("100.%d", i), at, "private text")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now = at.Add(ingestionWindow + time.Second)
+	alerts := 0
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
+		fetch:  func(context.Context, string) ([]json.RawMessage, error) { return nil, nil },
+		notify: func(context.Context, []inboundJournalRecord) error { alerts++; return nil }}
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if alerts != 1 {
+		t.Fatalf("one channel burst sent %d mails", alerts)
+	}
+	alerted := 0
+	for _, row := range ingestionJournalRows(t, j) {
+		if row.Phase == "ingestion_alert" && row.Alerted {
+			alerted++
+		}
+	}
+	if alerted != 3 {
+		t.Fatalf("only %d receipts marked alerted", alerted)
 	}
 }

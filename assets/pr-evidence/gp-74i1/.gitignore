@@ -1,0 +1,35 @@
+# Local task context and raw Slack payloads are not PR evidence.
+*-raw.json
+inbox*.json
+cuts-open.json
+bead*.json
+mayor-ruling.txt
+# Compressed test logs and parsed summaries are committed instead.
+*.jsonl
+# Mutable GitHub snapshots and the publication body stay local.
+pr-status.json
+pr-checks.json
+ci-status.json
+pr-body.md
+# Local round-2 routing and mutable status snapshots.
+bead-description.md
+pr-resumed.json
+round2-inbox.json
+gate-r2-pr-*.json
+gate-r2-provenance-before.json
+round2-pr-body.md
+# Round-four mutable claim and GitHub snapshots.
+resume-bead.json
+round4-pr-before.json
+round4-pr-after.json
+round4-pr-body.md
+round4-bead-latest.json
+round4-completion.tsv
+# Round-five mutable GitHub snapshots and publication body.
+round5-pr-before.json
+round5-pr-after.json
+round5-pr-body.md
+# Round-six mutable GitHub snapshots and publication body.
+round6-pr-before.json
+round6-pr-after.json
+round6-pr-body.md

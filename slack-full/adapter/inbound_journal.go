@@ -24,36 +24,48 @@ type injectionWindow struct {
 }
 
 type inboundJournal struct {
-	mu            sync.Mutex
-	dir           string
-	retentionDays int
-	maxBytes      int64
-	now           func() time.Time
+	mu                  sync.Mutex
+	dir                 string
+	retentionDays       int
+	maxBytes            int64
+	now                 func() time.Time
+	sessionActs         map[string]ingestionSessionAct
+	sessionActsOverflow bool
+	preparedBatches     map[string]ingestionAlertBatch
+	coverageDays        map[string]string  // latest self-contained source for each message/target pair
+	attemptWriteHook    func(string) error // crash-boundary injection; nil in production
 }
 
 type inboundJournalRecord struct {
-	Phase              string             `json:"phase"`
-	TS                 time.Time          `json:"ts"`
-	Provider           string             `json:"provider,omitempty"`
-	Channel            string             `json:"channel"`
-	ThreadTS           string             `json:"thread_ts,omitempty"`
-	MessageTS          string             `json:"message_ts"`
-	Target             string             `json:"target"`
-	TargetSessions     []string           `json:"target_sessions,omitempty"`
-	HandoffSessions    []string           `json:"handoff_sessions"`
-	CanonicalSessionID string             `json:"canonical_session_id,omitempty"`
-	Bytes              int                `json:"bytes"`
-	Mode               string             `json:"mode"`
-	ReceiptID          string             `json:"receipt_id,omitempty"`
-	Status             string             `json:"status"`
-	Windows            []injectionWindow  `json:"windows"`
-	PayloadSHA256      string             `json:"payload_sha256,omitempty"`
-	ProofKind          string             `json:"proof_kind,omitempty"`
-	DeliveredAt        time.Time          `json:"delivered_at,omitempty"`
-	StartedAt          time.Time          `json:"started_at,omitempty"`
-	Evidence           *ingestionEvidence `json:"ingestion_evidence,omitempty"`
-	Alerted            bool               `json:"alerted,omitempty"`
-	Late               bool               `json:"late,omitempty"`
+	Phase              string                   `json:"phase"`
+	TS                 time.Time                `json:"ts"`
+	Provider           string                   `json:"provider,omitempty"`
+	Channel            string                   `json:"channel"`
+	ThreadTS           string                   `json:"thread_ts,omitempty"`
+	MessageTS          string                   `json:"message_ts"`
+	Target             string                   `json:"target"`
+	TargetSessions     []string                 `json:"target_sessions,omitempty"`
+	HandoffSessions    []string                 `json:"handoff_sessions"`
+	CanonicalSessionID string                   `json:"canonical_session_id,omitempty"`
+	Bytes              int                      `json:"bytes"`
+	Mode               string                   `json:"mode"`
+	ReceiptID          string                   `json:"receipt_id,omitempty"`
+	Status             string                   `json:"status"`
+	Windows            []injectionWindow        `json:"windows"`
+	UnseenWindows      []injectionWindow        `json:"-"` // recomputed for mail; never replaces durable membership
+	PayloadSHA256      string                   `json:"payload_sha256,omitempty"`
+	ProofKind          string                   `json:"proof_kind,omitempty"`
+	DeliveredAt        time.Time                `json:"delivered_at,omitempty"`
+	StartedAt          time.Time                `json:"started_at,omitempty"`
+	Evidence           *ingestionEvidence       `json:"ingestion_evidence,omitempty"`
+	Alerted            bool                     `json:"alerted,omitempty"`
+	Late               bool                     `json:"late,omitempty"`
+	SessionAct         *ingestionSessionAct     `json:"session_act,omitempty"`
+	AlertBatch         *ingestionAlertBatch     `json:"alert_batch,omitempty"`
+	AlertBatchID       string                   `json:"alert_batch_id,omitempty"`
+	AlertVersion       int                      `json:"alert_version,omitempty"`
+	AlertCoverage      []ingestionAlertCoverage `json:"alert_coverage,omitempty"`
+	AlertSelection     []ingestionAlertCoverage `json:"-"` // exact message/target pairs in this mail
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {
@@ -131,6 +143,9 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 		now = j.now().UTC()
 	}
 	r.TS = now
+	if len(r.TargetSessions) > 0 {
+		r.AlertCoverage = ingestionTargetCoverage(r)
+	}
 	data, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -188,6 +203,29 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	if closeErr != nil {
 		return closeErr
 	}
+	if r.SessionAct != nil {
+		j.cacheSessionActLocked(*r.SessionAct)
+	}
+	if r.AlertBatch != nil {
+		switch r.Phase {
+		case "ingestion_batch":
+			if j.preparedBatches == nil {
+				j.preparedBatches = make(map[string]ingestionAlertBatch)
+			}
+			j.preparedBatches[r.AlertBatch.ID] = *r.AlertBatch
+		case "ingestion_batch_done":
+			delete(j.preparedBatches, r.AlertBatch.ID)
+		}
+	}
+	return j.pruneLocked(now, path)
+}
+
+// The caller holds j.mu. Keep pruning separate from the incoming append so
+// repeated retention passes can be checked for writes of their own.
+func (j *inboundJournal) pruneLocked(now time.Time, path string) error {
+	if err := j.pruneAlertAttemptFilesLocked(true); err != nil {
+		return err
+	}
 	days := j.retentionDays
 	if days <= 0 {
 		days = 7
@@ -229,22 +267,56 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 		if ingestionSettled(observation, now) {
 			continue
 		}
-		start := earlierIngestionTime(observation.StartedAt, observation.DeliveredAt)
+		// Session acts allow 30 seconds of clock skew before handoff. Keep
+		// that preceding day too when the tolerance crosses midnight.
+		start := earlierIngestionTime(observation.StartedAt, observation.DeliveredAt).Add(-30 * time.Second)
 		if day := start.UTC().Format("20060102"); day < cutoff {
 			cutoff = day
 		}
+	}
+	var deletions []string
+	deletedDays := make(map[string]bool)
+	for _, name := range expired {
+		if name[:8] < cutoff {
+			deletions = append(deletions, name)
+			deletedDays[name[:8]] = true
+		}
+	}
+	if len(deletions) == 0 {
+		return nil // Protected segments must not generate repeated carry records.
 	}
 	// A settled member's evidence may be in yesterday's file while today's
 	// transport conclusion still names that member. Copy only those verdicts
 	// that would otherwise be deleted before their newer rows. Preserve all
 	// timestamps, proof and alert state; fsync before removing any source.
 	var carry []byte
+	var carryCoverage []ingestionAlertCoverage
 	for key, observation := range observations {
 		d := recordDays[key]
+		// Carry only attribution whose last self-contained source is actually
+		// being deleted. A surviving pair or prior carry needs no new write.
+		if d.latest >= cutoff {
+			for _, c := range observation.AlertCoverage {
+				if deletedDays[j.coverageDays[ingestionCoverageKey(c)]] {
+					carryCoverage = mergeIngestionCoverage(carryCoverage, []ingestionAlertCoverage{c})
+				}
+			}
+		}
 		if !ingestionSettled(observation, now) || d.selected >= cutoff || d.latest < cutoff {
 			continue
 		}
+		// Carry shared attribution once, separately from the individual
+		// target verdicts, before deleting the original batch's source day.
+		observation.AlertCoverage = ingestionTargetCoverage(observation)
 		b, err := json.Marshal(observation)
+		if err != nil {
+			return err
+		}
+		carry = append(append(carry, b...), '\n')
+	}
+	for _, c := range carryCoverage {
+		// One pair per record also bounds a carry across many old batches.
+		b, err := json.Marshal(inboundJournalRecord{Phase: "ingestion_coverage", TS: now, AlertCoverage: []ingestionAlertCoverage{c}})
 		if err != nil {
 			return err
 		}
@@ -267,11 +339,9 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 			return closeErr
 		}
 	}
-	for _, name := range expired {
-		if name[:8] < cutoff {
-			if err := os.Remove(filepath.Join(j.dir, name)); err != nil {
-				return err
-			}
+	for _, name := range deletions {
+		if err := os.Remove(filepath.Join(j.dir, name)); err != nil {
+			return err
 		}
 	}
 	return nil
