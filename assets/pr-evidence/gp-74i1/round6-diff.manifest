@@ -1,0 +1,2 @@
+git diff --check	0
+git diff --cached --check	0

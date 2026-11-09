@@ -121,7 +121,10 @@ deliveries also log their registry label.
   proof. Large fanout receipts use bounded plans and target rows retain only
   their own attribution. Retention copies only coverage whose last source is
   actually deleted, so protected segments cannot cause repeated journal growth.
-  Durable attempt records distinguish definite refusals from ambiguous sends.
+  Durable attempt state records exact sent pairs, distinguishes definite
+  refusals from ambiguous sends, and replaces one bounded row per plan.
+  Refusals back off from five seconds to five minutes across restarts;
+  completed mail commands wait at most one second for inherited output pipes.
   The three-minute
   initial deadline and two-hour late-proof horizon remain unchanged (gp-74i1).
 

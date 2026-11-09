@@ -94,7 +94,7 @@ func TestIngestionNotifyAcceptanceRecovery(t *testing.T) {
 						break
 					}
 				}
-				now = now.Add(time.Second)
+				now = now.Add(5 * time.Second) // Round-six ruling: first eligible refusal retry.
 				for i, w := range r.Windows {
 					if (proof == "A" && i == 0) || proof == "both" {
 						recordDeliveredPublish(config{inboundJournal: j}, r.Channel, w.ThreadTS, fmt.Sprintf("%d.000000", now.Unix()), "s1")
@@ -109,6 +109,7 @@ func TestIngestionNotifyAcceptanceRecovery(t *testing.T) {
 					if err := o.step(context.Background()); err == nil {
 						t.Fatal("expected refusal of the ambiguous attempt's retry")
 					}
+					now = now.Add(5 * time.Second) // The refused retry also backs off.
 					restart()
 				}
 				if err := o.step(context.Background()); err != nil {

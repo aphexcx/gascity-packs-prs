@@ -85,19 +85,27 @@ Any completion retaining pairs beyond those confirmed by this pass is marked
 `unconfirmed`, including a successful retry of only a subset. When every member
 has proof, `sent` stays false. This retains ambiguous acceptance; it does not
 claim that the original attempt was confirmed.
-New plans record `ingestion_batch_attempt` immediately before notification.
-Retries reuse an outstanding ambiguous attempt; a refusal of that retry cannot
-clear the earlier uncertainty.
-A plan without an attempt, or an attempt definitely refused by gc, retries as
-fresh delivery of its still-unseen members and retains only coverage actually
-sent. Proven but never mailed members remain eligible if a later target lacks
-proof. Nonzero gc replies and failures to start or establish a connection are
+New attempts record the exact message/target coverage immediately before
+notification. A changed retry subset replaces that record before sending;
+an identical pending attempt can reuse its durable marker. Recovery keeps only
+the union of attempts not definitely refused. A refused A+B plan followed by
+an ambiguous B-only retry keeps B, leaving never-mailed A eligible for a later
+target without proof. Refusing a retry cannot erase an earlier ambiguous send.
+Nonzero gc replies and failures to start or establish a connection are
 definite refusals; timeouts after start, signal termination and connection loss
 after sending remain ambiguous. A refusal of a later retry cannot erase an
 earlier ambiguous attempt. Older plans without the attempt-record version
 retain their conservative ambiguous interpretation. The
 `alerted` flag in versioned rows settles that target's alert decision, never other
 messages or targets. Only legacy unversioned rows retain receipt-wide coverage.
+One state row per plan is atomically replaced in its journal segment, with
+reserved padding that prevents byte growth during repeated refusals. Exact
+current pairs and references to previous ambiguous pairs survive replacement.
+The replacement and directory are synced before notification. Definite refusals
+retry after 5, 10, 20, 40, 80 and 160 seconds, then every five minutes; the
+counter and next eligible time survive restart. Recovery sends on the first
+eligible retry pass. A gc exit is authoritative even when a descendant holds
+its output pipes: the additional wait is limited to one second.
 New batches are limited to a 64 KiB journal-record/mail-body budget; larger
 backlogs drain over successive passes. This stays below both the journal
 reader's 1 MiB line ceiling and command argument limits. A receipt with too many
@@ -108,6 +116,8 @@ coverage in separate `ingestion_coverage` rows only when its last durable source
 will actually be deleted. A pair already present in a surviving segment is
 not copied, and a prune that deletes nothing writes nothing. Coverage referenced
 by an `All` completion still depends on the saved plan's segment.
+Source-day tracking uses the message/target pair without its batch attribution,
+so a surviving copy under another batch prevents an unnecessary carry.
 A single pair that cannot fit produces a visible retryable error without blocking
 other channels.
 An oversized batch saved by an older adapter retries under its original dedup

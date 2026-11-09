@@ -286,8 +286,10 @@ target present during all-proven completion, and coverage disappearing after
 only the newer target survived retention. Splitting exact pairs was chosen over
 eliding target identities so recovery retains the same attribution contract.
 Coverage from an ambiguous attempt is kept, not proven by the timeout. Round
-five marks it unconfirmed whenever the retry does not confirm every kept pair;
-coverage from a definite refusal is not kept. The initial
+five marks it unconfirmed whenever the retry does not confirm every kept pair.
+Round six narrows that coverage to the exact union of attempts not definitely
+refused: a refused A+B plan followed by an ambiguous B-only retry keeps only B,
+so A remains eligible for a later unread target. The initial
 three-minute window, two-hour horizon, and rollout gate are unchanged. The
 mayor's Codex gate and Opus delta read on this head follow READY.
 
@@ -389,3 +391,84 @@ An initial full Go run exposed an extra retry-attempt write shifting an existing
 completion crash test. Reusing the outstanding ambiguous marker fixed it; the
 unchanged round-three/four tests and the final full/race runs are green. The
 initial failure is retained in the city record, separate from the final logs.
+
+## Mayor gate round 6: exact attempts and bounded refusal state
+
+The round-five gate and Opus read found that a plan-level attempt marker could
+hide A after an A+B refusal followed by an ambiguous B-only retry. They also
+found that refusal markers grew forever while unresolved deliveries pinned
+retention. The new regressions reproduced both on `b363ad0e`: all four
+subset/restart cases hid A; 1,000 passes made 2,000 attempt/refusal rows and
+821,178 extra bytes. Lingering pipe children also delayed both successful and
+refused gc exits for more than four seconds, losing the exit classification.
+
+Version-four attempts store the exact current message/target pairs plus
+references to earlier ambiguous pairs in the immutable plan. Replay retains
+only their union, excluding the current attempt when it is definitely refused.
+Every changed retry subset gets a durable record before notification. An
+identical already-pending send can reuse that record; a later refusal retains
+the previous ambiguity. Completion uses that union plus the pairs confirmed
+this pass, with `unconfirmed` whenever some kept pairs remain uncertain.
+
+One current state row per plan replaces its predecessor inside the owning
+journal segment, including after segment rotation. Under the journal mutex,
+the writer prepares a temporary replacement, syncs and closes it, atomically
+renames it and syncs the directory. Notification runs only after that boundary.
+Reserved whitespace keeps the row's byte size constant across refusal updates;
+the plan budget includes the largest state reservation. This trades a segment
+rewrite per eligible attempt/refusal for bounded replay storage. The raw state
+holds the exact current pairs; compact references avoid copying prior pairs
+twice. Legacy plans without pair arrays reserve from their first exact attempt.
+Older ambiguous plans retain their conservative interpretation.
+
+The refusal counter caps at seven and persists the next eligible timestamp.
+Delays are 5, 10, 20, 40, 80 and 160 seconds, then five minutes. The 1,000-pass
+test observes 22 attempts, one live state row and zero byte growth after its
+first refusal, including restart halfway through and protected retention.
+It proves no send before eligibility and exactly one on the first eligible
+pass after service recovery. The mayor explicitly approved this interpretation
+of recovery: the client does not probe service availability during backoff.
+
+The process boundary sets `cmd.WaitDelay` to one second. A successful gc exit
+with an inherited pipe still open remains success; a nonzero completed exit
+remains a refusal. Direct tests exercise both cases and cancellation after
+process start. A v2 plan reconstructed from the journal remains ambiguous.
+Source-day lookup now uses the pair without BatchID; a red-first test confirms
+that an already surviving pair under another batch is not copied again.
+
+Self-review injected errors before temporary-file creation and after write,
+file sync, close, rename and directory sync for the first attempt, a changed
+subset and a subset refusal: 18 boundaries, with segment rotation and restart.
+Each preserves readable state and recoverable coverage, and no notification
+runs after a failed attempt-state write. Another red-first check found that
+legacy receipt-only plans needed a reservation from their actual attempt;
+that compatibility fix is included. Legacy v0/v2 retry controls pass.
+
+The mayor's two timing rulings authorize only clock advances in these existing
+fixtures; their assertions are unchanged:
+
+- `TestIngestionNotifyAcceptanceRecovery`.
+- `TestIngestionBatchRetryPayloadCannotGrowWithFanout`.
+- `TestIngestionMailExecDeduplicatesFanoutAndRetriesFailure`.
+
+All round-six addendum implementation items are done: exact attempt coverage
+and corrected wording, bounded state/backoff, pipe-wait bound, legacy and real
+process-boundary tests, and pair-keyed source lookup. Notes 4, 5 and 6 remain
+accepted unchanged. The baseline, three-minute window, two-hour horizon and
+rollout restrictions remain unchanged. The mayor's gate and Opus delta read
+on `b363ad0e..NEW` follow READY; this lane does not close the bead.
+
+Final validation on Go 1.27.3 darwin/arm64, from `slack-full/adapter`:
+
+- `go test -json ./...`: 1,479 top-level passed, 3 skipped, zero failed;
+  13,030 passes including subtests. The new file contributes 34 passing
+  tests/subtests.
+- `go test -race -json -run '^(TestIngestion|TestInboundJournal)' ./...`:
+  67 top-level passed, 1 skipped, zero failed; 206 passes including subtests.
+- `go vet ./...` and diff checks: exit zero.
+
+Python is unchanged in this delta; round five's 948 passes / 2 skips are
+retained rather than reported as a new run. Node/pnpm were not used.
+Compressed red/final logs, command/exit manifests and `round6-test-summary.json`
+accompany this record. Intermediate ingestion failures from the two remaining
+fixture clocks are retained in the city record.

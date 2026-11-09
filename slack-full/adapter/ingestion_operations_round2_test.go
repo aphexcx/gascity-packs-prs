@@ -54,6 +54,7 @@ func TestIngestionMailExecDeduplicatesFanoutAndRetriesFailure(t *testing.T) {
 		}
 	}
 	t.Setenv("INGESTION_TEST_EXIT", "0")
+	now = now.Add(5 * time.Second) // Round-six ruling: first eligible refusal retry.
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}

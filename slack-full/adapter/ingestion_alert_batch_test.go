@@ -154,6 +154,7 @@ func TestIngestionBatchRetryPayloadCannotGrowWithFanout(t *testing.T) {
 	writeRows(fanout)
 	o.cfg.inboundJournal = &inboundJournal{dir: j.dir, now: func() time.Time { return now }}
 	t.Setenv("INGESTION_TEST_EXIT", "0")
+	now = now.Add(5 * time.Second) // Round-six ruling: first eligible refusal retry.
 	if err := o.step(context.Background()); err != nil {
 		t.Fatalf("fanout permanently blocked retry: %v", err)
 	}

@@ -32,7 +32,8 @@ type inboundJournal struct {
 	sessionActs         map[string]ingestionSessionAct
 	sessionActsOverflow bool
 	preparedBatches     map[string]ingestionAlertBatch
-	coverageDays        map[ingestionAlertCoverage]string // latest self-contained source for each attribution
+	coverageDays        map[string]string  // latest self-contained source for each message/target pair
+	attemptWriteHook    func(string) error // crash-boundary injection; nil in production
 }
 
 type inboundJournalRecord struct {
@@ -282,7 +283,7 @@ func (j *inboundJournal) pruneLocked(now time.Time, path string) error {
 		// being deleted. A surviving pair or prior carry needs no new write.
 		if d.latest >= cutoff {
 			for _, c := range observation.AlertCoverage {
-				if deletedDays[j.coverageDays[c]] {
+				if deletedDays[j.coverageDays[ingestionCoverageKey(c)]] {
 					carryCoverage = mergeIngestionCoverage(carryCoverage, []ingestionAlertCoverage{c})
 				}
 			}

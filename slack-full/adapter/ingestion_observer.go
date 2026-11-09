@@ -168,7 +168,7 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 	j.sessionActs = make(map[string]ingestionSessionAct)
 	j.sessionActsOverflow = false
 	j.preparedBatches = make(map[string]ingestionAlertBatch)
-	j.coverageDays = make(map[ingestionAlertCoverage]string)
+	j.coverageDays = make(map[string]string)
 	batchDays := make(map[string]string)
 	attemptBefore := make(map[string]bool)
 	rows := make(map[string]inboundJournalRecord)
@@ -180,8 +180,9 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			if c.BatchID == "" {
 				c.BatchID = batchID
 			}
-			if sourceDay > j.coverageDays[c] {
-				j.coverageDays[c] = sourceDay
+			key := ingestionCoverageKey(c)
+			if sourceDay > j.coverageDays[key] {
+				j.coverageDays[key] = sourceDay
 			}
 			coverage[c.Receipt] = mergeIngestionCoverage(coverage[c.Receipt], []ingestionAlertCoverage{c})
 		}
@@ -228,6 +229,24 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 					batch.attempted = batch.Version < ingestionAlertAttemptVersion
 					j.preparedBatches[batch.ID] = batch
 					batchDays[batch.ID] = day
+				} else if (r.Phase == "ingestion_batch_attempt" || r.Phase == "ingestion_batch_refused") && batch.Version >= ingestionAlertStateVersion {
+					if saved, ok := j.preparedBatches[batch.ID]; ok {
+						saved.possible = nil
+						for _, index := range batch.Prior {
+							if index < 0 || index >= len(saved.Coverage) {
+								f.Close()
+								return nil, nil, time.Time{}, fmt.Errorf("invalid ingestion attempt coverage reference")
+							}
+							saved.possible = append(saved.possible, saved.Coverage[index])
+						}
+						saved.refused = r.Phase == "ingestion_batch_refused"
+						if !saved.refused {
+							saved.possible = mergeIngestionCoverage(saved.possible, batch.Coverage)
+						}
+						saved.attempted = batch.PriorAll || len(saved.possible) > 0
+						saved.attempt = &batch
+						j.preparedBatches[batch.ID] = saved
+					}
 				} else if r.Phase == "ingestion_batch_attempt" {
 					if saved, ok := j.preparedBatches[batch.ID]; ok {
 						attemptBefore[batch.ID] = saved.attempted
@@ -333,6 +352,13 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 		f.Close()
 		if err != nil {
 			return nil, nil, time.Time{}, err
+		}
+	}
+	for id, batch := range j.preparedBatches {
+		if batch.attempt == nil && batch.attempted {
+			// v1/v2 plans and v3 markers cannot identify a narrower attempt.
+			batch.possible = batch.Coverage
+			j.preparedBatches[id] = batch
 		}
 	}
 	for key, r := range rows {
@@ -507,20 +533,19 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 		for i := range unseen {
 			unseen[i].AlertBatchID = batch.ID
 		}
-		attempt := ingestionAlertBatch{ID: batch.ID, Version: batch.Version}
-		if !batch.recovered {
-			if err := o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_attempt", AlertBatch: &attempt}); err != nil {
-				return err
-			}
+		attempt, err := o.beginAlertAttempt(batch, unseen)
+		if err != nil {
+			return err
 		}
-		// An outstanding ambiguous attempt already fences recovery. Reuse it
-		// on retries: no additional marker can make that acceptance more certain.
 		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err = o.notify(mailCtx, ingestionAlertRows(unseen))
 		cancel()
 		if err != nil {
-			if !batch.recovered && ingestionNotifyDefinitelyRefused(err) {
-				if recordErr := o.cfg.inboundJournal.append(inboundJournalRecord{Phase: "ingestion_batch_refused", AlertBatch: &attempt}); recordErr != nil {
+			if ingestionNotifyDefinitelyRefused(err) {
+				attempt.Refusals = min(attempt.Refusals+1, 7)
+				delay := min(5*time.Second<<uint(attempt.Refusals-1), 5*time.Minute)
+				attempt.RetryAt = o.now().Add(delay).UnixNano()
+				if recordErr := o.cfg.inboundJournal.writeAlertAttempt(batch, attempt, "ingestion_batch_refused"); recordErr != nil {
 					return errors.Join(err, recordErr)
 				}
 			}
@@ -692,9 +717,13 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 		return ingestionNotifyRefusal{err} // No child process was started.
 	}
 	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", subject, "-m", body)
+	cmd.WaitDelay = time.Second
 	// Do not log CLI output, which may contain mailbox or provider data.
 	// Output retains bounded stderr on ExitError for refusal classification.
 	_, err := cmd.Output()
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		return nil // The successful gc exit is authoritative; a descendant held a pipe.
+	}
 	if ctx.Err() != nil {
 		return ctx.Err() // Cancellation after start leaves acceptance ambiguous.
 	}

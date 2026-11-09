@@ -1,0 +1,1 @@
+go test -json -run '^TestIngestionCoverageSourceIgnoresBatchAttribution$' ./...	1
