@@ -7,8 +7,8 @@ enqueue or rendered attachment; three neighboring deliveries had both.
 
 The adapter now fingerprints each journaled payload without storing its text.
 A background observer checks gc's raw session transcript every five seconds,
-sharing one bounded fetch across each target's pending receipts. `ingested`
-requires a complete matching
+sharing one bounded fetch across each target's pending receipts. Rendered-input
+proof requires a complete matching
 payload, its provider/channel/message/thread coordinates for extmsg envelopes, and a
 timestamp within the delivery window. The evidence records the target session,
 transcript entry UUID (or SHA-256 of the compact native Codex record), timestamp
@@ -23,6 +23,24 @@ quoted message timestamps do not count. Alias and mention-only reminders are
 matched as complete reminder blocks. A coalesced receipt retains all its
 original quoted-context windows.
 
+## What counts as seen
+
+A complete rendered input, a successful explicit `/react` add on the inbound
+message, or a confirmed session `/publish` reply into its thread can mark the
+receipt `ingested`. Reply proof must belong to the target session; a top-level
+inbound uses its own message timestamp as the thread root. Explicit reactions
+are bot actions through `/react` (that endpoint does not carry caller session
+identity). Company admission eyes and automatic busy reactions do not count.
+Failed reactions, reaction removals, and replies to another thread do not count.
+
+The adapter journals successful acts with their source, channel, message/thread,
+emoji or session, and timestamp, never their text. Reaction time is the adapter
+clock; reply time is Slack's original publish timestamp, including on a later
+idempotent replay. Acts must fall between hand-off minus the existing 30-second
+clock tolerance and the two-hour proof horizon. Restart reconstructs the facts.
+The in-memory act cache holds at most 4,096 entries; on overflow, a bounded
+journal lookup prevents eviction from turning a seen line into an alarm.
+
 The journal preserves each member's handoff eligibility. `pending` members
 with complete byte counts are monitored from their initial receipt, including mixed fanouts;
 complete recovery handoffs enroll even when no further receipt poll is needed.
@@ -34,11 +52,14 @@ that delivery. New deliveries resolve names afresh. Repeated receipt polls
 cannot undo `ingested`, move the first handoff's deadline, or exclude input
 that arrived between initial acceptance and a delayed conclusion.
 
-After three minutes without proof, the journal appends `delivered_unseen` and
-the observer sends `gc mail send mayor --dedup ...`, naming the channel,
-message timestamp, thread, receipt and missing target. A successful alert is
+After checking rendered input and session acts, three minutes without proof
+appends `delivered_unseen`. Each observer pass sends at most one
+`gc mail send mayor --dedup ...` per channel, with a count in the subject and
+each message timestamp, thread, receipt and missing target in the body.
+Fanout members share one receipt line; the dedup key covers the sorted receipt
+set. Each receipt's successful alert is
 recorded durably; restart reconstructs pending work and completed alerts from
-the journal. Fanout targets share a mailbox dedup key. Failed mail is retried
+the journal. Failed mail is retried
 on the next pass and logged; it does not prevent other receipts being checked.
 The mail command and each target's transcript fetch have ten-second limits.
 The normal alert latency is the three-minute window plus one polling pass.
@@ -50,12 +71,16 @@ from handoff (90 minutes plus 30 minutes of margin). Matching input rendered
 within that horizon appends `status=ingested`, `late=true` with its evidence;
 this supersedes the earlier unseen verdict without retracting or repeating the
 alert. After the horizon an alerted row stops polling. Failed alerts remain
-retryable. The three-minute initial alert deadline is unchanged.
+retryable. The initial deadline remains three minutes, after checking rendered
+input, explicit reactions and session replies. November 9's seven conditional
+late samples had a 13m32.321s p95, but six came from one turn; that does not
+establish routine handoff delay or justify increasing the deadline.
 
 There is no automatic whole-message resend: a draft may still be in the
 harness, and resending could duplicate a founder instruction. The mayor reads
 an unseen thread manually. A missing transcript or unsupported provider
-format also produces `delivered_unseen`; absence of proof is not a claim that
+format without qualifying session acts also produces `delivered_unseen`;
+absence of proof is not a claim that
 the message was definitely lost. The existing dead-letter file continues to
 represent failed transport handoffs.
 
@@ -70,7 +95,8 @@ It uses
 response identity/format, and follows `before` cursors across compaction
 boundaries. All pages together are capped at 32 MiB and 64 requests; missing
 or repeated cursors fail visibly. Transcript text is never logged. It reads
-at most 64 MiB of retained journal segments per pass, under the journal lock.
+at most 64 MiB of retained segments per journal scan, under the journal lock
+(including a fallback lookup when the act cache overflows).
 Malformed JSON lines are skipped with a counted warning that contains no
 journal contents. Appends isolate an unterminated final fragment so it cannot
 swallow the next complete record. Read errors and over-budget journals fail

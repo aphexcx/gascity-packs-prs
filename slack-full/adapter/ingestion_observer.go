@@ -47,7 +47,7 @@ type ingestionObserver struct {
 	cfg      config
 	now      func() time.Time
 	fetch    func(context.Context, string) ([]json.RawMessage, error)
-	notify   func(context.Context, inboundJournalRecord) error
+	notify   func(context.Context, []inboundJournalRecord) error
 	resolved map[string]string
 }
 
@@ -146,6 +146,8 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 		return nil, nil, time.Time{}, err
 	}
 	sort.Strings(paths)
+	j.sessionActs = make(map[string]ingestionSessionAct)
+	j.sessionActsOverflow = false
 	rows := make(map[string]inboundJournalRecord)
 	days := make(map[string]ingestionRecordDays)
 	alerted := make(map[string]bool)
@@ -179,6 +181,10 @@ func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]i
 			var r inboundJournalRecord
 			if err := json.Unmarshal(s.Bytes(), &r); err != nil {
 				skipped++
+				continue
+			}
+			if r.SessionAct != nil {
+				j.cacheSessionActLocked(*r.SessionAct)
 				continue
 			}
 			// Old rows lack a complete payload fingerprint. Do not fabricate
@@ -279,7 +285,7 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 	// CanonicalSessionID remains pinned, but a new delivery may use a name
 	// reassigned to a different session since the previous pass.
 	o.resolved = make(map[string]string)
-	alerted := make(map[string]bool)
+	batches := make(map[string][]inboundJournalRecord)
 	keys := make([]string, 0, len(rows))
 	for key := range rows {
 		keys = append(keys, key)
@@ -317,13 +323,14 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 				break
 			}
 		}
-		if proof != nil {
-			if r.CanonicalSessionID != "" {
-				proof.SessionID = r.CanonicalSessionID
+		if proof == nil {
+			proof, err = o.cfg.inboundJournal.sessionActProof(r)
+			if err != nil {
+				return err
 			}
-			r.Late = !o.now().Before(r.DeliveredAt.Add(ingestionWindow))
-			r.Status, r.Phase, r.Evidence = "ingested", "ingestion", proof
-			if err := o.cfg.inboundJournal.append(r); err != nil {
+		}
+		if proof != nil {
+			if err := o.markIngested(r, proof); err != nil {
 				return err
 			}
 			continue
@@ -340,23 +347,90 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 				return err
 			}
 		}
-		alertKey := ingestionKey(r, "")
-		if !r.Alerted && !alerted[alertKey] {
-			mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err = o.notify(mailCtx, r)
-			cancel()
+		if !r.Alerted {
+			batches[r.Channel] = append(batches[r.Channel], r)
+		}
+	}
+	channels := make([]string, 0, len(batches))
+	for channel := range batches {
+		channels = append(channels, channel)
+	}
+	sort.Strings(channels)
+	for _, channel := range channels {
+		var unseen []inboundJournalRecord
+		for _, r := range batches[channel] {
+			// Transcript fetches for other targets may have taken time. Observe
+			// successful acts arriving during this pass before sending mail.
+			proof, err := o.cfg.inboundJournal.sessionActProof(r)
 			if err != nil {
-				failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
+				return err
+			}
+			if proof != nil {
+				if err := o.markIngested(r, proof); err != nil {
+					return err
+				}
 				continue
 			}
+			unseen = append(unseen, r)
 		}
-		alerted[alertKey] = true
-		r.Alerted, r.Phase = true, "ingestion_alert"
-		if err := o.cfg.inboundJournal.append(r); err != nil {
-			return err
+		if len(unseen) == 0 {
+			continue
+		}
+		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := o.notify(mailCtx, ingestionAlertRows(unseen))
+		cancel()
+		if err != nil {
+			failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
+			continue
+		}
+		for _, r := range unseen {
+			r.Alerted, r.Phase = true, "ingestion_alert"
+			if err := o.cfg.inboundJournal.append(r); err != nil {
+				return err
+			}
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func (o *ingestionObserver) markIngested(r inboundJournalRecord, proof *ingestionEvidence) error {
+	if r.CanonicalSessionID != "" {
+		proof.SessionID = r.CanonicalSessionID
+	}
+	r.Late = !o.now().Before(r.DeliveredAt.Add(ingestionWindow))
+	r.Status, r.Phase, r.Evidence = "ingested", "ingestion", proof
+	if proof.Kind == "reaction" || proof.Kind == "reply" {
+		r.ProofKind = proof.Kind
+	}
+	return o.cfg.inboundJournal.append(r)
+}
+
+// One line per receipt, even when several fanout targets lack proof. Sorting
+// both receipts and sessions makes the set's mail dedup key deterministic.
+func ingestionAlertRows(rows []inboundJournalRecord) []inboundJournalRecord {
+	unique := make(map[string]inboundJournalRecord)
+	for _, r := range rows {
+		key := ingestionKey(r, "")
+		if old, ok := unique[key]; ok {
+			old.TargetSessions = append(old.TargetSessions, r.TargetSessions...)
+			unique[key] = old
+		} else {
+			r.TargetSessions = append([]string(nil), r.TargetSessions...)
+			unique[key] = r
+		}
+	}
+	keys := make([]string, 0, len(unique))
+	for key := range unique {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]inboundJournalRecord, 0, len(keys))
+	for _, key := range keys {
+		r := unique[key]
+		sort.Strings(r.TargetSessions)
+		result = append(result, r)
+	}
+	return result
 }
 
 func (o *ingestionObserver) fetchTranscript(ctx context.Context, session string) ([]json.RawMessage, error) {
@@ -452,11 +526,21 @@ func ingestionRead(ctx context.Context, u string, limit int64) ([]byte, error) {
 	return b, nil
 }
 
-func (o *ingestionObserver) mailUnseen(ctx context.Context, r inboundJournalRecord) error {
-	// Fanout members share one mailbox alert for this Slack receipt.
-	key := ingestionDigest(ingestionKey(r, ""))
-	body := fmt.Sprintf("Slack delivered_unseen: channel=%s message_ts=%s thread_ts=%s receipt=%s session=%s. No complete rendered session payload was found within %s of hand-off %s. Read this Slack thread now. Transport delivery is not ingestion; the dead-letter file is unchanged.", r.Channel, r.MessageTS, r.ThreadTS, r.ReceiptID, r.TargetSessions[0], ingestionWindow, r.DeliveredAt.UTC().Format(time.RFC3339))
-	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", "Slack delivered_unseen", "-m", body)
+func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJournalRecord) error {
+	rows = ingestionAlertRows(rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	var keys, lines []string
+	for _, r := range rows {
+		keys = append(keys, ingestionKey(r, ""))
+		lines = append(lines, fmt.Sprintf("message_ts=%s thread_ts=%s receipt=%s sessions=%s handoff=%s", r.MessageTS, r.ThreadTS, r.ReceiptID, strings.Join(r.TargetSessions, ","), r.DeliveredAt.UTC().Format(time.RFC3339)))
+	}
+	encodedKeys, _ := json.Marshal(keys)
+	key := ingestionDigest(string(encodedKeys))
+	subject := fmt.Sprintf("Slack delivered_unseen: %d lines in %s", len(rows), rows[0].Channel)
+	body := fmt.Sprintf("%s\n%s\nNo rendered input, explicit session reaction, or session reply was found within %s of hand-off. Read these Slack threads now. Transport delivery is not ingestion; the dead-letter file is unchanged.", subject, strings.Join(lines, "\n"), ingestionWindow)
+	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", subject, "-m", body)
 	// Do not log CLI output, which may contain mailbox or provider data.
 	return cmd.Run()
 }

@@ -3268,6 +3268,12 @@ func handleReact(cfg config) http.HandlerFunc {
 		default:
 			receipt.Delivered = true
 		}
+		if receipt.Delivered && !req.Remove {
+			cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
+				Kind: "reaction", Source: "session_react", Channel: req.Conversation.ConversationID,
+				MessageTS: req.MessageID, Emoji: emoji,
+			})
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(receipt)
 	}
@@ -3286,6 +3292,12 @@ func handleReact(cfg config) http.HandlerFunc {
 // own ts (messageTS). Either way, replies in that thread now reach the
 // posting session even when it is bound mention-only.
 func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sessionID string) {
+	if at, ok := ingestionPublishTime(messageTS); ok && replyTo != "" && sessionID != "" {
+		cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
+			Kind: "reply", Source: "session_publish", Channel: conversationID,
+			MessageTS: messageTS, ThreadTS: replyTo, SessionID: sessionID, Timestamp: at,
+		})
+	}
 	// The published message's ts is the cutoff: a mark on an inbound that
 	// arrived after this reply was posted is not one this reply answers,
 	// which matters most on the replay path, where the proof can come long

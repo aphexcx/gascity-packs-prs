@@ -24,36 +24,39 @@ type injectionWindow struct {
 }
 
 type inboundJournal struct {
-	mu            sync.Mutex
-	dir           string
-	retentionDays int
-	maxBytes      int64
-	now           func() time.Time
+	mu                  sync.Mutex
+	dir                 string
+	retentionDays       int
+	maxBytes            int64
+	now                 func() time.Time
+	sessionActs         map[string]ingestionSessionAct
+	sessionActsOverflow bool
 }
 
 type inboundJournalRecord struct {
-	Phase              string             `json:"phase"`
-	TS                 time.Time          `json:"ts"`
-	Provider           string             `json:"provider,omitempty"`
-	Channel            string             `json:"channel"`
-	ThreadTS           string             `json:"thread_ts,omitempty"`
-	MessageTS          string             `json:"message_ts"`
-	Target             string             `json:"target"`
-	TargetSessions     []string           `json:"target_sessions,omitempty"`
-	HandoffSessions    []string           `json:"handoff_sessions"`
-	CanonicalSessionID string             `json:"canonical_session_id,omitempty"`
-	Bytes              int                `json:"bytes"`
-	Mode               string             `json:"mode"`
-	ReceiptID          string             `json:"receipt_id,omitempty"`
-	Status             string             `json:"status"`
-	Windows            []injectionWindow  `json:"windows"`
-	PayloadSHA256      string             `json:"payload_sha256,omitempty"`
-	ProofKind          string             `json:"proof_kind,omitempty"`
-	DeliveredAt        time.Time          `json:"delivered_at,omitempty"`
-	StartedAt          time.Time          `json:"started_at,omitempty"`
-	Evidence           *ingestionEvidence `json:"ingestion_evidence,omitempty"`
-	Alerted            bool               `json:"alerted,omitempty"`
-	Late               bool               `json:"late,omitempty"`
+	Phase              string               `json:"phase"`
+	TS                 time.Time            `json:"ts"`
+	Provider           string               `json:"provider,omitempty"`
+	Channel            string               `json:"channel"`
+	ThreadTS           string               `json:"thread_ts,omitempty"`
+	MessageTS          string               `json:"message_ts"`
+	Target             string               `json:"target"`
+	TargetSessions     []string             `json:"target_sessions,omitempty"`
+	HandoffSessions    []string             `json:"handoff_sessions"`
+	CanonicalSessionID string               `json:"canonical_session_id,omitempty"`
+	Bytes              int                  `json:"bytes"`
+	Mode               string               `json:"mode"`
+	ReceiptID          string               `json:"receipt_id,omitempty"`
+	Status             string               `json:"status"`
+	Windows            []injectionWindow    `json:"windows"`
+	PayloadSHA256      string               `json:"payload_sha256,omitempty"`
+	ProofKind          string               `json:"proof_kind,omitempty"`
+	DeliveredAt        time.Time            `json:"delivered_at,omitempty"`
+	StartedAt          time.Time            `json:"started_at,omitempty"`
+	Evidence           *ingestionEvidence   `json:"ingestion_evidence,omitempty"`
+	Alerted            bool                 `json:"alerted,omitempty"`
+	Late               bool                 `json:"late,omitempty"`
+	SessionAct         *ingestionSessionAct `json:"session_act,omitempty"`
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {
@@ -188,6 +191,9 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	if closeErr != nil {
 		return closeErr
 	}
+	if r.SessionAct != nil {
+		j.cacheSessionActLocked(*r.SessionAct)
+	}
 	days := j.retentionDays
 	if days <= 0 {
 		days = 7
@@ -229,7 +235,9 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 		if ingestionSettled(observation, now) {
 			continue
 		}
-		start := earlierIngestionTime(observation.StartedAt, observation.DeliveredAt)
+		// Session acts allow 30 seconds of clock skew before handoff. Keep
+		// that preceding day too when the tolerance crosses midnight.
+		start := earlierIngestionTime(observation.StartedAt, observation.DeliveredAt).Add(-30 * time.Second)
 		if day := start.UTC().Format("20060102"); day < cutoff {
 			cutoff = day
 		}

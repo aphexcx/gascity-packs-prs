@@ -1,0 +1,989 @@
+{
+  "bot_user_id": "U0BHE265YNN",
+  "bot_id": "B0BGYLTM8NT",
+  "threads": [
+    {
+      "channel": "C0AMHQ74ZLK",
+      "thread_ts": "1794047550.590319",
+      "has_more": false,
+      "messages": [
+        {
+          "ts": "1794047550.590319",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794047550.590319",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794047973.194279",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794047550.590319"
+        },
+        {
+          "ts": "1794181804.000289",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794047550.590319",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181894.092999",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794047550.590319"
+        },
+        {
+          "ts": "1794182889.231969",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794047550.590319"
+        },
+        {
+          "ts": "1794188916.796289",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794047550.590319",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794189151.955819",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794047550.590319"
+        }
+      ]
+    },
+    {
+      "channel": "C0ASAPRETDK",
+      "thread_ts": "1793944295.340749",
+      "has_more": false,
+      "messages": [
+        {
+          "ts": "1793944295.340749",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1793944295.340749",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1793948327.314169",
+          "user": "U0BQUA5DF36",
+          "bot_id": "B0BQLUREB45",
+          "thread_ts": "1793944295.340749"
+        }
+      ]
+    },
+    {
+      "channel": "C0BKF28CYUE",
+      "thread_ts": "1788066815.872599",
+      "has_more": false,
+      "messages": [
+        {
+          "ts": "1788066815.872599",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1788066815.872599",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181291.507919",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1788066815.872599",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "channel": "C0CACRS0162",
+      "thread_ts": "1794106182.256469",
+      "has_more": false,
+      "messages": [
+        {
+          "ts": "1794106182.256469",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794106182.256469",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794159381.215279",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794106182.256469",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794159412.634159",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794106182.256469",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794159424.547469",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794106182.256469",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794159511.465839",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794159671.175109",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794161439.068439",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794106182.256469",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            },
+            {
+              "name": "white_check_mark",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794161521.556929",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794161861.192349",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794164106.017019",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794164787.813179",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794165855.209729",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794165951.203079",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794166238.056199",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        },
+        {
+          "ts": "1794168260.845629",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794106182.256469",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794168455.360529",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794106182.256469"
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794016781.412049",
+      "has_more": false,
+      "messages": [
+        {
+          "ts": "1794016781.412049",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794045587.926179",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794046193.234039",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794016781.412049"
+        },
+        {
+          "ts": "1794055112.659789",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794016781.412049"
+        },
+        {
+          "ts": "1794059495.270469",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794059580.629139",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794016781.412049"
+        },
+        {
+          "ts": "1794059691.609079",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181618.973989",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181638.800439",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181683.339279",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181858.209119",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181875.540569",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181880.064429",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181893.561999",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794016781.412049"
+        },
+        {
+          "ts": "1794181915.670589",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794181943.369599",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794016781.412049"
+        },
+        {
+          "ts": "1794181978.913389",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182027.120609",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182029.670689",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "+1",
+              "users": [
+                "U0AN32RPBFT"
+              ],
+              "count": 1
+            },
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182055.022229",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182073.444919",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182085.803249",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182108.411189",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182138.935059",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182172.506869",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182191.156699",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182219.663679",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182244.593259",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182250.463389",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182277.390449",
+          "user": "U0AN32RPBFT",
+          "thread_ts": "1794016781.412049",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794182504.753939",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794016781.412049"
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "thread_ts": "1794025817.986829",
+      "has_more": false,
+      "messages": [
+        {
+          "ts": "1794025817.986829",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794025817.986829",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794063933.743159",
+          "user": "U0AN33FNGU9",
+          "thread_ts": "1794025817.986829",
+          "reactions": [
+            {
+              "name": "eyes",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            },
+            {
+              "name": "white_check_mark",
+              "users": [
+                "U0BHE265YNN"
+              ],
+              "count": 1
+            }
+          ]
+        },
+        {
+          "ts": "1794064037.349039",
+          "bot_id": "B0BGYLTM8NT",
+          "username": "Sterling, Citadel Mayor",
+          "thread_ts": "1794025817.986829"
+        }
+      ]
+    }
+  ],
+  "reactions": [
+    {
+      "channel": "C0ASAPRETDK",
+      "message_ts": "1793948327.314169",
+      "reactions": []
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794045587.926179",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0AMHQ74ZLK",
+      "message_ts": "1794047550.590319",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794063933.743159",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        },
+        {
+          "name": "white_check_mark",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CACRS0162",
+      "message_ts": "1794159381.215279",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CACRS0162",
+      "message_ts": "1794159412.634159",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CACRS0162",
+      "message_ts": "1794159424.547469",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CACRS0162",
+      "message_ts": "1794161439.068439",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        },
+        {
+          "name": "white_check_mark",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CACRS0162",
+      "message_ts": "1794168260.845629",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0BKF28CYUE",
+      "message_ts": "1794181291.507919",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0AMHQ74ZLK",
+      "message_ts": "1794181804.000289",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182138.935059",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182172.506869",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182191.156699",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182219.663679",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182250.463389",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0CCMJ1DU02",
+      "message_ts": "1794182277.390449",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "channel": "C0AMHQ74ZLK",
+      "message_ts": "1794188916.796289",
+      "reactions": [
+        {
+          "name": "eyes",
+          "users": [
+            "U0BHE265YNN"
+          ],
+          "count": 1
+        }
+      ]
+    }
+  ]
+}

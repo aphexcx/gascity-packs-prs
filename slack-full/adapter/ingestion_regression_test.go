@@ -110,7 +110,8 @@ func TestIngestionRecoveryUnconfirmedHandoff(t *testing.T) {
 						return []json.RawMessage{entry}, nil
 					}
 					return nil, nil
-				}, notify: func(_ context.Context, r inboundJournalRecord) error {
+				}, notify: func(_ context.Context, batch []inboundJournalRecord) error {
+					r := batch[0]
 					alerts++
 					if r.ReceiptID != "recovered" || r.TargetSessions[0] != "s2" {
 						t.Errorf("wrong recovery alert: %+v", r)
@@ -180,7 +181,7 @@ func TestIngestionRetentionPreservesUnresolvedAcrossMidnight(t *testing.T) {
 				return nil, nil
 			}
 			alerts := 0
-			o.notify = func(context.Context, inboundJournalRecord) error { alerts++; return fmt.Errorf("mail unavailable") }
+			o.notify = func(context.Context, []inboundJournalRecord) error { alerts++; return fmt.Errorf("mail unavailable") }
 			now = at.Add(ingestionWindow + time.Second)
 			err = o.step(context.Background())
 			if rendered && err != nil {
@@ -198,7 +199,7 @@ func TestIngestionRetentionPreservesUnresolvedAcrossMidnight(t *testing.T) {
 				if _, err := os.Stat(oldPath); err != nil {
 					t.Fatalf("pruned unresolved alert evidence: %v", err)
 				}
-				o.notify = func(context.Context, inboundJournalRecord) error { alerts++; return nil }
+				o.notify = func(context.Context, []inboundJournalRecord) error { alerts++; return nil }
 				if err := o.step(context.Background()); err != nil {
 					t.Fatal(err)
 				}
@@ -332,7 +333,7 @@ func TestIngestionNamedSessionPinsCanonicalProof(t *testing.T) {
 	}
 	o := &ingestionObserver{cfg: config{inboundJournal: j, gcAPIBase: server.URL, cityName: "test"}, now: func() time.Time { return now }}
 	o.fetch = o.fetchTranscript
-	o.notify = func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }
+	o.notify = func(context.Context, []inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +399,7 @@ func TestIngestionNameReassignmentBetweenDeliveries(t *testing.T) {
 	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { now = now.Add(time.Millisecond); return now }}
 	o := &ingestionObserver{cfg: config{inboundJournal: j, gcAPIBase: server.URL, cityName: "test"}, now: func() time.Time { return now }}
 	o.fetch = o.fetchTranscript
-	o.notify = func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected unseen alert"); return nil }
+	o.notify = func(context.Context, []inboundJournalRecord) error { t.Fatal("unexpected unseen alert"); return nil }
 	if err := j.append(first); err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +441,7 @@ func TestIngestionRepeatedConclusionsCannotReopenOrDelay(t *testing.T) {
 			alerts := 0
 			o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
 				fetch:  func(context.Context, string) ([]json.RawMessage, error) { return entries, nil },
-				notify: func(context.Context, inboundJournalRecord) error { alerts++; return nil }}
+				notify: func(context.Context, []inboundJournalRecord) error { alerts++; return nil }}
 			if err := o.step(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -487,7 +488,7 @@ func TestIngestionDelayedConclusionRetainsInputInterval(t *testing.T) {
 		fetch: func(context.Context, string) ([]json.RawMessage, error) {
 			return []json.RawMessage{ingestionTestEntry(t, reference, "body", "attachment")}, nil
 		},
-		notify: func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }}
+		notify: func(context.Context, []inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }}
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +525,7 @@ func TestIngestionPendingReceiptTimingSurvivesRetention(t *testing.T) {
 				o.fetch = func(context.Context, string) ([]json.RawMessage, error) {
 					return []json.RawMessage{ingestionTestEntry(t, reference, msg.Text, "attachment")}, nil
 				}
-				o.notify = func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }
+				o.notify = func(context.Context, []inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }
 				if err := o.step(context.Background()); err != nil {
 					t.Fatal(err)
 				}
@@ -574,7 +575,7 @@ func TestIngestionMentionOnlyDelayedAsyncConfirmation(t *testing.T) {
 		fetch: func(context.Context, string) ([]json.RawMessage, error) {
 			return []json.RawMessage{ingestionTestEntry(t, reference, "body", "attachment")}, nil
 		},
-		notify: func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }}
+		notify: func(context.Context, []inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }}
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}

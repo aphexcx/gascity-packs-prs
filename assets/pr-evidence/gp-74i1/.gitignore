@@ -1,0 +1,8 @@
+# Local task context and raw Slack payloads are not PR evidence.
+*-raw.json
+inbox*.json
+cuts-open.json
+bead*.json
+mayor-ruling.txt
+# Compressed test logs and parsed summaries are committed instead.
+*.jsonl

@@ -98,6 +98,13 @@ deliveries also log their registry label.
 
 ### Fixed
 
+- Ingestion alarms now accept successful explicit message reactions and
+  confirmed replies from the target session as durable proof, surviving
+  adapter restarts and excluding automatic admission acknowledgements.
+  Newly unseen receipts are combined into one mail per channel per observer
+  pass, with each receipt still recorded individually. The three-minute
+  initial deadline and two-hour late-proof horizon remain unchanged (gp-74i1).
+
 - Retry adapter registration during gc boot for up to ten minutes, with
   exponential waits from one to thirty seconds (gp-ktdn, gp-xgjf). Connection
   refusal, city-not-running 404s, all 5xx responses, timeouts, connection resets,
