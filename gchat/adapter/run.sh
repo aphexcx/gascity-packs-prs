@@ -36,7 +36,7 @@ GC_PACK_DIR=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd -P)
 adapter_bin=$(gchat_adapter_bin)
 # Keep the prebuilt logging/cwd behavior even when PATH or the override names
 # the pack-local file. The shared resolver alone selects the executable.
-if [ "${GC_GCHAT_ADAPTER_BIN+x}" = x ] || type -P gc-gchat-adapter >/dev/null 2>&1; then
+if [ -n "${GC_GCHAT_ADAPTER_BIN:-}" ] || type -P gc-gchat-adapter >/dev/null 2>&1; then
     adapter_version=$("$adapter_bin" version)
     printf '%s\n' "gc-gchat-adapter run.sh: using $adapter_bin (version $adapter_version)" >&2
     exec "$adapter_bin" serve

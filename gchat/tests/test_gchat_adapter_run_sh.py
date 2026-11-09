@@ -220,6 +220,26 @@ class PrebuiltAdapterTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "LOCAL\nserve\nproject=from-file\n")
 
+    def test_empty_override_keeps_local_fallback_working_directory(self):
+        binary = self.adapter / "gc-gchat-adapter"
+        self.stub(binary, "LOCAL")
+        with binary.open("a") as stream:
+            stream.write('printf "cwd=%s\\n" "$PWD"\n')
+        for override in (None, ""):
+            with self.subTest(override=override):
+                if override is None:
+                    self.env.pop("GC_GCHAT_ADAPTER_BIN", None)
+                else:
+                    self.env["GC_GCHAT_ADAPTER_BIN"] = override
+                result = self.run_adapter()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                lines = result.stdout.splitlines()
+                self.assertEqual(lines[:3], ["LOCAL", "serve", "project=from-file"])
+                self.assertEqual(len(lines), 4)
+                self.assertTrue(lines[3].startswith("cwd="))
+                self.assertEqual(Path(lines[3][4:]).resolve(), self.adapter.resolve())
+                self.assertEqual(result.stderr, "")
+
     def test_version_only_change_rebuilds_service_and_command_binary(self):
         binary = self.adapter / "gc-gchat-adapter"
         self.stub(binary, "LOCAL")
