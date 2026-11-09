@@ -1,2 +1,2 @@
-description = 'adapter and operator CLI Go binaries are built in place'
+description = 'adapter and operator CLI binaries are available prebuilt or locally'
 run = '../check-binaries.sh'

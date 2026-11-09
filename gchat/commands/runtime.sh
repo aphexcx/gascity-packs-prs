@@ -62,7 +62,7 @@ gchat_load_env() {
 # Print only the selected absolute path; build diagnostics belong on stderr.
 # A subshell keeps PATH splitting and glob settings out of the caller.
 gchat_adapter_bin() (
-    if [ "${GC_GCHAT_ADAPTER_BIN+x}" = x ]; then
+    if [ -n "${GC_GCHAT_ADAPTER_BIN:-}" ]; then
         gchat_bin=$GC_GCHAT_ADAPTER_BIN
         if [ ! -f "$gchat_bin" ] || [ ! -r "$gchat_bin" ] || [ ! -x "$gchat_bin" ]; then
             printf '%s\n' "ERROR: GC_GCHAT_ADAPTER_BIN=$gchat_bin is not an executable file" >&2
@@ -94,7 +94,7 @@ gchat_adapter_bin() (
 
 gchat_build() {
     (
-        cd "$GC_PACK_DIR/adapter"
+        cd "$GC_PACK_DIR/adapter" || return
         if [ ! -x ./gc-gchat-adapter ]; then
             ./build.sh
         elif [ -n "$(find .. -maxdepth 1 -name pack.toml -newer ./gc-gchat-adapter -print -quit)" ] ||

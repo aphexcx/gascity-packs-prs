@@ -142,9 +142,8 @@ class PrebuiltAdapterTest(unittest.TestCase):
             with self.subTest(entry=entry):
                 self.assert_helper_selected(entry, "OVERRIDE")
 
-    def test_keyholder_enrollment_uses_prebuilt_without_building(self):
+    def test_keyholder_enrollment_needs_no_adapter_or_build(self):
         self.helper_fixture()
-        self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
         with self.env_file.open("a") as stream:
             stream.write("GCHAT_TOKEN_SOURCE=keyholder\n")
         self.stub(self.bin / "boxboxbox-google", "ENROLL")
@@ -160,7 +159,7 @@ class PrebuiltAdapterTest(unittest.TestCase):
         self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
         nonexec = self.root / "nonexec"
         nonexec.write_text("not executable")
-        for override in ("absent", "nonexec", "bin", ""):
+        for override in ("absent", "nonexec", "bin"):
             self.env["GC_GCHAT_ADAPTER_BIN"] = override
             for entry in ("commands/auth.sh", "doctor/gchat/run.sh"):
                 with self.subTest(override=override, entry=entry):
@@ -169,6 +168,17 @@ class PrebuiltAdapterTest(unittest.TestCase):
                     self.assertIn("is not an executable file", result.stderr)
                     self.assertNotIn("BUILD_MUST_NOT_RUN", result.stderr)
                     self.assertEqual(result.stdout, "")
+
+    def test_empty_override_uses_path_for_launcher_and_helpers(self):
+        self.helper_fixture()
+        self.helper_stub(self.bin / "gc-gchat-adapter", "PATH")
+        self.env["GC_GCHAT_ADAPTER_BIN"] = ""
+        result = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PATH\nserve\n", result.stdout)
+        for entry in ("commands/auth.sh", "doctor/gchat/run.sh"):
+            with self.subTest(entry=entry):
+                self.assert_helper_selected(entry, "PATH")
 
     def test_helpers_empty_path_entries_mean_current_directory(self):
         self.helper_fixture()

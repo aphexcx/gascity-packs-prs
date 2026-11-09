@@ -48,6 +48,9 @@ gchat's `adapter/run.sh`, `gc gchat auth` (including `--check`) and its doctor.
 `GC_SLACK_CLI_BIN` applies to `_cli.sh` and all Slack commands routed through it
 (including `import-app`). Each helper prefers its override, then the named
 binary on PATH, before using or building the pack-local binary.
+Empty overrides are treated as unset. The Slack doctor accepts the same
+overrides and PATH binaries; a legacy `#!` wrapper named `gc-slack-cli`
+anywhere on PATH is skipped, so a pack-local wrapper is rebuilt before use.
 
 Gchat logs the selected prebuilt path and its `version` output; local and release
 builds stamp `main.Version` from `gchat/pack.toml` (0.5.0). Slack's pack version is

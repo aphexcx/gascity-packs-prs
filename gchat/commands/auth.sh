@@ -5,7 +5,6 @@ set -eu
 # shellcheck source-path=SCRIPTDIR source=runtime.sh
 . "$GC_PACK_DIR/commands/runtime.sh"
 gchat_load_env
-adapter_bin=$(gchat_adapter_bin)
 # With a key holder (GCHAT_TOKEN_SOURCE=keyholder) there is nothing to sign in
 # to here: enrollment belongs to the box. boxboxbox-google enroll prints what
 # an admin still has to grant and waits for it; --check stays with the binary,
@@ -13,4 +12,5 @@ adapter_bin=$(gchat_adapter_bin)
 if [ "${GCHAT_TOKEN_SOURCE:-oauth}" = keyholder ] && [ "${1:-}" != --check ] && command -v boxboxbox-google >/dev/null 2>&1; then
     exec boxboxbox-google enroll "$@"
 fi
+adapter_bin=$(gchat_adapter_bin)
 exec "$adapter_bin" auth "$@"

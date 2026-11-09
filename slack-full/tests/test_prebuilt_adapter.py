@@ -102,15 +102,20 @@ class PrebuiltCLITest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.pack = self.root / "fixture pack"
         shutil.copytree(PACK / "commands", self.pack / "commands")
+        shutil.copytree(PACK / "doctor", self.pack / "doctor")
         (self.pack / "cli").mkdir()
+        (self.pack / "adapter").mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        # No Go, head, or build utilities: prebuilt selection needs none of them.
+        # Inspect signatures without exposing Go or installed pack binaries.
+        (self.bin / "head").symlink_to(shutil.which("head"))
         self.env = {"PATH": str(self.bin), "GC_PACK_DIR": str(self.pack)}
         self.args = ["--marker", "two words", "", "*.json"]
 
     def stub(self, path, marker):
-        path.write_text(f'#!/bin/sh\nprintf "<%s>\\n" "{marker}" "$@"\nexit 17\n')
+        # No #! signature: sh's executable-text fallback keeps this portable
+        # on macOS and the no-Go Linux image without compiling test binaries.
+        path.write_text(f': prebuilt test stand-in\nprintf "<%s>\\n" "{marker}" "$@"\nexit 17\n')
         path.chmod(0o755)
 
     def run_cli(self, entry="_cli"):
@@ -143,7 +148,7 @@ class PrebuiltCLITest(unittest.TestCase):
     def test_cli_invalid_override_never_falls_back(self):
         self.stub(self.bin / "gc-slack-cli", "PATH")
         (self.root / "nonexec").write_text("not executable")
-        for override in ("absent", "nonexec", "bin", ""):
+        for override in ("absent", "nonexec", "bin"):
             with self.subTest(override=override):
                 self.env["GC_SLACK_CLI_BIN"] = override
                 result = self.run_cli()
@@ -154,6 +159,7 @@ class PrebuiltCLITest(unittest.TestCase):
 
     def test_cli_empty_and_relative_path_entries(self):
         self.stub(self.root / "gc-slack-cli", "CWD")
+        (self.root / "head").symlink_to(shutil.which("head"))
         for search_path in (f":{self.bin}", f"{self.bin}:", f"{self.bin}::{self.bin}", ".", ""):
             with self.subTest(path=search_path):
                 self.env["PATH"] = search_path
@@ -169,6 +175,145 @@ class PrebuiltCLITest(unittest.TestCase):
         self.stub(self.bin / "gc-slack-cli", "PATH")
         self.env["PATH"] = f"{first}:{second}:{self.bin}"
         self.assert_selected("PATH")
+
+    def test_cli_empty_override_uses_path(self):
+        self.stub(self.bin / "gc-slack-cli", "PATH")
+        self.env["GC_SLACK_CLI_BIN"] = ""
+        self.assert_selected("PATH")
+
+    def legacy(self, path):
+        path.write_text('#!/bin/sh\necho LEGACY_WRAPPER_RAN\nexit 99\n')
+        path.chmod(0o755)
+
+    def test_cli_local_legacy_wrapper_on_path_is_rebuilt_atomically(self):
+        local = self.pack / "cli/gc-slack-cli"
+        self.legacy(local)
+        self.env["PATH"] = f"{local.parent}:{self.bin}"
+        for name in ("mktemp", "mv", "rm", "cp", "chmod"):
+            (self.bin / name).symlink_to(shutil.which(name))
+        rebuilt = self.root / "rebuilt"
+        self.stub(rebuilt, "REBUILT")
+        self.env["REBUILT"] = str(rebuilt)
+        go = self.bin / "go"
+        go.write_text('#!/bin/sh\nset -eu\n'
+                      '[ "$1" = build ] && [ "$2" = -o ] && [ "$4" = . ]\n'
+                      'case "$3" in "$PWD"/.gc-slack-cli.build.*) ;; *) exit 98 ;; esac\n'
+                      '[ ! -s "$3" ]\ncp "$REBUILT" "$3"\nchmod +x "$3"\n')
+        go.chmod(0o755)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 17, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [f"<{arg}>" for arg in ("REBUILT", *self.args)])
+        self.assertIn("rebuilt", result.stderr)
+        self.assertEqual(local.read_bytes(), rebuilt.read_bytes())
+        self.assertEqual(list(local.parent.glob(".gc-slack-cli.build.*")), [])
+
+    def test_cli_local_legacy_wrapper_on_path_without_go_is_not_run(self):
+        local = self.pack / "cli/gc-slack-cli"
+        self.legacy(local)
+        self.env["PATH"] = f"{local.parent}:{self.bin}"
+        result = self.run_cli()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("no Go toolchain found", result.stderr)
+        self.assertIn("manual fix:", result.stderr)
+
+    def test_cli_path_legacy_wrapper_is_skipped_for_later_binary(self):
+        self.legacy(self.root / "gc-slack-cli")
+        self.stub(self.bin / "gc-slack-cli", "PATH")
+        self.env["PATH"] = f"{self.root}:{self.bin}"
+        self.assert_selected("PATH")
+
+    def test_cli_failed_signature_read_skips_candidate(self):
+        self.stub(self.bin / "gc-slack-cli", "PATH")
+        (self.bin / "head").unlink()
+        (self.bin / "head").write_text('#!/bin/sh\nexit 1\n')
+        (self.bin / "head").chmod(0o755)
+        result = self.run_cli()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("no Go toolchain found", result.stderr)
+
+    def test_cli_explicit_override_accepts_shebang_script(self):
+        chosen = self.root / "chosen"
+        self.legacy(chosen)
+        self.env["GC_SLACK_CLI_BIN"] = str(chosen)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 99, result.stderr)
+        self.assertEqual(result.stdout, "LEGACY_WRAPPER_RAN\n")
+
+    def test_cli_path_symlink_to_executable(self):
+        self.stub(self.root / "chosen", "SYMLINK")
+        (self.bin / "gc-slack-cli").symlink_to(self.root / "chosen")
+        self.assert_selected("SYMLINK")
+
+    def run_doctor(self):
+        return subprocess.run(
+            [shutil.which("sh"), str(self.pack / "doctor/check-binaries.sh")],
+            cwd=self.root, env=self.env, text=True, capture_output=True, timeout=10)
+
+    def test_doctor_accepts_prebuilt_path_without_local_files(self):
+        for kind in ("adapter", "cli"):
+            self.stub(self.bin / f"gc-slack-{kind}", kind)
+        result = self.run_doctor()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for kind in ("adapter", "cli"):
+            self.assertIn(f"{kind}: prebuilt {self.bin}/gc-slack-{kind}", result.stdout)
+            self.assertFalse((self.pack / kind / f"gc-slack-{kind}").exists())
+
+    def test_doctor_accepts_local_binaries_with_empty_path(self):
+        for kind in ("adapter", "cli"):
+            self.stub(self.pack / kind / f"gc-slack-{kind}", kind)
+        # Empty PATH searches cwd; supply only the signature-reading utility.
+        (self.root / "head").symlink_to(shutil.which("head"))
+        self.env["PATH"] = ""
+        result = self.run_doctor()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("adapter: local\ncli: local\n", result.stdout)
+
+    def test_doctor_missing_binaries_exits_two_with_install_advice(self):
+        result = self.run_doctor()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("pack binaries not built: adapter/gc-slack-adapter cli/gc-slack-cli", result.stdout)
+        for name in ("GC_SLACK_ADAPTER_BIN", "GC_SLACK_CLI_BIN", "PATH"):
+            self.assertIn(name, result.stdout)
+
+    def test_doctor_overrides_accept_scripts_and_take_precedence(self):
+        for kind in ("adapter", "cli"):
+            chosen = self.root / f"chosen {kind}"
+            self.legacy(chosen)
+            self.env[f"GC_SLACK_{kind.upper()}_BIN"] = chosen.name
+            self.stub(self.bin / f"gc-slack-{kind}", "PATH")
+        result = self.run_doctor()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for kind in ("adapter", "cli"):
+            self.assertIn(f"{kind}: prebuilt {self.root.resolve()}/chosen {kind}", result.stdout)
+
+    def test_doctor_empty_overrides_use_path(self):
+        for kind in ("adapter", "cli"):
+            self.stub(self.bin / f"gc-slack-{kind}", kind)
+            self.env[f"GC_SLACK_{kind.upper()}_BIN"] = ""
+        self.assertEqual(self.run_doctor().returncode, 0)
+
+    def test_doctor_invalid_overrides_do_not_fall_back(self):
+        for kind in ("adapter", "cli"):
+            self.stub(self.bin / f"gc-slack-{kind}", kind)
+            self.stub(self.pack / kind / f"gc-slack-{kind}", kind)
+        for kind in ("adapter", "cli"):
+            with self.subTest(kind=kind):
+                self.env[f"GC_SLACK_{kind.upper()}_BIN"] = "absent"
+                result = self.run_doctor()
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("is not an executable file", result.stderr)
+                self.assertNotIn(f"{kind}: ", result.stdout)
+                del self.env[f"GC_SLACK_{kind.upper()}_BIN"]
+
+    def test_doctor_rejects_path_and_local_legacy_wrappers(self):
+        for kind in ("adapter", "cli"):
+            self.legacy(self.bin / f"gc-slack-{kind}")
+            self.legacy(self.pack / kind / f"gc-slack-{kind}")
+        result = self.run_doctor()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("LEGACY_WRAPPER_RAN", result.stdout)
 
 
 if __name__ == "__main__":
