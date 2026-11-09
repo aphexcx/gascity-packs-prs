@@ -98,6 +98,9 @@ deliveries also log their registry label.
 
 ### Fixed
 
+- Compile a session-scoped native test stub for the CLI and adapter fixtures;
+  Ubuntu 26.04's uutils `echo` rejects their renamed executable paths (gp-f7wy).
+
 - Retry adapter registration during gc boot for up to ten minutes, with
   exponential waits from one to thirty seconds (gp-ktdn, gp-xgjf). Connection
   refusal, city-not-running 404s, all 5xx responses, timeouts, connection resets,

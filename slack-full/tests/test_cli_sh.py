@@ -44,6 +44,30 @@ printf '%s\\n' '#!/bin/sh' 'printf "<%s>\\n" "$@"' \
 """
 
 
+@pytest.fixture(scope="session")
+def native_binary(tmp_path_factory):
+    # Ubuntu 26.04's uutils echo rejects a renamed argv[0]; use our own native stub.
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    if compiler is None:
+        pytest.skip("no C compiler")
+    build_dir = tmp_path_factory.mktemp("native-binary")
+    source = build_dir / "stub.c"
+    source.write_text(r"""#include <stdio.h>
+
+int main(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) putchar(' ');
+        fputs(argv[i], stdout);
+    }
+    putchar('\n');
+    return 0;
+}
+""")
+    binary = build_dir / "native-stub"
+    subprocess.run([compiler, str(source), "-o", str(binary)], check=True, timeout=60)
+    return binary
+
+
 @pytest.fixture()
 def harness(tmp_path):
     pack = tmp_path / "fixture pack"
@@ -107,10 +131,10 @@ def test_cli_missing_binary_builds_and_execs(harness, verb):
 
 
 @pytest.mark.parametrize("verb", VERBS)
-def test_cli_existing_binary_execs_without_go(harness, verb):
+def test_cli_existing_binary_execs_without_go(harness, verb, native_binary):
     pack, stub_bin, go_log, run = harness
     # A real native executable: a #! script belongs to the legacy-shim case.
-    (pack / "cli" / "gc-slack-cli").symlink_to(shutil.which("echo"))
+    (pack / "cli" / "gc-slack-cli").symlink_to(native_binary)
     (stub_bin / "go").unlink()
     proc = run(verb)
     assert proc.returncode == 0, proc.stderr
@@ -244,10 +268,10 @@ def test_cli_wrapper_requires_pack_context(harness, verb):
     assert not go_log.exists()
 
 
-def test_cli_build_heals_doctor_binaries_row(harness):
+def test_cli_build_heals_doctor_binaries_row(harness, native_binary):
     pack, _, _, run = harness
     (pack / "adapter").mkdir()
-    (pack / "adapter" / "gc-slack-adapter").symlink_to(shutil.which("echo"))
+    (pack / "adapter" / "gc-slack-adapter").symlink_to(native_binary)
 
     def doctor():
         return subprocess.run(
