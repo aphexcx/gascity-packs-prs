@@ -18,7 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GASCITY = REPO_ROOT / "gascity"
 FRAGMENT = GASCITY / "template-fragments" / "gc-code-ownership.template.md"
 README = GASCITY / "README.md"
-CALL_LINE = '{{ template "gc-code-ownership" . }}'
+CALL_LINE = '{{ templateFirst . "gc-code-ownership" }}'
+PLAIN_CALL = '{{ template "gc-code-ownership" . }}'
 GUIDE_URL = (
     "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/"
     "prompting-claude-fable-5-2#say-who-owns-the-code"
@@ -57,6 +58,7 @@ def test_readme_documents_the_call_line_the_measured_effect_and_when_to_leave_it
     section = readme.split("### Code ownership", 1)[1].split("\n## ", 1)[0]
     words = " ".join(section.split())
     assert section.count(CALL_LINE) == 1
+    assert PLAIN_CALL not in section
     assert GUIDE_URL in section
     for clause in (
         "`template-fragments/gc-code-ownership.template.md` defines `gc-code-ownership`",
@@ -64,7 +66,7 @@ def test_readme_documents_the_call_line_the_measured_effect_and_when_to_leave_it
         "from under a tenth to about half, at about 1.5 times the output tokens",
         "It is its own fragment, not a standing note",
         "a city turns it on lane by lane",
-        "in the same roll order as above",
+        "written with `templateFirst` for the same reason as above",
         "Leave it out where the owner wants the code changed as little as possible",
         "a scope rule elsewhere in the prompt does not cancel it",
     ):

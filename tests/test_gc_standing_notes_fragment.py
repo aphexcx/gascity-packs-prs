@@ -17,11 +17,22 @@ FRAGMENTS = REPO_ROOT / "gascity" / "template-fragments"
 FRAGMENT = FRAGMENTS / "gc-standing-notes.template.md"
 ROLE_FRAGMENT = FRAGMENTS / "gc-role-worker.template.md"
 README = REPO_ROOT / "gascity" / "README.md"
-CALL_LINE = '{{ template "gc-standing-notes" . }}'
+CALL_LINE = '{{ templateFirst . "gc-standing-notes" }}'
+PLAIN_CALL = '{{ template "gc-standing-notes" . }}'
+# A template comment without trim markers renders nothing and leaves the text
+# around it as it is, so provenance can sit in the source and never reach a
+# prompt. A trimmed comment ({{- /* */ -}}) is not matched, so the body check
+# below refuses it: it would eat the whitespace next to it.
+TEMPLATE_COMMENT = re.compile(r"\{\{/\*.*?\*/\}\}", re.S)
 
 
 def fragment() -> str:
     return FRAGMENT.read_text(encoding="utf-8")
+
+
+def renderable(text: str) -> str:
+    """A fragment's text without its template comments: what can reach a prompt."""
+    return TEMPLATE_COMMENT.sub("", text)
 
 
 def flat(text: str) -> str:
@@ -41,10 +52,19 @@ def test_fragment_defines_exactly_one_template() -> None:
     assert text.count("{{ define ") == 1
     assert text.count("{{- end }}") == 1
     assert text.count("# Standing Notes") == 1
-    # Plain text between the delimiters: nothing in the note depends on the
-    # render context, so it renders the same in every city and every lane.
-    body = text.split("-}}", 1)[1].rsplit("{{-", 1)[0]
+    # Plain text between the delimiters, comments aside: nothing in the note
+    # depends on the render context, so it renders the same in every city and
+    # every lane.
+    body = renderable(text.split("-}}", 1)[1].rsplit("{{-", 1)[0])
     assert "{{" not in body and "}}" not in body
+
+
+def test_bead_of_record_is_cited_in_a_comment_that_does_not_render() -> None:
+    comments = TEMPLATE_COMMENT.findall(fragment())
+    assert [comment for comment in comments if "gp-gsww" in comment] == [
+        "{{/* Bead of record: gp-gsww. A comment renders nothing. */}}"
+    ]
+    assert "gp-gsww" not in renderable(fragment())
 
 
 def test_define_name_is_unique_across_every_pack_fragment() -> None:
@@ -61,7 +81,6 @@ def test_define_name_is_unique_across_every_pack_fragment() -> None:
 def test_deepening_note_carries_every_fact_and_bound_of_its_bead() -> None:
     note = deepening_note()
     for clause in (
-        "(gp-gsww)",
         "Once per PR, at your self-review and before the PR is pushed or its head updated",
         "while the whole change is still in your context",
         "on the modules this diff touched, never the whole repository",
@@ -102,8 +121,13 @@ def test_deepening_note_glosses_the_deletion_test_for_a_lane_without_the_skill()
 
 
 # One city's particulars: a machine path, a home path, a date, a Slack
-# channel or timestamp, a mayor ordinal, the city this pack was built in.
+# channel or timestamp, a mayor ordinal, the city this pack was built in, a
+# bead id of one of that city's stores. A bead id's shape alone (letters, a
+# hyphen, a short hash) also matches words like "in-process", so the bead
+# case names the prefixes of the stores this pack is built against.
+BEAD_ID = r"\b(?:ci|cs|gf|gp|hw)-[a-z0-9]{3,}"
 CITY_PARTICULARS = (
+    (BEAD_ID, "a bead id"),
     (r"(?<![\w.])/(?:Users|home|private|tmp|opt|var|etc)/", "an absolute machine path"),
     (r"~/", "a home-relative path"),
     (r"\$(?:GC_CITY_PATH|GC_CITY|HOME)\b", "a city or home variable"),
@@ -120,7 +144,7 @@ CITY_PARTICULARS = (
 
 def test_fragment_text_is_city_neutral() -> None:
     for path in (FRAGMENT, FRAGMENTS / "gc-code-ownership.template.md"):
-        text = path.read_text(encoding="utf-8")
+        text = renderable(path.read_text(encoding="utf-8"))
         for pattern, what in CITY_PARTICULARS:
             match = re.search(pattern, text)
             assert match is None, f"{path.name} names {what}: {match.group(0)!r}"
@@ -134,24 +158,28 @@ def test_role_fragment_does_not_call_the_standing_notes() -> None:
         assert "gc-standing-notes" not in prompt.read_text(encoding="utf-8"), prompt
 
 
-def test_readme_documents_the_one_call_line_and_the_roll_order() -> None:
+def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
     readme = README.read_text(encoding="utf-8")
     assert readme.count("## Standing notes") == 1
     section = readme.split("## Standing notes", 1)[1].split("\n## ", 1)[0]
+    # The order-proof form is the one call line; the plain form appears once,
+    # as the thing to avoid.
     assert section.count(CALL_LINE) == 1
+    assert section.count(PLAIN_CALL) == 1
     words = flat(section)
     for clause in (
         "`template-fragments/gc-standing-notes.template.md`",
         'right after its `{{ template "gc-role-worker" . }}` line',
-        "A city that does not add the line renders exactly what it rendered before",
-        "Move the city's import of this pack to a commit that carries this fragment first, then add the line",
-        "falls back to the template's raw source for the whole prompt",
+        f"Write it with `templateFirst`, never as `{PLAIN_CALL}`",
+        "`templateFirst` renders nothing and the lane keeps its role text",
+        "the plain call makes gc fall back to the template's raw source for the whole prompt",
+        "with one stderr line and exit 0 (`gc prime --strict` too, through gc v1.5.1)",
         "the lane loses its role text",
-        "`gc prime --strict` exits 0 on that through gc v1.5.1; gc builds that carry "
-        "gastownhall/gascity#8316 fail it",
-        "remove the line first, then the pin",
+        "The price is silence: an old import or a misspelt name drops the note without a word",
+        "read one lane's render and find the note once, after the role text",
+        "A city that does not add the line renders exactly what it rendered before",
         "A note that belongs to one city stays in that city's own prompt template",
         "THE DEEPENING NOTE",
     ):
         assert clause in words, f"README Standing notes lacks: {clause!r}"
-    assert words.index("first, then add the line") < words.index("remove the line first")
+    assert words.index(CALL_LINE) < words.index(f"never as `{PLAIN_CALL}`")

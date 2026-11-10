@@ -4,9 +4,9 @@
 Notes this pack keeps for every worker, beside the role text. Each says when it
 applies.
 
-## Deepening note
+## Deepening note{{/* Bead of record: gp-gsww. A comment renders nothing. */}}
 
-THE DEEPENING NOTE (gp-gsww). Once per PR, at your self-review and before the
+THE DEEPENING NOTE. Once per PR, at your self-review and before the
 PR is pushed or its head updated, while the whole change is still in your
 context, make one deepening read on the modules this diff touched, never the
 whole repository. Use the codebase-design skill (SKILL.md and DEEPENING.md in

@@ -258,17 +258,21 @@ that lane's `prompt.template.md`, right after its
 `{{ template "gc-role-worker" . }}` line:
 
 ```text
-{{ template "gc-standing-notes" . }}
+{{ templateFirst . "gc-standing-notes" }}
 ```
 
-A city that does not add the line renders exactly what it rendered before.
-Move the city's import of this pack to a commit that carries this fragment
-first, then add the line: given a call to a template that no imported pack
-defines, gc falls back to the template's raw source for the whole prompt, with
-one stderr line, and the lane loses its role text. `gc prime --strict` exits 0
-on that through gc v1.5.1; gc builds that carry gastownhall/gascity#8316 fail
-it. To roll back, remove the line first, then the pin. A note that belongs to
-one city stays in that city's own prompt template, after this call.
+Write it with `templateFirst`, never as `{{ template "gc-standing-notes" . }}`:
+when the city's import of this pack sits below the commit that carries the
+fragment (before the import moves, or after it rolls back), `templateFirst`
+renders nothing and the lane keeps its role text, while the plain call makes
+gc fall back to the template's raw source for the whole prompt, with one
+stderr line and exit 0 (`gc prime --strict` too, through gc v1.5.1), and the
+lane loses its role text. The price is silence: an old import or a misspelt
+name drops the note without a word, so once the import has moved and the line
+is in, read one lane's render and find the note once, after the role text. A
+city that does not add the line renders exactly what it rendered before. A
+note that belongs to one city stays in that city's own prompt template, after
+this call.
 
 ### Code ownership
 
@@ -279,10 +283,11 @@ in Anthropic's testing on small coding tasks it raised the share of tries
 that merged repeated code from under a tenth to about half, at about 1.5
 times the output tokens and with more changes nobody asked for. It is its own
 fragment, not a standing note: a city turns it on lane by lane with
-`{{ template "gc-code-ownership" . }}` after the role line, in the same roll
-order as above. Leave it out where the owner wants the code changed as little
-as possible (a fork rebased on an upstream, a customer's repository): a scope
-rule elsewhere in the prompt does not cancel it.
+`{{ templateFirst . "gc-code-ownership" }}` after the role line, written with
+`templateFirst` for the same reason as above. Leave it out where the owner
+wants the code changed as little as possible (a fork rebased on an upstream, a
+customer's repository): a scope rule elsewhere in the prompt does not cancel
+it.
 
 ## Worker workspaces
 
