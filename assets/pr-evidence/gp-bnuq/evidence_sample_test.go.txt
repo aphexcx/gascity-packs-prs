@@ -1,0 +1,113 @@
+package app
+
+// Evidence generator for gp-bnuq (not part of the PR): drives the real inbound
+// processor against the fake gc and fake Google, with the app's real mail
+// sender behind a fake gc binary, then reads the real status handler.
+// GCHAT_SAMPLE_DIR names where the samples are written.
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/chat"
+	"gchat-adapter/internal/config"
+	"gchat-adapter/internal/fakes/fakegc"
+	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/gcclient"
+	"gchat-adapter/internal/inbound"
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/server"
+	"gchat-adapter/internal/wire"
+	api "google.golang.org/api/chat/v1"
+)
+
+func TestEvidenceSamples(t *testing.T) {
+	out := os.Getenv("GCHAT_SAMPLE_DIR")
+	if out == "" {
+		t.Skip("GCHAT_SAMPLE_DIR unset")
+	}
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "mail-args")
+	script := "#!/bin/sh\n{ printf 'ARGV'; for a in \"$@\"; do printf '\\n[%s]' \"$a\"; done; printf '\\n'; } >> \"$GCHAT_TEST_MAIL_ARGS\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GC_BIN", filepath.Join(dir, "gc"))
+	t.Setenv("GCHAT_TEST_MAIL_ARGS", argsFile)
+
+	g := fakegoogle.New(t, nil)
+	g.Configure(func(s *fakegoogle.Server) {
+		s.Spaces["spaces/AAAA"] = &api.Space{Name: "spaces/AAAA", SpaceType: "SPACE"}
+		s.Spaces["spaces/BBBB"] = &api.Space{Name: "spaces/BBBB", SpaceType: "SPACE"}
+	})
+	gc := fakegc.New(t)
+	cfg := &config.Config{Secrets: config.Secrets{CityName: "examplecity"}, Endpoints: config.Endpoints{
+		ChatAPIBase: g.URL(), MediaDir: filepath.Join(dir, "media"), MediaMaxBytes: 1024, StateFile: filepath.Join(dir, "state.json")}}
+	cfg.Settings.Identities = []config.Identity{{Name: "example", Agent: "mayor"}}
+	c, err := chat.New(context.Background(), http.DefaultClient, cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, mu := ledger.New(), &sync.Mutex{}
+	a := &application{cfg: cfg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	start := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second)
+	now := start
+	var nowMu sync.Mutex
+	clock := func() time.Time { nowMu.Lock(); defer nowMu.Unlock(); return now }
+	p, err := inbound.New(inbound.Options{Config: cfg, Ledger: l, LedgerMu: mu, LedgerPath: cfg.Endpoints.StateFile, GC: gcclient.New(gc.URL(), "examplecity"), Chat: c,
+		IdentityUserID: "users/100", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RetryDelay: time.Millisecond, Now: clock, Raise: a.raiseDelivery})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred := wire.Delivery{Status: "failed", ExpectedBytes: 120, Members: []wire.DeliveryMember{{Status: "failed", ExpectedBytes: 120,
+		Error: `nudge: preserved draft deferred delivery: target "mayor" has no matching paste prompt`}}}
+	gc.Configure(func(s *fakegc.Server) {
+		s.Script = []wire.Delivery{deferred, deferred, deferred, deferred, {Status: "surprise"}, deferred}
+	})
+	sender := &api.User{Name: "users/200", DisplayName: "Reader", Type: "HUMAN"}
+	waiting := &api.Message{Name: "spaces/AAAA/messages/one", Text: "PRIVATE MESSAGE TEXT", CreateTime: start.Format(time.RFC3339),
+		Space: &api.Space{Name: "spaces/AAAA", SpaceType: "SPACE"}, Sender: sender, Thread: &api.Thread{Name: "spaces/AAAA/threads/one"}}
+	if out, err := p.Handle(context.Background(), &puller.Event{PubSubID: "one", Changes: []puller.Change{{Kind: "message.created", Message: waiting, Space: "spaces/AAAA"}}}); out != puller.Ack || err != nil {
+		t.Fatal(out, err)
+	}
+	unknown := &api.Message{Name: "spaces/BBBB/messages/two", Text: "PRIVATE MESSAGE TEXT", CreateTime: start.Format(time.RFC3339),
+		Space: &api.Space{Name: "spaces/BBBB", SpaceType: "SPACE"}, Sender: sender, Thread: &api.Thread{Name: "spaces/BBBB/threads/two"}}
+	if out, err := p.Handle(context.Background(), &puller.Event{PubSubID: "two", Changes: []puller.Change{{Kind: "message.created", Message: unknown, Space: "spaces/BBBB"}}}); out != puller.Ack || err != nil {
+		t.Fatal(out, err)
+	}
+	nowMu.Lock()
+	now = start.Add(2*time.Minute + 10*time.Second)
+	nowMu.Unlock()
+	if err := p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := server.New(server.Options{Config: cfg, Ledger: l, LedgerMu: mu, LedgerPath: cfg.Endpoints.StateFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetHealth(server.Health{State: "ready"})
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != 200 {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{"status.json": rec.Body.Bytes(), "mail-argv.txt": args} {
+		if err := os.WriteFile(filepath.Join(out, name), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

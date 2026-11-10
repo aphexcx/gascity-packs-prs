@@ -1,0 +1,5 @@
+# from gchat/adapter at b9d33951
+gofmt -l .
+rc=0
+go vet ./...
+rc=0

@@ -1,0 +1,40 @@
+# go test -race ./internal/app -run TestManagedSourceChatRefusalRetriesWithoutSignIn -count=5 at d2f453b8 (base): the same race
+WARNING: DATA RACE
+Read at 0x00c00089e2d0 by goroutine 9:
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/keyholder_test.go:180 +0x474
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0x164
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x34
+Previous write at 0x00c00089e2d0 by goroutine 157:
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/keyholder_test.go:176 +0xd0
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/operations.go:166 +0x17c
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/app.go:296 +0x40
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x7bc
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2744 +0x74
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0x164
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2742 +0x7a0
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2602 +0xb38
+      _testmain.go:148 +0x100
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/sync/waitgroup.go:238 +0x6c
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/app.go:140 +0x44
+WARNING: DATA RACE
+Read at 0x00c0002e8560 by goroutine 9:
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/keyholder_test.go:180 +0x488
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0x164
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x34
+Previous write at 0x00c0002e8560 by goroutine 157:
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/keyholder_test.go:176 +0x94
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/operations.go:166 +0x17c
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/app.go:296 +0x40
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x7bc
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2744 +0x74
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0x164
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2742 +0x7a0
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2602 +0xb38
+      _testmain.go:148 +0x100
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/sync/waitgroup.go:238 +0x6c
+      <lane>/.gc/gp-bnuq/make-test-clone/gchat/adapter/internal/app/app.go:140 +0x44
+--- FAIL: TestManagedSourceChatRefusalRetriesWithoutSignIn (3.82s)
+FAIL
+FAIL	gchat-adapter/internal/app	19.398s
+FAIL
+rc=1

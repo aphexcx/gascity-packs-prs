@@ -1,0 +1,24 @@
+..................F......                          [100%]
+=================================== FAILURES ===================================
+_____ ProxyCommandsTest.test_status_text_shows_age_cause_and_next_attempt ______
+
+self = <test_commands.ProxyCommandsTest testMethod=test_status_text_shows_age_cause_and_next_attempt>
+
+    def test_status_text_shows_age_cause_and_next_attempt(self):
+        self.respond("/status", {"health": {"state": "ready", "reason": ""}, "subscription": {"state": "ACTIVE", "name": "subscriptions/example"},
+            "backlog": 0, "unresolved": 1, "pending": 2, "stuck": 1, "unrecorded": 0, "quarantine": 0, "counters": {},
+            "deliveries": [{"id": "waiting-id", "status": "intent", "reason": "retry", "created": "2026-11-10T20:22:58Z", "age_seconds": 3725,
+                            "cause": "draft_deferred", "attempts": 63, "next_attempt": "2026-11-10T21:25:03Z"},
+                           {"id": "fresh-id", "status": "intent", "reason": "", "created": "2026-11-10T21:24:00Z", "age_seconds": 63, "cause": "behind_earlier"},
+                           {"id": "unresolved-id", "status": "unresolved", "reason": "not delivered within the retry bound", "created": "2026-11-09T20:22:58Z",
+                            "age_seconds": 90061, "cause": "draft_deferred", "attempts": 1440, "raised": "2026-11-09T20:24:58Z"}], "spaces": {}})
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+>       self.assertIn("Backlog: 0; pending: 2; unresolved: 1; unrecorded: 0; quarantine: 0; stuck: 1", lines)
+E       AssertionError: 'Backlog: 0; pending: 2; unresolved: 1; unrecorded: 0; quarantine: 0; stuck: 1' not found in ['Health: ready — ', 'Subscription: ACTIVE subscriptions/example', 'Expiry: unknown', 'Last event: none', 'Backlog: 0; pending: 2; unresolved: 1; unrecorded: 0; quarantine: 0', 'Counters:', 'Deliveries (only unresolved IDs can be resolved):', '  intent waiting-id: retry', '  intent fresh-id: ', '  unresolved unresolved-id: not delivered within the retry bound', 'Spaces:', 'Retained unavailable records are counted under unavailable:<space>; resolve cannot replay them.']
+
+gchat/tests/test_commands.py:387: AssertionError
+=========================== short test summary info ============================
+FAILED gchat/tests/test_commands.py::ProxyCommandsTest::test_status_text_shows_age_cause_and_next_attempt
+1 failed, 24 passed, 22 subtests passed in 11.78s

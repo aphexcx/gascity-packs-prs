@@ -1,0 +1,55 @@
+# gchat-adapter/internal/inbound [gchat-adapter/internal/inbound.test]
+internal/inbound/retry_test.go:797:17: rf.p.Pass undefined (type *Processor has no field or method Pass, but does have method pass)
+FAIL	gchat-adapter/internal/inbound [build failed]
+FAIL
+--- FAIL: TestNextAttemptIsClearedOnceUsed (0.16s)
+    retry_test.go:787: pending after retries: {ID:spaces/room/messages/one Space:spaces/room Message:spaces/room/messages/one Kind:message.created Status:pending ReceiptID:receipt-5 Attempts:5 Created:2026-11-10 20:22:58 +0000 UTC Event:{"provider_message_id":"spaces/room/messages/one","conversation":{"scope_id":"examplecity","provider":"gchat","account_id":"example","conversation_id":"spaces/room","kind":"room"},"actor":{"id":"users/456","display_name":"Reader","is_bot":false},"text":"[from: Reader \u003cusers/456\u003e | external | item gchat:spaces/room/messages/one]\nhello","reply_to_message_id":"spaces/room/threads/topic","received_at":"2026-11-10T20:22:58Z"} Reason: CatchUp:false ProvenanceFramed:true NextAttempt:2026-11-10 20:23:13 +0000 UTC Posted:2026-11-10 20:23:13 +0000 UTC Cause: Raised:0001-01-01 00:00:00 +0000 UTC}
+--- FAIL: TestRaiseBodyWording (0.30s)
+    --- FAIL: TestRaiseBodyWording/waiting (0.17s)
+        retry_test.go:828: body lacks "--since 2026-11-10T07:00:00Z":
+            A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying.
+
+            Space: spaces/room
+            Thread: spaces/room/threads/topic
+            Message: spaces/room/messages/one
+            Delivery ID: spaces/room/messages/one
+            Recorded: 2026-11-10T20:22:58Z
+            State: waiting to be posted to gc (intent)
+            Cause: draft_deferred (text in the agent's input box held the message back)
+            Age: 2m0s
+            POSTs made: 5
+            Retrying until: 2026-11-11T20:22:58Z (24 hours after it was recorded)
+
+            Read the message (from an hour before it was recorded): gc gchat read --space spaces/room --thread spaces/room/threads/topic --since 2026-11-10T19:22:58Z
+            Every delivery the adapter holds: gc gchat status
+            This is the only mail for this message. If it has not landed by 2026-11-11T20:22:58Z, the adapter stops trying and gc gchat status lists it for gc gchat resolve.
+
+            This mail never carries the message's text or its sender; read them in Chat with the command above.
+    --- FAIL: TestRaiseBodyWording/partial (0.14s)
+        retry_test.go:842: partial body: [{ID:spaces/room/messages/one Space:spaces/room Thread:spaces/room/threads/topic Message:spaces/room/messages/one Body:A Google Chat message did not reach the agent, and the gchat adapter has stopped trying. It waits for an operator.
+
+            Space: spaces/room
+            Thread: spaces/room/threads/topic
+            Message: spaces/room/messages/one
+            Delivery ID: spaces/room/messages/one
+            Recorded: 2026-11-10T20:22:58Z
+            State: unresolved
+            Cause: not_delivered (gc answered that nothing was delivered)
+            Reason: delivery retries exhausted
+            Age: 7s
+
+            Read the message (from an hour before it was recorded): gc gchat read --space spaces/room --thread spaces/room/threads/topic --since 2026-11-10T19:22:58Z
+            Every delivery the adapter holds: gc gchat status
+            After checking whether the agent has the message:
+              gc gchat resolve spaces/room/messages/one --accept marks it delivered.
+              gc gchat resolve spaces/room/messages/one --replay posts it again. A replay can duplicate a turn whose first outcome is unknown.
+
+            This mail never carries the message's text or its sender; read them in Chat with the command above.
+            }]
+    --- FAIL: TestRaiseBodyWording/one_hour (0.00s)
+        retry_test.go:847: hours(1h) = "1 hours"
+--- FAIL: TestBoundWithoutAnAnswerIsUnknown (0.06s)
+    retry_test.go:865: never answered: {ID:spaces/room/messages/one Space:spaces/room Message:spaces/room/messages/one Kind:message.created Status:unresolved ReceiptID: Attempts:0 Created:2026-11-10 20:22:58 +0000 UTC Event:{"provider_message_id":"spaces/room/messages/one","conversation":{"scope_id":"examplecity","provider":"gchat","account_id":"example","conversation_id":"spaces/room","kind":"room"},"actor":{"id":"users/456","display_name":"Reader","is_bot":false},"text":"[from: Reader \u003cusers/456\u003e | external | item gchat:spaces/room/messages/one]\nhello","reply_to_message_id":"spaces/room/threads/topic","received_at":"2026-11-10T20:22:58Z"} Reason:not delivered within the retry bound CatchUp:false ProvenanceFramed:true NextAttempt:0001-01-01 00:00:00 +0000 UTC Posted:2026-11-10 20:22:58 +0000 UTC Cause:not_delivered Raised:2026-11-11 20:22:58 +0000 UTC}
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.855s
+FAIL
