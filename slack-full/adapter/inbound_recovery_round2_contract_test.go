@@ -539,3 +539,43 @@ func TestRound2OlderReplayPermissionSurvivesOnlyItsPendingAttempt(t *testing.T) 
 		t.Fatal("later startup reused an expired manual override")
 	}
 }
+
+func TestRound2FailedRetirementNoticeNeverClaimsDelivery(t *testing.T) {
+	r, now := round2Recovery(t)
+	if err := os.WriteFile(r.deadDir, []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	round2Hold(t, r, "100.1")
+	var texts []string
+	r.notice = func(_, _, _, text string) (string, error) {
+		texts = append(texts, text)
+		return "n", nil
+	}
+	*now = now.Add(time.Minute)
+	r.updateNotices()
+	r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+		return deliveryReceipt{}, &inboundPostError{Status: 422, StatusText: "422 refused"}
+	}
+	r.tick(false)
+	e := r.state.Entries["C1|100.1"]
+	if !e.Retiring || !e.DeliveredAt.IsZero() {
+		t.Fatalf("retirement ownership lost: %+v", e)
+	}
+	if len(texts) != 2 || !strings.Contains(texts[1], "unconfirmed") || strings.Contains(texts[1], "handed to") || strings.Contains(texts[1], "0001-") {
+		t.Fatalf("failed retirement claimed delivery: %v", texts)
+	}
+	// A delivered sibling does not prove that the whole incident recovered.
+	sibling := e
+	sibling.Inbound.ProviderMessageID = "100.2"
+	sibling.DeliveredAt = *now
+	sibling.Retiring = false
+	sibling.Reason = "terminal handoff confirmed"
+	r.put("C1|100.2", sibling)
+	notice := r.state.Notices["C1"]
+	notice.Resolved = false
+	r.saveNotice("C1", notice)
+	r.updateNotices()
+	if len(texts) != 3 || !strings.Contains(texts[2], "unconfirmed") || strings.Contains(texts[2], "handed to") {
+		t.Fatalf("delivered sibling hid the failed retirement: %v", texts)
+	}
+}

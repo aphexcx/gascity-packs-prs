@@ -1450,6 +1450,7 @@ func (r *inboundRecovery) updateNotices() {
 		}
 		var latest time.Time
 		dead, unknown, gateOff, paste, acknowledged := false, false, false, false, false
+		unconfirmed := false
 		for _, e := range entries {
 			if e.Inbound.Conversation.ConversationID != channel || e.HeldAt.Before(n.Since) || e.Reaction || e.Inbound.Actor.IsBot {
 				continue
@@ -1461,6 +1462,7 @@ func (r *inboundRecovery) updateNotices() {
 				acknowledged = true
 				continue
 			}
+			unconfirmed = unconfirmed || e.DeliveredAt.IsZero()
 			dead = dead || (!e.DeadLetteredAt.IsZero() && e.DeliveredAt.IsZero() && e.AcknowledgedAt.IsZero())
 			unknown = unknown || strings.Contains(e.Reason, "proof unavailable")
 			gateOff = gateOff || strings.Contains(e.Reason, "gate is off")
@@ -1470,7 +1472,10 @@ func (r *inboundRecovery) updateNotices() {
 		if paste {
 			text = fmt.Sprintf("Held since %s; pasted into the session's terminal by %s, with submission and reading unconfirmed.", n.Since.UTC().Format(time.RFC3339), latest.UTC().Format(time.RFC3339))
 		}
-		if acknowledged {
+		if latest.IsZero() || unconfirmed {
+			text = "Delivery remains unconfirmed; the recorded line needs verification by hand."
+		}
+		if acknowledged && !unconfirmed {
 			text = "The held incident was acknowledged by hand; this does not confirm terminal delivery or reading."
 		}
 		if dead {

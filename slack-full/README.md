@@ -427,7 +427,8 @@ terminal handoff by the latest confirmed time, distinguishes an unconfirmed
 submission, and never asserts reading. Unknown or gate-off outcomes explicitly
 require verification by hand. At the bound, the notice says delivery was not
 confirmed and the recorded line may arrive late; a later incident gets a new
-notice. Only held human messages open notices, never imported dead letters,
+notice. A failed retirement write never produces a terminal-delivery claim.
+Only held human messages open notices, never imported dead letters,
 reactions or peer riders. Failed posts and edits use persisted ladder backoff
 and log each distinct error once. Missing threads/channels/messages, removed
 bots, archived channels and permanent edit refusals end that incident's notice.
