@@ -102,6 +102,78 @@ func TestPreTask15LedgerCompatibility(t *testing.T) {
 	}
 }
 
+func TestLedger050LoadsAndSavesUnchanged(t *testing.T) {
+	// Written by the real ledger.Save of gchat 0.5.0 (testdata/gen-ledger-0.5.0.go
+	// at d2f453b83a428546dfe7fa01dc2bd831c0b47ae0): a change in each delivery
+	// state, none with the retry fields that came after.
+	const fixture = "testdata/ledger-0.5.0.json"
+	oldBytes, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, err := ledger.Load(fixture, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, c := range l.Changes {
+		if !c.NextAttempt.IsZero() || !c.Posted.IsZero() || c.Cause != "" || !c.Raised.IsZero() {
+			t.Fatalf("0.5.0 change %s gained retry state on load: %+v", id, c)
+		}
+	}
+	if c := l.Changes["spaces/example/messages/intent"]; c == nil || c.Status != "intent" || c.Attempts != 2 || c.Reason != "retry" {
+		t.Fatalf("0.5.0 intent: %+v", c)
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := l.Clone().Save(path); err != nil {
+		t.Fatal(err)
+	}
+	newBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(oldBytes, newBytes) {
+		t.Fatalf("0.5.0 ledger changed on save:\nold %s\nnew %s", oldBytes, newBytes)
+	}
+}
+
+func TestChangeRetryFieldsRoundTripAndAreAbsentWhenZero(t *testing.T) {
+	at := time.Date(2026, 11, 10, 20, 22, 58, 123456789, time.UTC)
+	l := ledger.New()
+	l.Changes["waiting"] = &ledger.ChangeState{ID: "waiting", Status: "intent", Attempts: 7, Reason: "retry", Created: at,
+		NextAttempt: at.Add(time.Minute), Posted: at.Add(30 * time.Second), Cause: "draft_deferred", Raised: at.Add(2 * time.Minute)}
+	l.Changes["plain"] = &ledger.ChangeState{ID: "plain", Status: "committed", Created: at}
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Changes map[string]map[string]any `json:"changes"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"next_attempt", "posted", "cause", "raised"} {
+		if _, ok := doc.Changes["waiting"][key]; !ok {
+			t.Errorf("set %s missing from JSON: %s", key, raw)
+		}
+		if _, ok := doc.Changes["plain"][key]; ok {
+			t.Errorf("zero %s written to JSON: %s", key, raw)
+		}
+	}
+	assertJSONKeys(t, doc.Changes)
+	got, err := ledger.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Changes, l.Changes) {
+		t.Fatalf("round trip:\nwant %+v\ngot  %+v", l.Changes["waiting"], got.Changes["waiting"])
+	}
+}
+
 func TestSaveReplacesStateWithoutTemporaryFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	l := ledger.New()

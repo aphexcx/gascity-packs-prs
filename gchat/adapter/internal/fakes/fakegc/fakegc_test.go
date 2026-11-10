@@ -713,3 +713,36 @@ func TestNotFoundAndEmptySessionProblems(t *testing.T) {
 		t.Fatalf("empty session problem: %v", empty)
 	}
 }
+
+func TestScriptAnswersInOrderBeforeNextDelivery(t *testing.T) {
+	s := New(t)
+	held := wire.Delivery{Status: "held", Members: []wire.DeliveryMember{{Status: "held", ExpectedBytes: 12}}}
+	landed := wire.Delivery{Status: "pending", Members: []wire.DeliveryMember{{Status: "pending", DeliveredBytes: 12, ExpectedBytes: 12}}}
+	s.Configure(func(s *Server) { s.Script = []wire.Delivery{held, held, landed}; s.NextDelivery = "partial" })
+	// Nothing landed on "held", so the same message is delivered again.
+	for range 2 {
+		got := call(t, s, "POST", "inbound", inbound("same"), true, 200)["delivery"].(map[string]any)
+		if got["status"] != "held" || got["members"].([]any)[0].(map[string]any)["status"] != "held" {
+			t.Fatalf("held answer: %v", got)
+		}
+	}
+	got := call(t, s, "POST", "inbound", inbound("landed"), true, 200)["delivery"].(map[string]any)
+	id, _ := got["receipt_id"].(string)
+	if got["status"] != "pending" || id == "" {
+		t.Fatalf("pending answer: %v", got)
+	}
+	if poll := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200); poll["state"] != "pending" {
+		t.Fatalf("a pending answer concluded at once: %v", poll)
+	}
+	s.SetReceipt(id, wire.ReceiptResponse{State: "concluded", Delivery: landed})
+	poll := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200)
+	member := poll["delivery"].(map[string]any)["members"].([]any)[0].(map[string]any)
+	if member["status"] != "pending" || member["delivered_bytes"] != float64(12) || member["expected_bytes"] != float64(12) {
+		t.Fatalf("receipt members: %v", poll)
+	}
+	for _, want := range []string{"partial", "delivered"} {
+		if got := call(t, s, "POST", "inbound", inbound("after-"+want), true, 200)["delivery"].(map[string]any); got["status"] != want {
+			t.Fatalf("after the script: %v, want %s", got, want)
+		}
+	}
+}

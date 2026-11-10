@@ -195,16 +195,14 @@ func (c *Client) Register(ctx context.Context, reg wire.Registration) error {
 }
 
 // Inbound posts a message and reads gc's delivery outcome. A newer gc answers
-// {"delivery": {"status", "receipt_id"}}; gc 1.5 answers synchronously with
+// {"delivery": {...}}: the status, the receipt id, and when gc knows them the
+// terminal flag, byte counts and per-member outcomes. gc 1.5 answers synchronously with
 // the routing result itself (PascalCase: Message, Binding, TargetSessionID,
 // TargetAgentName, TranscriptEntry), which is mapped to delivered when a
 // target was chosen and no_route otherwise. Nothing is pending in that shape.
 func (c *Client) Inbound(ctx context.Context, m wire.InboundMessage) (wire.InboundResponse, error) {
 	var raw struct {
-		Delivery *struct {
-			Status    string `json:"status"`
-			ReceiptID string `json:"receipt_id"`
-		} `json:"delivery"`
+		Delivery        *wire.Delivery  `json:"delivery"`
 		Message         json.RawMessage `json:"Message"`
 		TargetSessionID string          `json:"TargetSessionID"`
 		TargetAgentName string          `json:"TargetAgentName"`
@@ -216,7 +214,7 @@ func (c *Client) Inbound(ctx context.Context, m wire.InboundMessage) (wire.Inbou
 	}
 	switch {
 	case raw.Delivery != nil:
-		result.Delivery.Status, result.Delivery.ReceiptID = raw.Delivery.Status, raw.Delivery.ReceiptID
+		result.Delivery = *raw.Delivery
 	case len(raw.Message) > 0:
 		result.Delivery.Status = "no_route"
 		if raw.TargetSessionID != "" || raw.TargetAgentName != "" || (len(raw.TranscriptEntry) > 0 && string(raw.TranscriptEntry) != "null") {

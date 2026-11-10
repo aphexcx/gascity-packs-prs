@@ -630,7 +630,10 @@ func TestEditsThatFirstWakeRemainFollowed(t *testing.T) {
 }
 
 func TestRetriesExhaustedAndPendingFailureRetries(t *testing.T) {
-	for _, status := range []string{"failed", "partial"} {
+	// "partial" keeps the four-POST bound: each retry can add another fragment
+	// to the terminal. A "failed" answer is retried until it lands instead; see
+	// TestFailedDeliveryIsRetriedUntilItLands.
+	for _, status := range []string{"partial"} {
 		t.Run(status, func(t *testing.T) {
 			f := setup(t)
 			f.opts.Save = func(l *ledger.Ledger) error {
@@ -1383,8 +1386,10 @@ func TestPendingReceiptBeyondDefaultDeadlineIsUnresolved(t *testing.T) {
 	f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
 	ev := event("pending-deadline", "message.created", message())
 	handle(t, f, ev)
-	// Model an old durable pending change recovered after a long outage.
+	// Model an old durable pending change recovered after a long outage. A
+	// record written before posted existed counts its deadline from Created.
 	f.l.Changes[messageName].Created = time.Now().Add(-time.Hour)
+	f.l.Changes[messageName].Posted = time.Time{}
 	if err := f.p.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1447,6 +1452,9 @@ func TestReceiptIsLookedUpAfterPendingDeadline(t *testing.T) {
 			if c.Status != "pending" || c.ReceiptID == "" {
 				t.Fatalf("recovery: %+v", c)
 			}
+			// The fresh receipt's deadline counts from its POST; look it up once
+			// that deadline has passed too.
+			now = now.Add(time.Hour)
 			r := wire.ReceiptResponse{State: "concluded"}
 			r.Delivery.Status = status
 			if status == "pending" || status == "unknown" {
@@ -1669,7 +1677,8 @@ func TestChangeRemovedBeforeRetryAttemptIsNotPosted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.l.Changes[messageName] = &ledger.ChangeState{ID: messageName, Space: space, Message: messageName, Kind: "message.created", Status: "intent", Attempts: 1, Reason: "retry", Event: string(data)}
+	// Every recorded change has Created; a zero one would be past the retry bound.
+	f.l.Changes[messageName] = &ledger.ChangeState{ID: messageName, Space: space, Message: messageName, Kind: "message.created", Status: "intent", Attempts: 1, Reason: "retry", Event: string(data), Created: time.Now().UTC()}
 	removed := false
 	ctx := &retryWaitContext{Context: context.Background(), onWait: func() {
 		f.opts.LedgerMu.Lock()
@@ -2303,7 +2312,7 @@ func TestReceiptLookupGracePreservesConcurrentTerminalChange(t *testing.T) {
 				// lookup is in flight, after Poll took its pending snapshot.
 				var err error
 				if terminal == "delivered" {
-					err = f.p.outcome(messageName, "delivered", "")
+					err = f.p.outcome(messageName, wire.Delivery{Status: "delivered"})
 				} else {
 					err = f.p.unresolved(messageName, "operator retained uncertainty")
 				}

@@ -168,7 +168,7 @@ func TestReceiptStates(t *testing.T) {
 	assertReceipt := func(want wire.ReceiptResponse) {
 		t.Helper()
 		got, err := c.Receipt(t.Context(), id)
-		if err != nil || got != want {
+		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("receipt = %+v, %v; want %+v", got, err, want)
 		}
 	}
@@ -177,6 +177,8 @@ func TestReceiptStates(t *testing.T) {
 		want := wire.ReceiptResponse{State: "concluded"}
 		want.Delivery.Status = status
 		s.SetReceipt(id, want)
+		// gc names the receipt inside every concluded delivery.
+		want.Delivery.ReceiptID = id
 		assertReceipt(want)
 	}
 	s.Advance(time.Hour + time.Nanosecond)
@@ -652,5 +654,27 @@ func TestRegisterFallsBackWithoutReplyInstructions(t *testing.T) {
 	defer other.Close()
 	if err := New(other.URL, "examplecity").Register(context.Background(), registration("http://127.0.0.1:1/svc/gchat")); err == nil {
 		t.Fatal("unrelated validation error swallowed")
+	}
+}
+
+func TestInboundAndReceiptCarryMembers(t *testing.T) {
+	s := fakegc.New(t)
+	c := checkedClient(t, s.URL())
+	deferred := wire.Delivery{Status: "failed", ExpectedBytes: 120, Members: []wire.DeliveryMember{{Status: "failed", ExpectedBytes: 120, Error: "nudge: preserved draft deferred delivery"}}}
+	s.Configure(func(s *fakegc.Server) { s.Script = []wire.Delivery{deferred} })
+	got, err := c.Inbound(t.Context(), inbound("spaces/room/messages/members"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred.ReceiptID = got.Delivery.ReceiptID
+	if got.Delivery.ReceiptID == "" || !reflect.DeepEqual(got.Delivery, deferred) {
+		t.Fatalf("delivery:\n got %+v\nwant %+v", got.Delivery, deferred)
+	}
+	receipt, err := c.Receipt(t.Context(), got.Delivery.ReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.State != "concluded" || !reflect.DeepEqual(receipt.Delivery, deferred) {
+		t.Fatalf("receipt:\n got %+v\nwant %+v", receipt.Delivery, deferred)
 	}
 }

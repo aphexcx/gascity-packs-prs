@@ -48,23 +48,74 @@ type Options struct {
 	// Save optionally replaces Ledger.Save. It runs with LedgerMu held and must
 	// durably save the supplied snapshot without retaining or modifying it.
 	Save func(*ledger.Ledger) error
-	// RetryDelay defaults to one second; retries back off exponentially.
+	// RetryDelay defaults to one second; retries back off exponentially. The
+	// first four POSTs of a change wait 1, 2 and 4 times it inside the gate.
 	RetryDelay time.Duration
 	// SpaceJoined is told, outside the ledger lock, when the identity's own
 	// membership in a space it did not know is observed. The app then sweeps
 	// that space's history from the join time: Google's all-spaces subscription
 	// does not deliver a newly joined space's messages at once (seen live).
 	SpaceJoined func(space string)
-	// PendingDeadline bounds receipt polling from ChangeState.Created. The
-	// default is one hour, matching gc's receipt retention period.
+	// PendingDeadline bounds receipt polling from the change's latest POST
+	// (ChangeState.Posted; Created for a record without it). The default is
+	// one hour, matching gc's receipt retention period.
 	PendingDeadline time.Duration
 	// Now supplies wall time for durable timestamps and pending deadlines.
 	Now func() time.Time
+	// RetryCap caps the wait between the POSTs that follow the fourth, when gc
+	// keeps answering "not delivered". The default is DefaultRetryCap.
+	RetryCap time.Duration
+	// RetryBound ends every change in intent at its recorded time plus this
+	// bound, whether it is retrying or held behind an earlier change of its
+	// space. The default is DefaultRetryBound.
+	RetryBound time.Duration
+	// StuckAfter is how long a change may wait in intent or pending, from its
+	// recorded time, before it is raised. It also bounds how long a pending
+	// change holds back the later changes of its space, from its latest POST.
+	// The default is DefaultStuckAfter.
+	StuckAfter time.Duration
+	// Raise tells the city's agent about one stuck or unresolved change. Poll
+	// calls it at the end of its pass, outside the gate and the ledger lock,
+	// at most RaisesPerPass times. It returns nil only once the report was
+	// sent; a failure is tried again on a later pass, at most once a minute.
+	// Nil disables raising.
+	Raise func(context.Context, Raise) error
+}
+
+const (
+	DefaultRetryCap   = time.Minute
+	DefaultRetryBound = 24 * time.Hour
+	DefaultStuckAfter = 2 * time.Minute
+	// RaisesPerPass bounds the Raise calls of one poll pass.
+	RaisesPerPass = 4
+	// firstPOSTs run inside the gate with today's waits; later POSTs are
+	// driven by Poll, one per call, no earlier than NextAttempt.
+	firstPOSTs = 4
+	// raiseRetry is the least time between two raise attempts of one change.
+	raiseRetry = time.Minute
+)
+
+// Raise is one stuck or unresolved change for the city's agent. Body is the
+// whole mail: it names the change and the commands for it, and never carries
+// the message's text, the sender or gc's error text.
+type Raise struct {
+	// ID is the change ID that gc gchat resolve takes.
+	ID      string
+	Space   string
+	Thread  string
+	Message string
+	Body    string
 }
 
 type Processor struct {
 	opts Options
 	gate chan struct{}
+	// wait is the in-gate wait of the first POSTs; tests replace it.
+	wait func(context.Context, time.Duration) error
+	// raiseMu serializes the raise phase of concurrent polls. raiseTried
+	// throttles a change whose report failed; it is process memory only.
+	raiseMu    sync.Mutex
+	raiseTried map[string]time.Time
 }
 
 // ErrCredentials identifies a lookup held until Chat credentials or scopes are repaired.
@@ -92,13 +143,25 @@ func New(opts Options) (*Processor, error) {
 	if opts.PendingDeadline < 0 {
 		return nil, errors.New("inbound: pending deadline must be positive")
 	}
+	for _, d := range []struct {
+		value    *time.Duration
+		fallback time.Duration
+		name     string
+	}{{&opts.RetryCap, DefaultRetryCap, "retry cap"}, {&opts.RetryBound, DefaultRetryBound, "retry bound"}, {&opts.StuckAfter, DefaultStuckAfter, "stuck threshold"}} {
+		if *d.value == 0 {
+			*d.value = d.fallback
+		}
+		if *d.value < 0 {
+			return nil, errors.New("inbound: " + d.name + " must be positive")
+		}
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
 	if opts.Save == nil {
 		opts.Save = func(l *ledger.Ledger) error { return l.Save(opts.LedgerPath) }
 	}
-	return &Processor{opts: opts, gate: make(chan struct{}, 1)}, nil
+	return &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{}}, nil
 }
 
 // Handle is a puller.Handler. Pending receipts are durable recovery obligations,
@@ -169,8 +232,17 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 
 // Poll performs one recovery pass. The app calls it every five seconds, also
 // after startup. Concluded receipts are honored even past the pending deadline;
-// lookup failures past that deadline get one persisted grace pass.
+// lookup failures past that deadline get one persisted grace pass. Changes are
+// taken oldest first, so the changes of one space follow each other in one
+// pass once the first lands. After the pass, outside the gate, Poll raises
+// what is due (see Options.Raise); a raise failure is logged, not returned.
 func (p *Processor) Poll(ctx context.Context) error {
+	err := p.pass(ctx)
+	p.raise(ctx)
+	return err
+}
+
+func (p *Processor) pass(ctx context.Context) error {
 	if err := p.enter(ctx); err != nil {
 		return err
 	}
@@ -185,13 +257,7 @@ func (p *Processor) Poll(ctx context.Context) error {
 			ids = append(ids, id)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool {
-		a, b := l.Changes[ids[i]], l.Changes[ids[j]]
-		if a.Created.Equal(b.Created) {
-			return a.ID < b.ID
-		}
-		return a.Created.Before(b.Created)
-	})
+	sort.Slice(ids, func(i, j int) bool { return earlier(l.Changes[ids[i]], l.Changes[ids[j]]) })
 	var failures []error
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
@@ -208,7 +274,7 @@ func (p *Processor) Poll(ctx context.Context) error {
 		if err != nil {
 			failures = append(failures, errors.New("inbound: receipt lookup failed"))
 			if ctx.Err() == nil {
-				late := !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline))
+				late := !p.opts.Now().Before(sentAt(c).Add(p.opts.PendingDeadline))
 				var saveErr error
 				if late && c.Reason == receiptLookupGrace {
 					saveErr = p.unresolved(id, "receipt lookup failed beyond deadline")
@@ -232,7 +298,7 @@ func (p *Processor) Poll(ctx context.Context) error {
 		}
 		switch r.State {
 		case "pending":
-			if !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
+			if !p.opts.Now().Before(sentAt(c).Add(p.opts.PendingDeadline)) {
 				err = p.unresolved(id, "receipt pending beyond deadline")
 			} else if c.Reason == receiptLookupGrace {
 				err = p.update(func(l *ledger.Ledger) {
@@ -243,9 +309,9 @@ func (p *Processor) Poll(ctx context.Context) error {
 			}
 		case "concluded":
 			if r.Delivery.Status == "pending" {
-				err = p.unresolved(id, "receipt concluded with pending delivery")
+				err = p.concludedPending(id, r.Delivery)
 			} else {
-				err = p.outcome(id, r.Delivery.Status, "")
+				err = p.outcome(id, r.Delivery)
 				if err == nil {
 					err = p.resume(ctx, id)
 				}
@@ -261,6 +327,151 @@ func (p *Processor) Poll(ctx context.Context) error {
 }
 
 const receiptLookupGrace = "receipt lookup failed beyond deadline; retry pending"
+
+// Durable reasons this file judges by, beside the many it only reports.
+const (
+	reasonRetry       = "retry"
+	reasonWithdrawn   = "message deleted or superseded before retry"
+	reasonExhausted   = "delivery retries exhausted"
+	reasonRetryBound  = "not delivered within the retry bound"
+	reasonHeld        = "gc holds the delivery; operator attention"
+	reasonUnconcluded = "receipt concluded with pending delivery"
+	reasonLanded      = "landed_unconfirmed"
+)
+
+// The closed set of ChangeState.Cause. A waiting change has one of the first
+// four; an unresolved change keeps its waiting word when a bound ended it.
+const (
+	causeDraftDeferred      = "draft_deferred"
+	causePendingInteraction = "pending_interaction"
+	causeNotDelivered       = "not_delivered"
+	causeBehindEarlier      = "behind_earlier"
+	causeHeld               = "held"
+	causeWithdrawn          = "withdrawn"
+	causeUnknown            = "unknown"
+)
+
+// earlier is the order of changes: by recorded time, then by ID.
+func earlier(a, b *ledger.ChangeState) bool {
+	if a.Created.Equal(b.Created) {
+		return a.ID < b.ID
+	}
+	return a.Created.Before(b.Created)
+}
+
+// sentAt is when the latest POST was made; a record written before Posted
+// existed counts from when it was recorded.
+func sentAt(c *ledger.ChangeState) time.Time {
+	if c.Posted.IsZero() {
+		return c.Created
+	}
+	return c.Posted
+}
+
+// heldBack reports whether an earlier change of c's space is unsettled: in
+// intent, or in pending for less than StuckAfter since its latest POST. A
+// pending change can still conclude "failed" and retry, so a later message
+// must not overtake it, but a receipt can stay pending for an hour and most
+// such messages have landed: the hold on the space is bounded.
+func (p *Processor) heldBack(l *ledger.Ledger, c *ledger.ChangeState, now time.Time) bool {
+	for _, other := range l.Changes {
+		if other.Space != c.Space || other.ID == c.ID || !earlier(other, c) {
+			continue
+		}
+		if other.Status == "intent" || (other.Status == "pending" && now.Before(sentAt(other).Add(p.opts.StuckAfter))) {
+			return true
+		}
+	}
+	return false
+}
+
+// retryWait continues the in-gate doubling after the first POSTs:
+// RetryDelay * 2^(attempts-1), capped at RetryCap before it can overflow.
+func (p *Processor) retryWait(attempts int) time.Duration {
+	d := p.opts.RetryDelay
+	for i := 1; i < attempts; i++ {
+		if d >= p.opts.RetryCap-d {
+			return p.opts.RetryCap
+		}
+		d *= 2
+	}
+	return min(d, p.opts.RetryCap)
+}
+
+// waitCause names why gc did not deliver, from its status and error texts.
+// The texts are read here and never stored or logged.
+func waitCause(d wire.Delivery) string {
+	if d.Status == "held" {
+		return causeDraftDeferred
+	}
+	cause := causeNotDelivered
+	for _, m := range d.Members {
+		if strings.Contains(m.Error, "preserved draft deferred delivery") {
+			return causeDraftDeferred
+		}
+		if strings.Contains(m.Error, "pending interaction") {
+			cause = causePendingInteraction
+		}
+	}
+	return cause
+}
+
+// unresolvedCause is the cause a change carries once it is unresolved.
+func unresolvedCause(reason, waiting string) string {
+	switch reason {
+	case reasonWithdrawn:
+		return causeWithdrawn
+	case reasonHeld:
+		return causeHeld
+	case reasonRetryBound, reasonExhausted:
+		if waiting != "" {
+			return waiting
+		}
+		return causeNotDelivered
+	}
+	return causeUnknown
+}
+
+// concludedPending judges a receipt that concluded with the status pending.
+// A terminal hold is for an operator. A paste every member took whole, with
+// no terminal hold, landed: gc vouches the whole message is in the terminal,
+// not that the agent read it. Anything else stays unresolved.
+func (p *Processor) concludedPending(id string, d wire.Delivery) error {
+	terminal := d.Terminal
+	for _, m := range d.Members {
+		terminal = terminal || m.Terminal
+	}
+	if terminal {
+		return p.unresolved(id, reasonHeld)
+	}
+	if !landedWhole(d) {
+		return p.unresolved(id, reasonUnconcluded)
+	}
+	committed := false
+	err := p.update(func(l *ledger.Ledger) {
+		c := l.Changes[id]
+		if c == nil || c.Status != "pending" {
+			return
+		}
+		l.Counters["turns:"+c.Space]++
+		l.Counters["unconfirmed:"+c.Space]++
+		c.Status, c.Reason = "committed", reasonLanded
+		committed = true
+	})
+	if err == nil && committed {
+		p.opts.Logger.Info("inbound delivery landed unconfirmed", "change", id)
+	}
+	return err
+}
+
+func landedWhole(d wire.Delivery) bool {
+	for _, m := range d.Members {
+		if m.Terminal || (m.Status != "delivered" && (m.Status != "pending" || m.ExpectedBytes <= 0 || m.DeliveredBytes != m.ExpectedBytes)) {
+			return false
+		}
+	}
+	return len(d.Members) > 0
+}
 
 func (p *Processor) enter(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -763,6 +974,12 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 	return err
 }
 
+// resume POSTs a change in intent. The first four POSTs run here, inside the
+// gate, with waits of 1, 2 and 4 times RetryDelay. After the fourth, a change
+// gc keeps answering "not delivered" stays in intent with NextAttempt set, and
+// each call makes at most one POST, none before NextAttempt: Poll drives it,
+// and a Pub/Sub redelivery takes the same path. A change never overtakes an
+// unsettled earlier change of its space (heldBack) and ends at RetryBound.
 func (p *Processor) resume(ctx context.Context, id string) error {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -777,16 +994,34 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			return nil
 		}
 		if superseded(l, c) {
-			return p.unresolved(id, "message deleted or superseded before retry")
+			return p.unresolved(id, reasonWithdrawn)
 		}
-		if c.Attempts > 0 && c.Reason != "retry" {
+		if c.Attempts > 0 && c.Reason != reasonRetry {
 			return p.unresolved(id, "interrupted POST; delivery unknown")
 		}
-		if c.Attempts >= 4 {
-			return p.unresolved(id, "delivery retries exhausted")
+		now := p.opts.Now()
+		if !now.Before(c.Created.Add(p.opts.RetryBound)) {
+			return p.unresolved(id, reasonRetryBound)
 		}
-		if c.Attempts > 0 {
-			if err := wait(ctx, p.opts.RetryDelay*time.Duration(1<<uint(c.Attempts-1))); err != nil {
+		if p.heldBack(l, c, now) {
+			if c.Cause == causeBehindEarlier {
+				return nil
+			}
+			return p.update(func(l *ledger.Ledger) {
+				if current := l.Changes[id]; current != nil && current.Status == "intent" {
+					current.Cause = causeBehindEarlier
+				}
+			})
+		}
+		later := c.Attempts >= firstPOSTs
+		// No wait is longer than RetryCap: after a wall clock was set back, a
+		// next attempt further away than that is due (a retry after "not
+		// delivered" is clean).
+		if later && now.Before(c.NextAttempt) && c.NextAttempt.Sub(now) <= p.opts.RetryCap {
+			return nil
+		}
+		if !later && c.Attempts > 0 {
+			if err := p.wait(ctx, p.opts.RetryDelay*time.Duration(1<<uint(c.Attempts-1))); err != nil {
 				return err
 			}
 		}
@@ -801,6 +1036,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			if c := l.Changes[id]; c != nil {
 				c.Attempts++
 				c.Reason = ""
+				c.Posted = p.opts.Now().UTC()
 				attempted = true
 			}
 		}); err != nil {
@@ -843,8 +1079,11 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			}
 			return ctx.Err()
 		}
-		if err := p.outcome(id, r.Delivery.Status, r.Delivery.ReceiptID); err != nil {
+		if err := p.outcome(id, r.Delivery); err != nil {
 			return err
+		}
+		if later {
+			return nil
 		}
 	}
 }
@@ -893,43 +1132,65 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 	return false
 }
 
-func (p *Processor) outcome(id, status, receipt string) error {
-	if status == "pending" && receipt == "" {
+// outcome applies gc's answer. "failed" and "held" are a definite "not
+// delivered": nothing reached the terminal, so the change goes back to intent
+// and is retried until it lands or a bound ends it, never by count. "partial"
+// put a fragment in the terminal and each retry can add another, so it keeps
+// the four-POST bound.
+func (p *Processor) outcome(id string, d wire.Delivery) error {
+	status := d.Status
+	if status == "pending" && d.ReceiptID == "" {
 		return p.unresolved(id, "pending delivery has no receipt")
 	}
 	switch status {
-	case "delivered", "no_route", "pending", "failed", "partial":
-		return p.update(func(l *ledger.Ledger) {
-			c := l.Changes[id]
-			if c == nil {
-				return
-			}
-			if receipt != "" {
-				c.ReceiptID = receipt
-			}
-			switch status {
-			case "delivered", "no_route":
-				if c.Status != "committed" {
-					if status == "no_route" {
-						l.Counters["no_route:"+c.Space]++
-					} else {
-						l.Counters["turns:"+c.Space]++
-					}
-				}
-				c.Status = "committed"
-				c.Reason = status
-			case "pending":
-				c.Status = "pending"
-			case "failed", "partial":
-				c.Status = "intent"
-				c.Reason = "retry"
-			}
-		})
+	case "delivered", "no_route", "pending", "failed", "held", "partial":
 	default:
 		return p.unresolved(id, "unrecognized delivery status")
 	}
+	exhausted := false
+	err := p.update(func(l *ledger.Ledger) {
+		c := l.Changes[id]
+		if c == nil {
+			return
+		}
+		if d.ReceiptID != "" {
+			c.ReceiptID = d.ReceiptID
+		}
+		switch status {
+		case "delivered", "no_route":
+			if c.Status != "committed" {
+				if status == "no_route" {
+					l.Counters["no_route:"+c.Space]++
+				} else {
+					l.Counters["turns:"+c.Space]++
+				}
+			}
+			c.Status = "committed"
+			c.Reason = status
+		case "pending":
+			// gc has the message in hand; the cause of an earlier wait is past.
+			c.Status, c.Cause = "pending", ""
+		case "failed", "held", "partial":
+			c.Cause = waitCause(d)
+			if status == "partial" && c.Attempts >= firstPOSTs {
+				// One save: an intent record with four POSTs would read as due.
+				markUnresolved(l, id, c, reasonExhausted)
+				exhausted = true
+				return
+			}
+			c.Status, c.Reason = "intent", reasonRetry
+			if c.Attempts >= firstPOSTs {
+				c.NextAttempt = p.opts.Now().UTC().Add(p.retryWait(c.Attempts))
+			}
+		}
+	})
+	if err == nil && exhausted {
+		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reasonExhausted)
+	}
+	return err
 }
 
+// unresolved ends a change for an operator and records its cause.
 func (p *Processor) unresolved(id, reason string) error {
 	recorded := false
 	err := p.update(func(l *ledger.Ledger) {
@@ -937,15 +1198,22 @@ func (p *Processor) unresolved(id, reason string) error {
 		if c == nil {
 			return
 		}
-		c.Status = "unresolved"
-		c.Reason = reason
-		l.Unresolved[id] = c
+		markUnresolved(l, id, c, reason)
 		recorded = true
 	})
 	if err == nil && recorded {
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reason)
 	}
 	return err
+}
+
+// markUnresolved runs inside an update; Changes and Unresolved hold the record.
+func markUnresolved(l *ledger.Ledger, id string, c *ledger.ChangeState, reason string) {
+	c.Status = "unresolved"
+	c.Reason = reason
+	c.Cause = unresolvedCause(reason, c.Cause)
+	c.NextAttempt = time.Time{}
+	l.Unresolved[id] = c
 }
 
 func wait(ctx context.Context, d time.Duration) error {

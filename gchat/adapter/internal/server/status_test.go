@@ -2,9 +2,13 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/wire"
 )
 
 func TestStatusDeliveryDetailsUseStatusNotReason(t *testing.T) {
@@ -35,5 +39,89 @@ func TestStatusDeliveryDetailsUseStatusNotReason(t *testing.T) {
 	}
 	if bytes.Contains(raw, []byte("private message body")) || bytes.Contains(raw, []byte("retained-id")) {
 		t.Fatalf("status exposes message content or offers a committed delivery to resolve: %s", raw)
+	}
+}
+
+func TestStatusDeliveryRowsShowAgeCauseAndStuck(t *testing.T) {
+	f := setup(t)
+	now := time.Now().UTC()
+	next := now.Add(45 * time.Second)
+	raised := now.Add(-time.Minute)
+	f.mu.Lock()
+	f.l.Changes["waiting-id"] = &ledger.ChangeState{ID: "waiting-id", Status: "intent", Reason: "retry", Created: now.Add(-3 * time.Minute), Attempts: 7,
+		NextAttempt: next, Posted: now.Add(-15 * time.Second), Cause: "draft_deferred", Raised: raised, Event: "private message body"}
+	f.l.Changes["pending-id"] = &ledger.ChangeState{ID: "pending-id", Status: "pending", ReceiptID: "receipt-example", Created: now.Add(-5 * time.Minute), Attempts: 1}
+	f.l.Changes["fresh-id"] = &ledger.ChangeState{ID: "fresh-id", Status: "intent", Created: now.Add(-10 * time.Second), Cause: "behind_earlier"}
+	u := &ledger.ChangeState{ID: "unresolved-id", Status: "unresolved", Reason: "not delivered within the retry bound", Created: now.Add(-25 * time.Hour), Attempts: 1400, Cause: "draft_deferred", Raised: raised}
+	f.l.Changes[u.ID], f.l.Unresolved[u.ID] = u, u
+	old := &ledger.ChangeState{ID: "old-id", Status: "unresolved", Reason: "delivery retries exhausted", Attempts: 4}
+	f.l.Changes[old.ID], f.l.Unresolved[old.ID] = old, old
+	f.mu.Unlock()
+	code, raw, _ := f.call(t, "/status", nil)
+	if code != 200 {
+		t.Fatalf("status: %d %s", code, raw)
+	}
+	var status struct {
+		Stuck      *int             `json:"stuck"`
+		Deliveries []map[string]any `json:"deliveries"`
+	}
+	if err := json.Unmarshal(raw, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Stuck == nil || *status.Stuck != 2 {
+		t.Fatalf("stuck counts intent and pending rows of two minutes or more: %s", raw)
+	}
+	rows := map[string]map[string]any{}
+	for _, row := range status.Deliveries {
+		rows[row["id"].(string)] = row
+	}
+	waiting := rows["waiting-id"]
+	if waiting == nil || waiting["cause"] != "draft_deferred" || waiting["attempts"] != float64(7) || waiting["next_attempt"] != next.Format(time.RFC3339Nano) ||
+		waiting["raised"] != raised.Format(time.RFC3339Nano) || waiting["created"] == nil {
+		t.Fatalf("waiting row: %v", waiting)
+	}
+	if age, _ := waiting["age_seconds"].(float64); age < 180 || age > 240 {
+		t.Fatalf("waiting age: %v", waiting)
+	}
+	if rows["fresh-id"]["cause"] != "behind_earlier" || rows["unresolved-id"]["cause"] != "draft_deferred" {
+		t.Fatalf("causes: %s", raw)
+	}
+	for _, key := range []string{"cause", "next_attempt", "raised", "created", "age_seconds"} {
+		if _, ok := rows["old-id"][key]; ok {
+			t.Fatalf("empty %s not omitted on an old row: %v", key, rows["old-id"])
+		}
+	}
+	for _, key := range []string{"cause", "next_attempt", "raised"} {
+		if _, ok := rows["pending-id"][key]; ok {
+			t.Fatalf("empty %s not omitted: %v", key, rows["pending-id"])
+		}
+	}
+	if bytes.Contains(raw, []byte("private message body")) {
+		t.Fatalf("status exposes message content: %s", raw)
+	}
+}
+
+func TestReplayClearsRetryStateAndKeepsRaised(t *testing.T) {
+	f := setup(t)
+	f.s.SetPoll(func(context.Context) error { return nil })
+	id := "spaces/room/messages/replay"
+	m := wire.InboundMessage{ProviderMessageID: id, Conversation: conversation("spaces/room"), Actor: wire.Actor{ID: "users/222", DisplayName: "Example"}, Text: "hello", ReceivedAt: time.Now()}
+	b, _ := json.Marshal(m)
+	raised := time.Now().UTC().Add(-time.Hour)
+	c := &ledger.ChangeState{ID: id, Space: "spaces/room", Message: id, Status: "unresolved", Reason: "not delivered within the retry bound", Event: string(b), Attempts: 1400,
+		Created: time.Now().Add(-25 * time.Hour), NextAttempt: time.Now().Add(time.Minute), Posted: time.Now().Add(-time.Minute), Cause: "draft_deferred", Raised: raised}
+	f.mu.Lock()
+	f.l.Changes[id] = c
+	copy := *c
+	f.l.Unresolved[id] = &copy
+	f.mu.Unlock()
+	if code, b, _ := f.call(t, "/resolve", map[string]string{"id": id, "action": "replay"}); code != 200 {
+		t.Fatalf("%d %s", code, b)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	got := f.l.Changes[id]
+	if got.Status != "intent" || got.Attempts != 0 || !got.NextAttempt.IsZero() || !got.Posted.IsZero() || got.Cause != "" || !got.Raised.Equal(raised) || time.Since(got.Created) > time.Minute {
+		t.Fatalf("replay: %+v", got)
 	}
 }

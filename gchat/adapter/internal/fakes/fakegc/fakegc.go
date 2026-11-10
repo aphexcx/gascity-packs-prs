@@ -17,13 +17,18 @@ import (
 	"gchat-adapter/internal/wire"
 )
 
-// Server scripts one inbound delivery at a time. NextDelivery is consumed by the
-// next non-duplicate inbound request; an empty script defaults to delivered.
+// Server scripts one inbound delivery at a time. Script, then NextDelivery, is
+// consumed by the next non-duplicate inbound request; with both empty the
+// answer is delivered.
 // Set fields before requests start, or use Configure while clients are running.
 // Configure callbacks must not call Server methods. Use SetReceipt to timestamp
 // a conclusion at the moment it is scripted, including before a polling client
 // observes it. Direct Receipts edits are timestamped on the next request.
 type Server struct {
+	// Script holds whole answers, members included, for the next non-duplicate
+	// inbound requests in order. An answer whose status is pending leaves its
+	// receipt pending; any other concludes it with the same delivery.
+	Script       []wire.Delivery
 	NextDelivery string
 	Receipts     map[string]wire.ReceiptResponse
 	// Bindings maps each active conversation binding to its owning session.
@@ -202,14 +207,9 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 // receiptResponse is the HTTP shape; the wire package's value-shaped fixture
 // type remains convenient for SetReceipt, but must not emit empty delivery data.
 type receiptResponse struct {
-	ReceiptID string           `json:"receipt_id"`
-	State     string           `json:"state"`
-	Delivery  *receiptDelivery `json:"delivery,omitempty"`
-}
-
-type receiptDelivery struct {
-	Status    string `json:"status"`
-	ReceiptID string `json:"receipt_id"`
+	ReceiptID string         `json:"receipt_id"`
+	State     string         `json:"state"`
+	Delivery  *wire.Delivery `json:"delivery,omitempty"`
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
@@ -294,8 +294,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 				// that a whole copy of this message was already delivered.
 				s.sequence++
 				id := fmt.Sprintf("receipt-%d", s.sequence)
-				previous.Delivery.Status = "no_route"
-				previous.Delivery.ReceiptID = id
+				previous.Delivery = wire.Delivery{Status: "no_route", ReceiptID: id}
 				receipt := wire.ReceiptResponse{State: "concluded"}
 				receipt.Delivery.Status = "no_route"
 				s.Receipts[id] = receipt
@@ -305,24 +304,29 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			respond(w, 200, previous)
 			return
 		}
-		status := s.NextDelivery
-		s.NextDelivery = ""
-		if status == "" {
-			status = "delivered"
+		var answer wire.Delivery
+		if len(s.Script) > 0 {
+			answer = clone(s.Script[0])
+			s.Script = s.Script[1:]
+		} else {
+			answer.Status = s.NextDelivery
+			s.NextDelivery = ""
 		}
-		response := wire.InboundResponse{}
-		response.Delivery.Status = status
+		if answer.Status == "" {
+			answer.Status = "delivered"
+		}
 		s.sequence++
 		id := fmt.Sprintf("receipt-%d", s.sequence)
-		response.Delivery.ReceiptID = id
+		answer.ReceiptID = id
+		response := wire.InboundResponse{Delivery: answer}
 		s.receiptKeys[id] = key
 		s.receiptCities[id] = city
 		receipt := wire.ReceiptResponse{State: "pending"}
-		if status == "pending" {
+		if answer.Status == "pending" {
 			s.Receipts[id] = receipt
 		} else {
 			receipt.State = "concluded"
-			receipt.Delivery.Status = status
+			receipt.Delivery = clone(answer)
 			s.Receipts[id] = receipt
 			s.concludedAt[id] = s.now()
 		}
@@ -336,7 +340,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		response := receiptResponse{ReceiptID: id, State: receipt.State}
 		if receipt.State == "concluded" {
-			response.Delivery = &receiptDelivery{Status: receipt.Delivery.Status, ReceiptID: id}
+			delivery := clone(receipt.Delivery)
+			delivery.ReceiptID = id
+			response.Delivery = &delivery
 		}
 		respond(w, 200, response)
 	default:

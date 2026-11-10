@@ -229,7 +229,7 @@ the service and offline recovery commands.
 | `gc gchat react --message spaces/AAAA/messages/ID --emoji '👍' [--remove]` | Add or remove the identity's reaction. |
 | `gc gchat read --space spaces/AAAA [--thread NAME] [--since RFC3339] [--limit 100]` | Read normalized history, newest last; limit 1–1000. |
 | `gc gchat spaces [--space spaces/AAAA --wake all\|mentions\|default]` | List spaces, or persist a wake override; `default` clears it. |
-| `gc gchat status [--json]` | Show health, subscription, last event, backlog, counters and delivery IDs. |
+| `gc gchat status [--json]` | Show health, subscription, last event, backlog, counters, and deliveries with their age and cause. |
 | `gc gchat resolve ID --accept\|--replay` | Settle an unresolved delivery. |
 | `gc gchat state restore FILE\|reset` | Request recovery through the running service's `/state` endpoint. |
 
@@ -263,7 +263,8 @@ keeps the proxy available. Check the health body and subscription state rather
 than treating HTTP 200 alone as ready. Subscription expiry and retry details,
 last event time, backlog, quarantine, recording backlog and all counters are
 visible. `pending` includes intents waiting to be sent or retried and receipts
-still in flight; each delivery's status is shown separately.
+still in flight; each delivery's status is shown separately, and `stuck`
+counts those waiting two minutes or more (see Delivery uncertainty).
 
 A rejected access token gets one forced refresh and client restart, counted
 under `credential_refresh_restarts`. Permanent refresh failures such as
@@ -286,17 +287,66 @@ recovery, which clears the failure count and notice deduplication.
 
 ### Delivery uncertainty
 
-An unresolved delivery stays in the ledger and is never automatically reposted.
-Read its ID and reason in `status`; verify whether the turn arrived, then use
-`resolve ID --accept` to treat it as delivered or `--replay` to post it again.
-Replay can duplicate a turn whose first outcome is unknown. Status is
-authoritative: `receipt lookup failed beyond deadline; retry pending` is still
-pending and cannot be resolved. The terminal reason omits `; retry pending`.
+gc answers every inbound POST with a delivery status. `delivered` and
+`no_route` settle the message. `failed` and `held` mean nothing reached the
+agent's terminal, so a retry is clean: the adapter retries the message until
+gc takes it. The first four POSTs follow each other within seven seconds.
+After that the adapter waits 8, 16 and 32 seconds, then one minute between
+POSTs, for up to 24 hours from the time it recorded the message. The usual
+cause is text in the agent's input box (`draft_deferred`): gc will not paste
+over it, and the message lands once the box clears. `partial` means a fragment
+already reached the terminal, and each retry can add another, so a partial
+message is posted at most four times in all.
 
-`receipt pending beyond deadline` after a long outage follows one receipt
-lookup, with the deadline still measured from the original intent's creation.
-It is usually the `--accept` case after verifying the existing turn, rather
-than a reason to assume the message was never delivered.
+The messages of one space reach gc in the order the adapter recorded them. A
+message waits (`behind_earlier`) while an earlier message of its space is
+still retrying, or while an earlier one is pending at gc, for at most two
+minutes after that one's POST. A message of another space never waits.
+
+When gc's receipt concludes with the status `pending`, the adapter reads its
+members. If every member took the whole paste and none is a terminal hold,
+the message commits as `landed_unconfirmed`, counted under `turns:<space>`
+and `unconfirmed:<space>`. gc vouches that the whole message is in the
+session's terminal. It does not prove that the agent read it. A terminal hold
+becomes unresolved with the cause `held`; any other concluded pending receipt
+stays unresolved as `receipt concluded with pending delivery`.
+
+`status` shows each delivery's age and cause, and for a waiting one its next
+attempt and the number of POSTs; `stuck` counts the deliveries waiting two
+minutes or more. The adapter mails the identity's agent (`[[identity]].agent`,
+default `mayor`) once about each such message, with the subject `gchat:
+delivery`. The mail names the space, thread, message, cause and age, the time
+the adapter stops retrying, and the commands to read the message and the
+status. A message that becomes unresolved is mailed too, unless it was mailed
+while it waited or its sender withdrew it. The mail never carries the
+message's text, its sender or gc's error text. A mail that fails is tried
+again a minute later. The retry state lives in the ledger: after a restart
+the next POST still waits for its time, and a POST that was in flight when
+the adapter stopped is unresolved as `interrupted POST; delivery unknown`.
+
+An unresolved delivery stays in the ledger and is never automatically
+reposted. Read its ID, reason and cause in `status`; verify whether the turn
+arrived, then use `resolve ID --accept` to treat it as delivered or `--replay`
+to post it again. Replay can duplicate a turn whose first outcome is unknown.
+A replay is posted at once and takes its place in its space's order by the
+time of the replay. Status is authoritative: `receipt lookup failed beyond
+deadline; retry pending` is still pending and cannot be resolved. The
+terminal reason omits `; retry pending`.
+
+| Cause of an unresolved delivery | What happened | What to do |
+| --- | --- | --- |
+| `draft_deferred`, `pending_interaction`, `not_delivered` with `not delivered within the retry bound` | gc did not take the message for 24 hours. | Clear what blocks the agent's session, then `--replay`. |
+| `not_delivered` (or another waiting cause) with `delivery retries exhausted` | gc answered `partial` four times: a fragment may be in the terminal. | Look at the session; `--accept` if the agent has the message, else `--replay`. |
+| `behind_earlier` | It waited 24 hours behind an earlier message of its space and was never posted. | Settle the earlier message, then `--replay`. |
+| `held` | gc holds a paste it cannot finish without an operator. | Look at the session before anything else; `--accept` if the message is there, else `--replay`. |
+| `unknown` | The outcome is not known: a lost POST response, an interrupted POST, a rejected POST, a receipt past its deadline or concluded pending without a whole paste, or a status the adapter does not know. The reason says which. | Check whether the turn arrived; `--accept` if it did, `--replay` if not. |
+| `withdrawn` | The sender deleted or edited the message before it was delivered. | Nothing; it is not mailed. |
+| none | Unresolved before causes were recorded. | Check, then accept or replay; it is not mailed. |
+
+`receipt pending beyond deadline` comes one hour after the latest POST (after
+the recorded time, for a record written before the POST time was kept). It is
+usually the `--accept` case after verifying the existing turn, rather than a
+reason to assume the message was never delivered.
 
 Space-unavailable, parent-unavailable and permanent lookup retentions are
 committed records, counted under `unavailable:<space>` and logged at WARN.

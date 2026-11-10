@@ -13,15 +13,22 @@ gchat_init
 result=$(gchat_get "$gchat_service_url/status")
 if [ "${1:-}" = --json ]; then printf '%s\n' "$result" | jq .; exit; fi
 printf '%s\n' "$result" | jq -r '
+    def age: if . >= 3600 then "\(./3600|floor)h\((.%3600)/60|floor)m" elif . >= 60 then "\(./60|floor)m\(.%60)s" else "\(.)s" end;
+    def waiting: .status == "intent" or .status == "pending";
     "Health: \(.health.state) — \(.health.reason // "")",
     "Subscription: \(.subscription.state // "unknown") \(.subscription.name // "")",
     "Expiry: \(.subscription.expiry // "unknown")",
     "Last event: \(.last_event_time // "none")",
-    "Backlog: \(.backlog // 0); pending: \(.pending // 0); unresolved: \(.unresolved // 0); unrecorded: \(.unrecorded // 0); quarantine: \(.quarantine // 0)",
+    "Backlog: \(.backlog // 0); pending: \(.pending // 0); unresolved: \(.unresolved // 0); unrecorded: \(.unrecorded // 0); quarantine: \(.quarantine // 0)" +
+        (if .stuck != null then "; stuck: \(.stuck)" else "" end),
     (if .subscription_retry then "Subscription retry: \(.subscription_retry | tojson)" else empty end),
     "Counters:", ((.counters // {}) | to_entries | sort_by(.key)[] | "  \(.key): \(.value)"),
     "Deliveries (only unresolved IDs can be resolved):",
-    ((.deliveries // [])[] | "  \(.status) \(.id): \(.reason // "")"),
+    ((.deliveries // [])[] | "  \(.status) \(.id): \(.reason // "")" +
+        (if .age_seconds != null then "; age \(.age_seconds | age)" else "" end) +
+        (if (.cause // "") != "" then "; cause \(.cause)" else "" end) +
+        (if waiting and (.next_attempt // "") != "" then "; next attempt \(.next_attempt)" else "" end) +
+        (if waiting and (.attempts // 0) > 0 then "; posts \(.attempts)" else "" end)),
     "Spaces:", ((.spaces // {}) | to_entries | sort_by(.key)[] |
         "  \(.key): wake=\(.value.wake) backlog=\(.value.backlog_count // ((.value.backlog // []) | length))",
         ((.value.page_token // "" | fromjson?) // {} |

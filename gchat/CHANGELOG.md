@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+- A Chat message gc answers `failed` or `held` (nothing reached the agent's
+  terminal) is retried until it lands, no longer given up after four POSTs:
+  the first four run as before, then the waits are 8, 16 and 32 seconds and
+  one minute, for up to 24 hours from when the adapter recorded it (then it
+  is unresolved as `not delivered within the retry bound`). `partial` keeps
+  its four-POST bound. gc's `held` status, from gc's composer-hold change, is
+  understood.
+- The messages of one space reach gc in the order they were recorded: a later
+  message waits while an earlier one is retrying, or while an earlier one is
+  pending at gc for up to two minutes after its POST.
+- A message waiting two minutes or more, and one that becomes unresolved, is
+  mailed once to the identity's agent (`gchat: delivery`, one dedup key per
+  message): ids, cause, age and commands, never the text, the sender or gc's
+  error text. A withdrawn message and an unresolved row from before this
+  version are not mailed.
+- `gc gchat status` shows each delivery's age, cause, POST count, next attempt
+  and raise time, and counts `stuck` deliveries.
+- A receipt that concludes `pending` after every member took the whole paste
+  commits as `landed_unconfirmed` (counted under `turns:<space>` and
+  `unconfirmed:<space>`); a terminal hold is unresolved with the cause `held`.
+- A pending receipt's one-hour deadline counts from the latest POST, not from
+  when the message was recorded.
+- The ledger's change record gains `next_attempt`, `posted`, `cause` and
+  `raised`, each omitted when empty; the version stays 1 and a 0.5.0 ledger
+  loads and saves unchanged. Going back to 0.5.0 turns a waiting message with
+  four or more POSTs unresolved as `delivery retries exhausted`.
+
 ## 0.5.0 — 2026-11-09
 
 - Prefer a prebuilt adapter on PATH (or GC_GCHAT_ADAPTER_BIN) before building;
