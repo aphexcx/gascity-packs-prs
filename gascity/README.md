@@ -243,6 +243,33 @@ Default formula routes use these qualified targets: `gc.run-operator`,
 `gc.implementation-worker`, `gc.gap-analyst`, `gc.implementation-reviewer`,
 and `gc.publisher`.
 
+## Standing notes
+
+`template-fragments/gc-standing-notes.template.md` defines `gc-standing-notes`:
+notes for every worker that sit beside the role text and travel with this
+pack's version, so every city that imports the pack renders the same notes at
+the same pin. Its first note is THE DEEPENING NOTE: once per PR, at the
+worker's self-review and before the push, a deepening read of the modules the
+diff touched (the codebase-design skill), written as a `Deepening note`
+section of the PR body.
+
+The role fragment does not call it. A city opts a lane in with one line in
+that lane's `prompt.template.md`, right after its
+`{{ template "gc-role-worker" . }}` line:
+
+```text
+{{ template "gc-standing-notes" . }}
+```
+
+A city that does not add the line renders exactly what it rendered before.
+Move the city's import of this pack to a commit that carries this fragment
+first, then add the line: given a call to a template that no imported pack
+defines, gc falls back to the template's raw source for the whole prompt, with
+one stderr line, and the lane loses its role text. `gc prime --strict` exits 0
+on that through gc v1.5.1; gc builds that carry gascity#8316 fail it. To roll
+back, remove the line first, then the pin. A note that belongs to one city
+stays in that city's own prompt template, after this call.
+
 ## Worker workspaces
 
 The unit of isolation is the agent. A rig role agent starts in the rig root

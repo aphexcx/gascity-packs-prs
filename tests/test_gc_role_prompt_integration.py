@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -622,3 +623,138 @@ def test_provenance_explicit_scope_missing_value_is_named(
     result = run_gc(gc_test_bin, workspace, 'custom', 'provenance', option)
     assert result.returncode == 2, result.stderr
     assert f'missing value for {option.rstrip("=")}' in result.stderr
+
+
+# gp-rj21: the standing notes reach a lane through one call line in the CITY's
+# own lane prompt, right after its gc-role-worker call. These render that city
+# lane with real gc: the note after the role text, and no change for a city
+# that does not add the line.
+ROLE_CALL = '{{ template "gc-role-worker" . }}'
+STANDING_NOTES_CALL = '{{ template "gc-standing-notes" . }}'
+STANDING_NOTES_FRAGMENT = REPO_ROOT / "gascity" / "template-fragments" / "gc-standing-notes.template.md"
+
+
+def render_city_lane(
+    gc_test_bin: Path, root: Path, *, gascity_pack: Path, prompt: str, binding: str = "gascity",
+    strict: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Render a city-side lane: a city agent whose prompt.template.md calls
+    the fragments of the Gas City pack the city imports under `binding`."""
+    workspace = _write_workspace_scaffold(
+        root,
+        workspace_name="standing-notes",
+        pack_toml=textwrap.dedent(
+            f"""\
+            [pack]
+            name = "standing-notes"
+            schema = 2
+
+            [imports.{binding}]
+            source = {json.dumps(str(gascity_pack.resolve()))}
+            """
+        ),
+        city_toml=textwrap.dedent(
+            """\
+            [workspace]
+            provider = "codex"
+
+            [providers.codex]
+            base = "builtin:codex"
+
+            [[rigs]]
+            name = "fixture"
+            """
+        ),
+    )
+    lane = workspace.city_dir / "agents" / "lane"
+    lane.mkdir(parents=True)
+    lane.joinpath("agent.toml").write_text('scope = "city"\nprovider = "codex"\n', encoding="utf-8")
+    lane.joinpath("prompt.template.md").write_text(prompt, encoding="utf-8")
+    return run_gc(
+        gc_test_bin, workspace, "--city", str(workspace.city_dir), "prime",
+        *(["--strict"] if strict else []), "lane",
+        cwd=workspace.city_dir,
+    )
+
+
+def gascity_pack_without_standing_notes(root: Path) -> Path:
+    """This pack as it was before the fragment: the same tree, minus the file."""
+    pack = root / "gascity"
+    shutil.copytree(REPO_ROOT / "gascity", pack, ignore=shutil.ignore_patterns("tests", "__pycache__"))
+    pack.joinpath("template-fragments", STANDING_NOTES_FRAGMENT.name).unlink()
+    return pack
+
+
+def standing_notes_text() -> str:
+    """The fragment's body as text/template emits it: `-}}` and `{{-` trim
+    the whitespace next to them, and the body holds no template action."""
+    text = STANDING_NOTES_FRAGMENT.read_text(encoding="utf-8")
+    return text.split("-}}", 1)[1].rsplit("{{-", 1)[0].strip(" \t\r\n")
+
+
+@pytest.mark.parametrize("binding", ["gascity", "gc", "custom"])
+def test_city_lane_renders_the_standing_notes_once_after_the_role_text(
+    tmp_path: Path, gc_test_bin: Path, binding: str,
+) -> None:
+    role_only = render_city_lane(
+        gc_test_bin, tmp_path / "role-only", gascity_pack=REPO_ROOT / "gascity",
+        prompt=f"{ROLE_CALL}\n", binding=binding,
+    )
+    both = render_city_lane(
+        gc_test_bin, tmp_path / "both", gascity_pack=REPO_ROOT / "gascity",
+        prompt=f"{ROLE_CALL}\n\n{STANDING_NOTES_CALL}\n", binding=binding,
+    )
+
+    for result in (role_only, both):
+        assert result.returncode == 0, result.stderr
+        assert "gc: prompt template" not in result.stderr, result.stderr
+    assert_clean_worker_render(both.stdout, "# GC Role Worker")
+    # The role text, unchanged, then the notes, once: byte for byte.
+    assert both.stdout == role_only.stdout + "\n" + standing_notes_text() + "\n"
+    assert both.stdout.count("# Standing Notes") == 1
+    assert both.stdout.count("THE DEEPENING NOTE") == 1
+    assert both.stdout.index("## Invariants") < both.stdout.index("# Standing Notes")
+    assert "{{" not in both.stdout
+
+
+def test_city_lane_without_the_call_renders_byte_identical_to_the_pack_without_the_fragment(
+    tmp_path: Path, gc_test_bin: Path,
+) -> None:
+    prompt = f"{ROLE_CALL}\n"
+    with_fragment = render_city_lane(
+        gc_test_bin, tmp_path / "with", gascity_pack=REPO_ROOT / "gascity", prompt=prompt,
+    )
+    without_fragment = render_city_lane(
+        gc_test_bin, tmp_path / "without",
+        gascity_pack=gascity_pack_without_standing_notes(tmp_path / "base-pack"), prompt=prompt,
+    )
+
+    assert with_fragment.returncode == 0, with_fragment.stderr
+    assert without_fragment.returncode == 0, without_fragment.stderr
+    assert with_fragment.stdout == without_fragment.stdout
+    assert "Standing Notes" not in with_fragment.stdout
+
+
+def test_city_lane_calling_the_notes_on_a_pack_without_them_falls_back_to_raw_source(
+    tmp_path: Path, gc_test_bin: Path,
+) -> None:
+    """Why the README orders the roll pin first, line second: gc renders an
+    undefined template call by returning the prompt's raw source with one
+    stderr line, so the lane loses its role text. `--strict` exits 0 on it
+    through gc v1.5.1 and fails it with no output from gascity#8316 on."""
+    prompt = f"{ROLE_CALL}\n\n{STANDING_NOTES_CALL}\n"
+    old_pin = gascity_pack_without_standing_notes(tmp_path / "base-pack")
+
+    rendered = render_city_lane(
+        gc_test_bin, tmp_path / "render", gascity_pack=old_pin, prompt=prompt, strict=False,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    assert rendered.stdout == prompt
+    assert "# GC Role Worker" not in rendered.stdout
+    assert 'template "gc-standing-notes" not defined' in rendered.stderr
+
+    strict = render_city_lane(
+        gc_test_bin, tmp_path / "strict", gascity_pack=old_pin, prompt=prompt,
+    )
+    assert 'template "gc-standing-notes" not defined' in strict.stderr
+    assert (strict.returncode, strict.stdout) in ((0, prompt), (1, "")), (strict.returncode, strict.stdout)
