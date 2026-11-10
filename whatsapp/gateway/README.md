@@ -703,13 +703,15 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   UPDATE phones SET city_id = '<new>' WHERE city_id = '<old>';
   UPDATE deliveries SET city_id = '<new>' WHERE city_id = '<old>';
   UPDATE media SET city_id = '<new>' WHERE city_id = '<old>';
+  UPDATE uploads SET city_id = '<new>' WHERE city_id = '<old>';
   UPDATE sends SET city_id = '<new>' WHERE city_id = '<old>';
   DELETE FROM invite_codes WHERE city_id = '<old>' AND used_at IS NULL;
   UPDATE credentials SET revoked_at = unixepoch() WHERE city_id = '<old>' AND revoked_at IS NULL
   ```
 
   The new city is fresh, so no row collides. The box re-reads every held delivery from
-  `after=0`.
+  `after=0`. Moving upload grants and claims keeps a restored outbound journal's
+  pending file handles and idempotency keys usable under the new credential.
 - **Unbind an owner** (so it can join another city by a new invite code), by any id it is known
   by: its `conversation_id`, its current `user_id`, or the number a PR 73 binding holds:
 
