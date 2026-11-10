@@ -1495,13 +1495,13 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 	}
 	var recoverySummary []string
 	for channel, counts := range recoveryCounts {
-		outstanding += counts.Held + counts.Dead
-		recoverySummary = append(recoverySummary, fmt.Sprintf("%s held=%d dead-lettered=%d", channel, counts.Held, counts.Dead))
+		outstanding += counts.Held + counts.Dead + counts.ByHand
+		recoverySummary = append(recoverySummary, fmt.Sprintf("%s held=%d dead-lettered=%d by-hand=%d", channel, counts.Held, counts.Dead, counts.ByHand))
 	}
 	sort.Strings(recoverySummary)
 	l.lastMissed.Store(int64(len(missed) + outstanding))
+	l.missedTotal.Add(l.cfg.inboundRecovery.newlyMissed())
 	if outstanding > 0 {
-		l.missedTotal.Add(uint64(outstanding))
 		log.Printf("inbound liveness: probe (%s) MISSED — %d held/dead-lettered message(s) (%s)", reason, outstanding, strings.Join(recoverySummary, "; "))
 	}
 	if len(skipped) > 0 {

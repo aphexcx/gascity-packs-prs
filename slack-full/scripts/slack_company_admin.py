@@ -406,10 +406,14 @@ def cmd_company_redact(argv: list[str]) -> int:
 def cmd_inbound_redrive(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="slack inbound-redrive")
     parser.add_argument("--conversation-id", required=True)
+    parser.add_argument("--acknowledge", metavar="MESSAGE_TS")
     args = parser.parse_args(argv)
+    payload = {"conversation_id": args.conversation_id}
+    if args.acknowledge:
+        payload["acknowledge"] = args.acknowledge
     status, data = _internal_request("POST", "/internal/inbound/redrive",
-                                     {"conversation_id": args.conversation_id})
-    if status != 202:
+                                     payload)
+    if status != (200 if args.acknowledge else 202):
         raise AdminError(f"inbound-redrive: HTTP {status}: {data}")
     print(json.dumps(data, sort_keys=True))
     return 0

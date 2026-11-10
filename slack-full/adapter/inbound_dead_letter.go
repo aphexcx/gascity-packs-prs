@@ -550,23 +550,27 @@ func (r *repeatedFailureLog) clear(channel string) {
 // operator can inspect the message and re-post it by hand once the
 // rejection cause is fixed.
 type inboundDeadLetterRecord struct {
-	ManualRecovery    bool                   `json:"manual_recovery,omitempty"`
-	TrustedFilePaths  []string               `json:"trusted_file_paths,omitempty"`
-	ReceiptStateKnown bool                   `json:"receipt_state_known,omitempty"`
-	Parts             *recoveryParts         `json:"parts,omitempty"`
-	Submission        *recoverySubmission    `json:"submission,omitempty"`
-	OriginalReceiptID string                 `json:"original_receipt_id,omitempty"`
-	TargetSessions    []string               `json:"target_sessions,omitempty"`
-	PendingReceiptID  string                 `json:"pending_receipt_id,omitempty"`
-	PendingReceipt    bool                   `json:"pending_receipt,omitempty"`
-	Rendered          bool                   `json:"rendered,omitempty"`
-	Reaction          bool                   `json:"reaction,omitempty"`
-	ReplayedAt        time.Time              `json:"replayed_at,omitempty"`
-	DeadLetteredAt    time.Time              `json:"dead_lettered_at"`
-	Channel           string                 `json:"channel"`
-	Attempts          int                    `json:"attempts"`
-	Reason            string                 `json:"reason"`
-	Inbound           externalInboundMessage `json:"inbound"`
+	AliasOriginalSessionID string                 `json:"alias_original_session_id,omitempty"`
+	BusyReaction           bool                   `json:"busy_reaction,omitempty"`
+	ReplayBlockedReason    string                 `json:"replay_blocked_reason,omitempty"`
+	AcknowledgedAt         time.Time              `json:"acknowledged_at,omitempty"`
+	ManualRecovery         bool                   `json:"manual_recovery,omitempty"`
+	TrustedFilePaths       []string               `json:"trusted_file_paths,omitempty"`
+	ReceiptStateKnown      bool                   `json:"receipt_state_known,omitempty"`
+	Parts                  *recoveryParts         `json:"parts,omitempty"`
+	Submission             *recoverySubmission    `json:"submission,omitempty"`
+	OriginalReceiptID      string                 `json:"original_receipt_id,omitempty"`
+	TargetSessions         []string               `json:"target_sessions,omitempty"`
+	PendingReceiptID       string                 `json:"pending_receipt_id,omitempty"`
+	PendingReceipt         bool                   `json:"pending_receipt,omitempty"`
+	Rendered               bool                   `json:"rendered,omitempty"`
+	Reaction               bool                   `json:"reaction,omitempty"`
+	ReplayedAt             time.Time              `json:"replayed_at,omitempty"`
+	DeadLetteredAt         time.Time              `json:"dead_lettered_at"`
+	Channel                string                 `json:"channel"`
+	Attempts               int                    `json:"attempts"`
+	Reason                 string                 `json:"reason"`
+	Inbound                externalInboundMessage `json:"inbound"`
 	// AliasSessionID/AliasHandle/AliasBody are set only for a lost
 	// address-by-handle injection (gp-3yg): the aliased session it was
 	// meant for, the handle, and the exact rendered reminder. A hand

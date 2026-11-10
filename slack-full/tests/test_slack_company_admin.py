@@ -52,6 +52,15 @@ def test_inbound_redrive_queues_channel(monkeypatch, capsys) -> None:
     assert "queued" in capsys.readouterr().out
 
 
+def test_inbound_acknowledge_records_message(monkeypatch, capsys) -> None:
+    mod = _mod()
+    calls = _mock_conn(mod, monkeypatch, [(200, {"acknowledged": 2})])
+    assert mod.main(["inbound-redrive", "--conversation-id", "C123",
+                     "--acknowledge", "100.1"]) == 0
+    assert calls[0]["body"] == {"conversation_id": "C123", "acknowledge": "100.1"}
+    assert '"acknowledged": 2' in capsys.readouterr().out
+
+
 def test_inbound_redrive_failure_is_not_delivery(monkeypatch, capsys) -> None:
     mod = _mod()
     _mock_conn(mod, monkeypatch, [(500, {"error": "history unreadable"})])

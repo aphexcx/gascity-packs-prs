@@ -171,6 +171,7 @@ type deliveryComposerHold struct {
 // response. present=false means no receipt block at all (a gc that
 // predates gp-2rq).
 type deliveryReceipt struct {
+	postStatus      int // transport refusal, retained for alias recovery classification
 	present         bool
 	id              string
 	status          string

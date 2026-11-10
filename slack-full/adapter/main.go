@@ -4543,7 +4543,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// the preamble's fetch when it ran; fetches once
 				// otherwise (skipChannelPost twins, nil cache).
 				if botUID := env.botUserID(); botUID != "" {
-					moIn.botPostedInThread = threadRepliesFetched && threadHasOwnBotPost(threadReplies, botUID, msg.TS)
+					ignoreNotice := func(ts string) bool { return cfg.inboundRecovery.isNotice(msg.Channel, ts) }
+					moIn.botPostedInThread = threadRepliesFetched && threadHasOwnBotPost(threadReplies, botUID, msg.TS, ignoreNotice)
 					// The preamble's fetch is capped at the context limit
 					// (20 by default) and conversations.replies pages
 					// oldest-first, so a bot reply past that window is
@@ -4553,7 +4554,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					// truncated.
 					if !moIn.botPostedInThread && (!threadRepliesFetched || len(threadReplies) >= mentionOnlyScanMinRefetch(cfg.slackThreadContextLimit)) {
 						fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
-						found, err := fetchThreadHasOwnBotPost(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, botUID, msg.TS)
+						found, err := fetchThreadHasOwnBotPost(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, botUID, msg.TS, ignoreNotice)
 						cancel()
 						if err != nil {
 							log.Printf("mention-only: own-thread scan fetch failed chan=%s thread=%s: %v", msg.Channel, msg.ThreadTS, err)
@@ -4740,6 +4741,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		!ladderSkip && !(skipChannelPost && cfg.draining != nil && cfg.draining.Load())
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
+	busyHeld := false
 	if busyEligible {
 		busyAddDone, busyDisplacedMarks = cfg.busyMarks.markBoth(msg.Channel, msg.ThreadTS, msg.TS)
 	}
@@ -4815,10 +4817,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		peerItems, peerDropped = nil, 0
 		channelHeld := false
 		if postErr == nil && (verdict == receiptUnconfirmed || verdict == receiptHeld) && cfg.inboundRecovery != nil {
-			if err := cfg.inboundRecovery.hold(pendingChannelInbound{inbound: replayInbound}, receipt, true); err != nil {
+			if err := cfg.inboundRecovery.hold(pendingChannelInbound{inbound: replayInbound}, receipt, true, busyEligible && aliasedSessionID == ""); err != nil {
 				log.Printf("inbound HOLD retained with receipt in memory; persistence retry needed: %v", err)
 			}
 			channelHeld = true
+			busyHeld = true
 		}
 		releaseChannel()
 		if postErr == nil && verdict == receiptHeld && cfg.inboundRecovery == nil {
@@ -5061,6 +5064,22 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		}(msg.Channel, msg.TS, cfg.busyReaction, busyAddDone)
 	}
 
+	busyCancelled := false
+	cancelHeldBusy := func() {
+		if busyEligible && !busyCancelled {
+			busyCancelled = true
+			for _, tk := range cfg.busyMarks.cancelBoth(msg.Channel, msg.ThreadTS, msg.TS, nil, busyDisplacedMarks) {
+				go removeBusyReaction(cfg, msg.Channel, tk)
+			}
+			// cancelBoth restores displaced marks; remove this message's
+			// hourglass only after its asynchronous add completes.
+			go removeBusyReaction(cfg, msg.Channel, busyTaken{messageTS: msg.TS, addDone: busyAddDone})
+		}
+	}
+	if busyHeld && aliasedSessionID == "" {
+		cancelHeldBusy()
+	}
+
 	// Cross-channel address-by-handle: if the parsed target matches a
 	// registered alias, dispatch the inbound directly to the aliased
 	// session via gc's session-message API, regardless of channel
@@ -5186,7 +5205,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					concludeEvent()
 					return
 				}
-				recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
+				recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound, true)
 				// Rendered ONCE: the in-place re-dispatch and the
 				// follow-up's recovery copy re-send these exact bytes.
 				aliasBody := renderAliasDispatch(cfg, inbound, target)
@@ -5200,10 +5219,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				}
 				aliasHeld := false
 				if aliasOK && cfg.inboundRecovery != nil && (aliasVerdict == receiptHeld || aliasVerdict == receiptUnconfirmed) {
-					if err := cfg.inboundRecovery.holdAlias(inbound, aliasedSessionID, target, aliasBody, aliasReceipt); err != nil {
+					if err := cfg.inboundRecovery.holdAlias(inbound, aliasedSessionID, target, aliasBody, aliasReceipt, busyEligible); err != nil {
 						log.Printf("alias HOLD retained with receipt in memory; persistence retry needed: %v", err)
 					}
 					aliasHeld = true
+					cancelHeldBusy()
 				}
 				if aliasOK && aliasVerdict == receiptHeld && cfg.inboundRecovery == nil {
 					log.Printf("alias dispatch: HELD handle=%s ts=%s gc accepted the injection and has not finished delivering it — not re-dispatching — %s",
@@ -5241,6 +5261,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				if aliasOK {
 					cfg.channelClaims.commit(aliasKey)
 					if !aliasHeld {
+						for _, binding := range mentionOnlyBindings {
+							if binding.matchesSession(aliasedSessionID) {
+								cfg.mentionOnlyDeliveries.confirm(binding, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
+							}
+						}
 						cfg.deliveredIDs.record(target, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 					}
 					// Final delivery landed: NOW retire the marks
@@ -6785,7 +6810,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 		// The body is gc's and can be large or carry newlines; bounded and
 		// sanitized like every other gc string that reaches a log line.
 		log.Printf("alias dispatch: %s -> %s: %s", target, resp.Status, sanitizeReceiptLogValue(string(respBody), receiptFollowUpLogLimit))
-		return deliveryReceipt{}, false
+		return deliveryReceipt{postStatus: resp.StatusCode}, false
 	}
 	if readErr != nil {
 		log.Printf("alias dispatch: handle=%s -> session=%s accepted; receipt unreadable: %v", handle, sessionID, readErr)

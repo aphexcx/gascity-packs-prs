@@ -709,11 +709,14 @@ func threadPostedBySession(in mentionOnlyInput, b mentionOnlyBinding) bool {
 // currentTS (the thread root included) was authored by botUserID. Slack's
 // conversations.replies returns oldest-first; ts values are decimal
 // strings of equal epoch width, so a lexical comparison orders them.
-func threadHasOwnBotPost(replies []slackThreadMessage, botUserID, currentTS string) bool {
+func threadHasOwnBotPost(replies []slackThreadMessage, botUserID, currentTS string, ignore ...func(string) bool) bool {
 	if botUserID == "" {
 		return false
 	}
 	for _, m := range replies {
+		if len(ignore) > 0 && ignore[0] != nil && ignore[0](m.TS) {
+			continue
+		}
 		if m.TS == "" || m.TS == currentTS || (currentTS != "" && m.TS > currentTS) {
 			continue
 		}
@@ -981,7 +984,7 @@ func mentionOnlyScanMinRefetch(limit int) int {
 // mention-only binding for the same session, so the pack scripts' latest-
 // inbound resolution sees it (the alias leg skipped the lane's own
 // injection, and no gc event exists for a non-member; codex r1 P2).
-func recordAliasDeliveryForMentionOnly(cfg config, bindings []mentionOnlyBinding, aliasedSessionID string, inbound externalInboundMessage) {
+func recordAliasDeliveryForMentionOnly(cfg config, bindings []mentionOnlyBinding, aliasedSessionID string, inbound externalInboundMessage, provisional ...bool) {
 	if cfg.mentionOnlyDeliveries == nil || aliasedSessionID == "" {
 		return
 	}
@@ -990,12 +993,13 @@ func recordAliasDeliveryForMentionOnly(cfg config, bindings []mentionOnlyBinding
 			continue
 		}
 		cfg.mentionOnlyDeliveries.record(b, mentionOnlyDelivery{
-			SessionID:  b.SessionID,
-			ChannelID:  inbound.Conversation.ConversationID,
-			TS:         inbound.ProviderMessageID,
-			ThreadTS:   inbound.ReplyToMessageID,
-			Reason:     mentionOnlyReasonHandle,
-			ReceivedAt: inbound.ReceivedAt,
+			SessionID:   b.SessionID,
+			ChannelID:   inbound.Conversation.ConversationID,
+			TS:          inbound.ProviderMessageID,
+			ThreadTS:    inbound.ReplyToMessageID,
+			Reason:      mentionOnlyReasonHandle,
+			ReceivedAt:  inbound.ReceivedAt,
+			Provisional: len(provisional) > 0 && provisional[0],
 		})
 	}
 }

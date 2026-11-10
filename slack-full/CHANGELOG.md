@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Inbound HOLD review corrections** (gp-k1vn, PR 85 round 2): alias replay
+  restores provisional reply routing and resolves the current handle; vouches
+  and follower rungs wake ordered retries, including a final attempt at the
+  bound. Pending receipts have their own 5s/30s clock. Unpollable and refused
+  records remain visible without blocking later messages. Notices have durable
+  failure backoff, close at retirement, ignore reactions and do not create own
+  threads. Replay defaults to a configurable 24h maximum age; older history is
+  never replayed or deleted, including by the redrive verb. An acknowledge form
+  records hand checks. Counts deduplicate human lines, recovery restores busy
+  marks, and damaged state/history no longer prevents startup. Optional fields
+  and rollback decoder compatibility are documented in the README.
+
 - **Durable inbound holds and ordered redrive** (gp-b06o): an unvouched
   channel/DM, peer-bot or alias delivery backs off over minutes, with a configurable 30-minute
   deadline. One adapter thread reply surfaces the incident and is edited on

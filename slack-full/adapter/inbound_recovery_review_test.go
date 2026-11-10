@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -171,6 +172,9 @@ func TestInboundRecoveryNewDeadLettersImmediatelyCountAsMissed(t *testing.T) {
 				if l.lastMissed.Load() != 1 {
 					t.Fatalf("probe %d lost a newly retired record: missed=%d", i, l.lastMissed.Load())
 				}
+				if l.missedTotal.Load() != 1 {
+					t.Fatalf("probe %d recounted a standing entry: total=%d", i, l.missedTotal.Load())
+				}
 			}
 		})
 	}
@@ -219,7 +223,7 @@ func TestInboundRecoveryIncompleteLivenessHistoryStaysMissed(t *testing.T) {
 	r.manual["C1"] = true
 	r.observe(recoveryReceipt("trigger", "s1", true))
 	r.tick(false)
-	if posts != 1 || r.counts()["C1"].Dead != 5 || r.known("C1", "100.1") {
+	if posts != 1 || r.counts()["C1"].ByHand != 5 || r.known("C1", "100.1") {
 		t.Fatalf("incomplete payload was settled or blocked full backfill: posts=%d counts=%v", posts, r.counts())
 	}
 	restarted, err := newInboundRecovery(r.path, dead)
@@ -918,7 +922,7 @@ func TestInboundRecoveryIncompleteJournalPreservesUncertainty(t *testing.T) {
 				}
 			}
 			err = r.enrichFromJournal(journal)
-			if mode != "missing" && err == nil {
+			if mode == "over-budget" && err == nil {
 				t.Fatal("incomplete scan was accepted")
 			}
 			if got := r.state.Entries["C1|100.1"]; !got.PendingReceipt || got.PendingReceiptID != "" {
@@ -959,32 +963,18 @@ func TestInboundRecoveryFIFOAllowsPollingAndDeadlines(t *testing.T) {
 		polled = append(polled, id)
 		return receiptPollConcluded, recoveryReceipt(id, "s1", id == "good"), nil
 	}
-	r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
-		t.Fatal("new send passed the older unknown receipt")
-		return deliveryReceipt{}, nil
-	}
-	now = now.Add(time.Minute)
-	r.tick(false)
-	if len(polled) != 2 || r.state.Entries["C1|100.2"].DeliveredAt.IsZero() || r.state.Entries["C1|100.3"].PendingReceipt {
-		t.Fatalf("FIFO blocked independent receipt settlement: polls=%v", polled)
-	}
-	now = now.Add(30 * time.Minute)
-	r.tick(false)
-	if r.counts()["C1"].Dead != 3 {
-		t.Fatalf("blocked holds skipped their deadlines: %v", r.counts())
-	}
-	old := r.state.Entries["C1|100.1"]
-	old.DeliveredAt = now
-	r.put("C1|100.1", old)
-	r.manual["C1"] = true
 	var sent []string
 	r.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
 		sent = append(sent, e.Inbound.ProviderMessageID)
 		return recoveryReceipt("done", "s1", true), nil
 	}
+	now = now.Add(time.Minute)
 	r.tick(false)
-	if len(sent) != 2 || sent[0] != "100.3" || sent[1] != "100.4" {
-		t.Fatalf("resolved losses did not resume in order: %v", sent)
+	if len(polled) != 2 || !reflect.DeepEqual(sent, []string{"100.3", "100.4"}) {
+		t.Fatalf("unpollable head blocked later lines: polls=%v sent=%v", polled, sent)
+	}
+	if r.counts()["C1"].ByHand != 1 || r.state.Entries["C1|100.1"].ReplayBlockedReason == "" {
+		t.Fatal("unknown receipt did not remain visible for hand verification")
 	}
 }
 
@@ -1013,6 +1003,7 @@ func TestInboundRecoveryPauseDoesNotCancelPendingReceipts(t *testing.T) {
 		polled = true
 		return receiptPollConcluded, recoveryReceipt(id, "s1", true), nil
 	}
+	now = now.Add(5 * time.Second)
 	r.tick(true)
 	if !polled || r.state.Entries["C1|100.2"].DeliveredAt.IsZero() {
 		t.Fatal("an older replay failure cancelled a later receipt poll")

@@ -72,7 +72,11 @@ func TestInboundRecoveryBusyComposerRegression(t *testing.T) {
 		if now.Sub(start) >= 9*time.Minute || body.Message.ProviderMessageID == "101.000001" {
 			status = "delivered"
 		}
-		fmt.Fprintf(w, `{"TargetSessionID":"s1","delivery":{"receipt_id":"receipt-%d","status":%q,"members":[{"session_id":"s1","status":%q}]}}`, len(posts), status, status)
+		session := "s1"
+		if body.Message.ProviderMessageID == "101.000001" {
+			session = "s2"
+		}
+		fmt.Fprintf(w, `{"TargetSessionID":%q,"delivery":{"receipt_id":"receipt-%d","status":%q,"members":[{"session_id":%q,"status":%q}]}}`, session, len(posts), status, session, status)
 	}))
 	defer srv.Close()
 	cfg := recoveryTestConfig(t, srv.URL)
@@ -86,7 +90,8 @@ func TestInboundRecoveryBusyComposerRegression(t *testing.T) {
 		t.Fatalf("three fast flushes: posts=%v counts=%v", posts, r.counts())
 	}
 	// New traffic still flows, while a duplicate of the held message cannot
-	// bypass its deadline. A success is not grounds to rush a held retry.
+	// bypass ownership. This fresh delivery targets a different session;
+	// same-session vouch release is covered by TestRound2VouchReleasesHeld.
 	cfg.coalescer.enqueue("C1", testPending("C1", "100.000001", "duplicate"))
 	cfg.coalescer.enqueue("C1", testPending("C1", "101.000001", "new line"))
 	cfg.coalescer.flushAheadOf("C1", "")
@@ -222,13 +227,13 @@ func TestInboundRecoveryNoticeOnePostAndEdit(t *testing.T) {
 	now = now.Add(time.Minute)
 	r.updateNotices()
 	r.updateNotices()
-	if len(calls) != 1 || !strings.Contains(calls[0], "Delivery to s1 is held") || !strings.HasPrefix(calls[0], "|100.0|") {
+	if len(calls) != 1 || !strings.Contains(calls[0], "Delivery has been held since") || !strings.HasPrefix(calls[0], "|100.0|") {
 		t.Fatalf("notices=%v", calls)
 	}
 	r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) { return recoveryReceipt("ok", "s1", true), nil }
 	r.tick(false)
 	r.updateNotices()
-	if len(calls) != 2 || !strings.HasPrefix(calls[1], "notice.1|") || !strings.Contains(calls[1], "delivered late at") {
+	if len(calls) != 2 || !strings.HasPrefix(calls[1], "notice.1|") || !strings.Contains(calls[1], "handed to the session's terminal by") {
 		t.Fatalf("edits=%v", calls)
 	}
 }
@@ -305,7 +310,7 @@ func TestInboundRecoveryExplicitHeldContract(t *testing.T) {
 	}
 	now = now.Add(time.Minute)
 	r.tick(false)
-	if !strings.Contains(notice, "unowned_draft since 2026-11-09T20:00:00Z") || r.state.Entries["C1|100.0"].Attempts != 1 {
+	if !strings.Contains(notice, "retrying for up to") || r.state.Entries["C1|100.0"].Attempts != 1 {
 		t.Fatalf("notice=%q state=%+v", notice, r.state.Entries["C1|100.0"])
 	}
 }
@@ -332,13 +337,13 @@ func TestInboundRecoveryReceiptPolicyCompatibility(t *testing.T) {
 			}
 			now = now.Add(time.Minute)
 			if !r.gated {
-				// Restarting with the escape hatch off must settle even a
-				// persisted hold whose deadline elapsed while offline.
+				// Gate-off preserves accepted uncertainty without resending,
+				// even when the deadline elapsed while offline.
 				now = now.Add(time.Hour)
 			}
 			r.tick(false)
-			if r.state.Entries["C1|100.0"].DeliveredAt.IsZero() || len(r.sessions) != 0 {
-				t.Fatalf("legacy settlement must not announce a vouch: %+v sessions=%v", r.state.Entries, r.sessions)
+			if !r.state.Entries["C1|100.0"].DeliveredAt.IsZero() || r.counts()["C1"].ByHand != 1 || len(r.sessions) != 0 {
+				t.Fatalf("unknown settlement must stay visible without announcing a vouch: %+v sessions=%v", r.state.Entries, r.sessions)
 			}
 		})
 	}
@@ -663,7 +668,7 @@ func TestInboundRecoveryPayloadRejectionAfterHold(t *testing.T) {
 	r.tick(false)
 	now = now.Add(time.Minute)
 	r.tick(false)
-	if !reflect.DeepEqual(attachmentCounts, []int{1, 0}) || r.counts()["C1"].Dead != 1 {
+	if !reflect.DeepEqual(attachmentCounts, []int{1, 0}) || r.counts()["C1"].ByHand != 1 {
 		t.Fatalf("rejection ladder=%v counts=%v", attachmentCounts, r.counts())
 	}
 }
@@ -834,7 +839,7 @@ func TestInboundRecoveryRetirementWriteFailureNeverReposts(t *testing.T) {
 	}
 	now = now.Add(15 * time.Minute)
 	restarted.tick(false)
-	if restarted.counts()["C1"].Dead != 1 {
+	if restarted.counts()["C1"].ByHand != 1 {
 		t.Fatal("write did not recover")
 	}
 }
@@ -850,7 +855,7 @@ func TestInboundRecoveryPendingWithoutIDNeverReposts(t *testing.T) {
 	}
 	now = now.Add(time.Minute)
 	r.tick(false)
-	if r.counts()["C1"].Held != 1 {
+	if r.counts()["C1"].ByHand != 1 {
 		t.Fatal("pending entry lost")
 	}
 }
@@ -897,8 +902,8 @@ func TestInboundRecoveryRefusesFIFOsWithoutBlocking(t *testing.T) {
 			return
 		}
 		r, _ := newInboundRecovery("", dir)
-		if err := r.importDeadLetters(); err == nil {
-			done <- errors.New("FIFO dead-letter file accepted")
+		if err := r.importDeadLetters(); err != nil {
+			done <- errors.New("FIFO dead-letter file disabled startup")
 			return
 		}
 		done <- nil
