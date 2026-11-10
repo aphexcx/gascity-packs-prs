@@ -135,6 +135,50 @@ test('hard links and unavailable descriptor inspection fail closed', async (t) =
   assert.throws(() => readAllowedFile(file, { roots: [fs.realpathSync(r.dir)] }), /hard-linked/);
   assert.throws(() => descriptorPath(1073741824), /inspection unavailable/);
 });
+test('a file changed during the read is refused before upload', async (t) => {
+  const { r, publish } = await direct(t), file = write(r.dir, 'photo.jpg');
+  const read = fs.readSync;
+  t.mock.method(fs, 'readSync', (...args) => {
+    const count = read(...args);
+    fs.appendFileSync(file, 'changed during read');
+    return count;
+  });
+  const answer = await publish(request(file));
+  assert.equal(answer.status, 400);
+  assert.match(answer.json.error, /changed while reading/);
+  assert.equal(r.gw.requests.length, 0);
+});
+test('the after-read descriptor check catches a moved parent despite stable pathname checks', async (t) => {
+  const { r, publish } = await direct(t), root = fs.realpathSync(r.dir);
+  const folder = path.join(root, 'out'), moved = path.join(root, '.gc/keys');
+  const file = write(root, 'out/photo.jpg');
+  fs.mkdirSync(path.dirname(moved));
+  const read = fs.readSync, realpath = fs.realpathSync;
+  let swapped = false;
+  t.mock.method(fs, 'readSync', (...args) => {
+    const count = read(...args);
+    if (!swapped) { fs.renameSync(folder, moved); fs.symlinkSync(moved, folder); swapped = true; }
+    return count;
+  });
+  // A concurrent swap can make each pathname lookup see the old name. The
+  // descriptor must still be checked independently after reading the bytes.
+  t.mock.method(fs, 'realpathSync', (p, ...args) => p === file && swapped ? file : realpath(p, ...args));
+  const answer = await publish(request(file));
+  assert.equal(answer.status, 400);
+  assert.match(answer.json.error, /descriptor moved while reading/);
+  assert.equal(r.gw.requests.length, 0);
+});
+test('the update endpoint refuses files and captions even with otherwise valid template text', async (t) => {
+  const { r, publisher } = await direct(t);
+  r.clock.advance(25 * 3600000);
+  for (const extra of [{ file: write(r.dir, 'photo.jpg') }, { caption: 'photo' }, { caption_file: '/caption.txt' }]) {
+    const answer = await publisher.handlePublishUpdate(JSON.stringify({ to: OWNER, text: 'An update',
+      idempotency_key: 'file-update', ...extra }));
+    assert.equal(answer.status, 400);
+    assert.equal(answer.json.error, 'files cannot use the update template');
+  }
+  assert.equal(r.gw.requests.length, 0);
+});
 test('checks signatures against extensions, actual size, captions and changed files before upload', async (t) => {
   const { r, publish } = await direct(t);
   assert.equal((await publish(request(write(r.dir, 'renamed.pdf')))).status, 400);
@@ -166,6 +210,7 @@ test('closed window uploads nothing, failed upload sends nothing, retry recovers
   const closed = await publish(body);
   assert.equal(closed.json.metadata.reason, 'window_closed');
   assert.match(closed.json.error, /cannot use the update template/);
+  assert.match(closed.json.error, /same --idempotency-key file-key/);
   assert.equal(r.gw.uploadCalls.length, 0);
   r.gw.lastInbound.set(OWNER, r.clock.now());
   r.gw.uploadFailures.push(500);
@@ -174,6 +219,91 @@ test('closed window uploads nothing, failed upload sends nothing, retry recovers
   assert.equal((await publish(body)).json.delivered, true);
   assert.equal(r.gw.uploadCalls.length, 1);
   assert.equal(r.gw.sends.length, 1);
+});
+for (const phase of ['before upload', 'after upload']) {
+  test(`an unwritable journal ${phase} pauses the file send until the same key can be saved`, async (t) => {
+    const { r } = await direct(t), body = request(write(r.dir, 'photo.jpg'));
+    const real = createGatewayClient({ url: r.gw.url, credential: CREDENTIAL });
+    let failWrites = true;
+    const gateway = { ...real, async upload(...args) {
+      const answer = await real.upload(...args);
+      if (failWrites && phase === 'after upload') fs.chmodSync(r.dir, 0o500);
+      return answer;
+    } };
+    const make = () => createPublisher({ stateDir: r.dir, cityDir: r.dir, city: CITY,
+      clock: r.clock.now, gateway, gc: { recordOutbound: async () => ({ TranscriptEntry: {} }) } });
+    const publisher = make();
+    if (phase === 'before upload') fs.chmodSync(r.dir, 0o500);
+    try {
+      const failed = await publisher.handlePublish(JSON.stringify(body));
+      assert.equal(failed.json.failure_kind, 'transient');
+      assert.equal(failed.json.metadata.reason, 'outbound_progress_unavailable');
+      assert.equal(r.gw.sends.length, 0);
+      assert.equal(r.gw.uploadCalls.length, phase === 'before upload' ? 0 : 1);
+    } finally { fs.chmodSync(r.dir, 0o700); failWrites = false; }
+    const recovered = await make().handlePublish(JSON.stringify(body));
+    assert.equal(recovered.json.delivered, true);
+    assert.equal((await publisher.handlePublish(JSON.stringify(body))).json.message_id, recovered.json.message_id);
+    assert.equal(r.gw.uploadCalls.length, 1);
+    assert.equal(r.gw.sends.length, 1);
+  });
+}
+for (const damage of ['removed', 'unreadable']) {
+  test(`a ${damage} journal recovers a lost send reply after 25 hours without uploading`, async (t) => {
+    const { r } = await direct(t), body = request(write(r.dir, 'photo.jpg'));
+    const real = createGatewayClient({ url: r.gw.url, credential: CREDENTIAL });
+    let firstId, loseReply = true;
+    const gateway = { ...real, async send(payload) {
+      const sent = await real.send(payload);
+      if (loseReply) { firstId = sent.message_id; throw Object.assign(new Error('lost reply'), { noAnswer: true }); }
+      return sent;
+    } };
+    const make = () => createPublisher({ stateDir: r.dir, cityDir: r.dir, city: CITY,
+      clock: r.clock.now, gateway, gc: { recordOutbound: async () => ({ TranscriptEntry: {} }) } });
+    assert.equal((await make().handlePublish(JSON.stringify(body))).json.failure_kind, 'transient');
+    const journal = path.join(r.dir, PROGRESS_FILE);
+    if (damage === 'removed') fs.unlinkSync(journal); else fs.writeFileSync(journal, '{unreadable');
+    r.clock.advance(25 * 3600000); loseReply = false;
+    const before = r.gw.requests.length;
+    const recovered = await make().handlePublish(JSON.stringify(body));
+    assert.equal(recovered.json.delivered, true);
+    assert.equal(recovered.json.message_id, firstId);
+    assert.equal(r.gw.uploadCalls.length, 1);
+    assert.equal(r.gw.sends.length, 1);
+    assert.equal(r.gw.requests.slice(before).filter((q) => q.route === 'POST /v1/uploads').length, 0);
+  });
+}
+test('a recovery probe cannot send when the window reopens between lookup and probe', async (t) => {
+  const { r } = await direct(t), body = request(write(r.dir, 'photo.jpg'));
+  r.clock.advance(25 * 3600000);
+  const real = createGatewayClient({ url: r.gw.url, credential: CREDENTIAL });
+  const gateway = { ...real, async send(payload) {
+    r.gw.lastInbound.set(OWNER, r.clock.now());
+    return real.send(payload);
+  } };
+  const publisher = createPublisher({ stateDir: r.dir, cityDir: r.dir, city: CITY,
+    clock: r.clock.now, gateway, gc: { recordOutbound: async () => ({ TranscriptEntry: {} }) } });
+  const refused = await publisher.handlePublish(JSON.stringify(body));
+  assert.equal(refused.json.failure_kind, 'transient');
+  assert.equal(refused.json.metadata.reason, 'window_changed');
+  assert.equal(r.gw.uploadCalls.length, 0);
+  assert.equal(r.gw.sends.length, 0);
+  assert.equal((await publisher.handlePublish(JSON.stringify(body))).json.delivered, true);
+  assert.equal(r.gw.sends.length, 1);
+});
+test('a recovery probe with an unknown send outcome never claims nothing was sent', async (t) => {
+  const { r } = await direct(t), body = request(write(r.dir, 'photo.jpg'));
+  r.clock.advance(25 * 3600000);
+  const real = createGatewayClient({ url: r.gw.url, credential: CREDENTIAL });
+  const gateway = { ...real, async send() {
+    throw Object.assign(new Error('lost send outcome'), { status: 409, json: { error: 'outcome_unknown' } });
+  } };
+  const publisher = createPublisher({ stateDir: r.dir, cityDir: r.dir, city: CITY, clock: r.clock.now, gateway });
+  const refused = await publisher.handlePublish(JSON.stringify(body));
+  assert.equal(refused.json.metadata.reason, 'outcome_unknown');
+  assert.match(refused.json.error, /check the chat/);
+  assert.doesNotMatch(refused.json.error, /Nothing was sent|kept the upload/);
+  assert.equal(r.gw.uploadCalls.length, 0);
 });
 test('signature parsing distinguishes audio/video tracks and rejects non-Opus Ogg', () => {
   assert.equal(sniffMime(mp4()), 'video/mp4');
@@ -308,6 +438,10 @@ for (const f of fixtures) for (const point of ['before-media-upload', 'after-med
     const pending = adapterRequest(r.socket, 'POST', '/publish', body).catch(() => null);
     const exit = await first.exited;
     assert.equal(exit.signal, 'SIGKILL'); await pending;
+    if (point === 'after-media-send') {
+      fs.unlinkSync(path.join(r.dir, '.gc', 'whatsapp', PROGRESS_FILE));
+      r.clock.advance(25 * 3600000);
+    }
     await r.restart(); await ready(r);
     const recovered = await adapterRequest(r.socket, 'POST', '/publish', body);
     assert.equal(recovered.json.delivered, true, JSON.stringify(recovered));

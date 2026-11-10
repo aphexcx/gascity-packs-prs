@@ -35,8 +35,9 @@
 // message ids, the settled receipt), so a retry under the same key resumes
 // at the failed chunk and never asks for a delivered one again, and a
 // settled key answers its receipt without a gateway call, across restarts.
-// A lost progress write is therefore safe: the retry re-asks the gateway
-// under the same chunk key and gets the same answer.
+// Text retries can reconstruct their chunk keys after a lost progress write.
+// Files must persist their upload handle before sending. A missing file entry
+// can still recover a completed send by its key, even after the window closes.
 //
 // THE RECIPIENT (gp-g02t; the mayor's (A), 12:05Z 11/6). A reply names its
 // conversation, the key the inbound side files the owner under (render.js
@@ -155,7 +156,7 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 // transcript_sha256?, chunks, delivered, message_ids, receipt?, recording?,
 // updated_at}. Text entries are bounded by age and count. File recovery records
 // stay for the gateway's 30-day idempotency horizon and are never count-evicted:
-// losing a handle would prevent recovery while the owner's window is closed.
+// keeping the handle lets a pending send resume without another upload.
 // Rewritten atomically on change; no media bytes are stored here.
 // An entry written before gp-g02t names its conversation under wa_id, that
 // field's old name; the value was always the conversation id gc (or the
@@ -196,10 +197,13 @@ function createProgressStore({ file, clock, log, cap = 1024, ttlMs = 7 * DAY_MS 
       prune();
       try {
         writeFileAtomic(file, `${JSON.stringify({ version: 1, entries: Object.fromEntries(entries) })}\n`);
+        return true;
       } catch (err) {
-        // Safe to carry on: a retry re-asks the gateway under the same
-        // chunk key and gets the same answer without a second Meta call.
+        // Text can reconstruct its chunk key; file callers must check this
+        // result before uploading or sending. Receipt writes can be retried
+        // through the gateway's stored answer under the same send key.
         log(`outbound progress write failed (${err.code ?? err.message}); kept in memory`);
+        return false;
       }
     },
   };
@@ -320,6 +324,10 @@ export function createPublisher({
       kind = 'transient';
       reason = 'in_flight';
       hint = 'The gateway is still sending this key to WhatsApp: retry shortly with the same idempotency key.';
+    } else if (err?.progressSave) {
+      kind = 'transient';
+      reason = 'outbound_progress_unavailable';
+      hint = 'The file send is paused because its journal could not be saved. Restore state-directory writes, then retry with the same idempotency key.';
     } else if (isTransient(err) || err?.malformed || err?.noMessageId) {
       kind = 'transient';
       reason = 'gateway_unavailable';
@@ -487,18 +495,20 @@ export function createPublisher({
         if (!entry) {
           entry = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
             transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [] };
-          progress.save(key, entry);
         }
         const operation = sha256Hex(JSON.stringify([key, conversationId, textSha]));
+        let uploading = false;
         try {
-          // If send may already have happened, its repeat must reach the gateway
-          // even after the window closes: it can answer the original message id.
-          if (!entry.media_id && (!Number.isFinite(closes) || closes * 1000 <= clock())) {
-            throw Object.assign(new Error('window closed'), { status: 422, json: { error: 'window_closed' } });
-          }
-          if (!entry.media_id) {
+          const recoverOnly = !entry.media_id && (!Number.isFinite(closes) || closes * 1000 <= clock());
+          const saveBeforeSend = () => {
+            if (!progress.save(key, entry)) throw Object.assign(new Error('file journal write failed'), { progressSave: true });
+          };
+          if (!entry.media_id && !recoverOnly) {
+            saveBeforeSend();
             killPoint('before-media-upload', key);
+            uploading = true;
             const uploaded = await mediaGateway.upload(file, `file-upload:${operation}`);
+            uploading = false;
             killPoint('after-media-upload', key);
             if (!str(uploaded?.media_id) || !Number.isFinite(uploaded.expires_at)) throw Object.assign(new Error('invalid upload answer'), { malformed: true });
             entry.media_id = uploaded.media_id;
@@ -506,10 +516,14 @@ export function createPublisher({
           }
           // A delayed resume starts the send's retention horizon now, not at
           // upload time. Save before sending so a lost reply cannot age it out.
-          progress.save(key, entry);
+          if (!recoverOnly) saveBeforeSend();
           killPoint('after-media-journal', key);
+          // With no journal handle, probe the existing send key before refusing.
+          // The gateway checks that key before the window and grant. This sentinel
+          // is not a gateway UUID handle, so even a window reopening during the
+          // request cannot cause a new Meta send. No upload is made for the probe.
           const sent = await gateway.send({ to, idempotency_key: `file-send:${operation}`, type: file.kind,
-            media: { id: entry.media_id, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } });
+            media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } });
           killPoint('after-media-send', key);
           if (!str(sent?.message_id)) throw Object.assign(new Error('missing message id'), { noMessageId: true });
           entry.delivered = 1;
@@ -523,20 +537,26 @@ export function createPublisher({
         } catch (err) {
           if (err?.status === 422 && err.json?.error === 'window_closed') ledger?.noteWindowClosed?.(conversationId, clock());
           const refused = failure(err, context);
-          if (err?.json?.error === 'media_not_found' || err?.json?.error === 'media_expired') {
+          if (!entry.media_id && err?.json?.error === 'media_not_found') {
+            refused.json.failure_kind = 'transient';
+            refused.json.metadata.reason = 'window_changed';
+            refused.json.metadata.hint = 'No completed send was found and the window changed during recovery. Retry with the same idempotency key.';
+            refused.json.error = refused.json.metadata.hint;
+          } else if (err?.json?.error === 'media_not_found' || err?.json?.error === 'media_expired') {
             refused.json.failure_kind = 'permanent';
             refused.json.metadata.reason = 'media_expired';
             refused.json.metadata.hint = 'The upload handle is unavailable or expired. The gateway found no completed send under this key. '
               + 'Check the chat, then start a new publish with a fresh key if the owner still needs the file; repeating this key cannot restore the handle.';
             refused.json.error = refused.json.metadata.hint;
           }
-          if (!entry.media_id && err?.json?.error === 'outcome_unknown') {
+          if (uploading && err?.json?.error === 'outcome_unknown') {
             refused.json.metadata.hint = 'Meta may have kept the upload, but the gateway has no confirmed handle. Nothing was sent to the owner. '
               + 'This key will not upload again; an operator must decide whether to start a new publish with a fresh key.';
             refused.json.error = refused.json.metadata.hint;
           }
           if (refused.json.metadata.reason === 'window_closed') {
-            refused.json.metadata.hint = 'Files can be sent only after the owner writes again. A file cannot use the update template.';
+            refused.json.metadata.hint = 'Files can be sent only after the owner writes again. A file cannot use the update template. '
+              + `Retry with the same --idempotency-key ${key} to recover any completed send without sending twice.`;
             refused.json.error = refused.json.metadata.hint;
           }
           return refused;

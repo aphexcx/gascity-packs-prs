@@ -34,6 +34,10 @@ describe("files out", () => {
     const count = s.graph.sends().length;
     s.clock.now += 86400;
     expect((await s.call("POST", "/v1/send", { token: city.token, body: send })).body).toEqual(sent.body);
+    // A restarted adapter may have lost its upload handle. The send key still
+    // recovers its first receipt before the window or grant is checked.
+    expect((await s.call("POST", "/v1/send", { token: city.token,
+      body: { ...send, media: { id: "unuploaded:recovery-probe" } } })).body).toEqual(sent.body);
     expect(s.graph.sends()).toHaveLength(count);
     expect(s.graph.sends().at(-1)!.body).toMatchObject({ type: "image", recipient: userOf(owner), image: { caption: "hello" } });
     expect(s.graph.sends().at(-1)!.body!.image.id).not.toBe(first.body.media_id);
@@ -69,6 +73,34 @@ describe("files out", () => {
     }
     expect((await s.call("POST", "/v1/uploads", { raw: bytes, headers: headers() })).status).toBe(401);
     expect(s.graph.calls).toHaveLength(0);
+  });
+  it("rejects invalid filename, idempotency-key and digest headers before storing or uploading", async () => {
+    const s = setup(), city = await s.enrollCity();
+    for (const extra of [
+      { "x-filename": "" }, { "x-filename": "folder%2Fsecret.jpg" },
+      { "idempotency-key": "" }, { "idempotency-key": "k".repeat(201) },
+      { "x-content-sha256": "" }, { "x-content-sha256": "g".repeat(64) },
+    ]) {
+      const out = await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes,
+        headers: { ...headers(), ...extra } });
+      expect(out).toMatchObject({ status: 400, body: { error: "bad_upload" } });
+    }
+    expect(s.graph.calls).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM uploads WHERE city_id = ?").bind(city.id).first())?.n).toBe(0);
+  });
+  it("the daily cron purges expired upload metadata and preserves unexpired grants", async () => {
+    const s = setup(), city = await s.enrollCity();
+    const first = await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: headers() });
+    s.clock.now += 1;
+    const second = await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: headers() });
+    expect(first.status).toBe(200); expect(second.status).toBe(200);
+    s.clock.now = first.body.expires_at;
+    await s.gateway.maintain();
+    const rows = await env.DB.prepare("SELECT media_id FROM uploads WHERE city_id = ?").bind(city.id).all();
+    expect(rows.results).toEqual([{ media_id: second.body.media_id }]);
+    s.clock.now = second.body.expires_at;
+    await s.gateway.maintain();
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM uploads WHERE city_id = ?").bind(city.id).first())?.n).toBe(0);
   });
   for (const length of [bytes.length - 3, bytes.length + 3]) {
     it(`aborts a mismatched stream declared ${length}: no handle and no retry`, async () => {

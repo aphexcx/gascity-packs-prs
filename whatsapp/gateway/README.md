@@ -473,16 +473,29 @@ ship their binaries as optional dependencies.
 
 **Files-out upgrade (gp-755k), after merge, on the already-live gateway:**
 
-1. In the Houmanoids deploy checkout, run `$PNPM exec wrangler d1 migrations
+1. In the Houmanoids deploy checkout, enter `whatsapp/gateway/` and run
+   `$PNPM install --frozen-lockfile` using the supported Node/pnpm toolchain.
+   Record the currently deployed Worker version and each city's pack pin
+   for rollback. Run `$PNPM exec wrangler d1 migrations
    list whatsapp-gateway --remote`; confirm 0001–0003 are applied and
    `0004_uploads.sql` is pending. Run `$PNPM exec wrangler d1 migrations apply
    whatsapp-gateway --remote`, then list again and confirm 0004 applied.
    The migration adds only `uploads`, metadata and claims with no media
    bytes. The old Worker ignores it during this deploy gap; all old routes
-   continue to work. Deploying new code before 0004 makes upload/media-send
-   requests fail, so keep the migration-first order.
-2. Run `$PNPM exec wrangler deploy`. Then roll the pack pin and restart the
-   whatsapp adapter per city, through the mayor's normal city procedure.
+   continue to work. Apply 0004 **before deploying the new gateway**:
+   reversing that order makes upload/media-send requests fail and the daily
+   cron throw before it can run any retention cleanup, because `uploads`
+   does not exist yet.
+2. From that same directory, run `$PNPM exec wrangler deploy`. Check the
+   existing text door first: inside the owner's window, send one requested
+   text with `gc whatsapp publish --to <conversation_id> --text "Deploy check"`
+   and confirm its receipt and message id. Before each city's pin roll,
+   choose its allowed outbound directories and set `WHATSAPP_OUTBOUND_ROOTS`
+   in that city's adapter env (absolute directories separated by the host's
+   path delimiter). The default includes the city directory and inbound
+   media store; explicitly choose narrower roots where appropriate.
+   Then roll the pack pin and restart the whatsapp adapter per city,
+   through the mayor's normal city procedure.
    Before this deploy an upgraded adapter's file upload receives 404 and
    sends nothing. Text and inbound flows are unchanged.
 3. On citadel, with the founder's phone inside its window, send one requested
@@ -492,6 +505,13 @@ ship their binaries as optional dependencies.
    name/bytes/SHA256 in the transcript. Repeating each key must return its
    first message id with no duplicate on the phone. This live proof, the
    deploy and city pin rolls are the mayor's work; lane tests use fakes only.
+4. If the checks fail, stop file publishes and restore each affected city's
+   previous pack pin and adapter env, then restart its adapter. From
+   `whatsapp/gateway/`, run `$PNPM exec wrangler rollback <previous-version-id>`
+   using the recorded Worker version and repeat the text check. Leave 0004
+   and its upload rows in place: the previous Worker ignores the additive
+   table. Preserve adapter journals and retry keys for recovery when files
+   out is restored; do not resend an uncertain file under a fresh key.
 
 The original initial-setup/deploy runbook follows.
 
@@ -750,6 +770,9 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   redelivery. The daily cron also clears any id left on a body-less row.
 - **Sends** keep the owner's `conversation_id` with their idempotency key for 30 days (statuses
   reach the city under it), even after the owner is unbound.
+- **Uploads.** The `uploads` table keeps each file's name in clear, its type,
+  size, declared SHA-256, city, handles and idempotency state for 30 days.
+  The daily cron purges expired rows. It stores no file bytes.
 - **Media.** Media ids are kept 7 days (Meta's lifetime for a webhook media id). No media bytes
   are ever stored: `GET /v1/media/<id>` streams Meta's bytes through.
 - **Strangers.** An unknown sender's row (last canned reply, code attempts) is pruned after 7 days.
