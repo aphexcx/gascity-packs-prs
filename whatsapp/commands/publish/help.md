@@ -33,6 +33,8 @@ gc whatsapp publish --update --to <conversation_id> --text "today's update"
   `secrets`, `.ssh`, `.config`, and names ending `.env`/`.pem` or starting `id_`
   are always forbidden, including through symlinks. Never send secrets or
   unexpected files, or pass a file between people's chats without their request.
+  Hard-linked files and files whose opened descriptor cannot be verified are
+  refused too. See the README's Files out section for platform requirements.
 - `--update`: send the ONE approved utility template instead (`dynasty_update`,
   "Your city has an update: {{1}}", the text as its one parameter). Only for an
   actual update, and only when the 24-hour window is closed: the adapter refuses
@@ -59,3 +61,5 @@ template: wait for the owner to write again. A failed upload sends nothing.
 The transcript records the filename, byte count, SHA256 and caption, never
 the file bytes. If an upload/send outcome is unknown, check it before using
 a new key; a retry under the original key never makes a second Meta call.
+An expired handle needs a new key after checking the chat; the refusal says
+so. Retrying an already completed send still recovers its original answer.

@@ -199,6 +199,15 @@ tighter rule). Caption files have the same restriction. Never send a secret,
 credential or key, an unexpected file, or another person's file without
 their request.
 
+The adapter also checks the kernel pathname of the opened descriptor before
+and after reading, so replacing a parent directory cannot authorize a secret
+file. Hard-linked files are refused, including otherwise allowed aliases.
+Linux uses `/proc/self/fd`; macOS uses the OS-shipped `/usr/sbin/lsof` for
+this process and descriptor. If that facility is unavailable, or on another
+OS, file publishing fails closed with `kernel descriptor path inspection
+unavailable`. No additional package is installed. This per-file check covers
+the capability, so no new doctor row is added.
+
 The key printed by the publish command covers the whole upload and send.
 `outbound_progress.json` holds the name, bytes, SHA256, caption and upload
 handle; the gateway also durably deduplicates uploads, covering a crash
@@ -207,6 +216,10 @@ key resumes without repeating either successful operation. A changed file
 conflicts. A failed upload sends nothing; an uncertain Meta outcome stays
 spent under that key and requires an operator check before any new key.
 The transcript names the file and its byte count/SHA256, never its bytes.
+An expired/missing handle is a permanent `media_expired` receipt with guidance
+to check the chat before starting a new key. The adapter still asks for a
+completed send's stored answer first, so a delivered file is recovered even
+after its upload handle expires.
 
 The window rule is unchanged. A closed window is `window_closed`; wait for
 the owner to write again. A file never goes out by the update template and

@@ -3,10 +3,32 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 export const mediaTypes = JSON.parse(fs.readFileSync(new URL('../../media-types.json', import.meta.url), 'utf8'));
 const reject = (message) => { throw new Error(message); };
 const inside = (root, file) => { const rel = path.relative(root, file); return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel); };
+
+// Inspect the OPEN descriptor's kernel pathname, never re-resolve the pathname
+// used to open it. O_NOFOLLOW alone cannot fence a swapped parent directory.
+// Linux exposes this through procfs; Darwin's shipped lsof queries the vnode
+// path (PROC_PIDFDVNODEPATHINFO). Unsupported/unavailable inspection fails closed.
+export function descriptorPath(fd) {
+  let name;
+  try {
+    if (process.platform === 'linux') name = fs.readlinkSync(`/proc/self/fd/${fd}`);
+    else if (process.platform === 'darwin') {
+      const result = execFileSync('/usr/sbin/lsof', ['-nP', '-a', '-p', String(process.pid), '-d', String(fd), '-Fn0'],
+        { encoding: 'utf8', timeout: 5000, maxBuffer: 65536, stdio: ['ignore', 'pipe', 'pipe'] });
+      const fields = result.split('\0').map((s) => s.replace(/^\n/, ''));
+      const names = fields.filter((s) => s.startsWith('n'));
+      if (!fields.includes(`p${process.pid}`) || !fields.includes(`f${fd}`) || names.length !== 1) reject('descriptor lookup failed');
+      name = names[0].slice(1);
+    }
+  } catch { reject('file refused: kernel descriptor path inspection unavailable'); }
+  if (!name || !path.isAbsolute(name) || /[\x00-\x1f\x7f]/.test(name)) reject('file refused: kernel descriptor path inspection unavailable');
+  return name;
+}
 
 function denied(file) {
   const parts = file.split(path.sep).map((p) => p.toLowerCase());
@@ -54,6 +76,8 @@ export function readAllowedFile(filename, { roots, maxBytes = 100000000 } = {}) 
     const opened = fs.fstatSync(fd);
     if (!opened.isFile() || opened.ino !== before.ino || opened.dev !== before.dev || opened.size !== before.size
       || fs.realpathSync(supplied) !== real || fs.realpathSync(real) !== real) reject('file changed while opening; retry');
+    if (opened.nlink !== 1) reject('file refused: hard-linked files are not allowed');
+    if (descriptorPath(fd) !== real) reject('file refused: opened descriptor is outside the validated path');
     // A bounded read of the opened inode, never a second path open or unbounded readFile.
     const bytes = Buffer.alloc(opened.size);
     let offset = 0;
@@ -66,6 +90,7 @@ export function readAllowedFile(filename, { roots, maxBytes = 100000000 } = {}) 
     const current = fs.statSync(real);
     if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs
       || current.ino !== opened.ino || current.dev !== opened.dev || fs.realpathSync(supplied) !== real) reject('file changed while reading; retry');
+    if (descriptorPath(fd) !== real) reject('file refused: opened descriptor moved while reading');
     return { bytes, name: path.basename(real), realPath: real };
   } finally { fs.closeSync(fd); }
 }
@@ -100,21 +125,46 @@ function zipKind(b) {
 }
 
 function compoundKind(b) {
-  // CFB directory entries are UTF-16 names at 128-byte boundaries. Following
-  // its directory's first sector is enough to identify supported legacy Office.
+  // Follow the CFB FAT/DIFAT directory chain, including later directory sectors.
+  // Never follow an out-of-file sector, repeated sector or an unbounded chain.
   if (b.length < 512 || b.readUInt16LE(28) !== 0xfffe) return null;
   const shift = b.readUInt16LE(30);
   if (![9, 12].includes(shift)) return null;
-  const sector = 2 ** shift, start = (b.readUInt32LE(48) + 1) * sector;
-  if (start + sector > b.length) return null;
-  const names = [];
-  for (let p = start; p < start + sector; p += 128) {
-    const n = b.readUInt16LE(p + 64);
-    if (n >= 2 && n <= 64 && n % 2 === 0 && b[p + 66] === 2) names.push(b.toString('utf16le', p, p + n - 2));
+  const sector = 2 ** shift, total = b.length / sector - 1, entries = sector / 4;
+  if (!Number.isInteger(total) || total < 1) return null;
+  const valid = (sid) => sid < total;
+  const at = (sid) => (sid + 1) * sector;
+  const fatCount = b.readUInt32LE(44), difatCount = b.readUInt32LE(72);
+  if (!fatCount || fatCount > total || difatCount > total) return null;
+  const fat = [];
+  for (let i = 0; i < 109; i++) { const sid = b.readUInt32LE(76 + i * 4); if (sid !== 0xffffffff) fat.push(sid); }
+  let difat = b.readUInt32LE(68);
+  const seenDifat = new Set();
+  for (let i = 0; i < difatCount; i++) {
+    if (!valid(difat) || seenDifat.has(difat)) return null;
+    seenDifat.add(difat);
+    for (let j = 0; j < entries - 1; j++) { const sid = b.readUInt32LE(at(difat) + j * 4); if (sid !== 0xffffffff) fat.push(sid); }
+    difat = b.readUInt32LE(at(difat) + sector - 4);
+  }
+  const fatSectors = new Set(fat);
+  if (fat.length !== fatCount || fat.some((sid) => !valid(sid)) || fatSectors.size !== fat.length) return null;
+  const names = [], seen = new Set();
+  let dir = b.readUInt32LE(48);
+  while (dir !== 0xfffffffe) {
+    if (!valid(dir) || seen.has(dir) || fatSectors.has(dir) || seenDifat.has(dir)) return null;
+    seen.add(dir);
+    for (let p = at(dir); p < at(dir) + sector; p += 128) {
+      const n = b.readUInt16LE(p + 64);
+      if (n >= 2 && n <= 64 && n % 2 === 0 && b[p + 66] === 2) names.push(b.toString('utf16le', p, p + n - 2));
+    }
+    const fatSector = fat[Math.floor(dir / entries)];
+    if (fatSector === undefined) return null;
+    dir = b.readUInt32LE(at(fatSector) + (dir % entries) * 4);
   }
   const hits = [['WordDocument', 'application/msword'], ['Workbook', 'application/vnd.ms-excel'],
     ['Book', 'application/vnd.ms-excel'], ['PowerPoint Document', 'application/vnd.ms-powerpoint']].filter(([n]) => names.includes(n));
-  return hits.length === 1 ? hits[0][1] : null;
+  const kinds = [...new Set(hits.map(([, mime]) => mime))];
+  return kinds.length === 1 ? kinds[0] : null;
 }
 
 function mp4Kind(b) {

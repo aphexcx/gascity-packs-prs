@@ -149,4 +149,62 @@ describe("files out", () => {
     expect((await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: { ...h, "x-filename": "other.jpg" } })).body.error).toBe("idempotency_conflict");
     expect(uploadCalls(s)).toHaveLength(1);
   });
+  it("serializes simultaneous upload claims and never retries an abandoned claim", async () => {
+    const s = setup(), city = await s.enrollCity(), h = headers();
+    let release!: () => void, reached!: () => void;
+    const barrier = new Promise<void>((r) => { release = r; });
+    const atMeta = new Promise<void>((r) => { reached = r; });
+    s.graph.hooks.onUpload = async () => { reached(); await barrier; };
+    const first = s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: h });
+    await atMeta;
+    try {
+      expect((await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: h })).body.error).toBe("in_flight");
+    } finally { release(); }
+    expect((await first).status).toBe(200);
+    expect(uploadCalls(s)).toHaveLength(1);
+    await env.DB.prepare("UPDATE uploads SET state = 'claimed', meta_id = NULL, created_at = ? WHERE city_id = ?")
+      .bind(s.clock.now - 181, city.id).run();
+    expect((await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: h })).body.error).toBe("outcome_unknown");
+    expect(uploadCalls(s)).toHaveLength(1);
+  });
+  it("a failed upload grant write returns no handle and leaves a spent claim", async () => {
+    let failReady = true;
+    const db = {
+      prepare(sql: string) {
+        const stmt = env.DB.prepare(sql);
+        if (!sql.startsWith("UPDATE uploads SET state = 'ready'")) return stmt;
+        return { bind(...args: unknown[]) {
+          const bound = stmt.bind(...args);
+          return { async run() { if (failReady) { failReady = false; throw new Error("simulated write failure"); } return bound.run(); } };
+        } } as D1PreparedStatement;
+      },
+      batch: (statements: D1PreparedStatement[]) => env.DB.batch(statements),
+      exec: (sql: string) => env.DB.exec(sql),
+    } as unknown as D1Database;
+    const s = setup({ db }), city = await s.enrollCity(), h = headers();
+    const out = await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: h });
+    expect(out.status).toBe(500); expect(out.body.media_id).toBeUndefined();
+    s.clock.now += 181;
+    expect((await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: h })).body.error).toBe("outcome_unknown");
+    expect(uploadCalls(s)).toHaveLength(1);
+  });
+  it("cancels an early-rejected or unconsumed body without yielding a handle", async () => {
+    const s = setup(), city = await s.enrollCity();
+    for (const status of [400, 500, 200]) {
+      let cancelled = false, pulls = 0;
+      const input = new ReadableStream<Uint8Array>({ pull(c) { pulls++; c.enqueue(bytes); }, cancel() { cancelled = true; } }, { highWaterMark: 0 });
+      s.deps.fetch = (async (_url, init) => {
+        // Model fetch retaining ownership even though Meta already answered.
+        const reader = (init!.body as ReadableStream<Uint8Array>).getReader();
+        await reader.read(); // multipart framing only
+        return Response.json(status === 200 ? { id: "unconsumed" } : { error: { code: 100 } }, { status });
+      }) as typeof fetch;
+      const out = await s.call("POST", "/v1/uploads", { token: city.token, raw: input, headers: headers() });
+      expect(out.status).toBe(502);
+      expect(out.body.error).toBe(status === 400 ? "meta_error" : "outcome_unknown");
+      expect(out.body.media_id).toBeUndefined();
+      expect(pulls).toBe(0);
+      expect(cancelled).toBe(true);
+    }
+  });
 });

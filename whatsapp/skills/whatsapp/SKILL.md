@@ -227,6 +227,8 @@ outcome needs the operator's check before any new key.
 Files must be inside the city directory or its inbound media store, unless
 the operator configured `WHATSAPP_OUTBOUND_ROOTS`. Secret and credential
 directories stay forbidden even inside those roots. A refusal names why.
+Hard-linked files are refused too. If the adapter cannot verify a file's
+path, ask the operator to check it; do not bypass the refusal.
 
 - Never send a secret, credential or key file.
 - Never send a file from one person's conversation into another's unless

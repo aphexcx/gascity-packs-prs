@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 import { createPublisher, PROGRESS_FILE } from '../src/outbound.js';
 import { createGatewayClient } from '../src/gateway.js';
-import { prepareFile, outboundRoots, sniffMime } from '../src/outbound-file.js';
+import { prepareFile, outboundRoots, sniffMime, readAllowedFile, descriptorPath } from '../src/outbound-file.js';
 import { rig, adapterRequest, waitFor, CITY, CREDENTIAL } from './fakes.js';
 
 const OWNER = '5511900000001';
@@ -100,6 +100,41 @@ test('custom roots never exempt denied paths; invalid and empty configuration fa
   assert.throws(() => prepareFile(secret, { roots }), /denied/);
   assert.throws(() => prepareFile(r.dir, { roots: [r.dir] }), /outside|regular/);
 });
+test('a parent-directory swap cannot authorize the descriptor of a secret file', async (t) => {
+  const { r, publish } = await direct(t);
+  const root = fs.realpathSync(r.dir);
+  const folder = path.join(root, 'out'), parked = path.join(root, 'parked');
+  const file = write(root, 'out/report.txt', Buffer.from('ordinary report'));
+  const secret = write(root, '.gc/keys/report.txt', Buffer.from('private credential contents'));
+  const stat = fs.statSync, open = fs.openSync, read = fs.readSync;
+  let swapped = false, targetFd, reads = 0;
+  const swap = () => { if (!swapped) { fs.renameSync(folder, parked); fs.symlinkSync(path.dirname(secret), folder); swapped = true; } };
+  const restore = () => { if (swapped) { fs.unlinkSync(folder); fs.renameSync(parked, folder); swapped = false; } };
+  t.after(restore);
+  t.mock.method(fs, 'statSync', (p, ...args) => {
+    if (p !== file) return stat(p, ...args);
+    swap(); const result = stat(p, ...args);
+    if (targetFd !== undefined) restore(); // old final pathname check sees the innocent directory again
+    return result;
+  });
+  t.mock.method(fs, 'openSync', (p, ...args) => {
+    const fd = open(p, ...args);
+    if (p === file) { targetFd = fd; restore(); }
+    return fd;
+  });
+  t.mock.method(fs, 'readSync', (fd, ...args) => { if (fd === targetFd) reads++; return read(fd, ...args); });
+  const answer = await publish(request(file));
+  assert.equal(answer.status, 400);
+  assert.match(answer.json.error, /opened descriptor/);
+  assert.equal(reads, 0, 'no secret byte is read, let alone uploaded');
+  assert.equal(r.gw.requests.length, 0);
+});
+test('hard links and unavailable descriptor inspection fail closed', async (t) => {
+  const { r } = await direct(t), file = write(r.dir, 'photo.jpg');
+  fs.linkSync(file, path.join(r.dir, 'alias.jpg'));
+  assert.throws(() => readAllowedFile(file, { roots: [fs.realpathSync(r.dir)] }), /hard-linked/);
+  assert.throws(() => descriptorPath(1073741824), /inspection unavailable/);
+});
 test('checks signatures against extensions, actual size, captions and changed files before upload', async (t) => {
   const { r, publish } = await direct(t);
   assert.equal((await publish(request(write(r.dir, 'renamed.pdf')))).status, 400);
@@ -147,6 +182,54 @@ test('signature parsing distinguishes audio/video tracks and rejects non-Opus Og
   const ogg = Buffer.alloc(47); ogg.write('OggS'); ogg[26] = 1; ogg[27] = 19; ogg.write('OpusHead', 28); ogg[37] = 1;
   assert.equal(sniffMime(ogg), 'audio/ogg');
   ogg[37] = 2; assert.equal(sniffMime(ogg), null);
+});
+
+function legacyOffice(stream) {
+  // A CFB v3 header, two linked directory sectors, one FAT; stream is in
+  // directory entry 4, beyond the first 512-byte sector.
+  const b = Buffer.alloc(2048);
+  Buffer.from('d0cf11e0a1b11ae1', 'hex').copy(b);
+  b.writeUInt16LE(0x3e, 24); b.writeUInt16LE(3, 26); b.writeUInt16LE(0xfffe, 28);
+  b.writeUInt16LE(9, 30); b.writeUInt16LE(6, 32); b.writeUInt32LE(1, 44);
+  b.writeUInt32LE(0, 48); b.writeUInt32LE(4096, 56); b.writeUInt32LE(0xfffffffe, 60); b.writeUInt32LE(0xfffffffe, 68);
+  b.fill(0xff, 76, 512); b.writeUInt32LE(1, 76);
+  const entry = (offset, name, kind) => {
+    const text = Buffer.from(`${name}\0`, 'utf16le'); text.copy(b, offset); b.writeUInt16LE(text.length, offset + 64); b[offset + 66] = kind; b[offset + 67] = 1;
+    b.writeUInt32LE(0xffffffff, offset + 68); b.writeUInt32LE(0xffffffff, offset + 72); b.writeUInt32LE(0xffffffff, offset + 76);
+    b.writeUInt32LE(0xfffffffe, offset + 116);
+  };
+  entry(512, 'Root Entry', 5); b.writeUInt32LE(4, 512 + 76);
+  entry(1536, stream, 2);
+  b.fill(0xff, 1024, 1536); b.writeUInt32LE(2, 1024); b.writeUInt32LE(0xfffffffd, 1028); b.writeUInt32LE(0xfffffffe, 1032);
+  return b;
+}
+for (const [name, mime] of [['WordDocument', 'application/msword'], ['Workbook', 'application/vnd.ms-excel'], ['PowerPoint Document', 'application/vnd.ms-powerpoint']]) {
+  test(`legacy Office follows later directory sectors for ${name}`, () => {
+    const bytes = legacyOffice(name);
+    assert.equal(sniffMime(bytes), mime);
+    bytes.writeUInt32LE(0, 1032); assert.equal(sniffMime(bytes), null, 'directory cycles are refused');
+    bytes.writeUInt32LE(9999, 1032); assert.equal(sniffMime(bytes), null, 'out-of-file chains are refused');
+  });
+}
+test('an expired journal handle is permanent, but a completed send is still recovered', async (t) => {
+  const { r, publish } = await direct(t), file = write(r.dir, 'photo.jpg'), body = request(file, 'expired-key');
+  await publish(body);
+  const fileName = path.join(r.dir, PROGRESS_FILE), saved = JSON.parse(fs.readFileSync(fileName));
+  const entry = saved.entries['expired-key'];
+  // The crash boundary after send but before recording its receipt.
+  delete entry.receipt; delete entry.recording; entry.delivered = 0; entry.message_ids = [];
+  r.clock.advance(31 * 86400000); r.gw.lastInbound.set(OWNER, r.clock.now());
+  fs.writeFileSync(fileName, JSON.stringify(saved));
+  const gateway = createGatewayClient({ url: r.gw.url, credential: CREDENTIAL });
+  const make = () => createPublisher({ stateDir: r.dir, cityDir: r.dir, city: CITY, clock: r.clock.now, gateway, gc: { recordOutbound: async () => ({ TranscriptEntry: {} }) } });
+  assert.equal((await make().handlePublish(JSON.stringify(body))).json.delivered, true, 'stored send wins over expired grant');
+  // The earlier crash boundary: uploaded, but no send reached the gateway.
+  r.gw.sendAnswers.clear(); fs.writeFileSync(fileName, JSON.stringify(saved));
+  const failed = await make().handlePublish(JSON.stringify(body));
+  assert.equal(failed.json.failure_kind, 'permanent');
+  assert.equal(failed.json.metadata.reason, 'media_expired');
+  assert.match(failed.json.error, /fresh key/);
+  assert.equal(r.gw.uploadCalls.length, 1);
 });
 
 async function ready(r) {

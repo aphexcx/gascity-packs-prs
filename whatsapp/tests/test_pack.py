@@ -472,6 +472,11 @@ def test_publish_file_passes_paths_and_caption_without_reading_bytes(fake, tmp_p
     (['--file', '/a.pdf', '--update'], 'cannot use --update'),
     (['--caption', 'caption'], 'requires --file'),
     (['--file', '/a.pdf', '--caption', 'caption', '--caption-file', '/text'], 'not both'),
+    (['--file', '', '--update', '--text', 'update'], 'non-empty path'),
+    (['--file', '/a.pdf', '--text-file', ''], 'use --caption-file'),
+    (['--file', '/a.pdf', '--text', ''], 'use --caption'),
+    (['--file', '/a.pdf', '--caption-file', ''], 'non-empty path'),
+    (['--caption-file', ''], 'requires --file'),
 ])
 def test_publish_file_usage_rejected_before_network(args, message):
     result = verb('publish.sh', '--to', 'US.owner', *args)

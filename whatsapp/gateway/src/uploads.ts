@@ -26,12 +26,15 @@ export function multipartStream(input: ReadableStream<Uint8Array>, length: numbe
   const state = { mismatch: false, complete: false, forwarded: 0 };
   let started = false;
   let excess = false;
+  let aborted = false;
+  const cancel = async (reason?: unknown) => { aborted = true; await reader.cancel(reason).catch(() => {}); };
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (!started) { started = true; controller.enqueue(head); return; }
       try {
         if (excess) throw new Error("media_length_mismatch");
         const next = await reader.read();
+        if (aborted) { controller.error(new Error("upload_cancelled")); return; }
         if (next.done) {
           if (state.forwarded !== length) throw new Error("media_length_mismatch");
           state.complete = true;
@@ -47,14 +50,14 @@ export function multipartStream(input: ReadableStream<Uint8Array>, length: numbe
         if (count > 0) { controller.enqueue(next.value.subarray(0, count)); state.forwarded += count; }
         else if (excess) throw new Error("media_length_mismatch");
       } catch {
-        state.mismatch = true;
+        if (!aborted) state.mismatch = true;
         controller.error(new Error("media_length_mismatch"));
         await reader.cancel().catch(() => {});
       }
     },
-    async cancel(reason) { await reader.cancel(reason).catch(() => {}); },
+    cancel,
   }, { highWaterMark: 0 });
-  return { body, state, contentType: `multipart/form-data; boundary=${boundary}` };
+  return { body, state, cancel, contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
 export async function upload(request: Request, cityId: string, db: D1Database, now: number, client: () => GraphClient) {
@@ -102,7 +105,9 @@ export async function upload(request: Request, cityId: string, db: D1Database, n
     // A transport that does not consume the request must never mint a grant.
     if (!stream.state.complete || stream.state.mismatch) throw new GraphError(0, null);
   } catch (e) {
-    if (!stream.body.locked) await stream.body.cancel().catch(() => {});
+    // Fetch can return an early refusal while still owning/locking its body.
+    // Cancel the source reader directly so no further file bytes are consumed.
+    await stream.cancel();
     if (stream.state.mismatch) { await setState("length_mismatch"); return fail(400, "media_length_mismatch"); }
     if (!(e instanceof GraphError)) throw e;
     if (e.status >= 400 && e.status < 500) {

@@ -516,6 +516,18 @@ export function createPublisher({
         } catch (err) {
           if (err?.status === 422 && err.json?.error === 'window_closed') ledger?.noteWindowClosed?.(conversationId, clock());
           const refused = failure(err, context);
+          if (err?.json?.error === 'media_not_found' || err?.json?.error === 'media_expired') {
+            refused.json.failure_kind = 'permanent';
+            refused.json.metadata.reason = 'media_expired';
+            refused.json.metadata.hint = 'The upload handle is unavailable or expired. The gateway found no completed send under this key. '
+              + 'Check the chat, then start a new publish with a fresh key if the owner still needs the file; repeating this key cannot restore the handle.';
+            refused.json.error = refused.json.metadata.hint;
+          }
+          if (!entry.media_id && err?.json?.error === 'outcome_unknown') {
+            refused.json.metadata.hint = 'Meta may have kept the upload, but the gateway has no confirmed handle. Nothing was sent to the owner. '
+              + 'This key will not upload again; an operator must decide whether to start a new publish with a fresh key.';
+            refused.json.error = refused.json.metadata.hint;
+          }
           if (refused.json.metadata.reason === 'window_closed') {
             refused.json.metadata.hint = 'Files can be sent only after the owner writes again. A file cannot use the update template.';
             refused.json.error = refused.json.metadata.hint;
