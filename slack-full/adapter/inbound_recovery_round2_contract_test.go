@@ -59,12 +59,13 @@ func TestRound2StateAndHistoryCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := r.state.Entries["C1|100.1"]
-	if e.Inbound.Text != msg.Text || e.OriginalReceiptID != "r" || e.ReplayBlockedReason != "" || e.BusyReaction || !e.LastVouchAt.IsZero() || e.ReactionReceiptGeneration != 0 {
+	if e.Inbound.Text != msg.Text || e.OriginalReceiptID != "r" || e.ReplayBlockedReason != "" || e.BusyReaction || !e.LastVouchAt.IsZero() || e.ReactionReceiptGeneration != 0 || e.ReplayRequestGeneration != 0 {
 		t.Fatalf("base defaults changed: %+v", e)
 	}
 	e.BusyReaction = true
 	e.ReactionReceiptGeneration = 2
 	e.ReplayIncludeOlder = true
+	e.ReplayRequestGeneration = 3
 	e.ReplayBlockedReason = "manual"
 	e.AcknowledgedAt = now
 	e.LastVouchAt = now
@@ -88,6 +89,10 @@ func TestRound2StateAndHistoryCompatibility(t *testing.T) {
 	}
 	if decoded.Entries["C1|100.1"].Inbound.Text != msg.Text || decoded.Notices["C1"].TS != "n" {
 		t.Fatal("rollback decoder lost existing fields")
+	}
+	current, err := newInboundRecovery(path, dead)
+	if err != nil || current.state.Entries["C1|100.1"].ReplayRequestGeneration != 3 {
+		t.Fatalf("new decoder lost replay request generation: %v", err)
 	}
 	baseRecord := round2BaseInboundDeadLetterRecord{Inbound: msg, Channel: "C1", DeadLetteredAt: now, OriginalReceiptID: "r", ReceiptStateKnown: true}
 	oldData, _ := json.Marshal(baseRecord)
@@ -626,6 +631,85 @@ func TestRound2RetargetHistoryKeepsOriginalDedup(t *testing.T) {
 	}
 	if len(rebuilt.state.Entries) != 1 || rebuilt.state.Entries["C1|100.1|alias:old"].DeliveredAt.IsZero() {
 		t.Fatalf("retarget duplicated history: %+v", rebuilt.state.Entries)
+	}
+}
+
+func TestRound2RefusedReturnedReactionStaysTerminalAcrossRestart(t *testing.T) {
+	for _, historyOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("history-only=%v", historyOnly), func(t *testing.T) {
+			cfg := recoveryTestConfig(t, "http://unused")
+			r := cfg.inboundRecovery
+			p := testPending("C1", "100.1", "permanently refused reaction")
+			p.reaction = true
+			if err := r.hold(p, recoveryReceipt("failed", "s1", false), false); err != nil {
+				t.Fatal(err)
+			}
+			cfg.coalescer.charge("C1", cfg.coalescer.reactions["C1"][0], &inboundPostError{Status: 422, StatusText: "422 invalid payload"})
+			if r.state.Entries["C1|100.1"].ReplayBlockedReason == "" || r.queuedReactions["C1|100.1"] {
+				t.Fatal("ordinary refusal did not terminate the durable mirror")
+			}
+			if historyOnly {
+				if err := os.Remove(r.path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fresh := coalescingTestConfig("http://unused", time.Hour)
+			fresh.cityPath, fresh.inboundDeadLetterDir = cfg.cityPath, cfg.inboundDeadLetterDir
+			fresh.deliveryReceiptGate = true
+			if err := installInboundRecovery(&fresh); err != nil {
+				t.Fatal(err)
+			}
+			fresh.inboundRecovery.now = func() time.Time { return time.Now().Add(time.Hour) }
+			fresh.inboundRecovery.tick(true)
+			if len(fresh.coalescer.reactions["C1"]) != 0 || fresh.inboundRecovery.state.Entries["C1|100.1"].ReplayBlockedReason == "" {
+				t.Fatal("restart requeued a permanently refused reaction")
+			}
+			delivered := 0
+			fresh.coalescer.deliver = func(_ string, batch []pendingChannelInbound) error {
+				for _, p := range batch {
+					if p.reaction {
+						t.Error("refused reaction piggybacked again")
+					}
+					delivered++
+				}
+				return nil
+			}
+			t.Cleanup(func() { fresh.coalescer.flushAll() })
+			fresh.coalescer.enqueue("C1", testPending("C1", "100.2", "later human line"))
+			fresh.coalescer.flushAheadOf("C1", "200.1")
+			if delivered != 1 {
+				t.Fatalf("later line did not flow alone: %d", delivered)
+			}
+		})
+	}
+}
+
+func TestRound2LegacyRefusalFoldsIntoExistingMirror(t *testing.T) {
+	for _, alias := range []bool{false, true} {
+		for _, status := range []int{404, 408, 429, 422} {
+			t.Run(fmt.Sprintf("alias=%v/status=%d", alias, status), func(t *testing.T) {
+				r, now := round2Recovery(t)
+				msg := testPending("C1", "100.1", "legacy payload").inbound
+				key, session := "C1|100.1", ""
+				if alias {
+					session, key = "s1", key+"|alias:s1"
+				}
+				if err := r.holdEntry(inboundRecoveryEntry{Inbound: msg, Reaction: !alias, AliasSessionID: session}, recoveryReceipt("r", "s1", false)); err != nil {
+					t.Fatal(err)
+				}
+				record := inboundDeadLetterRecord{Inbound: msg, Channel: "C1", AliasSessionID: session, DeadLetteredAt: *now, Reason: fmt.Sprintf("%d: legacy refusal", status)}
+				if _, err := writeInboundDeadLetterRecords(r.deadDir, "C1", []inboundDeadLetterRecord{record}); err != nil {
+					t.Fatal(err)
+				}
+				if err := r.importDeadLetters(); err != nil {
+					t.Fatal(err)
+				}
+				wantBlocked := status == 422 || (alias && status == 404)
+				if got := r.state.Entries[key].ReplayBlockedReason != ""; got != wantBlocked {
+					t.Fatalf("legacy classifier blocked=%v want=%v", got, wantBlocked)
+				}
+			})
+		}
 	}
 }
 
@@ -1519,7 +1603,7 @@ func TestRound2ExplicitOlderReplayPreviewAndEligibility(t *testing.T) {
 	}
 }
 
-func TestRound2RedriveAcceptanceFollowsInflightRetry(t *testing.T) {
+func TestRound2RedriveRemainsResponsiveDuringInflightRetry(t *testing.T) {
 	for _, pending := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pending=%v", pending), func(t *testing.T) {
 			r, now := round2Recovery(t)
@@ -1546,24 +1630,32 @@ func TestRound2RedriveAcceptanceFollowsInflightRetry(t *testing.T) {
 			}
 			go func() { r.tick(true); close(tickDone) }()
 			<-entered
-			response := httptest.NewRecorder()
-			requestDone := make(chan struct{})
-			go func() {
-				r.handleRedrive(response, httptest.NewRequest(http.MethodPost, "/internal/inbound/redrive", strings.NewReader(`{"conversation_id":"C1","include_older":true}`)))
-				close(requestDone)
-			}()
-			acceptedEarly := false
-			select {
-			case <-requestDone:
-				acceptedEarly = true
-			case <-time.After(time.Second):
+			request := func(preview bool) *httptest.ResponseRecorder {
+				t.Helper()
+				response := httptest.NewRecorder()
+				requestDone := make(chan struct{})
+				go func() {
+					body := fmt.Sprintf(`{"conversation_id":"C1","include_older":true,"preview":%v}`, preview)
+					r.handleRedrive(response, httptest.NewRequest(http.MethodPost, "/internal/inbound/redrive", strings.NewReader(body)))
+					close(requestDone)
+				}()
+				select {
+				case <-requestDone:
+				case <-time.After(2 * time.Second):
+					close(release)
+					<-tickDone
+					<-requestDone
+					t.Fatal("admin request waited behind network recovery")
+				}
+				return response
 			}
+			if preview := request(true); preview.Code != http.StatusOK {
+				t.Fatal(preview.Body.String())
+			}
+			response := request(false)
 			close(release)
 			<-tickDone
-			<-requestDone
-			if acceptedEarly {
-				t.Fatal("redrive accepted permission before the in-flight retry settled")
-			}
+			r.tick(false) // consume the manual trigger while the receipt is pending
 			if response.Code != http.StatusAccepted {
 				t.Fatal(response.Body.String())
 			}
@@ -1576,12 +1668,25 @@ func TestRound2RedriveAcceptanceFollowsInflightRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			stored := restarted.state.Entries["C1|100.1"]
-			if pending {
-				if result["replay_count"] != float64(0) || !stored.PendingReceipt || stored.PendingReceiptID != "inflight" {
-					t.Fatalf("pending outcome was incorrectly queued: result=%v entry=%+v", result, stored)
-				}
-			} else if result["replay_count"] != float64(1) || !stored.ReplayIncludeOlder || stored.NextAttemptAt.IsZero() {
+			if result["replay_count"] != float64(1) || !stored.ReplayIncludeOlder || stored.ReplayRequestGeneration != 1 || stored.NextAttemptAt.IsZero() {
 				t.Fatalf("accepted override lost across restart: result=%v entry=%+v", result, stored)
+			}
+			if pending && (!stored.PendingReceipt || stored.PendingReceiptID != "inflight") {
+				t.Fatal("new queue intent replaced its in-flight receipt")
+			}
+			*now = now.Add(48 * time.Hour)
+			restarted.now = func() time.Time { return *now }
+			restarted.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+				return receiptPollConcluded, recoveryReceipt("inflight", "s1", false), nil
+			}
+			sent := 0
+			restarted.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+				sent++
+				return recoveryReceipt("done", "s1", true), nil
+			}
+			restarted.tick(true)
+			if sent != 1 || restarted.state.Entries["C1|100.1"].DeliveredAt.IsZero() {
+				t.Fatal("accepted override expired with the older in-flight attempt")
 			}
 		})
 	}

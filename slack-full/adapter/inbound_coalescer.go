@@ -2491,6 +2491,9 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 	if dropped > 0 {
 		log.Printf("coalesce: chan=%s ts=%s %d buffered duplicate copy(ies) of the retired message dropped — never re-posted", channel, ts, dropped)
 	}
+	if err := c.recovery.refuseBufferedReaction(p, cause); err != nil {
+		log.Printf("coalesce: reaction refusal recovery persistence: %v", err)
+	}
 	if c.deadLetter == nil {
 		log.Printf("coalesce: LOSS chan=%s ts=%s rejected %d times and no dead-letter sink is wired — dropped: %v",
 			channel, ts, p.attempts, cause)

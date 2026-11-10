@@ -435,6 +435,9 @@ that mirror to retain one no-wake owner. Recovery keeps it until the piggyback
 completes and appends completion to existing dead-letter history. A new receipt replaces the
 old one; its generation prevents a delayed history write from reviving an older
 receipt. Complete paste evidence, including mixed fanout, prevents another send.
+If a returned reaction is permanently refused, both its side-buffer ownership
+and durable mirror become non-replayable; restart also classifies legacy refusal
+history before folding it into an existing mirror.
 
 After a minute, one bot-authored thread reply per channel incident says delivery
 is held and retrying. Pending-only deliveries wait three minutes before a notice,
@@ -471,9 +474,10 @@ counts. Refused, unpollable and incomplete records remain excluded even with
 this flag. History is never deleted. Trigger logs count records left unreplayed
 for age and name the oldest timestamp. The admin route's 202
 means the replay permission and deadline are durably queued, including when an
-earlier pending receipt delays the attempt. Queue acceptance waits for any
-in-flight recovery attempt to save its outcome, so it cannot overwrite a newer
-age permission. Replays preserve ordering and message-ID dedup, prepend
+earlier pending receipt delays the attempt. Preview and queue acceptance do not
+wait for recovery HTTP calls. A persisted request generation prevents an older
+in-flight attempt from overwriting newer age permission or its queued deadline.
+Replays preserve ordering and message-ID dedup, prepend
 `[delivered late: dead-lettered at <time>]`, and append a `replayed_at` history
 record on completion. Alias replay resolves the handle's current session,
 logging both destinations and removing the departing destination's provisional
@@ -522,6 +526,7 @@ decoders accept them; absent/zero values preserve the previous stored facts.
 | Entry and history | `alias_original_session_id` | Empty uses the existing alias ID as identity; otherwise preserves dedup identity after retargeting |
 | Entry | `last_attempt_at` | Zero means no recorded recovery send; otherwise its latest time |
 | Entry | `replay_include_older` | False enforces the age horizon; true preserves a deliberately queued older replay through ordering and pending receipt checks, then clears on a failed concluded attempt |
+| Entry | `replay_request_generation` | Zero means no accepted redrive command; each selected command increments it so an older attempt preserves newer queue permission and scheduling |
 | Entry | `last_vouch_at` | Zero means no vouch acceleration; otherwise limits those accelerations to one per minute |
 | Entry | `pending_since`, `next_poll_at` | Zero uses held time / an immediately due receipt check; otherwise the separate pending clock |
 | Entry | `retry_step` | Zero uses the existing attempt count when loading old state, otherwise starts at the first rung; advances scheduled repost/follower wake rungs without charging receipt polls |

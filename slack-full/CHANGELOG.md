@@ -36,10 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits; recovered hourglasses wait for the original HOLD cleanup to finish.
   A later held line cannot shorten a rearmed history replay's cooldown.
   Immediately failed reactions retain durable no-wake ownership across crashes
-  and shutdown spooling. Redrive acceptance is serialized with retry outcomes,
+  and shutdown spooling. Redrive acceptance uses a persisted request generation
+  to preserve newer permission without waiting for recovery HTTP calls,
   and every alias retarget removes the departing destination's routing record.
   Delayed reaction handoffs recheck current ownership and receipt generation
   after acquiring the channel lock, preserving newer outcomes and one side copy.
+  Permanent reaction refusals settle the durable mirror too; legacy refusal
+  imports use the same classifier as live delivery.
   Optional fields
   and rollback decoder compatibility are documented in the README.
 

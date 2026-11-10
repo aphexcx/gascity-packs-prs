@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -273,6 +274,7 @@ func (s *recoverySubmission) message() externalInboundMessage {
 type inboundRecoveryEntry struct {
 	ReactionReceiptGeneration uint64                 `json:"reaction_receipt_generation,omitempty"`
 	ReplayIncludeOlder        bool                   `json:"replay_include_older,omitempty"`
+	ReplayRequestGeneration   uint64                 `json:"replay_request_generation,omitempty"`
 	AliasOriginalSessionID    string                 `json:"alias_original_session_id,omitempty"`
 	BusyReaction              bool                   `json:"busy_reaction,omitempty"`
 	LastVouchAt               time.Time              `json:"last_vouch_at,omitempty"`
@@ -394,19 +396,18 @@ type inboundRecovery struct {
 	stopping         func() bool
 	// One worker owns retries and redrives. Success observations only enqueue
 	// session IDs; they never acquire a channel lock inside a delivery callback.
-	wake               chan struct{}
-	sessions           map[string]bool
-	manual             map[string]bool
-	manualIncludeOlder map[string]bool
-	queuedReactions    map[string]bool
-	busyRemovals       map[string]chan struct{}
+	wake            chan struct{}
+	sessions        map[string]bool
+	manual          map[string]bool
+	queuedReactions map[string]bool
+	busyRemovals    map[string]chan struct{}
 }
 
 func newInboundRecovery(path, deadDir string) (*inboundRecovery, error) {
 	r := &inboundRecovery{path: path, deadDir: deadDir, ceiling: 15 * time.Minute,
 		bound: 30 * time.Minute, replayMaxAge: 24 * time.Hour, gated: true, now: time.Now, wake: make(chan struct{}, 1),
 		counted: map[string]bool{}, queuedReactions: map[string]bool{},
-		sessions: map[string]bool{}, manual: map[string]bool{}, manualIncludeOlder: map[string]bool{},
+		sessions: map[string]bool{}, manual: map[string]bool{},
 		state: inboundRecoveryState{Entries: map[string]inboundRecoveryEntry{}, Notices: map[string]inboundHoldNotice{}}}
 	if path != "" {
 		created, err := missingAncestors(filepath.Dir(path))
@@ -838,8 +839,15 @@ func (r *inboundRecovery) importDeadLetters() error {
 					}
 					r.state.Entries[key] = cur
 				}
-				if rec.ReplayBlockedReason != "" {
-					cur.ReplayBlockedReason = rec.ReplayBlockedReason
+				blockedReason := rec.ReplayBlockedReason
+				if blockedReason == "" && legacyPayloadRefusal(rec.Reason, rec.AliasSessionID != "") {
+					blockedReason = rec.Reason
+				}
+				if blockedReason != "" {
+					cur.ReplayBlockedReason = blockedReason
+					cur.PendingReceipt, cur.PendingReceiptID = false, ""
+					cur.NextAttemptAt, cur.NextPollAt = time.Time{}, time.Time{}
+					delete(r.queuedReactions, key)
 					r.state.Entries[key] = cur
 				}
 				if cur.DeliveredAt.IsZero() && cur.DeadLetteredAt.IsZero() {
@@ -864,7 +872,7 @@ func (r *inboundRecovery) importDeadLetters() error {
 				r.state.Entries[key] = e
 			}
 			e := r.state.Entries[key]
-			if legacyPayloadRefusal(rec.Reason) {
+			if legacyPayloadRefusal(rec.Reason, rec.AliasSessionID != "") {
 				e.ReplayBlockedReason = rec.Reason
 			}
 			r.state.Entries[key] = e
@@ -1011,13 +1019,12 @@ func (r *inboundRecovery) enrichFromJournal(dir string) error {
 	return r.saveLocked()
 }
 
-func legacyPayloadRefusal(reason string) bool {
-	for _, status := range []string{"400", "413", "415", "422"} {
-		if strings.HasPrefix(reason, status+" ") || strings.HasPrefix(reason, status+":") {
-			return true
-		}
+func legacyPayloadRefusal(reason string, alias ...bool) bool {
+	if len(reason) < 4 || (reason[3] != ' ' && reason[3] != ':') {
+		return false
 	}
-	return false
+	status, err := strconv.Atoi(reason[:3])
+	return err == nil && permanentDeliveryFailure(&inboundPostError{Status: status}, alias...)
 }
 
 func recoveryOrderKeys(e inboundRecoveryEntry) []string {
@@ -1065,9 +1072,7 @@ func (r *inboundRecovery) tick(startup bool) {
 	r.mu.Lock()
 	now := r.now()
 	sessions, manual := r.sessions, r.manual
-	includeOlder := r.manualIncludeOlder
 	r.sessions, r.manual = map[string]bool{}, map[string]bool{}
-	r.manualIncludeOlder = map[string]bool{}
 	var keys []string
 	schedulingChanged := false
 	armed, aged := 0, 0
@@ -1088,9 +1093,6 @@ func (r *inboundRecovery) tick(startup bool) {
 		}
 		if !e.DeadLetteredAt.IsZero() {
 			manualEligible := manual[e.Inbound.Conversation.ConversationID] && !e.PendingReceipt && !e.Retiring && !e.Reaction
-			if manualEligible {
-				e.ReplayIncludeOlder = includeOlder[e.Inbound.Conversation.ConversationID]
-			}
 			eligible := startup || manualEligible || vouched
 			tooOld := !e.ReplayIncludeOlder && (r.replayMaxAge == 0 || now.Sub(e.DeadLetteredAt) > r.replayMaxAge)
 			if tooOld && !e.PendingReceipt {
@@ -1429,6 +1431,19 @@ func (r *inboundRecovery) put(key string, e inboundRecoveryEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if cur, exists := r.state.Entries[key]; exists {
+		// A command accepted during network I/O is a newer durable intent.
+		// Keep its permission and schedule while adopting this receipt's
+		// outcome. Terminal delivery/refusal still ends replay eligibility.
+		if cur.ReplayRequestGeneration > e.ReplayRequestGeneration {
+			e.ReplayRequestGeneration = cur.ReplayRequestGeneration
+			if !e.inactive() {
+				e.ReplayIncludeOlder = cur.ReplayIncludeOlder
+				e.NextAttemptAt = cur.NextAttemptAt
+				if e.ReplayNotBefore.After(e.NextAttemptAt) {
+					e.NextAttemptAt = e.ReplayNotBefore
+				}
+			}
+		}
 		// A reply racing this attempt permanently cancels restoration.
 		e.BusyReaction = e.BusyReaction && cur.BusyReaction
 		if !cur.AcknowledgedAt.IsZero() {
@@ -1553,6 +1568,39 @@ func (r *inboundRecovery) historyWritten(key string, written inboundRecoveryEntr
 	if err := r.saveLocked(); err != nil {
 		log.Printf("inbound history completion persist: %v", err)
 	}
+}
+
+// A returned reaction may subsequently meet the ordinary payload-rejection
+// ladder. Settle its recovery mirror too, including if the snapshot write
+// fails but the history append succeeds.
+func (r *inboundRecovery) refuseBufferedReaction(p pendingChannelInbound, cause error) error {
+	if r == nil || !p.reaction || !permanentDeliveryFailure(cause) {
+		return nil
+	}
+	key := recoveryKey(p.inbound)
+	r.mu.Lock()
+	e, exists := r.state.Entries[key]
+	if !exists || e.inactive() {
+		r.mu.Unlock()
+		return nil
+	}
+	e.ReplayBlockedReason = truncateReason(cause.Error())
+	e.Reason = e.ReplayBlockedReason
+	e.PendingReceipt, e.PendingReceiptID = false, ""
+	e.NextAttemptAt, e.NextPollAt = time.Time{}, time.Time{}
+	if e.DeadLetteredAt.IsZero() {
+		e.DeadLetteredAt = r.now()
+	}
+	e.CompletionPending = true
+	delete(r.queuedReactions, key)
+	r.state.Entries[key] = compactRecoveryEntry(e)
+	persistErr := r.saveLocked()
+	r.mu.Unlock()
+	historyErr := r.writeDead(e, time.Time{})
+	if historyErr == nil {
+		r.historyWritten(key, e)
+	}
+	return errors.Join(persistErr, historyErr)
 }
 
 // queueReaction runs under the channel delivery lock. The durable mirror
@@ -2046,10 +2094,6 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 		writeAdminJSON(w, http.StatusOK, map[string]any{"conversation_id": body.ConversationID, "acknowledged": n})
 		return
 	}
-	// Acceptance must follow any in-flight retry's state update. Otherwise
-	// its stale copy can overwrite this command's persisted age permission.
-	r.runMu.Lock()
-	defer r.runMu.Unlock()
 	r.mu.Lock()
 	count, skipped := 0, 0
 	var selected []string
@@ -2080,6 +2124,7 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 	}
 	for _, key := range selected {
 		e := r.state.Entries[key]
+		e.ReplayRequestGeneration++
 		e.ReplayIncludeOlder = body.IncludeOlder
 		e.NextAttemptAt = r.now()
 		if e.ReplayNotBefore.After(e.NextAttemptAt) {
@@ -2095,7 +2140,6 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 		}
 	}
 	r.manual[body.ConversationID] = true
-	r.manualIncludeOlder[body.ConversationID] = body.IncludeOlder
 	r.mu.Unlock()
 	log.Printf("inbound replay: verb channel=%s include_older=%t replay_count=%d skipped_for_age=%d oldest=%s", body.ConversationID, body.IncludeOlder, count, skipped, result["oldest_skipped_at"])
 	select {
