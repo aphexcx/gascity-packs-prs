@@ -1222,7 +1222,9 @@ func (r *inboundRecovery) tick(startup bool) {
 		if e.PendingReceipt {
 			due = due || !now.Before(e.NextPollAt)
 		} else {
-			due = due || !now.Before(e.NextAttemptAt) || pushed
+			// Follower pressure advances the active HOLD ladder, never a
+			// history replay's persisted cooldown.
+			due = due || !now.Before(e.NextAttemptAt) || (pushed && e.DeadLetteredAt.IsZero())
 		}
 		if !due {
 			if e.DeadLetteredAt.IsZero() || !e.PendingReceipt || (!e.PendingSince.IsZero() && now.Sub(e.PendingSince) < r.bound) {

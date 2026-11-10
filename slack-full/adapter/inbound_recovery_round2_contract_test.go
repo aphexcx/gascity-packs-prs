@@ -1151,6 +1151,70 @@ func TestRound2NoticeLogsEachDistinctErrorOnceAcrossRestart(t *testing.T) {
 }
 
 // P12's separate five-minute follower sequence must wake the older head.
+func TestRound2FollowerCannotShortenRearmedHistoryCooldown(t *testing.T) {
+	for _, trigger := range []string{"startup", "vouch", "verb"} {
+		for _, followerChannel := range []string{"C1", "C2"} {
+			t.Run(trigger+"/"+followerChannel, func(t *testing.T) {
+				r, now := round2Recovery(t)
+				start := *now
+				round2Hold(t, r, "100.1")
+				e := r.state.Entries["C1|100.1"]
+				e.DeadLetteredAt = start
+				e.NextAttemptAt = time.Time{}
+				r.put("C1|100.1", e)
+				var sent []string
+				var attempts []time.Time
+				r.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
+					sent = append(sent, e.Inbound.ProviderMessageID)
+					attempts = append(attempts, *now)
+					if len(sent) == 1 {
+						return deliveryReceipt{}, &inboundPostError{Status: 503, StatusText: "unavailable"}
+					}
+					return recoveryReceipt("done", "s1", true), nil
+				}
+				r.tick(true)
+				deadline := r.state.Entries["C1|100.1"].ReplayNotBefore
+				if !deadline.After(start.Add(20 * time.Second)) {
+					t.Fatal("fixture cooldown does not cover follower rung")
+				}
+				if err := r.hold(testPending(followerChannel, "100.2", "fresh follower"), recoveryReceipt("follower", "s1", false), false); err != nil {
+					t.Fatal(err)
+				}
+				*now = start.Add(time.Second)
+				switch trigger {
+				case "startup":
+					r.tick(true)
+				case "vouch":
+					r.observe(recoveryReceipt("vouch", "s1", true))
+					r.tick(false)
+				case "verb":
+					response := httptest.NewRecorder()
+					r.handleRedrive(response, httptest.NewRequest(http.MethodPost, "/internal/inbound/redrive", strings.NewReader(`{"conversation_id":"C1"}`)))
+					if response.Code != http.StatusAccepted {
+						t.Fatal(response.Body.String())
+					}
+					r.tick(false)
+				}
+				*now = start.Add(20 * time.Second)
+				r.tick(false)
+				if len(sent) != 1 {
+					t.Fatalf("follower bypassed replay cooldown: %v at %v", sent, attempts)
+				}
+				*now = deadline
+				r.tick(false)
+				if len(sent) < 2 || sent[1] != "100.1" || !attempts[1].Equal(deadline) {
+					t.Fatalf("replay missed its actual deadline: %v at %v", sent, attempts)
+				}
+				*now = deadline.Add(time.Minute)
+				r.tick(false)
+				if !reflect.DeepEqual(sent, []string{"100.1", "100.1", "100.2"}) {
+					t.Fatalf("follower did not flow after replay: %v", sent)
+				}
+			})
+		}
+	}
+}
+
 func TestRound2FiveMinuteFollowerWakesHead(t *testing.T) {
 	r, now := round2Recovery(t)
 	start := *now

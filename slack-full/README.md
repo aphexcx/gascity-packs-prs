@@ -418,7 +418,9 @@ dead-letters. Trusted local attachment paths survive recovery. A refused replay
 including explicit redrive. Alias 408/429 remain transient: HOLD retries within
 the bound, makes one final attempt, then records a dead letter and lets later
 lines flow. Transient replay failures delay followers only until
-their backoff ends. A `no_route` response remains subject to the hold bound.
+their backoff ends. A fresh follower can advance an active HOLD, but cannot
+shorten a history replay's cooldown after a start, vouch or explicit redrive.
+A `no_route` response remains subject to the hold bound.
 Reactions whose receipt establishes loss return to their coalescer side buffer.
 They ride a real message or a new overflow of 100 fresh reactions; returned
 reactions never count toward that threshold or arm a solo retry, even with a

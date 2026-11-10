@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receipts preserve a concurrent acknowledgement.
   Explicit replay permission is saved before queue acceptance and survives FIFO
   waits; recovered hourglasses wait for the original HOLD cleanup to finish.
+  A later held line cannot shorten a rearmed history replay's cooldown.
   Optional fields
   and rollback decoder compatibility are documented in the README.
 
