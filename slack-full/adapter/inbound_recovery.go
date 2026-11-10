@@ -502,6 +502,24 @@ func (r *inboundRecovery) known(channel, ts string) bool {
 	return ok
 }
 
+func (r *inboundRecovery) busyDeferred(channel, ts, aliasSession string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.state.Entries {
+		if e.Inbound.Conversation.ConversationID != channel || e.Inbound.ProviderMessageID != ts || !e.DeliveredAt.IsZero() {
+			continue
+		}
+		if (aliasSession == "" && e.AliasSessionID == "") ||
+			(aliasSession != "" && (aliasSession == e.AliasSessionID || aliasSession == e.AliasOriginalSessionID)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *inboundRecovery) isNotice(channel, ts string) bool {
 	if r == nil {
 		return false
@@ -1164,11 +1182,15 @@ func (r *inboundRecovery) tick(startup bool) {
 		}
 		if errors.Is(err, errRecoveryReaction) {
 			if r.coalescer != nil {
+				// A flush must not consume the restored reaction while known()
+				// still points at its old recovery owner and discard that copy.
+				release := r.coalescer.holdDelivery(e.Inbound.Conversation.ConversationID)
 				r.coalescer.restore(e.Inbound.Conversation.ConversationID, []pendingChannelInbound{e.pending()})
 				r.mu.Lock()
 				delete(r.state.Entries, key)
 				_ = r.saveLocked()
 				r.mu.Unlock()
+				release()
 			}
 			continue
 		}

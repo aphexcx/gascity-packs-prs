@@ -421,6 +421,8 @@ lines flow. Transient replay failures delay followers only until
 their backoff ends. A `no_route` response remains subject to the hold bound.
 Reactions whose receipt establishes loss return to their coalescer side buffer
 and only ride a real message; pending reactions are polled and never sent alone.
+The ownership handoff is serialized with channel delivery so a concurrent flush
+cannot discard the only reaction copy.
 
 After a minute, one bot-authored thread reply per channel incident says delivery
 is held and retrying. Pending-only deliveries wait three minutes before a notice,
@@ -441,6 +443,9 @@ The hourglass is removed on HOLD and restored after confirmed recovery of an
 eligible line. A reply cancels that restoration durably, including replies that
 arrive before the pending receipt settles or while a replacement POST runs.
 When a new targeted line enters HOLD, an unanswered predecessor keeps its mark.
+This also applies when a handle is delivered through its existing channel
+binding. Slack's duplicate message/app-mention events do not re-add a mark while
+that destination still has an outstanding recovery entry.
 
 Dead letters within the configured age limit replay at startup, on a vouched
 delivery to their target, or through

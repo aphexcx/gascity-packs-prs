@@ -25,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   permanent alias 4xx remain excluded from replay. Lost pending aliases refresh
   their destination and FIFO before replacement. Incomplete history scans keep
   unresolved records for a hand check instead of risking duplicate replay, and
-  HOLD preserves an unanswered predecessor's busy mark. Optional fields
+  HOLD preserves an unanswered predecessor's busy mark, including suppressed
+  alias routes and duplicate Slack event twins. Reaction ownership transfers
+  under the channel delivery lock. Optional fields
   and rollback decoder compatibility are documented in the README.
 
 - **Durable inbound holds and ordered redrive** (gp-b06o): an unvouched

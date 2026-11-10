@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -165,28 +166,33 @@ func TestRound2HeldMentionRemovesAndRestoresBusyReaction(t *testing.T) {
 }
 
 func TestRound2HoldPreservesUnansweredPredecessorBusy(t *testing.T) {
-	for _, alias := range []bool{false, true} {
-		t.Run(fmt.Sprint(alias), func(t *testing.T) {
+	for _, route := range []string{"channel", "alias", "suppressed-alias"} {
+		t.Run(route, func(t *testing.T) {
 			slackStub, reactions := newReactionRecordingSlackStub(t)
 			withSlackAPIStub(t, slackStub)
 			gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				if strings.Contains(req.URL.Path, "/bindings") {
-					fmt.Fprint(w, `{"items":[]}`)
+					if route == "suppressed-alias" {
+						fmt.Fprint(w, `{"items":[{"status":"active","conversation":{"provider":"slack","conversation_id":"C1"}}]}`)
+					} else {
+						fmt.Fprint(w, `{"items":[]}`)
+					}
 					return
 				}
 				status := "failed"
-				if alias && !strings.HasSuffix(req.URL.Path, "/messages") {
+				if route == "alias" && !strings.HasSuffix(req.URL.Path, "/messages") {
 					status = "delivered"
 				}
 				fmt.Fprintf(w, `{"delivery":{"receipt_id":"r","status":%q,"members":[{"session_id":"s1","status":%q}]}}`, status, status)
 			}))
 			defer gcStub.Close()
 			cfg := recoveryTestConfig(t, gcStub.URL)
+			cfg.bindingCheck = newBindingCheckCache()
 			cfg.slackBotToken, cfg.busyReaction = "test", "hourglass"
 			cfg.busyMarks = newBusyReactionRegistry()
 			reg := newTestHandleAliasRegistry(t)
 			text := "<@" + testBotUserID + "> work"
-			if alias {
+			if route != "channel" {
 				if err := reg.Set("mayor", "s1"); err != nil {
 					t.Fatal(err)
 				}
@@ -212,6 +218,21 @@ func TestRound2HoldPreservesUnansweredPredecessorBusy(t *testing.T) {
 			}
 			if ts, ok := cfg.busyMarks.pending("C1", "99.1"); !ok || ts != "100.1" {
 				t.Fatalf("predecessor was not restored: %s %v", ts, ok)
+			}
+			intent := false
+			for _, e := range cfg.inboundRecovery.state.Entries {
+				intent = intent || (e.Inbound.ProviderMessageID == "100.2" && e.BusyReaction)
+			}
+			if !intent {
+				t.Fatal("held route lost durable busy intent")
+			}
+			twin := botMentionEnvelope(t, "app_mention", "EvHoldPredecessorTwin", "C1", "100.2", "99.1", text, true)
+			twinDone := make(chan struct{})
+			processSlackEvent(cfg, reg, nil, nil, nil, nil, twin, func() { close(twinDone) })
+			select {
+			case <-twinDone:
+			case <-time.After(3 * time.Second):
+				t.Fatal("held twin did not conclude")
 			}
 			reactions.assertNoCall(t, 50*time.Millisecond)
 		})
@@ -445,6 +466,76 @@ func TestRound2RetargetHistoryKeepsOriginalDedup(t *testing.T) {
 	}
 	if len(rebuilt.state.Entries) != 1 || rebuilt.state.Entries["C1|100.1|alias:old"].DeliveredAt.IsZero() {
 		t.Fatalf("retarget duplicated history: %+v", rebuilt.state.Entries)
+	}
+}
+
+func TestRound2ReactionOwnershipTransferWaitsForChannelDelivery(t *testing.T) {
+	var delivered atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if strings.Contains(string(body), "lost-reaction") {
+			delivered.Add(1)
+		}
+		fmt.Fprint(w, `{"delivery":{"receipt_id":"done","status":"delivered","members":[{"session_id":"s1","status":"delivered"}]}}`)
+	}))
+	defer srv.Close()
+	cfg := recoveryTestConfig(t, srv.URL)
+	r := cfg.inboundRecovery
+	now := time.Now()
+	r.now = func() time.Time { return now }
+	p := testPending("C1", "100.1", "lost-reaction")
+	p.reaction = true
+	if err := r.hold(p, deliveryReceipt{present: true, id: "pending", status: "pending"}, false); err != nil {
+		t.Fatal(err)
+	}
+	polled := make(chan struct{})
+	r.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+		close(polled)
+		return receiptPollConcluded, recoveryReceipt("pending", "s1", false), nil
+	}
+	release := cfg.coalescer.holdDelivery("C1")
+	held := true
+	defer func() {
+		if held {
+			release()
+		}
+	}()
+	now = now.Add(time.Minute)
+	finished := make(chan struct{})
+	go func() { r.tick(false); close(finished) }()
+	select {
+	case <-polled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("receipt was not polled")
+	}
+	select {
+	case <-finished:
+		t.Fatal("ownership transfer ran during another channel delivery")
+	case <-time.After(50 * time.Millisecond):
+	}
+	cfg.coalescer.mu.Lock()
+	buffered := len(cfg.coalescer.reactions["C1"])
+	cfg.coalescer.mu.Unlock()
+	if buffered != 0 || !r.known("C1", "100.1") {
+		t.Fatal("reaction exposed before the old recovery owner was cleared")
+	}
+	release()
+	held = false
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ownership transfer did not resume")
+	}
+	if r.known("C1", "100.1") {
+		t.Fatal("recovery retained transferred reaction")
+	}
+	cfg.coalescer.enqueue("C1", testPending("C1", "100.2", "fresh real line"))
+	cfg.coalescer.flushAheadOf("C1", "200.1")
+	if delivered.Load() != 1 {
+		t.Fatalf("reaction lost or duplicated during handoff: %d", delivered.Load())
 	}
 }
 

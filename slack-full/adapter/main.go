@@ -4732,8 +4732,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// remove the reaction does not survive the restart — so marking here
 	// leaves a permanent hourglass on a message the next startup will
 	// replay and answer normally.
+	busyAliasSession := aliasedSessionID
+	if aliasSuppressed {
+		busyAliasSession = ""
+	}
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != "" &&
-		!ladderSkip && !(skipChannelPost && cfg.draining != nil && cfg.draining.Load())
+		!ladderSkip && !(skipChannelPost && cfg.draining != nil && cfg.draining.Load()) &&
+		!(skipChannelPost && cfg.inboundRecovery.busyDeferred(msg.Channel, msg.TS, busyAliasSession))
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
 	busyHeld := false
@@ -4812,7 +4817,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		peerItems, peerDropped = nil, 0
 		channelHeld := false
 		if postErr == nil && (verdict == receiptUnconfirmed || verdict == receiptHeld) && cfg.inboundRecovery != nil {
-			if err := cfg.inboundRecovery.hold(pendingChannelInbound{inbound: replayInbound}, receipt, true, busyEligible && aliasedSessionID == ""); err != nil {
+			if err := cfg.inboundRecovery.hold(pendingChannelInbound{inbound: replayInbound}, receipt, true, busyEligible && busyAliasSession == ""); err != nil {
 				log.Printf("inbound HOLD retained with receipt in memory; persistence retry needed: %v", err)
 			}
 			channelHeld = true
@@ -5071,7 +5076,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			go removeBusyReaction(cfg, msg.Channel, busyTaken{messageTS: msg.TS, addDone: busyAddDone})
 		}
 	}
-	if busyHeld && aliasedSessionID == "" {
+	if busyHeld && busyAliasSession == "" {
 		cancelHeldBusy()
 	}
 
