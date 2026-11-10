@@ -42,11 +42,16 @@ func (e *inboundPostError) Error() string {
 // name, a route missing mid-rollout, auth) — those are deployment
 // problems an operator fixes in place, and dead-lettering every
 // buffered message after three windows would turn a config mistake
-// into a recovery chore (codex r1 finding 4).
-func permanentDeliveryFailure(err error) bool {
+// into a recovery chore (codex r1 finding 4). Alias recovery also treats
+// operational 4xx as permanent refusals of that destination, except 408
+// and 429: those remain transient and use the bounded HOLD retry ladder.
+func permanentDeliveryFailure(err error, alias ...bool) bool {
 	var pe *inboundPostError
 	if !errors.As(err, &pe) {
 		return false
+	}
+	if len(alias) > 0 && alias[0] {
+		return pe.Status >= 400 && pe.Status < 500 && pe.Status != http.StatusRequestTimeout && pe.Status != http.StatusTooManyRequests
 	}
 	switch pe.Status {
 	case http.StatusBadRequest, http.StatusRequestEntityTooLarge,

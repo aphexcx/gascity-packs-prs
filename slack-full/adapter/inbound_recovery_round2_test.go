@@ -175,7 +175,7 @@ func TestRound2UnsettleableHeadsDoNotBlock(t *testing.T) {
 }
 
 func TestRound2AliasRefusalAndTransientBackoff(t *testing.T) {
-	for _, status := range []int{404, 503} {
+	for _, status := range []int{404, 408, 429, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			r, now := round2Recovery(t)
 			for _, ts := range []string{"100.1", "100.2"} {
@@ -197,7 +197,7 @@ func TestRound2AliasRefusalAndTransientBackoff(t *testing.T) {
 				return recoveryReceipt("ok", "s1", true), nil
 			}
 			r.tick(true)
-			if status == 503 {
+			if status != 404 {
 				if len(sent) != 1 {
 					t.Fatal("transient head overtaken immediately")
 				}
@@ -207,11 +207,77 @@ func TestRound2AliasRefusalAndTransientBackoff(t *testing.T) {
 			if !reflect.DeepEqual(sent, []string{"100.1", "100.2"}) {
 				t.Fatalf("blocked follower: %v", sent)
 			}
+			if blocked := r.state.Entries["C1|100.1"].ReplayBlockedReason != ""; blocked != (status == 404) {
+				t.Fatalf("permanent refusal=%v for HTTP %d", blocked, status)
+			}
 			if status == 404 {
 				r.manual["C1"] = true
 				r.tick(false)
 				if len(sent) != 2 {
 					t.Fatal("reposted refused alias")
+				}
+			}
+		})
+	}
+}
+
+func TestRound2AliasHTTPFailureRetriesToBoundThenReleasesFollower(t *testing.T) {
+	for _, status := range []int{408, 429, 404} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			r, now := round2Recovery(t)
+			start := *now
+			msg := testPending("C1", "100.1", "alias line").inbound
+			if err := r.holdAlias(msg, "s1", "builder", "alias line", recoveryReceipt("original", "s1", false)); err != nil {
+				t.Fatal(err)
+			}
+			round2Hold(t, r, "100.2")
+			var sent []string
+			r.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
+				sent = append(sent, e.Inbound.ProviderMessageID)
+				if e.AliasSessionID != "" {
+					return deliveryReceipt{}, &inboundPostError{Status: status, StatusText: fmt.Sprint(status)}
+				}
+				return recoveryReceipt("ok", "s1", true), nil
+			}
+			*now = start.Add(20 * time.Second)
+			r.tick(false)
+			key := "C1|100.1|alias:s1"
+			if status != 404 {
+				if !reflect.DeepEqual(sent, []string{"100.1"}) || !r.state.Entries[key].DeadLetteredAt.IsZero() {
+					t.Fatalf("transient failure dropped or overtaken: %v", sent)
+				}
+				*now = start.Add(2 * time.Minute)
+				r.tick(false)
+				if !reflect.DeepEqual(sent, []string{"100.1", "100.1"}) {
+					t.Fatalf("transient failure not retried: %v", sent)
+				}
+				*now = start.Add(r.bound)
+				r.tick(false)
+				if !reflect.DeepEqual(sent, []string{"100.1", "100.1", "100.1", "100.2"}) {
+					t.Fatalf("missing final attempt or blocked follower: %v", sent)
+				}
+			} else if !reflect.DeepEqual(sent, []string{"100.1", "100.2"}) {
+				t.Fatalf("permanent alias refusal blocked follower: %v", sent)
+			}
+			e := r.state.Entries[key]
+			if e.DeadLetteredAt.IsZero() || (e.ReplayBlockedReason != "") != (status == 404) || r.state.Entries["C1|100.2"].DeliveredAt.IsZero() {
+				t.Fatalf("incorrect terminal state: %+v", e)
+			}
+			restarted, err := newInboundRecovery(r.path, r.deadDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := restarted.importDeadLetters(); err != nil {
+				t.Fatal(err)
+			}
+			if restarted.state.Entries[key].DeadLetteredAt.IsZero() {
+				t.Fatal("dead letter did not survive restart")
+			}
+			if status == 404 {
+				r.manual["C1"] = true
+				r.tick(false)
+				if len(sent) != 2 {
+					t.Fatal("permanent alias refusal was replayed")
 				}
 			}
 		})

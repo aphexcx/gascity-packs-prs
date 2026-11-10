@@ -414,8 +414,10 @@ dead-letter replays.
 
 The 400/413/415/422 rejection path still strips attachments once, then
 dead-letters. Trusted local attachment paths survive recovery. A refused replay
-(400/413/415/422, or any alias 4xx) is durably excluded from further replay,
-including explicit redrive. Transient replay failures delay followers only until
+(400/413/415/422, or permanent alias 4xx) is durably excluded from further replay,
+including explicit redrive. Alias 408/429 remain transient: HOLD retries within
+the bound, makes one final attempt, then records a dead letter and lets later
+lines flow. Transient replay failures delay followers only until
 their backoff ends. A `no_route` response remains subject to the hold bound.
 Reactions whose receipt establishes loss return to their coalescer side buffer
 and only ride a real message; pending reactions are polled and never sent alone.
@@ -436,7 +438,8 @@ bots, archived channels and permanent edit refusals end that incident's notice.
 These posts use `chat.postMessage`/`chat.update` outside the session act
 journal. They cannot count as session acknowledgement or own-thread evidence.
 The hourglass is removed on HOLD and restored after confirmed recovery of an
-eligible line.
+eligible line. A reply cancels that restoration durably, including replies that
+arrive before the pending receipt settles or while a replacement POST runs.
 
 Dead letters within the configured age limit replay at startup, on a vouched
 delivery to their target, or through
@@ -482,7 +485,7 @@ decoders accept them; absent/zero values preserve the previous stored facts.
 | --- | --- | --- |
 | Entry and history | `replay_blocked_reason` | Empty permits existing eligibility; nonempty requires a hand check and prevents replay/FIFO blocking |
 | Entry and history | `acknowledged_at` | Zero means unacknowledged; nonzero removes outstanding counts and replay eligibility |
-| Entry and history | `busy_reaction` | False adds no recovery hourglass; true restores the cancelled eligible affordance |
+| Entry and history | `busy_reaction` | False adds no recovery hourglass; true restores the cancelled eligible affordance; reply completion clears the state intent durably |
 | Entry and history | `alias_original_session_id` | Empty uses the existing alias ID as identity; otherwise preserves dedup identity after retargeting |
 | Entry | `last_attempt_at` | Zero means no recorded recovery send; otherwise its latest time |
 | Entry | `replay_include_older` | False enforces the age horizon; true preserves a deliberately queued older replay through ordering and pending receipt checks, then clears on a failed concluded attempt |

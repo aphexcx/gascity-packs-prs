@@ -3353,12 +3353,7 @@ func clearBusyReactionBefore(cfg config, conversationID, threadKey, cutoffTS str
 	if cfg.busyReaction == "" || conversationID == "" {
 		return
 	}
-	var taken []busyTaken
-	if threadKey == "" {
-		taken = cfg.busyMarks.takeConversationBefore(conversationID, cutoffTS)
-	} else {
-		taken = cfg.busyMarks.takeBefore(conversationID, threadKey, cutoffTS)
-	}
+	taken := cfg.inboundRecovery.takeBusyBefore(cfg.busyMarks, conversationID, threadKey, cutoffTS)
 	for _, tk := range taken {
 		go removeBusyReaction(cfg, conversationID, tk)
 	}

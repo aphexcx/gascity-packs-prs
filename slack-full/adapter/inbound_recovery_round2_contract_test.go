@@ -163,6 +163,112 @@ func TestRound2HeldMentionRemovesAndRestoresBusyReaction(t *testing.T) {
 	}
 }
 
+func TestRound2ReplyDuringRecoveryDoesNotRestoreBusy(t *testing.T) {
+	for _, phase := range []string{"initial-post", "pending", "pending-restart", "replacement-post", "settled"} {
+		t.Run(phase, func(t *testing.T) {
+			slackStub, reactions := newReactionRecordingSlackStub(t)
+			withSlackAPIStub(t, slackStub)
+			var cfg config
+			gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if phase == "initial-post" {
+					clearBusyReactionBefore(cfg, "C1", "99.1", "101.1")
+				}
+				fmt.Fprint(w, `{"delivery":{"receipt_id":"r","status":"pending","members":[{"session_id":"s1","status":"pending"}]}}`)
+			}))
+			defer gcStub.Close()
+			cfg = recoveryTestConfig(t, gcStub.URL)
+			cfg.slackBotToken, cfg.busyReaction = "test", "hourglass"
+			cfg.busyMarks = newBusyReactionRegistry()
+			if err := installInboundRecovery(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			cfg.inboundRecovery.now = func() time.Time { return now }
+			env := botMentionEnvelope(t, "message", "EvBusyReply", "C1", "100.1", "99.1", "<@"+testBotUserID+"> work", true)
+			processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
+			if got := reactions.await(t, 2*time.Second); got.op != "add" {
+				t.Fatalf("initial mark=%+v", got)
+			}
+			removes := 1
+			if phase == "initial-post" {
+				removes++ // reply cleanup and HOLD cancellation both remove safely
+			}
+			for i := 0; i < removes; i++ {
+				if got := reactions.await(t, 2*time.Second); got.op != "remove" {
+					t.Fatalf("hold cleanup=%+v", got)
+				}
+			}
+			if phase == "pending" || phase == "pending-restart" {
+				clearBusyReactionBefore(cfg, "C1", "99.1", "101.1")
+			}
+			if phase == "pending-restart" {
+				cfg.busyMarks = newBusyReactionRegistry()
+				if err := installInboundRecovery(&cfg); err != nil {
+					t.Fatal(err)
+				}
+				cfg.inboundRecovery.now = func() time.Time { return now }
+			}
+			r := cfg.inboundRecovery
+			r.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+				return receiptPollConcluded, recoveryReceipt("r", "s1", phase != "replacement-post"), nil
+			}
+			r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+				clearBusyReactionBefore(cfg, "C1", "99.1", "101.1")
+				return recoveryReceipt("replacement", "s1", true), nil
+			}
+			if phase == "settled" {
+				finished := r.finished
+				r.finished = func(e inboundRecoveryEntry) {
+					clearBusyReactionBefore(cfg, "C1", "99.1", "101.1")
+					finished(e)
+				}
+			}
+			now = now.Add(time.Minute)
+			r.tick(false)
+			e := r.state.Entries["C1|100.1"]
+			if e.DeliveredAt.IsZero() || e.BusyReaction {
+				t.Fatalf("reply completion lost: delivered=%s busy=%v", e.DeliveredAt, e.BusyReaction)
+			}
+			if cfg.busyMarks.size() != 0 {
+				t.Fatal("answered line re-registered as busy")
+			}
+			reactions.assertNoCall(t, 50*time.Millisecond)
+		})
+	}
+}
+
+func TestRound2BusyCompletionRespectsThreadAndCutoff(t *testing.T) {
+	r, _ := round2Recovery(t)
+	marks := newBusyReactionRegistry()
+	for _, ts := range []string{"100.1", "100.2", "102.1"} {
+		msg := testPending("C1", ts, "work").inbound
+		msg.ReplyToMessageID = "99.1"
+		if ts == "100.2" {
+			msg.ReplyToMessageID = "98.1"
+		}
+		if err := r.hold(pendingChannelInbound{inbound: msg}, recoveryReceipt("r", "s1", false), false, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.takeBusyBefore(marks, "C2", "99.1", "101.1")
+	if !r.state.Entries["C1|100.1"].BusyReaction {
+		t.Fatal("other channel cancelled intent")
+	}
+	r.takeBusyBefore(marks, "C1", "99.1", "101.1")
+	for key, e := range r.state.Entries {
+		want := e.Inbound.ProviderMessageID != "100.1"
+		if e.BusyReaction != want {
+			t.Fatalf("thread/cutoff mismatch %s: busy=%v", key, e.BusyReaction)
+		}
+	}
+	r.takeBusyBefore(marks, "C1", "", "103.1")
+	for key, e := range r.state.Entries {
+		if e.BusyReaction {
+			t.Fatalf("top-level reply did not clear %s", key)
+		}
+	}
+}
+
 // P8 specifically: an 18m20s send completes before the 30-minute retirement.
 func TestRound2LatePendingReceiptSettlesBeforeBound(t *testing.T) {
 	r, now := round2Recovery(t)

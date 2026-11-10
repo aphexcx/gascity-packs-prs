@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   age; `inbound-redrive --include-older` previews its count before explicitly
   replaying older history, including 30-day records. History is never deleted. An acknowledge form
   records hand checks. Counts deduplicate human lines, recovery restores busy
-  marks, and damaged state/history no longer prevents startup. Optional fields
+  marks only while unanswered, and damaged state/history no longer prevents startup.
+  Alias 408/429 use bounded retries and a final attempt before dead-lettering;
+  permanent alias 4xx remain excluded from replay. Optional fields
   and rollback decoder compatibility are documented in the README.
 
 - **Durable inbound holds and ordered redrive** (gp-b06o): an unvouched

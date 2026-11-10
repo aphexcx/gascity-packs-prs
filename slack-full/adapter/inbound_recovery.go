@@ -75,6 +75,9 @@ func installInboundRecovery(cfg *config) error {
 	}
 	cfg.inboundRecovery, cfg.coalescer.recovery = r, r
 	r.coalescer = cfg.coalescer
+	if cfg.slackBotToken != "" && cfg.busyReaction != "" {
+		r.busyMarks = cfg.busyMarks
+	}
 	r.gated = cfg.deliveryReceiptGate
 	r.resolveAlias = func(handle string) (string, bool) {
 		if cfg.handleAliases == nil {
@@ -114,8 +117,7 @@ func installInboundRecovery(cfg *config) error {
 		channel, ts := e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID
 		if !e.DeliveredAt.IsZero() {
 			copyCfg.deliveredIDs.record(e.AliasHandle, channel, ts)
-			if e.BusyReaction && copyCfg.slackBotToken != "" && copyCfg.busyReaction != "" {
-				done, displaced := copyCfg.busyMarks.markBoth(channel, e.Inbound.ReplyToMessageID, ts)
+			if done, displaced := r.restoreBusy(e); done != nil {
 				go func() {
 					defer close(done)
 					_, err := postReactionToSlack(copyCfg.slackBotToken, slackReactionsAddReq{Channel: channel, Name: copyCfg.busyReaction, Timestamp: ts})
@@ -346,7 +348,7 @@ func compactRecoveryEntry(e inboundRecoveryEntry) inboundRecoveryEntry {
 		return e
 	}
 	// Keep durable message-ID dedup and notice timestamps, release payloads.
-	e.Inbound = externalInboundMessage{ProviderMessageID: e.Inbound.ProviderMessageID, Conversation: e.Inbound.Conversation}
+	e.Inbound = externalInboundMessage{ProviderMessageID: e.Inbound.ProviderMessageID, Conversation: e.Inbound.Conversation, ReplyToMessageID: e.Inbound.ReplyToMessageID}
 	e.Submission, e.Parts, e.ComposerHold = nil, nil, nil
 	e.TrustedFilePaths = nil
 	e.AliasBody = ""
@@ -361,6 +363,7 @@ type inboundRecoveryState struct {
 
 type inboundRecovery struct {
 	coalescer     *inboundCoalescer
+	busyMarks     *busyReactionRegistry
 	mu, runMu     sync.Mutex
 	state         inboundRecoveryState
 	path          string
@@ -576,6 +579,12 @@ func (r *inboundRecovery) holdEntry(e inboundRecoveryEntry, receipt deliveryRece
 	}
 	if _, ok := r.state.Entries[key]; ok {
 		return r.saveLocked()
+	}
+	if e.BusyReaction && r.busyMarks != nil {
+		// A reply may already have taken the initial mark while the POST
+		// was in flight. Serialize this check with reply cleanup below.
+		ts, pending := r.busyMarks.pending(e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID)
+		e.BusyReaction = pending && ts == e.Inbound.ProviderMessageID
 	}
 	now := r.now()
 	e.OriginalReceiptID, e.TargetSessions = receipt.id, receiptSessions(receipt)
@@ -1178,8 +1187,7 @@ func (r *inboundRecovery) tick(startup bool) {
 			r.observe(receipt)
 			continue
 		}
-		var postErr *inboundPostError
-		refused := permanentDeliveryFailure(err) || (e.AliasSessionID != "" && errors.As(err, &postErr) && postErr.Status >= 400 && postErr.Status < 500)
+		refused := permanentDeliveryFailure(err, e.AliasSessionID != "")
 		if refused {
 			p := e.pending()
 			if e.AliasSessionID == "" && e.DeadLetteredAt.IsZero() && nextRejectionStep(p, err) == stepRetryWithoutAttachments {
@@ -1283,6 +1291,10 @@ func (r *inboundRecovery) retire(key string, e inboundRecoveryEntry) {
 func (r *inboundRecovery) put(key string, e inboundRecoveryEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if cur, exists := r.state.Entries[key]; exists {
+		// A reply racing this attempt permanently cancels restoration.
+		e.BusyReaction = e.BusyReaction && cur.BusyReaction
+	}
 	// A deletion racing a POST still applies to the durable retry copy.
 	if cur := r.state.Entries[key]; cur.Inbound.Text == deletedBySenderNotice {
 		e.Inbound.Text, e.Inbound.Attachments = deletedBySenderNotice, nil
@@ -1296,6 +1308,55 @@ func (r *inboundRecovery) put(key string, e inboundRecoveryEntry) {
 	if err := r.saveLocked(); err != nil {
 		log.Printf("inbound HOLD persist: %v", err)
 	}
+}
+
+// restoreBusy and takeBusyBefore share r.mu so a reply either cancels the
+// durable intent before restoration, or takes the newly restored registry
+// mark. The latter's addDone orders its Slack removal after the add.
+func (r *inboundRecovery) restoreBusy(e inboundRecoveryEntry) (chan struct{}, []busyDisplaced) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := recoveryKey(e.Inbound)
+	if e.AliasSessionID != "" {
+		id := e.AliasSessionID
+		if e.AliasOriginalSessionID != "" {
+			id = e.AliasOriginalSessionID
+		}
+		key += "|alias:" + id
+	}
+	if r.busyMarks == nil || !r.state.Entries[key].BusyReaction {
+		return nil, nil
+	}
+	return r.busyMarks.markBoth(e.Inbound.Conversation.ConversationID, e.Inbound.ReplyToMessageID, e.Inbound.ProviderMessageID)
+}
+
+func (r *inboundRecovery) takeBusyBefore(marks *busyReactionRegistry, channel, thread, cutoff string) []busyTaken {
+	if r != nil {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		changed := false
+		for key, e := range r.state.Entries {
+			msg := e.Inbound
+			if !e.BusyReaction || msg.Conversation.ConversationID != channel ||
+				(thread != "" && thread != msg.ReplyToMessageID && thread != msg.ProviderMessageID) ||
+				(cutoff != "" && compareSlackTS(msg.ProviderMessageID, cutoff) >= 0) {
+				continue
+			}
+			e.BusyReaction = false
+			r.state.Entries[key] = e
+			changed = true
+		}
+		if changed {
+			if err := r.saveLocked(); err != nil {
+				r.dirty = true
+				log.Printf("inbound HOLD busy completion persist: %v", err)
+			}
+		}
+	}
+	if thread == "" {
+		return marks.takeConversationBefore(channel, cutoff)
+	}
+	return marks.takeBefore(channel, thread, cutoff)
 }
 
 // The final result says the previous pending receipt is resolved. That fact
