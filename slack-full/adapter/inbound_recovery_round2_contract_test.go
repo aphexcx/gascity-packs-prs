@@ -123,6 +123,96 @@ func TestRound2StateAndHistoryCompatibility(t *testing.T) {
 	}
 }
 
+func TestRound2RecoveryWaitsForHeldHourglassRemoval(t *testing.T) {
+	for _, route := range []string{"channel", "alias"} {
+		t.Run(route, func(t *testing.T) {
+			removing, release := make(chan struct{}, 1), make(chan struct{})
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			adds := make(chan int32, 2)
+			var added atomic.Int32
+			var removed, outOfOrder atomic.Bool
+			slackStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				switch {
+				case strings.HasSuffix(req.URL.Path, "/reactions.remove"):
+					removing <- struct{}{}
+					<-release
+					removed.Store(true)
+				case strings.HasSuffix(req.URL.Path, "/reactions.add"):
+					n := added.Add(1)
+					if n > 1 && !removed.Load() {
+						outOfOrder.Store(true)
+					}
+					adds <- n
+				}
+				fmt.Fprint(w, `{"ok":true}`)
+			}))
+			t.Cleanup(slackStub.Close)
+			withSlackAPIStub(t, slackStub)
+			var ready atomic.Bool
+			gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if strings.Contains(req.URL.Path, "/bindings") {
+					fmt.Fprint(w, `{"items":[]}`)
+					return
+				}
+				status := "failed"
+				if ready.Load() || (route == "alias" && !strings.HasSuffix(req.URL.Path, "/messages")) {
+					status = "delivered"
+				}
+				fmt.Fprintf(w, `{"delivery":{"receipt_id":"busy","status":%q,"members":[{"session_id":"s1","status":%q}]}}`, status, status)
+			}))
+			defer gcStub.Close()
+			cfg := recoveryTestConfig(t, gcStub.URL)
+			cfg.bindingCheck = newBindingCheckCache()
+			cfg.slackBotToken, cfg.busyReaction = "test", "hourglass"
+			cfg.busyMarks = newBusyReactionRegistry()
+			reg := newTestHandleAliasRegistry(t)
+			body := "<@" + testBotUserID + "> work"
+			if route == "alias" {
+				if err := reg.Set("mayor", "s1"); err != nil {
+					t.Fatal(err)
+				}
+				body = "@mayor: work"
+			}
+			if err := installInboundRecovery(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			cfg.inboundRecovery.now = func() time.Time { return now }
+			env := botMentionEnvelope(t, "message", "EvHoldBusyFence", "C1", "100.1", "", body, true)
+			processSlackEvent(cfg, reg, nil, nil, nil, nil, env, func() {})
+			select {
+			case <-removing:
+			case <-time.After(3 * time.Second):
+				t.Fatal("HOLD removal did not start")
+			}
+			if n := <-adds; n != 1 {
+				t.Fatalf("initial adds=%d", n)
+			}
+			now = now.Add(time.Minute)
+			ready.Store(true)
+			cfg.inboundRecovery.tick(false)
+			if _, ok := cfg.busyMarks.pending("C1", "100.1"); ok {
+				t.Fatal("recovery restored the registry before HOLD removal finished")
+			}
+			close(release)
+			select {
+			case n := <-adds:
+				if n != 2 || outOfOrder.Load() {
+					t.Fatalf("busy restoration overtook removal: adds=%d outOfOrder=%v", n, outOfOrder.Load())
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("recovery did not restore hourglass after removal")
+			}
+		})
+	}
+}
+
 func TestRound2HeldMentionRemovesAndRestoresBusyReaction(t *testing.T) {
 	slackStub, reactions := newReactionRecordingSlackStub(t)
 	withSlackAPIStub(t, slackStub)
@@ -467,6 +557,119 @@ func TestRound2RetargetHistoryKeepsOriginalDedup(t *testing.T) {
 	}
 	if len(rebuilt.state.Entries) != 1 || rebuilt.state.Entries["C1|100.1|alias:old"].DeliveredAt.IsZero() {
 		t.Fatalf("retarget duplicated history: %+v", rebuilt.state.Entries)
+	}
+}
+
+func TestRound2LostReactionOverflowWaitsForFreshTraffic(t *testing.T) {
+	for _, window := range []time.Duration{0, 8 * time.Second} {
+		for _, pending := range []bool{false, true} {
+			for _, trigger := range []string{"real", "fresh-overflow"} {
+				t.Run(fmt.Sprintf("window=%s/pending=%v/%s", window, pending, trigger), func(t *testing.T) {
+					var posts atomic.Int32
+					var deliver atomic.Bool
+					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+						posts.Add(1)
+						status := "failed"
+						if pending {
+							status = "pending"
+						}
+						if deliver.Load() {
+							status = "delivered"
+						}
+						fmt.Fprintf(w, `{"delivery":{"receipt_id":"overflow","status":%q,"members":[{"session_id":"s1","status":%q}]}}`, status, status)
+					}))
+					defer srv.Close()
+					cfg := recoveryTestConfig(t, srv.URL)
+					c, r := cfg.coalescer, cfg.inboundRecovery
+					c.window = window
+					// This matrix exercises scheduling, not snapshot durability
+					// (covered by the restart regressions below).
+					r.path = ""
+					now := time.Now()
+					r.now = func() time.Time { return now }
+					for i := 0; i < maxBufferedReactionsPerChannel; i++ {
+						c.admitReaction("C1", testPending("C1", fmt.Sprintf("100.%03d", i), "old reaction"), false)
+					}
+					if pending {
+						r.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+							return receiptPollConcluded, recoveryReceipt("overflow", "s1", false), nil
+						}
+						now = now.Add(time.Minute)
+						r.tick(false)
+					}
+					c.reconcileTimers()
+					c.mu.Lock()
+					_, armed := c.timers["C1"]
+					worthy, buffered := c.timerWorthyLocked("C1"), len(c.reactions["C1"])
+					c.mu.Unlock()
+					if armed || worthy || buffered != maxBufferedReactionsPerChannel || posts.Load() != 1 {
+						t.Fatalf("lost overflow retried or disappeared: armed=%v worthy=%v buffered=%d posts=%d", armed, worthy, buffered, posts.Load())
+					}
+					// One fresh reaction cannot use the failed batch to earn a wake.
+					c.admitReaction("C1", testPending("C1", "200.000", "fresh reaction"), false)
+					if posts.Load() != 1 {
+						t.Fatal("one fresh reaction retriggered the failed overflow")
+					}
+					if r.counts()["C1"] != (inboundRecoveryCounts{}) {
+						t.Fatal("reactions entered human-line counts")
+					}
+					deliver.Store(true)
+					if trigger == "real" {
+						c.window = time.Hour
+						c.enqueue("C1", testPending("C1", "300.1", "real message"))
+						c.flushAheadOf("C1", "400.1")
+					} else {
+						for i := 1; i < maxBufferedReactionsPerChannel; i++ {
+							c.admitReaction("C1", testPending("C1", fmt.Sprintf("200.%03d", i), "fresh reaction"), false)
+						}
+					}
+					if posts.Load() != 2 || len(c.reactions["C1"]) != 0 {
+						t.Fatalf("fresh traffic failed to carry retained reactions: posts=%d buffered=%d", posts.Load(), len(c.reactions["C1"]))
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestRound2AcknowledgedReactionIgnoresLatePendingReceipt(t *testing.T) {
+	cfg := recoveryTestConfig(t, "http://unused")
+	r := cfg.inboundRecovery
+	now := time.Now()
+	r.now = func() time.Time { return now }
+	p := testPending("C1", "100.1", "reaction")
+	p.reaction = true
+	pending := deliveryReceipt{present: true, id: "old", status: "pending", targetSessionID: "s1"}
+	if err := r.hold(p, pending, false); err != nil {
+		t.Fatal(err)
+	}
+	r.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+		return receiptPollConcluded, recoveryReceipt("old", "s1", false), nil
+	}
+	now = now.Add(time.Minute)
+	r.tick(false)
+	if !r.queuedReactions["C1|100.1"] {
+		t.Fatal("fixture did not transfer reaction to side lane")
+	}
+	if n, err := r.acknowledge("C1", "100.1"); err != nil || n != 1 {
+		t.Fatalf("acknowledge=%d: %v", n, err)
+	}
+	acknowledged := r.state.Entries["C1|100.1"].AcknowledgedAt
+	// A piggyback POST began before acknowledgement and returns afterward.
+	pending.id = "late-new-receipt"
+	if err := r.hold(p, pending, false); err != nil {
+		t.Fatal(err)
+	}
+	e := r.state.Entries["C1|100.1"]
+	if !e.AcknowledgedAt.Equal(acknowledged) || e.PendingReceipt || e.ReactionReceiptGeneration != 0 || r.queuedReactions["C1|100.1"] {
+		t.Fatalf("late receipt revived acknowledgement: %+v", e)
+	}
+	restarted, err := newInboundRecovery(r.path, r.deadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restarted.state.Entries["C1|100.1"].AcknowledgedAt.Equal(acknowledged) {
+		t.Fatal("acknowledgement lost across restart")
 	}
 }
 
@@ -1035,6 +1238,60 @@ func TestRound2ExplicitOlderReplayPreviewAndEligibility(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "verb channel=C1 include_older=true replay_count=1 skipped_for_age=0") {
 		t.Fatalf("missing operator audit: %s", logs.String())
+	}
+}
+
+func TestRound2OlderReplayQueueSurvivesRestartBehindPendingHead(t *testing.T) {
+	for _, processQueue := range []bool{false, true} {
+		t.Run(fmt.Sprintf("tick=%v", processQueue), func(t *testing.T) {
+			r, now := round2Recovery(t)
+			pending := deliveryReceipt{present: true, id: "head", status: "pending", targetSessionID: "s1"}
+			if err := r.hold(testPending("C1", "100.0", "pending head"), pending, false); err != nil {
+				t.Fatal(err)
+			}
+			round2Hold(t, r, "100.1")
+			e := r.state.Entries["C1|100.1"]
+			e.DeadLetteredAt = now.Add(-30 * 24 * time.Hour)
+			e.NextAttemptAt = time.Time{}
+			r.put("C1|100.1", e)
+			r.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+				return receiptPollPending, pending, nil
+			}
+			r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+				t.Fatal("older replay overtook pending head")
+				return deliveryReceipt{}, nil
+			}
+			response := httptest.NewRecorder()
+			r.handleRedrive(response, httptest.NewRequest(http.MethodPost, "/internal/inbound/redrive", strings.NewReader(`{"conversation_id":"C1","include_older":true}`)))
+			if response.Code != http.StatusAccepted {
+				t.Fatal(response.Body.String())
+			}
+			if processQueue {
+				r.tick(false)
+			}
+			restarted, err := newInboundRecovery(r.path, r.deadDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			queued := restarted.state.Entries["C1|100.1"]
+			if !queued.ReplayIncludeOlder || queued.NextAttemptAt.IsZero() {
+				t.Fatal("accepted older replay lost its queued permission")
+			}
+			*now = now.Add(time.Minute)
+			restarted.now = func() time.Time { return *now }
+			restarted.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+				return receiptPollConcluded, recoveryReceipt("head", "s1", true), nil
+			}
+			var sent []string
+			restarted.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
+				sent = append(sent, e.Inbound.ProviderMessageID)
+				return recoveryReceipt("replayed", "s1", true), nil
+			}
+			restarted.tick(true)
+			if !reflect.DeepEqual(sent, []string{"100.1"}) {
+				t.Fatalf("accepted replay did not follow completed head: %v", sent)
+			}
+		})
 	}
 }
 

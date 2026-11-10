@@ -4742,6 +4742,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
 	busyHeld := false
+	finishBusyRemoval := func() {}
 	if busyEligible {
 		busyAddDone, busyDisplacedMarks = cfg.busyMarks.markBoth(msg.Channel, msg.ThreadTS, msg.TS)
 	}
@@ -4817,6 +4818,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		peerItems, peerDropped = nil, 0
 		channelHeld := false
 		if postErr == nil && (verdict == receiptUnconfirmed || verdict == receiptHeld) && cfg.inboundRecovery != nil {
+			if busyEligible && busyAliasSession == "" {
+				finishBusyRemoval = cfg.inboundRecovery.deferBusyRestore(msg.Channel, msg.TS)
+			}
 			if err := cfg.inboundRecovery.hold(pendingChannelInbound{inbound: replayInbound}, receipt, true, busyEligible && busyAliasSession == ""); err != nil {
 				log.Printf("inbound HOLD retained with receipt in memory; persistence retry needed: %v", err)
 			}
@@ -5073,7 +5077,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			}
 			// cancelBoth restores displaced marks; remove this message's
 			// hourglass only after its asynchronous add completes.
-			go removeBusyReaction(cfg, msg.Channel, busyTaken{messageTS: msg.TS, addDone: busyAddDone})
+			go func(finish func()) {
+				defer finish()
+				removeBusyReaction(cfg, msg.Channel, busyTaken{messageTS: msg.TS, addDone: busyAddDone})
+			}(finishBusyRemoval)
 		}
 	}
 	if busyHeld && busyAliasSession == "" {
@@ -5219,6 +5226,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				}
 				aliasHeld := false
 				if aliasOK && cfg.inboundRecovery != nil && (aliasVerdict == receiptHeld || aliasVerdict == receiptUnconfirmed) {
+					if busyEligible {
+						finishBusyRemoval = cfg.inboundRecovery.deferBusyRestore(msg.Channel, msg.TS)
+					}
 					if err := cfg.inboundRecovery.holdAlias(inbound, aliasedSessionID, target, aliasBody, aliasReceipt, busyEligible); err != nil {
 						log.Printf("alias HOLD retained with receipt in memory; persistence retry needed: %v", err)
 					}

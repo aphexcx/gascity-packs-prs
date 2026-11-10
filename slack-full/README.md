@@ -419,8 +419,10 @@ including explicit redrive. Alias 408/429 remain transient: HOLD retries within
 the bound, makes one final attempt, then records a dead letter and lets later
 lines flow. Transient replay failures delay followers only until
 their backoff ends. A `no_route` response remains subject to the hold bound.
-Reactions whose receipt establishes loss return to their coalescer side buffer
-and only ride a real message; pending reactions are polled and never sent alone.
+Reactions whose receipt establishes loss return to their coalescer side buffer.
+They ride a real message or a new overflow of 100 fresh reactions; returned
+reactions never count toward that threshold or arm a solo retry, even with a
+zero coalescing window. Pending reactions are polled and never sent alone.
 The ownership handoff is serialized with channel delivery so a concurrent flush
 cannot discard the only reaction copy.
 Recovery retains a durable mirror until the piggyback completes and appends its
@@ -450,6 +452,8 @@ When a new targeted line enters HOLD, an unanswered predecessor keeps its mark.
 This also applies when a handle is delivered through its existing channel
 binding. Slack's duplicate message/app-mention events do not re-add a mark while
 that destination still has an outstanding recovery entry.
+Recovery waits for the HOLD's in-flight hourglass removal before restoring its
+mark, so delayed Slack cleanup cannot erase a newly confirmed busy indicator.
 
 Dead letters within the configured age limit replay at startup, on a vouched
 delivery to their target, or through
@@ -460,7 +464,8 @@ eligible count before requesting replay. The service log records the flag and
 counts. Refused, unpollable and incomplete records remain excluded even with
 this flag. History is never deleted. Trigger logs count records left unreplayed
 for age and name the oldest timestamp. The admin route's 202
-means queued. Replays preserve ordering and message-ID dedup, prepend
+means the replay permission and deadline are durably queued, including when an
+earlier pending receipt delays the attempt. Replays preserve ordering and message-ID dedup, prepend
 `[delivered late: dead-lettered at <time>]`, and append a `replayed_at` history
 record on completion. Alias replay resolves the handle's current session,
 logging both destinations when changed. A pending alias first polls its saved
@@ -474,6 +479,7 @@ after checking an outstanding line by hand. This appends `acknowledged_at`
 records for its channel/alias copies and removes them from counts and FIFO
 without claiming delivery or deleting history; the admin route returns 200.
 Its notice closes as acknowledged by hand without claiming terminal delivery.
+A late receipt from an in-flight reaction delivery cannot undo acknowledgement.
 Liveness reports separate `held=N dead-lettered=N by-hand=N` counts. A human
 line counts once even with multiple destinations; reactions and peer riders do
 not count. The cumulative missed counter counts each standing line once per

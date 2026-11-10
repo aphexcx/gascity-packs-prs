@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the channel delivery lock and retains a durable mirror until piggyback
   completion. Mixed-fanout paste evidence prevents replay; pending reaction
   receipts carry an optional generation so delayed history writes stay obsolete.
+  Returned reactions do not count toward solo overflow wakes, and late pending
+  receipts preserve a concurrent acknowledgement.
+  Explicit replay permission is saved before queue acceptance and survives FIFO
+  waits; recovered hourglasses wait for the original HOLD cleanup to finish.
   Optional fields
   and rollback decoder compatibility are documented in the README.
 

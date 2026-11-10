@@ -117,18 +117,20 @@ func installInboundRecovery(cfg *config) error {
 		channel, ts := e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID
 		if !e.DeliveredAt.IsZero() {
 			copyCfg.deliveredIDs.record(e.AliasHandle, channel, ts)
-			if done, displaced := r.restoreBusy(e); done != nil {
-				go func() {
-					defer close(done)
-					_, err := postReactionToSlack(copyCfg.slackBotToken, slackReactionsAddReq{Channel: channel, Name: copyCfg.busyReaction, Timestamp: ts})
-					if err != nil {
-						log.Printf("inbound HOLD recovered busy mark: %v", err)
+			r.afterBusyRemoval(e, func() {
+				if done, displaced := r.restoreBusy(e); done != nil {
+					go func() {
+						defer close(done)
+						_, err := postReactionToSlack(copyCfg.slackBotToken, slackReactionsAddReq{Channel: channel, Name: copyCfg.busyReaction, Timestamp: ts})
+						if err != nil {
+							log.Printf("inbound HOLD recovered busy mark: %v", err)
+						}
+					}()
+					for _, d := range displaced {
+						go removeBusyReaction(copyCfg, channel, d.mark)
 					}
-				}()
-				for _, d := range displaced {
-					go removeBusyReaction(copyCfg, channel, d.mark)
 				}
-			}
+			})
 		}
 		if e.AliasSessionID != "" {
 			bindings := copyCfg.mentionOnly.ForChannel(channel)
@@ -392,6 +394,7 @@ type inboundRecovery struct {
 	manual             map[string]bool
 	manualIncludeOlder map[string]bool
 	queuedReactions    map[string]bool
+	busyRemovals       map[string]chan struct{}
 }
 
 func newInboundRecovery(path, deadDir string) (*inboundRecovery, error) {
@@ -550,6 +553,7 @@ func (r *inboundRecovery) isNotice(channel, ts string) bool {
 func (r *inboundRecovery) hold(p pendingChannelInbound, receipt deliveryReceipt, rendered bool, busy ...bool) error {
 	if p.reaction && receipt.verdict(r.gated) != receiptHeld && !receipt.landedUnconfirmed() {
 		if r.coalescer != nil {
+			p.reactionNoWake = true
 			r.coalescer.restore(p.inbound.Conversation.ConversationID, []pendingChannelInbound{p})
 		}
 		return nil
@@ -627,6 +631,10 @@ func (r *inboundRecovery) holdEntry(e inboundRecoveryEntry, receipt deliveryRece
 		key += "|alias:" + e.AliasSessionID
 	}
 	if cur, ok := r.state.Entries[key]; ok {
+		if cur.inactive() {
+			delete(r.queuedReactions, key)
+			return r.saveLocked()
+		}
 		if !e.Reaction || !r.queuedReactions[key] {
 			return r.saveLocked()
 		}
@@ -1059,6 +1067,7 @@ func (r *inboundRecovery) tick(startup bool) {
 	r.sessions, r.manual = map[string]bool{}, map[string]bool{}
 	r.manualIncludeOlder = map[string]bool{}
 	var keys []string
+	schedulingChanged := false
 	armed, aged := 0, 0
 	var oldest time.Time
 	for key, e := range r.state.Entries {
@@ -1068,6 +1077,7 @@ func (r *inboundRecovery) tick(startup bool) {
 		if e.inactive() && !e.CompletionPending && !e.Retiring {
 			continue
 		}
+		previous := e
 		// Resolve before matching vouches and before calculating session FIFO.
 		e = r.resolveRecoveryAlias(e)
 		vouched := false
@@ -1100,8 +1110,17 @@ func (r *inboundRecovery) tick(startup bool) {
 			e.NextAttemptAt = now
 			e.LastVouchAt = now
 		}
+		schedulingChanged = schedulingChanged || previous.ReplayIncludeOlder != e.ReplayIncludeOlder ||
+			!previous.NextAttemptAt.Equal(e.NextAttemptAt) || !previous.LastVouchAt.Equal(e.LastVouchAt)
 		r.state.Entries[key] = e
 		keys = append(keys, key)
+	}
+	// A selected dead letter may be skipped by FIFO below. Persist its
+	// accepted replay permission and deadline before any such early exit.
+	if schedulingChanged {
+		if err := r.saveLocked(); err != nil {
+			log.Printf("inbound replay schedule persist: %v", err)
+		}
 	}
 	if armed > 0 || aged > 0 {
 		reason := "vouch"
@@ -1281,6 +1300,7 @@ func (r *inboundRecovery) tick(startup bool) {
 				r.queuedReactions[key] = true
 				r.mu.Unlock()
 				p := e.pending()
+				p.reactionNoWake = true
 				p.inbound.originalReceiptID = e.OriginalReceiptID
 				r.coalescer.restore(e.Inbound.Conversation.ConversationID, []pendingChannelInbound{p})
 				release()
@@ -1446,6 +1466,44 @@ func (r *inboundRecovery) put(key string, e inboundRecoveryEntry) {
 	if err := r.saveLocked(); err != nil {
 		log.Printf("inbound HOLD persist: %v", err)
 	}
+}
+
+// Register before publishing a HOLD so its recovery cannot overtake the
+// initial hourglass removal. The fence covers this process's request
+// lifecycle; restart restoration uses the persisted BusyReaction intent.
+func (r *inboundRecovery) deferBusyRestore(channel, ts string) func() {
+	if r == nil {
+		return func() {}
+	}
+	key, done := channel+"|"+ts, make(chan struct{})
+	r.mu.Lock()
+	if r.busyRemovals == nil {
+		r.busyRemovals = map[string]chan struct{}{}
+	}
+	r.busyRemovals[key] = done
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		if r.busyRemovals[key] == done {
+			delete(r.busyRemovals, key)
+		}
+		close(done)
+		r.mu.Unlock()
+	}
+}
+
+func (r *inboundRecovery) afterBusyRemoval(e inboundRecoveryEntry, restore func()) {
+	r.mu.Lock()
+	done := r.busyRemovals[recoveryKey(e.Inbound)]
+	r.mu.Unlock()
+	if done == nil {
+		restore()
+		return
+	}
+	go func() {
+		<-done
+		restore()
+	}()
 }
 
 // restoreBusy and takeBusyBefore share r.mu so a reply either cancels the
@@ -1967,8 +2025,9 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 	}
 	r.mu.Lock()
 	count, skipped := 0, 0
+	var selected []string
 	var oldest time.Time
-	for _, e := range r.state.Entries {
+	for key, e := range r.state.Entries {
 		if e.Inbound.Conversation.ConversationID != body.ConversationID || e.inactive() || e.DeadLetteredAt.IsZero() || e.PendingReceipt || e.Retiring || e.Reaction {
 			continue
 		}
@@ -1979,6 +2038,7 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 			}
 		} else {
 			count++
+			selected = append(selected, key)
 		}
 	}
 	result := map[string]any{"conversation_id": body.ConversationID, "include_older": body.IncludeOlder, "replay_count": count, "skipped_for_age": skipped, "oldest_skipped_at": ""}
@@ -1990,6 +2050,22 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 		result["status"] = "preview"
 		writeAdminJSON(w, http.StatusOK, result)
 		return
+	}
+	for _, key := range selected {
+		e := r.state.Entries[key]
+		e.ReplayIncludeOlder = body.IncludeOlder
+		e.NextAttemptAt = r.now()
+		if e.ReplayNotBefore.After(e.NextAttemptAt) {
+			e.NextAttemptAt = e.ReplayNotBefore
+		}
+		r.state.Entries[key] = e
+	}
+	if len(selected) > 0 {
+		if err := r.saveLocked(); err != nil {
+			r.mu.Unlock()
+			writeAdminError(w, http.StatusInternalServerError, "replay queue persistence failed: "+err.Error())
+			return
+		}
 	}
 	r.manual[body.ConversationID] = true
 	r.manualIncludeOlder[body.ConversationID] = body.IncludeOlder

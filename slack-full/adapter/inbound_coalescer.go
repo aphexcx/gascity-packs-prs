@@ -133,6 +133,10 @@ type pendingChannelInbound struct {
 	// take time, and returned to the reaction side-buffer — never
 	// re-arming a timer — when a failed delivery restores the batch.
 	reaction bool
+	// reactionNoWake marks a reaction returned after gc proved nothing
+	// landed. It can ride real traffic or a fresh reaction overflow, but
+	// cannot itself earn another solo wake from the overflow threshold.
+	reactionNoWake bool
 	// attempts counts deliveries gc REJECTED (permanentDeliveryFailure)
 	// with this entry charged as the suspect (see failed); at
 	// maxCoalesceDeliveryAttempts it is dead-lettered instead of
@@ -1256,12 +1260,27 @@ func (c *inboundCoalescer) hasRealPendingLocked(channel string) bool {
 // lane has overflowed (the one sanctioned solo reaction wake, gp-9e7
 // item 1). Reactions below the cap never earn a timer — not by
 // admission, not by a restore, not by a withheld twin emptying the
-// buffer beside them (codex r8 finding 3) — and an overflowed lane
-// always does, even during a backoff (codex r8 finding 2: the deadline
+// buffer beside them (codex r8 finding 3). Reactions returned after a
+// conclusive loss do not count toward overflow; only fresh admissions
+// earn another solo wake. An eligible overflow does, even during a
+// backoff (codex r8 finding 2: the deadline
 // decides WHEN, never WHETHER). Both the arming side (scheduleLocked)
 // and the firing side (flushTimer) consult it. Caller holds c.mu.
 func (c *inboundCoalescer) timerWorthyLocked(channel string) bool {
-	return c.hasRealPendingLocked(channel) || len(c.reactions[channel]) >= maxBufferedReactionsPerChannel
+	return c.hasRealPendingLocked(channel) || c.reactionOverflowLocked(channel)
+}
+
+func (c *inboundCoalescer) reactionOverflowLocked(channel string) bool {
+	n := 0
+	for _, p := range c.reactions[channel] {
+		if !p.reactionNoWake {
+			n++
+			if n >= maxBufferedReactionsPerChannel {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // disarmLocked stops and forgets the channel's timer, bumping the
@@ -1678,7 +1697,8 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 	}
 	c.reactions[channel] = append(c.reactions[channel], p)
 	n := len(c.reactions[channel])
-	if n >= maxBufferedReactionsPerChannel && c.inBackoffLocked(channel) {
+	overflow := c.reactionOverflowLocked(channel)
+	if overflow && c.inBackoffLocked(channel) {
 		// A channel in transient-failure backoff keeps its overflow too
 		// (gp-sgu7): the overflow flush would POST at an unreachable gc.
 		// But the overflow is now timer-worthy, and a reactions-only
@@ -1693,7 +1713,7 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 		c.mu.Unlock()
 		return true
 	}
-	if n >= maxBufferedReactionsPerChannel {
+	if overflow {
 		// Overflow: deliver rather than evict — reactions never drop.
 		// The solo wake this costs takes a pathological reaction volume
 		// with zero real traffic; the cap bounds memory, not content.
@@ -2966,7 +2986,7 @@ func (c *inboundCoalescer) reconcileTimers() {
 			// than waiting a whole window again.
 			at = now.Add(c.capRetryDelay())
 		case len(c.pending[channel]) >= maxCoalescePerChannel ||
-			len(c.reactions[channel]) >= maxBufferedReactionsPerChannel:
+			c.reactionOverflowLocked(channel):
 			at = now.Add(c.capRetryDelay())
 		}
 		// A deadline still ahead binds inside the scheduler (gp-sgu7,
