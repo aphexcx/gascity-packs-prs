@@ -74,12 +74,13 @@ def test_deepening_note_carries_every_fact_and_bound_of_its_bead() -> None:
         "Apply the deletion test",
         "Decide: deepen now in this PR (only inside the bead's scope, with the tests moved to "
         "the new interface and the old ones deleted), a follow-up bead",
-        "name the cluster and its category",
+        "name the cluster and its category; the mayor cuts it under the rule of three",
         "or none.",
         "Write the result as a `Deepening note` section at the end of the PR body, three to ten lines",
         "`none` with one reason is a fine answer",
         "Skip the read for docs, config, evidence and diffs under about forty changed lines",
-        "say `deepening note skipped: <reason>` in the PR handoff instead",
+        "say `deepening note skipped: <reason>` in the PR handoff instead (the handoff mail "
+        "when the bead names a recipient, else the close reason)",
         "Never run a repository-wide pass from a lane",
         "never add a new seam with a single adapter",
     ):
@@ -112,15 +113,17 @@ CITY_PARTICULARS = (
     (r"\b\d{10}\.\d{6}\b", "a Slack message timestamp"),
     (r"\b\d+(?:st|nd|rd|th)\b", "an ordinal"),
     (r"(?i)citadel", "the city name"),
+    (r"(?i)\b(?:afik|aphexcx|taylor|sinan)\b", "a founder's or operator's name"),
     (r"(?i)standing note \(", "a mayor-stamped note header"),
 )
 
 
 def test_fragment_text_is_city_neutral() -> None:
-    text = fragment()
-    for pattern, what in CITY_PARTICULARS:
-        match = re.search(pattern, text)
-        assert match is None, f"the fragment names {what}: {match.group(0)!r}"
+    for path in (FRAGMENT, FRAGMENTS / "gc-code-ownership.template.md"):
+        text = path.read_text(encoding="utf-8")
+        for pattern, what in CITY_PARTICULARS:
+            match = re.search(pattern, text)
+            assert match is None, f"{path.name} names {what}: {match.group(0)!r}"
 
 
 def test_role_fragment_does_not_call_the_standing_notes() -> None:
@@ -144,7 +147,8 @@ def test_readme_documents_the_one_call_line_and_the_roll_order() -> None:
         "Move the city's import of this pack to a commit that carries this fragment first, then add the line",
         "falls back to the template's raw source for the whole prompt",
         "the lane loses its role text",
-        "`gc prime --strict` exits 0 on that through gc v1.5.1; gc builds that carry gascity#8316 fail it",
+        "`gc prime --strict` exits 0 on that through gc v1.5.1; gc builds that carry "
+        "gastownhall/gascity#8316 fail it",
         "remove the line first, then the pin",
         "A note that belongs to one city stays in that city's own prompt template",
         "THE DEEPENING NOTE",

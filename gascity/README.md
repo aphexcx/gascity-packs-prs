@@ -247,7 +247,7 @@ and `gc.publisher`.
 
 `template-fragments/gc-standing-notes.template.md` defines `gc-standing-notes`:
 notes for every worker that sit beside the role text and travel with this
-pack's version, so every city that imports the pack renders the same notes at
+pack's version, so every city that opts a lane in renders the same notes at
 the same pin. Its first note is THE DEEPENING NOTE: once per PR, at the
 worker's self-review and before the push, a deepening read of the modules the
 diff touched (the codebase-design skill), written as a `Deepening note`
@@ -266,9 +266,23 @@ Move the city's import of this pack to a commit that carries this fragment
 first, then add the line: given a call to a template that no imported pack
 defines, gc falls back to the template's raw source for the whole prompt, with
 one stderr line, and the lane loses its role text. `gc prime --strict` exits 0
-on that through gc v1.5.1; gc builds that carry gascity#8316 fail it. To roll
-back, remove the line first, then the pin. A note that belongs to one city
-stays in that city's own prompt template, after this call.
+on that through gc v1.5.1; gc builds that carry gastownhall/gascity#8316 fail
+it. To roll back, remove the line first, then the pin. A note that belongs to
+one city stays in that city's own prompt template, after this call.
+
+### Code ownership
+
+`template-fragments/gc-code-ownership.template.md` defines `gc-code-ownership`,
+one sentence verbatim from Anthropic's guide
+[Prompting Claude Fable 5.2, "Say who owns the code"](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-2#say-who-owns-the-code):
+in Anthropic's testing on small coding tasks it raised the share of tries
+that merged repeated code from under a tenth to about half, at about 1.5
+times the output tokens and with more changes nobody asked for. It is its own
+fragment, not a standing note: a city turns it on lane by lane with
+`{{ template "gc-code-ownership" . }}` after the role line, in the same roll
+order as above. Leave it out where the owner wants the code changed as little
+as possible (a fork rebased on an upstream, a customer's repository): a scope
+rule elsewhere in the prompt does not cancel it.
 
 ## Worker workspaces
 

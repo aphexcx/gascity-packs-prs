@@ -29,7 +29,8 @@ method.
 Write the result as a `Deepening note` section at the end of the PR body, three
 to ten lines; `none` with one reason is a fine answer. Skip the read for docs,
 config, evidence and diffs under about forty changed lines, and say
-`deepening note skipped: <reason>` in the PR handoff instead. Never run a
+`deepening note skipped: <reason>` in the PR handoff instead (the handoff mail
+when the bead names a recipient, else the close reason). Never run a
 repository-wide pass from a lane, and never add a new seam with a single
 adapter.
 {{- end }}
