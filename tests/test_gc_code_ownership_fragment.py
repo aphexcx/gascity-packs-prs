@@ -66,7 +66,7 @@ def test_readme_documents_the_call_line_the_measured_effect_and_when_to_leave_it
         "from under a tenth to about half, at about 1.5 times the output tokens",
         "It is its own fragment, not a standing note",
         "a city turns it on lane by lane",
-        "written with `templateFirst` for the same reason as above",
+        "in the `templateFirst` form for the reason above",
         "Leave it out where the owner wants the code changed as little as possible",
         "a scope rule elsewhere in the prompt does not cancel it",
     ):

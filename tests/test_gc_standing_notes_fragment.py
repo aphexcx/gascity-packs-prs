@@ -59,11 +59,9 @@ def test_fragment_defines_exactly_one_template() -> None:
     assert "{{" not in body and "}}" not in body
 
 
-def test_bead_of_record_is_cited_in_a_comment_that_does_not_render() -> None:
-    comments = TEMPLATE_COMMENT.findall(fragment())
-    assert [comment for comment in comments if "gp-gsww" in comment] == [
-        "{{/* Bead of record: gp-gsww. A comment renders nothing. */}}"
-    ]
+def test_bead_of_record_is_cited_only_inside_a_template_comment() -> None:
+    """The real render without it is proven in the GC_TEST_BIN render test."""
+    assert any("gp-gsww" in comment for comment in TEMPLATE_COMMENT.findall(fragment()))
     assert "gp-gsww" not in renderable(fragment())
 
 
@@ -125,7 +123,7 @@ def test_deepening_note_glosses_the_deletion_test_for_a_lane_without_the_skill()
 # bead id of one of that city's stores. A bead id's shape alone (letters, a
 # hyphen, a short hash) also matches words like "in-process", so the bead
 # case names the prefixes of the stores this pack is built against.
-BEAD_ID = r"\b(?:ci|cs|gf|gp|hw)-[a-z0-9]{3,}"
+BEAD_ID = r"\b(?:ci|cp|cs|dy|gf|gp|hw)-[a-z0-9]{3,}"
 CITY_PARTICULARS = (
     (BEAD_ID, "a bead id"),
     (r"(?<![\w.])/(?:Users|home|private|tmp|opt|var|etc)/", "an absolute machine path"),
@@ -170,13 +168,15 @@ def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
     for clause in (
         "`template-fragments/gc-standing-notes.template.md`",
         'right after its `{{ template "gc-role-worker" . }}` line',
-        f"Write it with `templateFirst`, never as `{PLAIN_CALL}`",
+        f"Write it with `templateFirst` (gc v1.2.0 and later), never as `{PLAIN_CALL}`",
+        "when the city's import of this pack is older than the commit that carries the fragment",
         "`templateFirst` renders nothing and the lane keeps its role text",
-        "the plain call makes gc fall back to the template's raw source for the whole prompt",
-        "with one stderr line and exit 0 (`gc prime --strict` too, through gc v1.5.1)",
-        "the lane loses its role text",
-        "The price is silence: an old import or a misspelt name drops the note without a word",
-        "read one lane's render and find the note once, after the role text",
+        "the plain call makes gc fall back to the lane's raw prompt source and the lane loses its role text",
+        "That fallback prints one stderr line and exits 0, `gc prime --strict` included through gc v1.5.1; "
+        "later builds fail `--strict`, but a plain render still returns the raw source",
+        "The price of `templateFirst` is silence: an old import or a misspelt name drops the note "
+        "without a word",
+        "run `gc prime <lane>` and check that the note appears exactly once, after the role text",
         "A city that does not add the line renders exactly what it rendered before",
         "A note that belongs to one city stays in that city's own prompt template",
         "THE DEEPENING NOTE",

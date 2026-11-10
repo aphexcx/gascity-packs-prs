@@ -639,7 +639,7 @@ CODE_OWNERSHIP_CALL = '{{ templateFirst . "gc-code-ownership" }}'
 TEMPLATE_COMMENT = re.compile(r"\{\{/\*.*?\*/\}\}", re.S)
 # The bead-id prefixes of the stores this pack is built against; no bead id
 # reaches a prompt through these fragments.
-BEAD_ID = re.compile(r"\b(?:ci|cs|gf|gp|hw)-[a-z0-9]{3,}")
+BEAD_ID = re.compile(r"\b(?:ci|cp|cs|dy|gf|gp|hw)-[a-z0-9]{3,}")
 FRAGMENTS_DIR = REPO_ROOT / "gascity" / "template-fragments"
 STANDING_NOTES_FRAGMENT = FRAGMENTS_DIR / "gc-standing-notes.template.md"
 CODE_OWNERSHIP_FRAGMENT = FRAGMENTS_DIR / "gc-code-ownership.template.md"
