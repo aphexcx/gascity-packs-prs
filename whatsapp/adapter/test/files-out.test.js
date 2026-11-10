@@ -248,6 +248,32 @@ test('file receipts survive age and count pruning to recover after the window cl
   assert.equal(r.gw.uploadCalls.length, 1);
   assert.equal(r.gw.sends.length, 2); // the file and the other owner's text only
 });
+test('a day-29 send with a lost reply survives day-31 pruning and a closed window', async (t) => {
+  const { r } = await direct(t), body = request(write(r.dir, 'photo.jpg'), 'delayed-file');
+  const realGateway = createGatewayClient({ url: r.gw.url, credential: CREDENTIAL });
+  let phase = 'before-send', delivered;
+  const gateway = { ...realGateway, async send(payload) {
+    if (phase === 'before-send') throw new Error('stop after journal, before send');
+    const sent = await realGateway.send(payload);
+    if (phase === 'after-send') { delivered = sent; throw new Error('lost send reply'); }
+    return sent;
+  } };
+  const make = () => createPublisher({ stateDir: r.dir, cityDir: r.dir, city: CITY, clock: r.clock.now, gateway,
+    gc: { recordOutbound: async () => ({ TranscriptEntry: {} }) } });
+  assert.equal((await make().handlePublish(JSON.stringify(body))).json.delivered, false);
+  assert.equal(r.gw.uploadCalls.length, 1); assert.equal(r.gw.sends.length, 0);
+  r.clock.advance(29 * 86400000); r.gw.lastInbound.set(OWNER, r.clock.now()); phase = 'after-send';
+  assert.equal((await make().handlePublish(JSON.stringify(body))).json.delivered, false);
+  assert.equal(r.gw.sends.length, 1);
+  r.clock.advance(2 * 86400000); phase = 'normal';
+  const other = '5511900000002'; r.gw.bound.add(other); r.gw.lastInbound.set(other, r.clock.now());
+  await make().handlePublish(JSON.stringify({ session_id: 'session-test', conversation: { conversation_id: other },
+    text: 'Trigger pruning', idempotency_key: 'delayed-pruner' }));
+  const recovered = await make().handlePublish(JSON.stringify(body));
+  assert.equal(recovered.json.delivered, true);
+  assert.equal(recovered.json.message_id, delivered.message_id);
+  assert.equal(r.gw.uploadCalls.length, 1); assert.equal(r.gw.sends.length, 2);
+});
 test('an expired journal handle is permanent, but a completed send is still recovered', async (t) => {
   const { r, publish } = await direct(t), file = write(r.dir, 'photo.jpg'), body = request(file, 'expired-key');
   await publish(body);

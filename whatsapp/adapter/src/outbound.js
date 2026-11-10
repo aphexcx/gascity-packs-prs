@@ -503,8 +503,10 @@ export function createPublisher({
             if (!str(uploaded?.media_id) || !Number.isFinite(uploaded.expires_at)) throw Object.assign(new Error('invalid upload answer'), { malformed: true });
             entry.media_id = uploaded.media_id;
             entry.media_expires_at = uploaded.expires_at;
-            progress.save(key, entry);
           }
+          // A delayed resume starts the send's retention horizon now, not at
+          // upload time. Save before sending so a lost reply cannot age it out.
+          progress.save(key, entry);
           killPoint('after-media-journal', key);
           const sent = await gateway.send({ to, idempotency_key: `file-send:${operation}`, type: file.kind,
             media: { id: entry.media_id, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } });
