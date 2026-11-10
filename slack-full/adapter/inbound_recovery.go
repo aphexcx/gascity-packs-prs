@@ -670,29 +670,32 @@ func (r *inboundRecovery) importDeadLetters() error {
 	if r.deadDir == "" {
 		return nil
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	files, err := os.ReadDir(r.deadDir)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		log.Printf("inbound HOLD: LOSS cannot read history %s: %v", r.deadDir, err)
-		return nil
+		r.quarantineHistoryLocked("", nil)
+		return r.saveLocked()
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".jsonl") {
+		if !strings.HasSuffix(file.Name(), ".jsonl") {
 			continue
 		}
 		f, err := openBeneathFlags(r.deadDir, file.Name(), unix.O_NONBLOCK)
 		if err != nil {
 			log.Printf("inbound HOLD: LOSS skipped history %s: %v", filepath.Join(r.deadDir, file.Name()), err)
+			r.quarantineHistoryLocked(file.Name(), nil)
 			continue
 		}
 		info, err := f.Stat()
 		if err != nil || !info.Mode().IsRegular() {
 			f.Close()
 			log.Printf("inbound HOLD: LOSS skipped non-regular history %s", filepath.Join(r.deadDir, file.Name()))
+			r.quarantineHistoryLocked(file.Name(), nil)
 			continue
 		}
 		scan := bufio.NewScanner(f)
@@ -780,19 +783,23 @@ func (r *inboundRecovery) importDeadLetters() error {
 		f.Close()
 		if err != nil {
 			log.Printf("inbound HOLD: LOSS skipped unreadable history tail %s: %v", filepath.Join(r.deadDir, file.Name()), err)
-			// A later completion/acknowledgement may be hidden in the tail.
-			// Retain the parsed records for inspection, never replay them on
-			// the assumption that this incomplete prefix is the whole history.
-			for key, e := range r.state.Entries {
-				if (fileEntries[key] || safePathComponent(e.Inbound.Conversation.ConversationID)+".jsonl" == file.Name()) && !e.inactive() {
-					e.ReplayBlockedReason = "verify by hand: incomplete history scan of " + file.Name()
-					e.Reason = e.ReplayBlockedReason
-					r.state.Entries[key] = e
-				}
-			}
+			r.quarantineHistoryLocked(file.Name(), fileEntries)
 		}
 	}
 	return r.saveLocked()
+}
+
+func (r *inboundRecovery) quarantineHistoryLocked(name string, seen map[string]bool) {
+	// An unreadable file/tail may hide a later completion or acknowledgement.
+	// Retain both snapshot and parsed entries, but never replay them based on
+	// an incomplete history. An unreadable directory makes every file uncertain.
+	for key, e := range r.state.Entries {
+		if (name == "" || seen[key] || safePathComponent(e.Inbound.Conversation.ConversationID)+".jsonl" == name) && !e.inactive() {
+			e.ReplayBlockedReason = "verify by hand: incomplete history scan of " + filepath.Join(r.deadDir, name)
+			e.Reason = e.ReplayBlockedReason
+			r.state.Entries[key] = e
+		}
+	}
 }
 
 // Older dead-letter records did not retain receipts or targets. Recover known

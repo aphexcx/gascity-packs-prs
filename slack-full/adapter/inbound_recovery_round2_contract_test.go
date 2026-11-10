@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -488,6 +489,50 @@ func TestRound2PendingAliasLossRefreshesDestinationAndFIFO(t *testing.T) {
 	r.tick(false)
 	if !reflect.DeepEqual(sent, []string{"100.1", "100.2", "100.3"}) || polls != 1 || r.state.Entries["C1|100.2|alias:old"].DeliveredAt.IsZero() {
 		t.Fatalf("retarget failed or overtook FIFO: sent=%v polls=%d", sent, polls)
+	}
+}
+
+func TestRound2UnreadableHistoryQuarantinesSnapshot(t *testing.T) {
+	for _, kind := range []string{"symlink", "fifo", "directory", "invalid-history-root"} {
+		t.Run(kind, func(t *testing.T) {
+			r, _ := round2Recovery(t)
+			round2Hold(t, r, "100.1")
+			r.retire("C1|100.1", r.state.Entries["C1|100.1"])
+			path := filepath.Join(r.deadDir, "C1.jsonl")
+			if err := os.Rename(path, filepath.Join(t.TempDir(), "saved.jsonl")); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			switch kind {
+			case "symlink":
+				err = os.Symlink(r.path, path)
+			case "fifo":
+				err = syscall.Mkfifo(path, 0600)
+			case "directory":
+				err = os.Mkdir(path, 0700)
+			case "invalid-history-root":
+				if err := os.Remove(r.deadDir); err != nil {
+					t.Fatal(err)
+				}
+				err = os.WriteFile(r.deadDir, []byte("unreadable directory"), 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := r.importDeadLetters(); err != nil {
+				t.Fatal(err)
+			}
+			r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+				t.Fatal("replayed snapshot without complete history")
+				return deliveryReceipt{}, nil
+			}
+			r.manual["C1"] = true
+			r.tick(true)
+			reloaded, err := newInboundRecovery(r.path, r.deadDir)
+			if err != nil || !strings.Contains(reloaded.state.Entries["C1|100.1"].ReplayBlockedReason, "incomplete history") {
+				t.Fatalf("quarantine not durable: %v", err)
+			}
+		})
 	}
 }
 

@@ -477,8 +477,10 @@ Torn journal lines are skipped while good target/receipt facts are recovered;
 an incomplete scan never selects an uncertain outstanding receipt. Damaged
 state starts from history with a LOSS log. Unsafe, unreadable or oversized
 history records are skipped with a LOSS log naming the path; nonblocking opens
-prevent FIFOs from hanging startup. If a history scan stops before EOF, its
-unresolved entries require a hand check: an unseen completion or acknowledgement
+prevent FIFOs from hanging startup. If a history file cannot be opened safely or
+its scan stops before EOF, its unresolved entries require a hand check; an
+unreadable history directory makes all outstanding snapshot entries require one.
+An unseen completion or acknowledgement
 may follow the readable prefix, so neither automatic nor explicit redrive replays
 that prefix. Fresh lines still flow. Retirement intent resumes failed appends
 after restart. State-write failures retain in-memory ownership and retry
