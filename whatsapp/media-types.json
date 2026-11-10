@@ -1,0 +1,20 @@
+{
+  "image/jpeg": {"kind":"image","maxBytes":5000000,"extensions":[".jpg",".jpeg"]},
+  "image/png": {"kind":"image","maxBytes":5000000,"extensions":[".png"]},
+  "image/webp": {"kind":"image","maxBytes":5000000,"extensions":[".webp"]},
+  "audio/aac": {"kind":"audio","maxBytes":16000000,"extensions":[".aac"]},
+  "audio/amr": {"kind":"audio","maxBytes":16000000,"extensions":[".amr"]},
+  "audio/mpeg": {"kind":"audio","maxBytes":16000000,"extensions":[".mp3"]},
+  "audio/mp4": {"kind":"audio","maxBytes":16000000,"extensions":[".m4a"]},
+  "audio/ogg": {"kind":"audio","maxBytes":16000000,"extensions":[".ogg"]},
+  "video/mp4": {"kind":"video","maxBytes":16000000,"extensions":[".mp4"]},
+  "video/3gpp": {"kind":"video","maxBytes":16000000,"extensions":[".3gp"]},
+  "text/plain": {"kind":"document","maxBytes":100000000,"extensions":[".txt"]},
+  "application/pdf": {"kind":"document","maxBytes":100000000,"extensions":[".pdf"]},
+  "application/msword": {"kind":"document","maxBytes":100000000,"extensions":[".doc"]},
+  "application/vnd.ms-excel": {"kind":"document","maxBytes":100000000,"extensions":[".xls"]},
+  "application/vnd.ms-powerpoint": {"kind":"document","maxBytes":100000000,"extensions":[".ppt"]},
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {"kind":"document","maxBytes":100000000,"extensions":[".docx"]},
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {"kind":"document","maxBytes":100000000,"extensions":[".xlsx"]},
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": {"kind":"document","maxBytes":100000000,"extensions":[".pptx"]}
+}

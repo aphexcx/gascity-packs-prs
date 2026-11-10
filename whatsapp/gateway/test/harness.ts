@@ -99,6 +99,22 @@ export function fakeGraph() {
   const impl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const req = new Request(input, init);
     const url = new URL(req.url);
+    if (req.method === "POST" && url.pathname.endsWith("/media")) {
+      const record = { url, method: req.method, authorization: req.headers.get("authorization"),
+        body: { chunks: [] as Uint8Array[], complete: false } };
+      calls.push(record);
+      const reader = req.body!.getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        record.body.chunks.push(value);
+      }
+      record.body.complete = true;
+      const failure = failures.shift();
+      if (failure === "network") throw new TypeError("fetch failed");
+      if (failure) return Response.json(failure.body, { status: failure.status });
+      return Response.json({ id: `upload-${uniq()}` });
+    }
     const body = req.method === "POST" ? ((await req.json()) as Record<string, any>) : null;
     calls.push({ url, method: req.method, authorization: req.headers.get("authorization"), body });
     const failure = failures.shift();

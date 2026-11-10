@@ -1864,7 +1864,7 @@ describe("BSUID: migrations 0002 and 0003 over schema v1 rows", () => {
   it("a v1 phone keeps its wa_id as its key, a held delivery gains its conversation_id, a stranger's row keeps its key, user_id is unique where present, and a wamid is one row whichever city", async () => {
     const db = env.MIGRATION_DB;
     const all = env.TEST_MIGRATIONS;
-    expect(all.map((m) => m.name)).toEqual(["0001_init.sql", "0002_bsuid.sql", "0003_retries.sql"]);
+    expect(all.map((m) => m.name)).toEqual(["0001_init.sql", "0002_bsuid.sql", "0003_retries.sql", "0004_uploads.sql"]);
     await applyD1Migrations(db, all.slice(0, 1));
     const wa = phone();
     await db.batch([

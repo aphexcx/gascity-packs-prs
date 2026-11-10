@@ -14,16 +14,16 @@ export function createGatewayClient({ url, credential, timeoutMs = 15000, fetchI
   const base = String(url || '').replace(/\/+$/, '');
   const bearer = () => (typeof credential === 'function' ? credential() : credential) || '';
 
-  async function call(method, path, { body, auth = true, expect } = {}) {
+  async function call(method, path, { body, rawBody, auth = true, expect, uploadHeaders } = {}) {
     if (!base) throw Object.assign(new Error('WHATSAPP_GATEWAY_URL is not set'), { config: true });
-    const headers = {};
+    const headers = { ...uploadHeaders };
     if (auth) {
       const token = bearer();
       if (!token) throw Object.assign(new Error('not enrolled: run gc whatsapp enroll'), { status: 401, auth: true });
       headers.Authorization = `Bearer ${token}`;
     }
     try {
-      return await requestJSON(`${base}${path}`, { method, headers, body, timeoutMs, fetchImpl, expect });
+      return await requestJSON(`${base}${path}`, { method, headers, body, rawBody, timeoutMs, fetchImpl, expect });
     } catch (err) {
       if (err.status === 401) err.auth = true;
       throw err;
@@ -42,6 +42,10 @@ export function createGatewayClient({ url, credential, timeoutMs = 15000, fetchI
     },
     ack: (ids) => call('POST', '/v1/inbox/ack', { body: { ids } }),
     send: (body) => call('POST', '/v1/send', { body }),
+    upload: (file, key) => call('POST', '/v1/uploads', { rawBody: file.bytes, uploadHeaders: {
+      'Content-Type': file.mime, 'Content-Length': String(file.size),
+      'X-Filename': encodeURIComponent(file.name), 'X-Content-SHA256': file.sha256, 'Idempotency-Key': key,
+    } }),
     read: (messageId) => call('POST', '/v1/read', { body: { message_id: messageId } }),
     window: () => call('GET', '/v1/window'),
     media: (mediaId) => call('GET', `/v1/media/${encodeURIComponent(mediaId)}`, { expect: 'bytes' }),

@@ -449,6 +449,36 @@ def test_publish_update_and_usage_errors(fake):
     assert verb('publish.sh', '--to', '1', '--text', '').returncode == 2
 
 
+def test_publish_file_passes_paths_and_caption_without_reading_bytes(fake, tmp_path):
+    adapter = fake({'POST /publish': (200, {'message_id': 'wamid.file', 'delivered': True})})
+    media = tmp_path / 'report.pdf'
+    media.write_bytes(b'%PDF-private bytes')
+    caption = tmp_path / 'caption.txt'
+    caption.write_text('Requested report')
+    result = verb('publish.sh', '--to', 'US.owner', '--file', str(media), '--caption-file', str(caption),
+                  '--idempotency-key', 'file-operation', WHATSAPP_ADAPTER_URL=adapter.url, GC_SESSION_ID='s-mayor')
+    assert result.returncode == 0, result.stderr
+    body = adapter.requests[0][2]
+    assert body['file'] == str(media)
+    assert body['caption_file'] == str(caption)
+    assert body['idempotency_key'] == 'file-operation'
+    assert body['metadata'] == {'origin': 'cli'}
+    assert 'text' not in body and 'private bytes' not in json.dumps(body)
+
+
+@pytest.mark.parametrize('args, message', [
+    (['--file', '/a.pdf', '--text-file', '/text'], 'use --caption-file'),
+    (['--file', '/a.pdf', '--text', 'text'], 'use --caption'),
+    (['--file', '/a.pdf', '--update'], 'cannot use --update'),
+    (['--caption', 'caption'], 'requires --file'),
+    (['--file', '/a.pdf', '--caption', 'caption', '--caption-file', '/text'], 'not both'),
+])
+def test_publish_file_usage_rejected_before_network(args, message):
+    result = verb('publish.sh', '--to', 'US.owner', *args)
+    assert result.returncode == 2
+    assert message in result.stderr
+
+
 def test_resolve_prints_last_four_and_receipt_never_the_text(fake):
     rid = 'whatsapp:dynasty:wamid.H'
     ref = 'm-' + hashlib.sha256(rid.encode()).hexdigest()[:10]
