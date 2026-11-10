@@ -427,6 +427,8 @@ reactions never count toward that threshold or arm a solo retry, even with a
 zero coalescing window. Pending reactions are polled and never sent alone.
 The ownership handoff is serialized with channel delivery so a concurrent flush
 cannot discard the only reaction copy.
+After waiting for that lock, recovery rechecks ownership and receipt generation
+so it cannot restore a second copy or replace a newer pending/completed outcome.
 Recovery persists a durable mirror even for an immediately failed reaction,
 before returning it to the side buffer. Restarts and shutdown spool replay use
 that mirror to retain one no-wake owner. Recovery keeps it until the piggyback

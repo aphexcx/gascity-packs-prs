@@ -950,6 +950,81 @@ func TestRound2DeadReactionPiggybackCompletionSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestRound2ReactionHandoffRechecksOwnershipAfterChannelWait(t *testing.T) {
+	for _, outcome := range []string{"queued", "pending", "delivered"} {
+		t.Run(outcome, func(t *testing.T) {
+			cfg := recoveryTestConfig(t, "http://unused")
+			c, r := cfg.coalescer, cfg.inboundRecovery
+			c.deliver = func(string, []pendingChannelInbound) error { return nil }
+			now := time.Now()
+			r.now = func() time.Time { return now }
+			p := testPending("C1", "100.1", "reaction handoff")
+			p.reaction = true
+			// Initial admission has persisted the mirror but still owns the
+			// channel lock while it finishes transferring the side copy.
+			release := c.holdDelivery("C1")
+			held := true
+			defer func() {
+				if held {
+					release()
+				}
+			}()
+			if err := r.holdEntry(inboundRecoveryEntry{Inbound: p.inbound, Reaction: true}, recoveryReceipt("initial", "s1", false)); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(time.Minute)
+			finished := make(chan struct{})
+			go func() { r.tick(false); close(finished) }()
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				c.mu.Lock()
+				waiting := c.urgentWaiting["C1"] > 0
+				c.mu.Unlock()
+				if waiting {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("recovery did not wait on channel ownership")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			r.mu.Lock()
+			e := r.state.Entries["C1|100.1"]
+			r.mu.Unlock()
+			if err := r.queueReaction("C1|100.1", e); err != nil {
+				t.Fatal(err)
+			}
+			if outcome != "queued" {
+				c.mu.Lock()
+				c.reactions["C1"] = nil // the next delivery consumed the copy
+				c.mu.Unlock()
+				if outcome == "pending" {
+					if err := r.hold(p, deliveryReceipt{present: true, id: "new", status: "pending", targetSessionID: "s1"}, false); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					r.completeBufferedReactions([]pendingChannelInbound{p}, recoveryReceipt("done", "s1", true))
+				}
+			}
+			release()
+			held = false
+			select {
+			case <-finished:
+			case <-time.After(2 * time.Second):
+				t.Fatal("recovery did not finish its delayed handoff")
+			}
+			stored := r.state.Entries["C1|100.1"]
+			if outcome == "queued" {
+				if len(c.reactions["C1"]) != 1 {
+					t.Fatal("delayed tick duplicated the queued reaction")
+				}
+			} else if len(c.reactions["C1"]) != 0 || (outcome == "pending" && (!stored.PendingReceipt || stored.PendingReceiptID != "new" || stored.ReactionReceiptGeneration != 1)) || (outcome == "delivered" && stored.DeliveredAt.IsZero()) {
+				t.Fatalf("delayed tick replaced newer %s state: %+v", outcome, stored)
+			}
+		})
+	}
+}
+
 func TestRound2ReactionOwnershipTransferWaitsForChannelDelivery(t *testing.T) {
 	var delivered atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

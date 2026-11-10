@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Immediately failed reactions retain durable no-wake ownership across crashes
   and shutdown spooling. Redrive acceptance is serialized with retry outcomes,
   and every alias retarget removes the departing destination's routing record.
+  Delayed reaction handoffs recheck current ownership and receipt generation
+  after acquiring the channel lock, preserving newer outcomes and one side copy.
   Optional fields
   and rollback decoder compatibility are documented in the README.
 

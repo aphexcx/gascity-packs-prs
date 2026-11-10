@@ -1272,6 +1272,16 @@ func (r *inboundRecovery) tick(startup bool) {
 				// A flush must not consume the restored reaction before the
 				// delivery filter permits its side-buffer copy to be sent.
 				release := r.coalescer.holdDelivery(e.Inbound.Conversation.ConversationID)
+				// The delivery that held this lock may already have queued,
+				// completed, or replaced the receipt while this tick waited.
+				r.mu.Lock()
+				current, exists := r.state.Entries[key]
+				obsolete := !exists || r.queuedReactions[key] || current.inactive() || current.ReactionReceiptGeneration != e.ReactionReceiptGeneration
+				r.mu.Unlock()
+				if obsolete {
+					release()
+					continue
+				}
 				if err := r.queueReaction(key, e); err != nil {
 					log.Printf("inbound reaction handoff persist: %v", err)
 				}
