@@ -175,6 +175,23 @@ func installInboundRecovery(cfg *config) error {
 		defer copyCfg.coalescer.endDelivery()
 		release := copyCfg.coalescer.holdDelivery(e.Inbound.Conversation.ConversationID)
 		defer release()
+		// Acquiring channel ownership can outlive an operator acknowledgement.
+		// Recheck after that wait, before routing records or HTTP side effects.
+		key := recoveryKey(e.Inbound)
+		if e.AliasSessionID != "" {
+			id := e.AliasSessionID
+			if e.AliasOriginalSessionID != "" {
+				id = e.AliasOriginalSessionID
+			}
+			key += "|alias:" + id
+		}
+		r.mu.Lock()
+		current, exists := r.state.Entries[key]
+		inactive := !exists || current.inactive()
+		r.mu.Unlock()
+		if inactive {
+			return deliveryReceipt{}, errRecoveryInactive
+		}
 		batch := []pendingChannelInbound{e.pending()}
 		copyCfg.coalescer.applyDeletionTombstones(e.Inbound.Conversation.ConversationID, batch)
 		e.Inbound = batch[0].inbound
@@ -375,7 +392,7 @@ type inboundRecoveryState struct {
 type inboundRecovery struct {
 	coalescer        *inboundCoalescer
 	busyMarks        *busyReactionRegistry
-	mu, runMu        sync.Mutex
+	mu, runMu, ackMu sync.Mutex
 	state            inboundRecoveryState
 	path             string
 	deadDir          string
@@ -2052,26 +2069,40 @@ func (r *inboundRecovery) newlyMissed() uint64 {
 }
 
 func (r *inboundRecovery) acknowledge(channel, ts string) (int, error) {
-	// Hold only the state lock across local durable writes. A recovery tick
-	// may be blocked on unrelated network I/O; its put merges this terminal
-	// acknowledgement without overwriting the receipt outcome.
+	// Serialize operator acknowledgements, never recovery network calls.
+	// Release the state mutex before history I/O: import takes the history
+	// writer lock before the state lock. Merge only acknowledgement into
+	// the latest entry afterward, preserving any in-flight receipt outcome.
+	r.ackMu.Lock()
+	defer r.ackMu.Unlock()
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	acknowledged := 0
+	selected := map[string]inboundRecoveryEntry{}
 	for key, e := range r.state.Entries {
 		if e.Inbound.Conversation.ConversationID != channel || e.Inbound.ProviderMessageID != ts || !e.DeliveredAt.IsZero() || !e.AcknowledgedAt.IsZero() {
 			continue
 		}
 		e.AcknowledgedAt = r.now()
+		selected[key] = e
+	}
+	r.mu.Unlock()
+	acknowledged := 0
+	for key, e := range selected {
 		if err := r.writeDead(e, time.Time{}); err != nil {
 			return acknowledged, err
 		}
-		r.state.Entries[key] = e
+		r.mu.Lock()
+		if current, exists := r.state.Entries[key]; exists {
+			if current.AcknowledgedAt.IsZero() {
+				current.AcknowledgedAt = e.AcknowledgedAt
+			}
+			r.state.Entries[key] = current
+		}
 		delete(r.queuedReactions, key)
 		acknowledged++
 		if err := r.saveLocked(); err != nil {
 			log.Printf("inbound acknowledgement persist: %v", err)
 		}
+		r.mu.Unlock()
 	}
 	return acknowledged, nil
 }

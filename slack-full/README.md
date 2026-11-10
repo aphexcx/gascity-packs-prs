@@ -498,6 +498,10 @@ A late receipt from an in-flight reaction delivery cannot undo acknowledgement.
 Acknowledgement persists without waiting for recovery network calls. An already
 in-flight outcome retains the acknowledgement, and a poll concluding loss cannot
 start a replacement send after the line has been acknowledged.
+Recovery also rechecks acknowledgement after acquiring channel delivery ownership,
+before creating alias routing records or sending a queued replacement.
+History writes release the state lock, then merge acknowledgement into the latest
+entry so concurrent history imports and newer receipt outcomes remain safe.
 Liveness reports separate `held=N dead-lettered=N by-hand=N` counts. A human
 line counts once even with multiple destinations; reactions and peer riders do
 not count. The cumulative missed counter counts each standing line once per

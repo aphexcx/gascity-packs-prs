@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Acknowledgements persist independently of recovery HTTP calls and fence
   replacement sends after a pending receipt resolves. HOLD cleanup waits for
   all registered twin reaction adds before removing their merged busy mark.
+  Acknowledgement releases the state lock before history I/O and merges only its
+  terminal marker afterward, avoiding history-import lock inversion and stale outcomes.
+  Queued recovery rechecks acknowledgement after acquiring the channel lock, before
+  any routing record or replacement POST, including retargeted aliases.
   Optional fields
   and rollback decoder compatibility are documented in the README.
 

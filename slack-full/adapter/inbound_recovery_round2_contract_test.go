@@ -1689,6 +1689,137 @@ func TestRound2ExplicitOlderReplayPreviewAndEligibility(t *testing.T) {
 	}
 }
 
+func TestRound2AcknowledgementFencesChannelWait(t *testing.T) {
+	for _, route := range []string{"channel", "alias", "retargeted-alias"} {
+		t.Run(route, func(t *testing.T) {
+			var posts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				posts.Add(1)
+				fmt.Fprint(w, `{"delivery":{"receipt_id":"unexpected","status":"delivered","members":[{"session_id":"s1","status":"delivered"}]}}`)
+			}))
+			defer server.Close()
+			cfg := recoveryTestConfig(t, server.URL)
+			r, c := cfg.inboundRecovery, cfg.coalescer
+			now := time.Now()
+			r.now = func() time.Time { return now }
+			key := "C1|100.1"
+			p := testPending("C1", "100.1", "acknowledge before channel unlock")
+			if route == "channel" {
+				if err := r.hold(p, recoveryReceipt("old", "s1", false), false); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := r.holdAlias(p.inbound, "s1", "mayor", "body", recoveryReceipt("old", "s1", false)); err != nil {
+					t.Fatal(err)
+				}
+				key += "|alias:s1"
+				if route == "retargeted-alias" {
+					e := r.state.Entries[key]
+					e.AliasSessionID, e.AliasOriginalSessionID = "s2", "s1"
+					r.put(key, e)
+				}
+			}
+			release := c.holdDelivery("C1")
+			held := true
+			defer func() {
+				if held {
+					release()
+				}
+			}()
+			now = now.Add(time.Minute)
+			tickDone := make(chan struct{})
+			go func() { r.tick(false); close(tickDone) }()
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				c.mu.Lock()
+				waiting := c.urgentWaiting["C1"] > 0
+				c.mu.Unlock()
+				if waiting {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("recovery did not wait for channel ownership")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			if n, err := r.acknowledge("C1", "100.1"); err != nil || n != 1 {
+				t.Fatalf("acknowledgement=%d: %v", n, err)
+			}
+			release()
+			held = false
+			select {
+			case <-tickDone:
+			case <-time.After(2 * time.Second):
+				t.Fatal("recovery did not finish after channel unlock")
+			}
+			if posts.Load() != 0 || r.state.Entries[key].AcknowledgedAt.IsZero() {
+				t.Fatalf("acknowledged %s replayed after channel wait: posts=%d", route, posts.Load())
+			}
+		})
+	}
+}
+
+func TestRound2AcknowledgementDoesNotInvertHistoryLock(t *testing.T) {
+	r, now := round2Recovery(t)
+	round2Hold(t, r, "100.1")
+	selected := make(chan struct{})
+	r.now = func() time.Time {
+		close(selected)
+		return *now
+	}
+	inboundDeadLetterWriteMu.Lock()
+	writerHeld := true
+	defer func() {
+		if writerHeld {
+			inboundDeadLetterWriteMu.Unlock()
+		}
+	}()
+	ackDone := make(chan error, 1)
+	go func() {
+		_, err := r.acknowledge("C1", "100.1")
+		ackDone <- err
+	}()
+	<-selected // acknowledgement selected its entry and now needs history I/O
+	stateAvailable := make(chan struct{})
+	go func() {
+		r.mu.Lock()
+		// An actual receipt outcome may arrive while acknowledgement waits
+		// for the history writer. It must survive the acknowledgement merge.
+		e := r.state.Entries["C1|100.1"]
+		e.PendingReceipt, e.PendingReceiptID = true, "newer-receipt"
+		r.state.Entries["C1|100.1"] = e
+		r.mu.Unlock()
+		close(stateAvailable)
+	}()
+	select {
+	case <-stateAvailable:
+	case <-time.After(2 * time.Second):
+		inboundDeadLetterWriteMu.Unlock()
+		writerHeld = false
+		<-ackDone
+		<-stateAvailable
+		t.Fatal("acknowledgement held state while waiting for the history writer")
+	}
+	importDone := make(chan error, 1)
+	go func() { importDone <- r.importDeadLetters() }()
+	inboundDeadLetterWriteMu.Unlock()
+	writerHeld = false
+	for _, done := range []<-chan error{ackDone, importDone} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("concurrent acknowledgement/history import deadlocked")
+		}
+	}
+	e := r.state.Entries["C1|100.1"]
+	if e.AcknowledgedAt.IsZero() || !e.PendingReceipt || e.PendingReceiptID != "newer-receipt" {
+		t.Fatalf("acknowledgement replaced the newer receipt outcome: %+v", e)
+	}
+}
+
 func TestRound2AcknowledgementRemainsResponsiveDuringRecovery(t *testing.T) {
 	for _, phase := range []string{"failed-post", "pending-post", "delivered-post", "failed-poll", "unrelated-post"} {
 		t.Run(phase, func(t *testing.T) {
