@@ -35,25 +35,9 @@ func (p *Processor) raise(ctx context.Context) {
 	}
 	var due []*ledger.ChangeState
 	for _, c := range l.Changes {
-		if !c.Raised.IsZero() {
-			continue
+		if p.dueRaise(c, now) {
+			due = append(due, c)
 		}
-		switch c.Status {
-		case "intent", "pending":
-			if now.Sub(c.Created) < p.opts.StuckAfter {
-				continue
-			}
-		case "unresolved":
-			if c.Cause == "" || c.Cause == causeWithdrawn {
-				continue
-			}
-		default:
-			continue
-		}
-		if tried, ok := p.raiseTried[c.ID]; ok && now.Sub(tried) < raiseRetry {
-			continue
-		}
-		due = append(due, c)
 	}
 	sort.Slice(due, func(i, j int) bool { return earlier(due[i], due[j]) })
 	if len(due) > RaisesPerPass {
@@ -63,23 +47,33 @@ func (p *Processor) raise(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := p.opts.Raise(ctx, p.report(l, c, now)); err != nil {
-			p.raiseTried[c.ID] = now
+		// The calls can take seconds each: report what the change is now.
+		current, err := p.snapshot()
+		if err != nil {
+			return
+		}
+		now := p.opts.Now()
+		c = current.Changes[c.ID]
+		if c == nil || !p.dueRaise(c, now) {
+			continue
+		}
+		if err := p.opts.Raise(ctx, p.report(current, c, now)); err != nil {
+			p.raiseTried[c.ID] = p.opts.Now()
 			p.opts.Logger.Warn("inbound delivery raise failed; retrying in a minute", "change", c.ID)
 			continue
 		}
 		at := p.opts.Now().UTC()
-		err := p.update(func(l *ledger.Ledger) {
+		err = p.update(func(l *ledger.Ledger) {
 			// resolve copies the Unresolved record back into Changes: mark both.
 			for _, records := range []map[string]*ledger.ChangeState{l.Changes, l.Unresolved} {
-				if current := records[c.ID]; current != nil && current.Raised.IsZero() {
-					current.Raised = at
+				if record := records[c.ID]; record != nil && record.Raised.IsZero() {
+					record.Raised = at
 				}
 			}
 		})
 		if err != nil {
 			// The mail went out; gc's dedup key keeps a second send to one mail.
-			p.raiseTried[c.ID] = now
+			p.raiseTried[c.ID] = p.opts.Now()
 			p.opts.Logger.Warn("inbound delivery raise not recorded", "change", c.ID)
 			continue
 		}
@@ -87,8 +81,33 @@ func (p *Processor) raise(ctx context.Context) {
 	}
 }
 
+// dueRaise: in intent or pending for StuckAfter since recorded, or unresolved
+// with a cause other than withdrawn; never raised; not tried in the last minute.
+func (p *Processor) dueRaise(c *ledger.ChangeState, now time.Time) bool {
+	if !c.Raised.IsZero() {
+		return false
+	}
+	switch c.Status {
+	case "intent", "pending":
+		if now.Sub(c.Created) < p.opts.StuckAfter {
+			return false
+		}
+	case "unresolved":
+		if c.Cause == "" || c.Cause == causeWithdrawn {
+			return false
+		}
+	default:
+		return false
+	}
+	tried, ok := p.raiseTried[c.ID]
+	return !ok || now.Sub(tried) >= raiseRetry
+}
+
 func hours(d time.Duration) string {
-	if d%time.Hour == 0 {
+	switch {
+	case d == time.Hour:
+		return "1 hour"
+	case d%time.Hour == 0:
 		return strconv.FormatInt(int64(d/time.Hour), 10) + " hours"
 	}
 	return d.String()
@@ -135,9 +154,12 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 	default:
 		line("State", "unresolved")
 	}
-	if c.Cause == "" {
+	switch {
+	case c.Cause == "":
 		line("Cause", "none recorded")
-	} else {
+	case c.Reason == reasonExhausted:
+		line("Cause", c.Cause+" (gc answered partial four times: a fragment of the message may be in the terminal)")
+	default:
 		line("Cause", c.Cause+" ("+causeMeaning[c.Cause]+")")
 	}
 	if !waiting {
@@ -153,15 +175,22 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		}
 		line("Retrying until", bound)
 	}
+	// Created is when the adapter recorded the change; a catch-up record or a
+	// replay is younger than its message, whose revision may be older.
+	since := c.Created
+	if m := l.Messages[c.Message]; m != nil && !m.Revision.IsZero() && m.Revision.Before(since) {
+		since = m.Revision
+	}
 	read := "gc gchat read --space " + c.Space
 	if thread != "" {
 		read += " --thread " + thread
 	}
-	read += " --since " + c.Created.Add(-time.Hour).UTC().Format(time.RFC3339)
-	b.WriteString("\nRead the message (from an hour before it was recorded): " + read + "\n")
+	read += " --since " + since.Add(-time.Hour).UTC().Format(time.RFC3339)
+	b.WriteString("\nRead the message: " + read + "\n")
+	b.WriteString("If it is not there (an edit or a reaction on an older message), run the same command without --since.\n")
 	b.WriteString("Every delivery the adapter holds: gc gchat status\n")
 	if waiting {
-		b.WriteString("This is the only mail for this message. If it has not landed by " + stop + ", the adapter stops trying and gc gchat status lists it for gc gchat resolve.\n")
+		b.WriteString("No further mail is sent for this message. If it has not landed by " + stop + ", or it ends unresolved for another reason, gc gchat status lists it for gc gchat resolve.\n")
 	} else {
 		b.WriteString("After checking whether the agent has the message:\n")
 		b.WriteString("  gc gchat resolve " + c.ID + " --accept marks it delivered.\n")

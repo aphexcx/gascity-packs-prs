@@ -237,12 +237,15 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 // pass once the first lands. After the pass, outside the gate, Poll raises
 // what is due (see Options.Raise); a raise failure is logged, not returned.
 func (p *Processor) Poll(ctx context.Context) error {
-	err := p.pass(ctx)
+	err := p.Pass(ctx)
 	p.raise(ctx)
 	return err
 }
 
-func (p *Processor) pass(ctx context.Context) error {
+// Pass is Poll without the raise phase, for a caller that answers a request
+// (resolve --replay): a mail must not hold that answer. The app's poll loop
+// raises on its next pass, within seconds.
+func (p *Processor) Pass(ctx context.Context) error {
 	if err := p.enter(ctx); err != nil {
 		return err
 	}
@@ -427,8 +430,9 @@ func unresolvedCause(reason, waiting string) string {
 		if waiting != "" {
 			return waiting
 		}
-		return causeNotDelivered
 	}
+	// Includes a change that met the bound without any answer from gc (gc
+	// down or restarting the whole time): nothing says it was not delivered.
 	return causeUnknown
 }
 
@@ -455,7 +459,7 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 		}
 		l.Counters["turns:"+c.Space]++
 		l.Counters["unconfirmed:"+c.Space]++
-		c.Status, c.Reason = "committed", reasonLanded
+		c.Status, c.Reason, c.Cause = "committed", reasonLanded, ""
 		committed = true
 	})
 	if err == nil && committed {
@@ -1037,6 +1041,8 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 				c.Attempts++
 				c.Reason = ""
 				c.Posted = p.opts.Now().UTC()
+				// This POST uses the next attempt; a later "not delivered" sets a new one.
+				c.NextAttempt = time.Time{}
 				attempted = true
 			}
 		}); err != nil {
@@ -1165,8 +1171,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 					l.Counters["turns:"+c.Space]++
 				}
 			}
-			c.Status = "committed"
-			c.Reason = status
+			c.Status, c.Reason, c.Cause = "committed", status, ""
 		case "pending":
 			// gc has the message in hand; the cause of an earlier wait is past.
 			c.Status, c.Cause = "pending", ""

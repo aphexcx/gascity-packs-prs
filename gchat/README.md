@@ -317,7 +317,7 @@ minutes or more. The adapter mails the identity's agent (`[[identity]].agent`,
 default `mayor`) once about each such message, with the subject `gchat:
 delivery`. The mail names the space, thread, message, cause and age, the time
 the adapter stops retrying, and the commands to read the message and the
-status. A message that becomes unresolved is mailed too, unless it was mailed
+status. No further mail follows for that message, however it ends. A message that becomes unresolved is mailed too, unless it was mailed
 while it waited or its sender withdrew it. The mail never carries the
 message's text, its sender or gc's error text. A mail that fails is tried
 again a minute later. The retry state lives in the ledger: after a restart
@@ -339,7 +339,7 @@ terminal reason omits `; retry pending`.
 | `not_delivered` (or another waiting cause) with `delivery retries exhausted` | gc answered `partial` four times: a fragment may be in the terminal. | Look at the session; `--accept` if the agent has the message, else `--replay`. |
 | `behind_earlier` | It waited 24 hours behind an earlier message of its space and was never posted. | Settle the earlier message, then `--replay`. |
 | `held` | gc holds a paste it cannot finish without an operator. | Look at the session before anything else; `--accept` if the message is there, else `--replay`. |
-| `unknown` | The outcome is not known: a lost POST response, an interrupted POST, a rejected POST, a receipt past its deadline or concluded pending without a whole paste, or a status the adapter does not know. The reason says which. | Check whether the turn arrived; `--accept` if it did, `--replay` if not. |
+| `unknown` | The outcome is not known: a lost POST response, an interrupted POST, a rejected POST, a receipt past its deadline or concluded pending without a whole paste, a status the adapter does not know, or no answer from gc at all for 24 hours (`not delivered within the retry bound` while gc was down). The reason says which. | Check whether the turn arrived; `--accept` if it did, `--replay` if not. |
 | `withdrawn` | The sender deleted or edited the message before it was delivered. | Nothing; it is not mailed. |
 | none | Unresolved before causes were recorded. | Check, then accept or replay; it is not mailed. |
 

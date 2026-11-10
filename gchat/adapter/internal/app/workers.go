@@ -85,7 +85,8 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	if err != nil {
 		return err
 	}
-	a.s.SetPoll(proc.Poll)
+	// resolve --replay answers a request: it runs the pass, not the raise.
+	a.s.SetPoll(proc.Pass)
 	defer a.s.SetPoll(nil)
 	if err = a.retry(ctx, "subscription", func() error {
 		var e error

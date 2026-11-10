@@ -386,7 +386,7 @@ class ProxyCommandsTest(ProxyFixture):
         lines = result.stdout.splitlines()
         self.assertIn("Backlog: 0; pending: 2; unresolved: 1; unrecorded: 0; quarantine: 0; stuck: 1", lines)
         self.assertIn("  intent waiting-id: retry; age 1h2m; cause draft_deferred; next attempt 2026-11-10T21:25:03Z; posts 63", lines)
-        self.assertIn("  intent fresh-id: ; age 1m3s; cause behind_earlier", lines)
+        self.assertIn("  intent fresh-id: ; age 1m3s; cause behind_earlier; posts 0", lines)
         self.assertIn("  unresolved unresolved-id: not delivered within the retry bound; age 25h1m; cause draft_deferred", lines)
 
 

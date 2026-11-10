@@ -380,7 +380,7 @@ func TestStuckChangeIsRaisedOnce(t *testing.T) {
 	}
 	body := got[0].Body
 	for _, want := range []string{space, space + "/threads/topic", messageName, "2026-11-10T20:22:58Z", "draft_deferred", "waiting",
-		"gc gchat read --space " + space + " --thread " + space + "/threads/topic --since 2026-11-10T19:22:58Z", "gc gchat status", "2026-11-11T20:22:58Z"} {
+		"gc gchat read --space " + space + " --thread " + space + "/threads/topic --since 2026-10-22T09:00:00Z", "gc gchat status", "2026-11-11T20:22:58Z"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body lacks %q:\n%s", want, body)
 		}
@@ -772,5 +772,96 @@ func TestPendingRaiseNamesTheReceiptDeadline(t *testing.T) {
 		if !strings.Contains(got[0].Body, want) {
 			t.Fatalf("body lacks %q:\n%s", want, got[0].Body)
 		}
+	}
+}
+
+// Self-review r1 m1: a consumed next_attempt does not linger on a change that
+// is now pending at gc.
+func TestNextAttemptIsClearedOnceUsed(t *testing.T) {
+	rf := retrySetup(t)
+	rf.script(repeat(4, failedWith(draftDeferred), wire.Delivery{Status: "pending"})...)
+	handle(t, rf.fixture, event("pending-after-retries", "message.created", message()))
+	rf.clock.Set(rf.change(t, messageName).NextAttempt)
+	rf.poll(t)
+	if c := rf.change(t, messageName); c.Status != "pending" || !c.NextAttempt.IsZero() || c.Cause != "" {
+		t.Fatalf("pending after retries: %+v", c)
+	}
+}
+
+// Self-review r1 m2: the pass the resolve handler runs does not raise; the
+// raise belongs to the app's own poll loop.
+func TestPassDoesNotRaise(t *testing.T) {
+	rf := retrySetup(t)
+	rf.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "surprise" })
+	handle(t, rf.fixture, event("pass", "message.created", message()))
+	if err := rf.p.Pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := rf.raises.list(); len(got) != 0 {
+		t.Fatalf("Pass raised: %+v", got)
+	}
+	rf.poll(t)
+	if got := rf.raises.list(); len(got) != 1 {
+		t.Fatalf("Poll did not raise: %+v", got)
+	}
+}
+
+// Self-review r1 m3, m4, m5: the mail does not promise one ending, reads
+// from the message's own time when that is older, and does not call a
+// partial fragment "nothing delivered".
+func TestRaiseBodyWording(t *testing.T) {
+	t.Run("waiting", func(t *testing.T) {
+		rf := retrySetup(t)
+		rf.script(repeat(20, failedWith(draftDeferred))...)
+		m := message()
+		m.CreateTime = "2026-11-10T08:00:00Z"
+		handle(t, rf.fixture, &puller.Event{PubSubID: "old", Changes: []puller.Change{{Kind: "message.created", Message: m, Space: space}}})
+		rf.clock.Set(retryStart.Add(2 * time.Minute))
+		rf.poll(t)
+		got := rf.raises.list()
+		if len(got) != 1 {
+			t.Fatalf("raises: %+v", got)
+		}
+		body := got[0].Body
+		for _, want := range []string{"--since 2026-11-10T07:00:00Z", "No further mail", "without --since"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("body lacks %q:\n%s", want, body)
+			}
+		}
+		if strings.Contains(body, "only mail") {
+			t.Fatalf("body promises a single ending:\n%s", body)
+		}
+	})
+	t.Run("partial", func(t *testing.T) {
+		rf := retrySetup(t)
+		rf.script(repeat(4, wire.Delivery{Status: "partial", Members: []wire.DeliveryMember{{Status: "partial", DeliveredBytes: 40, ExpectedBytes: 120}}})...)
+		handle(t, rf.fixture, event("partial", "message.created", message()))
+		rf.poll(t)
+		got := rf.raises.list()
+		if len(got) != 1 || !strings.Contains(got[0].Body, "fragment") || strings.Contains(got[0].Body, "nothing was delivered") {
+			t.Fatalf("partial body: %+v", got)
+		}
+	})
+	t.Run("one hour", func(t *testing.T) {
+		if got := hours(time.Hour); got != "1 hour" {
+			t.Fatalf("hours(1h) = %q", got)
+		}
+	})
+}
+
+// Self-review r1 m6: a change that never got an answer from gc and ends at
+// the bound does not claim gc answered.
+func TestBoundWithoutAnAnswerIsUnknown(t *testing.T) {
+	rf := retrySetup(t)
+	rf.gc.Configure(func(s *fakegc.Server) { s.CityNotRunning = true })
+	if out, _ := rf.p.Handle(context.Background(), event("never-answered", "message.created", message())); out != puller.Nack {
+		t.Fatalf("gc down: %v", out)
+	}
+	rf.clock.Set(retryStart.Add(24 * time.Hour))
+	if err := rf.p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != "not delivered within the retry bound" || c.Cause != "unknown" {
+		t.Fatalf("never answered: %+v", c)
 	}
 }
