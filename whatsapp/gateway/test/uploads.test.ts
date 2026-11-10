@@ -207,4 +207,24 @@ describe("files out", () => {
       expect(cancelled).toBe(true);
     }
   });
+  for (const status of [400, 500, 200]) {
+    it(`keeps a detected excess spent when Meta answers ${status} before another pull`, async () => {
+      const s = setup(), city = await s.enrollCity(), h = headers("image/jpeg", bytes.length - 1);
+      let calls = 0;
+      s.deps.fetch = (async (_url, init) => {
+        calls++;
+        const reader = (init!.body as ReadableStream<Uint8Array>).getReader();
+        await reader.read(); // framing
+        const prefix = await reader.read(); // detect excess but do not pull again
+        expect(prefix.value).toEqual(bytes.subarray(0, bytes.length - 1));
+        return Response.json(status === 200 ? { id: "too-early" } : { error: { code: 100 } }, { status });
+      }) as typeof fetch;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await s.call("POST", "/v1/uploads", { token: city.token, raw: bytes, headers: h });
+        expect(result).toMatchObject({ status: 400, body: { error: "media_length_mismatch" } });
+        expect(result.body.media_id).toBeUndefined();
+      }
+      expect(calls).toBe(1);
+    });
+  }
 });

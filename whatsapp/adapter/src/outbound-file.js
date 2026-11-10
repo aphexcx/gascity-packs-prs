@@ -148,18 +148,32 @@ function compoundKind(b) {
   }
   const fatSectors = new Set(fat);
   if (fat.length !== fatCount || fat.some((sid) => !valid(sid)) || fatSectors.size !== fat.length) return null;
-  const names = [], seen = new Set();
+  const directory = [], seen = new Set();
   let dir = b.readUInt32LE(48);
   while (dir !== 0xfffffffe) {
     if (!valid(dir) || seen.has(dir) || fatSectors.has(dir) || seenDifat.has(dir)) return null;
     seen.add(dir);
     for (let p = at(dir); p < at(dir) + sector; p += 128) {
       const n = b.readUInt16LE(p + 64);
-      if (n >= 2 && n <= 64 && n % 2 === 0 && b[p + 66] === 2) names.push(b.toString('utf16le', p, p + n - 2));
+      directory.push({ name: n >= 2 && n <= 64 && n % 2 === 0 ? b.toString('utf16le', p, p + n - 2) : '',
+        type: b[p + 66], left: b.readUInt32LE(p + 68), right: b.readUInt32LE(p + 72), child: b.readUInt32LE(p + 76) });
     }
     const fatSector = fat[Math.floor(dir / entries)];
     if (fatSector === undefined) return null;
     dir = b.readUInt32LE(at(fatSector) + (dir % entries) * 4);
+  }
+  // Only the root storage's immediate streams identify the outer document.
+  // Embedded Office objects have their own child trees and must not count.
+  if (directory[0]?.type !== 5) return null;
+  const names = [], visited = new Set(), pending = [directory[0].child];
+  while (pending.length) {
+    const id = pending.pop();
+    if (id === 0xffffffff) continue;
+    const entry = directory[id];
+    if (!entry || visited.has(id) || ![1, 2].includes(entry.type) || !entry.name) return null;
+    visited.add(id);
+    if (entry.type === 2) names.push(entry.name);
+    pending.push(entry.left, entry.right);
   }
   const hits = [['WordDocument', 'application/msword'], ['Workbook', 'application/vnd.ms-excel'],
     ['Book', 'application/vnd.ms-excel'], ['PowerPoint Document', 'application/vnd.ms-powerpoint']].filter(([n]) => names.includes(n));

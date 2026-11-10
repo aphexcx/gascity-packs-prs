@@ -216,6 +216,9 @@ key resumes without repeating either successful operation. A changed file
 conflicts. A failed upload sends nothing; an uncertain Meta outcome stays
 spent under that key and requires an operator check before any new key.
 The transcript names the file and its byte count/SHA256, never its bytes.
+File recovery records remain in the journal for 30 days after their last
+update, covering the gateway's idempotency horizon; text's seven-day/1,024
+entry pruning never evicts them. File records are bounded by age, not count.
 An expired/missing handle is a permanent `media_expired` receipt with guidance
 to check the chat before starting a new key. The adapter still asks for a
 completed send's stored answer first, so a delivered file is recovered even

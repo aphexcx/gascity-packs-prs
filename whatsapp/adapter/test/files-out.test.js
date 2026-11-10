@@ -211,6 +211,43 @@ for (const [name, mime] of [['WordDocument', 'application/msword'], ['Workbook',
     bytes.writeUInt32LE(9999, 1032); assert.equal(sniffMime(bytes), null, 'out-of-file chains are refused');
   });
 }
+test('legacy Office identifies root streams and ignores embedded Office storage children', () => {
+  const bytes = legacyOffice('WordDocument');
+  // Root's child tree contains the Word stream (entry 4) and an embedded
+  // storage (entry 1). The Workbook (entry 2) is that storage's child only.
+  const entry = (id, name, type, child = 0xffffffff) => {
+    const p = 512 + id * 128, text = Buffer.from(`${name}\0`, 'utf16le');
+    text.copy(bytes, p); bytes.writeUInt16LE(text.length, p + 64); bytes[p + 66] = type;
+    bytes.writeUInt32LE(0xffffffff, p + 68); bytes.writeUInt32LE(0xffffffff, p + 72); bytes.writeUInt32LE(child, p + 76);
+  };
+  entry(1, 'EmbeddedObject', 1, 2); entry(2, 'Workbook', 2);
+  bytes.writeUInt32LE(1, 1536 + 72);
+  assert.equal(sniffMime(bytes), 'application/msword');
+  bytes.writeUInt32LE(4, 512 + 128 + 72);
+  assert.equal(sniffMime(bytes), null, 'cycles in root sibling trees are refused');
+});
+test('file receipts survive age and count pruning to recover after the window closes', async (t) => {
+  const { r, publish } = await direct(t), body = request(write(r.dir, 'photo.jpg'), 'retained-file');
+  const first = await publish(body);
+  r.clock.advance(8 * 86400000);
+  const journalPath = path.join(r.dir, PROGRESS_FILE), saved = JSON.parse(fs.readFileSync(journalPath));
+  for (let i = 0; i < 1025; i++) saved.entries[`text-${i}`] = { endpoint: 'text', updated_at: r.clock.now() };
+  fs.writeFileSync(journalPath, JSON.stringify(saved));
+  const gateway = createGatewayClient({ url: r.gw.url, credential: CREDENTIAL });
+  const make = () => createPublisher({ stateDir: r.dir, cityDir: r.dir, city: CITY, clock: r.clock.now, gateway,
+    gc: { recordOutbound: async () => ({ TranscriptEntry: {} }) } });
+  const other = '5511900000002'; r.gw.bound.add(other); r.gw.lastInbound.set(other, r.clock.now());
+  const text = { session_id: 'session-test', conversation: { conversation_id: other }, text: 'Trigger pruning', idempotency_key: 'pruner' };
+  assert.equal((await make().handlePublish(JSON.stringify(text))).json.delivered, true);
+  const pruned = JSON.parse(fs.readFileSync(journalPath));
+  assert.ok(pruned.entries['retained-file']);
+  assert.equal(Object.values(pruned.entries).filter((e) => e.endpoint !== 'file').length, 1024);
+  const recovered = await make().handlePublish(JSON.stringify(body));
+  assert.equal(recovered.json.message_id, first.json.message_id);
+  assert.equal(recovered.json.delivered, true);
+  assert.equal(r.gw.uploadCalls.length, 1);
+  assert.equal(r.gw.sends.length, 2); // the file and the other owner's text only
+});
 test('an expired journal handle is permanent, but a completed send is still recovered', async (t) => {
   const { r, publish } = await direct(t), file = write(r.dir, 'photo.jpg'), body = request(file, 'expired-key');
   await publish(body);

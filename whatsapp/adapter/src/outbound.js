@@ -153,7 +153,10 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 
 // The per-key progress store: key -> {endpoint, conversation_id, text_sha256,
 // transcript_sha256?, chunks, delivered, message_ids, receipt?, recording?,
-// updated_at}. Bounded by age and count; rewritten atomically on change.
+// updated_at}. Text entries are bounded by age and count. File recovery records
+// stay for the gateway's 30-day idempotency horizon and are never count-evicted:
+// losing a handle would prevent recovery while the owner's window is closed.
+// Rewritten atomically on change; no media bytes are stored here.
 // An entry written before gp-g02t names its conversation under wa_id, that
 // field's old name; the value was always the conversation id gc (or the
 // operator's --to) named, and entryConversation reads either.
@@ -175,11 +178,13 @@ function createProgressStore({ file, clock, log, cap = 1024, ttlMs = 7 * DAY_MS 
   const prune = () => {
     const now = clock();
     for (const [key, e] of entries) {
-      if (now - (Number(e.updated_at) || 0) > ttlMs) entries.delete(key);
+      const retention = e.endpoint === 'file' ? 30 * DAY_MS : ttlMs;
+      if (now - (Number(e.updated_at) || 0) > retention) entries.delete(key);
     }
-    if (entries.size > cap) {
-      const oldest = [...entries.entries()].sort((a, b) => (a[1].updated_at || 0) - (b[1].updated_at || 0));
-      for (const [key] of oldest.slice(0, entries.size - cap)) entries.delete(key);
+    const counted = [...entries.entries()].filter(([, e]) => e.endpoint !== 'file');
+    if (counted.length > cap) {
+      const oldest = counted.sort((a, b) => (a[1].updated_at || 0) - (b[1].updated_at || 0));
+      for (const [key] of oldest.slice(0, counted.length - cap)) entries.delete(key);
     }
   };
 

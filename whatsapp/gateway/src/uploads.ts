@@ -46,6 +46,9 @@ export function multipartStream(input: ReadableStream<Uint8Array>, length: numbe
         const remaining = length - state.forwarded;
         const count = Math.min(remaining, next.value.byteLength);
         excess = next.value.byteLength > remaining;
+        // An early Meta response can arrive before another pull. Persist the
+        // observation now, while deferring stream failure until after the prefix.
+        if (excess) state.mismatch = true;
         // The permitted prefix is delivered before the next pull reports excess.
         if (count > 0) { controller.enqueue(next.value.subarray(0, count)); state.forwarded += count; }
         else if (excess) throw new Error("media_length_mismatch");
