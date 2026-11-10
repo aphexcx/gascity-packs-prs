@@ -457,12 +457,14 @@ func TestRound2ReactionsReturnToSideLane(t *testing.T) {
 	p := testPending("C1", "100.1", "reaction")
 	p.reaction = true
 	cfg.coalescer.charge("C1", p, &unvouchedDeliveryError{receipt: recoveryReceipt("bad", "s1", false)})
-	if r.known("C1", "100.1") {
-		t.Fatal("unvouched reaction entered timed ladder")
+	if !r.known("C1", "100.1") || r.deliveryBlocked("C1", "100.1") {
+		t.Fatal("unvouched reaction lacks its durable no-wake owner")
 	}
 	if len(cfg.coalescer.reactions["C1"]) != 1 {
 		t.Fatal("reaction did not return to no-wake side buffer")
 	}
+	// Simulate the side-buffer copy being taken by its next real delivery.
+	cfg.coalescer.reactions["C1"] = nil
 	receipt := deliveryReceipt{present: true, id: "pending", status: "pending"}
 	if err := r.hold(p, receipt, false); err != nil {
 		t.Fatal(err)

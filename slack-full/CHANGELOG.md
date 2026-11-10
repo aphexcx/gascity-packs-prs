@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Explicit replay permission is saved before queue acceptance and survives FIFO
   waits; recovered hourglasses wait for the original HOLD cleanup to finish.
   A later held line cannot shorten a rearmed history replay's cooldown.
+  Immediately failed reactions retain durable no-wake ownership across crashes
+  and shutdown spooling. Redrive acceptance is serialized with retry outcomes,
+  and every alias retarget removes the departing destination's routing record.
   Optional fields
   and rollback decoder compatibility are documented in the README.
 

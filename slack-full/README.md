@@ -427,8 +427,10 @@ reactions never count toward that threshold or arm a solo retry, even with a
 zero coalescing window. Pending reactions are polled and never sent alone.
 The ownership handoff is serialized with channel delivery so a concurrent flush
 cannot discard the only reaction copy.
-Recovery retains a durable mirror until the piggyback completes and appends its
-completion to existing dead-letter history. A new pending receipt replaces the
+Recovery persists a durable mirror even for an immediately failed reaction,
+before returning it to the side buffer. Restarts and shutdown spool replay use
+that mirror to retain one no-wake owner. Recovery keeps it until the piggyback
+completes and appends completion to existing dead-letter history. A new receipt replaces the
 old one; its generation prevents a delayed history write from reviving an older
 receipt. Complete paste evidence, including mixed fanout, prevents another send.
 
@@ -467,10 +469,13 @@ counts. Refused, unpollable and incomplete records remain excluded even with
 this flag. History is never deleted. Trigger logs count records left unreplayed
 for age and name the oldest timestamp. The admin route's 202
 means the replay permission and deadline are durably queued, including when an
-earlier pending receipt delays the attempt. Replays preserve ordering and message-ID dedup, prepend
+earlier pending receipt delays the attempt. Queue acceptance waits for any
+in-flight recovery attempt to save its outcome, so it cannot overwrite a newer
+age permission. Replays preserve ordering and message-ID dedup, prepend
 `[delivered late: dead-lettered at <time>]`, and append a `replayed_at` history
 record on completion. Alias replay resolves the handle's current session,
-logging both destinations when changed. A pending alias first polls its saved
+logging both destinations and removing the departing destination's provisional
+routing record on every change. A pending alias first polls its saved
 receipt; after proven loss, it refreshes the destination and FIFO before any
 replacement send. Its mention-only routing record remains
 provisional while held, is removed on refusal/dead-letter, and becomes confirmed
@@ -511,7 +516,7 @@ decoders accept them; absent/zero values preserve the previous stored facts.
 | Entry and history | `replay_blocked_reason` | Empty permits existing eligibility; nonempty requires a hand check and prevents replay/FIFO blocking |
 | Entry and history | `acknowledged_at` | Zero means unacknowledged; nonzero removes outstanding counts and replay eligibility |
 | Entry and history | `busy_reaction` | False adds no recovery hourglass; true restores the cancelled eligible affordance; reply completion clears the state intent durably |
-| Entry and history | `reaction_receipt_generation` | Zero is the initial/legacy receipt; increases when a buffered reaction acquires a new pending receipt so older history writes cannot replace it |
+| Entry and history | `reaction_receipt_generation` | Zero is the initial/legacy receipt; increases when a buffered reaction acquires a new receipt so older history writes cannot replace it |
 | Entry and history | `alias_original_session_id` | Empty uses the existing alias ID as identity; otherwise preserves dedup identity after retargeting |
 | Entry | `last_attempt_at` | Zero means no recorded recovery send; otherwise its latest time |
 | Entry | `replay_include_older` | False enforces the age horizon; true preserves a deliberately queued older replay through ordering and pending receipt checks, then clears on a failed concluded attempt |

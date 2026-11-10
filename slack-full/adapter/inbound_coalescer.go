@@ -1653,6 +1653,10 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 	}
 	p.reaction = true
 	c.mu.Lock()
+	if c.recovery.known(channel, p.inbound.ProviderMessageID) {
+		c.mu.Unlock()
+		return true
+	}
 	// A copy of a reaction the ladder RETIRED (dead-lettered, by its own
 	// event identity) is a duplicate of a handled event, exactly like a
 	// retired message's copy at enqueue (codex r14 finding 2): the

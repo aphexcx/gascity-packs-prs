@@ -85,6 +85,10 @@ func installInboundRecovery(cfg *config) error {
 		}
 		return cfg.handleAliases.Get(handle)
 	}
+	r.forgetAliasRoute = func(e inboundRecoveryEntry) {
+		bindings := cfg.mentionOnly.ForChannel(e.Inbound.Conversation.ConversationID)
+		forgetAliasDeliveryForMentionOnly(*cfg, bindings, e.AliasSessionID, e.Inbound)
+	}
 	if cfg.inboundLiveness != nil {
 		cfg.inboundLiveness.cfg.inboundRecovery = r
 	}
@@ -366,27 +370,28 @@ type inboundRecoveryState struct {
 }
 
 type inboundRecovery struct {
-	coalescer     *inboundCoalescer
-	busyMarks     *busyReactionRegistry
-	mu, runMu     sync.Mutex
-	state         inboundRecoveryState
-	path          string
-	deadDir       string
-	ceiling       time.Duration
-	bound         time.Duration
-	replayMaxAge  time.Duration
-	gated         bool
-	now           func() time.Time
-	send          func(inboundRecoveryEntry) (deliveryReceipt, error)
-	poll          receiptPollFunc
-	notice        func(channel, thread, ts, text string) (string, error)
-	journal       func(inboundRecoveryEntry, deliveryReceipt)
-	finished      func(inboundRecoveryEntry)
-	resolveAlias  func(string) (string, bool)
-	counted       map[string]bool
-	missesPending uint64
-	dirty         bool
-	stopping      func() bool
+	coalescer        *inboundCoalescer
+	busyMarks        *busyReactionRegistry
+	mu, runMu        sync.Mutex
+	state            inboundRecoveryState
+	path             string
+	deadDir          string
+	ceiling          time.Duration
+	bound            time.Duration
+	replayMaxAge     time.Duration
+	gated            bool
+	now              func() time.Time
+	send             func(inboundRecoveryEntry) (deliveryReceipt, error)
+	poll             receiptPollFunc
+	notice           func(channel, thread, ts, text string) (string, error)
+	journal          func(inboundRecoveryEntry, deliveryReceipt)
+	finished         func(inboundRecoveryEntry)
+	resolveAlias     func(string) (string, bool)
+	forgetAliasRoute func(inboundRecoveryEntry)
+	counted          map[string]bool
+	missesPending    uint64
+	dirty            bool
+	stopping         func() bool
 	// One worker owns retries and redrives. Success observations only enqueue
 	// session IDs; they never acquire a channel lock inside a delivery callback.
 	wake               chan struct{}
@@ -551,13 +556,6 @@ func (r *inboundRecovery) isNotice(channel, ts string) bool {
 // A nil error confirms durability. On write failure recovery still owns the
 // payload AND receipt in memory, and tick retries persistence independently.
 func (r *inboundRecovery) hold(p pendingChannelInbound, receipt deliveryReceipt, rendered bool, busy ...bool) error {
-	if p.reaction && receipt.verdict(r.gated) != receiptHeld && !receipt.landedUnconfirmed() {
-		if r.coalescer != nil {
-			p.reactionNoWake = true
-			r.coalescer.restore(p.inbound.Conversation.ConversationID, []pendingChannelInbound{p})
-		}
-		return nil
-	}
 	if err := r.holdEntry(inboundRecoveryEntry{Inbound: redactInboundMessage(p.inbound), Parts: captureRecoveryParts(p), Reaction: p.reaction, Rendered: rendered, BusyReaction: len(busy) > 0 && busy[0]}, receipt); err != nil {
 		return err
 	}
@@ -566,6 +564,10 @@ func (r *inboundRecovery) hold(p pendingChannelInbound, receipt deliveryReceipt,
 		r.mu.Lock()
 		e := r.state.Entries[key]
 		r.mu.Unlock()
+		if receipt.verdict(r.gated) != receiptHeld && !receipt.landedUnconfirmed() && r.coalescer != nil {
+			// charge retains the channel delivery lock through this handoff.
+			return r.queueReaction(key, e)
+		}
 		if e.CompletionPending {
 			if err := r.writeDead(e, e.DeliveredAt); err != nil {
 				return err
@@ -638,7 +640,7 @@ func (r *inboundRecovery) holdEntry(e inboundRecoveryEntry, receipt deliveryRece
 		if !e.Reaction || !r.queuedReactions[key] {
 			return r.saveLocked()
 		}
-		// A queued reaction acquired a new pending receipt. Keep its
+		// A queued reaction acquired a new receipt. Keep its
 		// original history identity while returning ownership to polling.
 		e.HeldAt, e.DeadLetteredAt = cur.HeldAt, cur.DeadLetteredAt
 		e.OriginalReceiptID, e.Attempts = cur.OriginalReceiptID, cur.Attempts
@@ -1270,41 +1272,9 @@ func (r *inboundRecovery) tick(startup bool) {
 				// A flush must not consume the restored reaction before the
 				// delivery filter permits its side-buffer copy to be sent.
 				release := r.coalescer.holdDelivery(e.Inbound.Conversation.ConversationID)
-				// Keep the durable mirror until piggyback delivery completes.
-				// Otherwise an unresolved history row would resurrect it later.
-				e.CompletionPending = !e.DeadLetteredAt.IsZero()
-				r.put(key, e)
-				if e.CompletionPending {
-					if err := r.writeDead(e, time.Time{}); err != nil {
-						log.Printf("inbound reaction handoff persist: %v", err)
-						release()
-						continue
-					}
-					r.historyWritten(key, e)
+				if err := r.queueReaction(key, e); err != nil {
+					log.Printf("inbound reaction handoff persist: %v", err)
 				}
-				r.mu.Lock()
-				e = r.state.Entries[key]
-				if e.inactive() || e.PendingReceipt {
-					r.mu.Unlock()
-					release()
-					continue
-				}
-				if r.dirty {
-					if err := r.saveLocked(); err != nil {
-						r.mu.Unlock()
-						release()
-						continue
-					}
-				}
-				if r.queuedReactions == nil {
-					r.queuedReactions = map[string]bool{}
-				}
-				r.queuedReactions[key] = true
-				r.mu.Unlock()
-				p := e.pending()
-				p.reactionNoWake = true
-				p.inbound.originalReceiptID = e.OriginalReceiptID
-				r.coalescer.restore(e.Inbound.Conversation.ConversationID, []pendingChannelInbound{p})
 				release()
 			}
 			continue
@@ -1575,6 +1545,44 @@ func (r *inboundRecovery) historyWritten(key string, written inboundRecoveryEntr
 	}
 }
 
+// queueReaction runs under the channel delivery lock. The durable mirror
+// owns the payload before its no-wake copy becomes eligible for piggyback.
+func (r *inboundRecovery) queueReaction(key string, e inboundRecoveryEntry) error {
+	if e.inactive() || e.PendingReceipt {
+		return nil
+	}
+	e.CompletionPending = !e.DeadLetteredAt.IsZero()
+	r.put(key, e)
+	if e.CompletionPending {
+		if err := r.writeDead(e, time.Time{}); err != nil {
+			return err
+		}
+		r.historyWritten(key, e)
+	}
+	r.mu.Lock()
+	e = r.state.Entries[key]
+	if e.inactive() || e.PendingReceipt {
+		r.mu.Unlock()
+		return nil
+	}
+	if r.dirty {
+		if err := r.saveLocked(); err != nil {
+			r.mu.Unlock()
+			return err
+		}
+	}
+	if r.queuedReactions == nil {
+		r.queuedReactions = map[string]bool{}
+	}
+	r.queuedReactions[key] = true
+	r.mu.Unlock()
+	p := e.pending()
+	p.reactionNoWake = true
+	p.inbound.originalReceiptID = e.OriginalReceiptID
+	r.coalescer.restore(e.Inbound.Conversation.ConversationID, []pendingChannelInbound{p})
+	return nil
+}
+
 // Buffered reactions retain a durable recovery mirror until their next real
 // piggyback proves delivery. This callback runs under channel delivery ownership.
 func (r *inboundRecovery) completeBufferedReactions(batch []pendingChannelInbound, receipt deliveryReceipt) {
@@ -1635,6 +1643,9 @@ func (r *inboundRecovery) completeBufferedReactions(batch []pendingChannelInboun
 func (r *inboundRecovery) resolveRecoveryAlias(e inboundRecoveryEntry) inboundRecoveryEntry {
 	if e.AliasHandle != "" && !e.PendingReceipt && r.resolveAlias != nil {
 		if id, ok := r.resolveAlias(e.AliasHandle); ok && id != e.AliasSessionID {
+			if r.forgetAliasRoute != nil {
+				r.forgetAliasRoute(e)
+			}
 			log.Printf("inbound replay: handle=%s session=%s -> %s", e.AliasHandle, e.AliasSessionID, id)
 			if e.AliasOriginalSessionID == "" {
 				e.AliasOriginalSessionID = e.AliasSessionID
@@ -2025,6 +2036,10 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 		writeAdminJSON(w, http.StatusOK, map[string]any{"conversation_id": body.ConversationID, "acknowledged": n})
 		return
 	}
+	// Acceptance must follow any in-flight retry's state update. Otherwise
+	// its stale copy can overwrite this command's persisted age permission.
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
 	r.mu.Lock()
 	count, skipped := 0, 0
 	var selected []string

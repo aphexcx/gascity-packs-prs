@@ -540,6 +540,75 @@ func TestRound2FailedNoticeEditEndsAtBound(t *testing.T) {
 	}
 }
 
+func TestRound2RepeatedAliasRetargetRemovesDepartingRoutes(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restart=%v", restart), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				status, session := "failed", "b"
+				if strings.Contains(req.URL.Path, "/session/c/messages") {
+					status, session = "delivered", "c"
+				}
+				fmt.Fprintf(w, `{"delivery":{"receipt_id":%q,"status":%q,"members":[{"session_id":%q,"status":%q}]}}`, session, status, session, status)
+			}))
+			defer srv.Close()
+			cfg := recoveryTestConfig(t, srv.URL)
+			cfg.mentionOnly, _ = newMentionOnlyRegistry("")
+			cfg.mentionOnlyDeliveries = newMentionOnlyDeliveryLog()
+			cfg.handleAliases = newTestHandleAliasRegistry(t)
+			for _, id := range []string{"a", "b", "c"} {
+				if err := cfg.mentionOnly.Set("C1", mentionOnlyBinding{SessionID: id, SessionName: id, Handle: id}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := cfg.handleAliases.Set("mayor", "a"); err != nil {
+				t.Fatal(err)
+			}
+			if err := installInboundRecovery(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			r := cfg.inboundRecovery
+			r.now = func() time.Time { return now }
+			msg := testPending("C1", "100.1", "retargeted alias").inbound
+			bindings := cfg.mentionOnly.ForChannel("C1")
+			recordAliasDeliveryForMentionOnly(cfg, bindings, "a", msg, true)
+			if err := r.holdAlias(msg, "a", "mayor", "body", recoveryReceipt("a", "a", false)); err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range []string{"b", "c"} {
+				if id == "c" && restart {
+					if err := installInboundRecovery(&cfg); err != nil {
+						t.Fatal(err)
+					}
+					r = cfg.inboundRecovery
+					r.now = func() time.Time { return now }
+				}
+				if err := cfg.handleAliases.Set("mayor", id); err != nil {
+					t.Fatal(err)
+				}
+				now = now.Add(time.Minute)
+				r.observe(recoveryReceipt("vouch", id, true))
+				r.tick(false)
+				if id == "b" {
+					rows := cfg.mentionOnlyDeliveries.forSession("b")
+					if len(rows) != 1 || !rows[0].Provisional {
+						t.Fatalf("fixture did not retain B provisional route: %+v", rows)
+					}
+				}
+			}
+			for _, id := range []string{"a", "b"} {
+				if rows := cfg.mentionOnlyDeliveries.forSession(id); len(rows) != 0 {
+					t.Fatalf("departed session %s retained routing: %+v", id, rows)
+				}
+			}
+			rows := cfg.mentionOnlyDeliveries.forSession("c")
+			if len(rows) != 1 || rows[0].Provisional || rows[0].TS != "100.1" {
+				t.Fatalf("current delivered route missing: %+v", rows)
+			}
+		})
+	}
+}
+
 func TestRound2RetargetHistoryKeepsOriginalDedup(t *testing.T) {
 	r, now := round2Recovery(t)
 	msg := testPending("C1", "100.1", "alias").inbound
@@ -557,6 +626,76 @@ func TestRound2RetargetHistoryKeepsOriginalDedup(t *testing.T) {
 	}
 	if len(rebuilt.state.Entries) != 1 || rebuilt.state.Entries["C1|100.1|alias:old"].DeliveredAt.IsZero() {
 		t.Fatalf("retarget duplicated history: %+v", rebuilt.state.Entries)
+	}
+}
+
+func TestRound2ImmediateReactionFailureSurvivesRestart(t *testing.T) {
+	for _, spooled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("spooled=%v", spooled), func(t *testing.T) {
+			var posts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				posts.Add(1)
+				fmt.Fprint(w, `{"delivery":{"receipt_id":"done","status":"delivered","members":[{"session_id":"s1","status":"delivered"}]}}`)
+			}))
+			defer srv.Close()
+			cfg := recoveryTestConfig(t, srv.URL)
+			r := cfg.inboundRecovery
+			now := time.Now()
+			r.now = func() time.Time { return now }
+			count := 1
+			if spooled {
+				count = maxBufferedReactionsPerChannel
+			}
+			for i := 0; i < count; i++ {
+				p := testPending("C1", fmt.Sprintf("100.%03d", i), "durable failed reaction")
+				p.reaction = true
+				if err := r.hold(p, recoveryReceipt("failed", "s1", false), false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(cfg.coalescer.reactions["C1"]) != count {
+				t.Fatal("immediate failures did not return to the side lane")
+			}
+			spool := newInboundSpool(filepath.Join(t.TempDir(), "shutdown.jsonl"))
+			if spooled && !spool.spillBatch("C1", cfg.coalescer.reactions["C1"]) {
+				t.Fatal("could not spool shutdown copies")
+			}
+			// Discard the old process's volatile buffer without a flush.
+			cfg.coalescer.reactions["C1"] = nil
+			fresh := coalescingTestConfig(srv.URL, time.Hour)
+			fresh.cityPath, fresh.inboundDeadLetterDir = cfg.cityPath, cfg.inboundDeadLetterDir
+			fresh.deliveryReceiptGate = true
+			if err := installInboundRecovery(&fresh); err != nil {
+				t.Fatal(err)
+			}
+			fresh.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
+				return deliverCoalescedBatch(fresh, channel, batch)
+			}
+			t.Cleanup(func() { fresh.coalescer.flushAll() })
+			if len(fresh.inboundRecovery.state.Entries) != count {
+				t.Fatal("crash lost immediately failed reaction ownership")
+			}
+			if spooled {
+				if _, err := spool.replay(fresh.coalescer); err != nil {
+					t.Fatal(err)
+				}
+				if len(fresh.coalescer.reactions["C1"]) != 0 {
+					t.Fatal("spool bypassed durable reaction admission dedup")
+				}
+			}
+			now = now.Add(time.Minute)
+			fresh.inboundRecovery.now = func() time.Time { return now }
+			fresh.inboundRecovery.tick(true)
+			fresh.coalescer.admitReaction("C1", testPending("C1", "100.000", "duplicate event"), false)
+			if len(fresh.coalescer.reactions["C1"]) != count || fresh.coalescer.timerWorthyLocked("C1") || posts.Load() != 0 {
+				t.Fatal("restart lost no-wake ownership or duplicated the reaction")
+			}
+			fresh.coalescer.enqueue("C1", testPending("C1", "200.1", "fresh human line"))
+			fresh.coalescer.flushAheadOf("C1", "300.1")
+			if posts.Load() != 1 || len(fresh.coalescer.reactions["C1"]) != 0 {
+				t.Fatal("restored reactions failed to piggyback exactly once")
+			}
+		})
 	}
 }
 
@@ -1302,6 +1441,74 @@ func TestRound2ExplicitOlderReplayPreviewAndEligibility(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "verb channel=C1 include_older=true replay_count=1 skipped_for_age=0") {
 		t.Fatalf("missing operator audit: %s", logs.String())
+	}
+}
+
+func TestRound2RedriveAcceptanceFollowsInflightRetry(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending=%v", pending), func(t *testing.T) {
+			r, now := round2Recovery(t)
+			round2Hold(t, r, "100.1")
+			e := r.state.Entries["C1|100.1"]
+			e.DeadLetteredAt = *now
+			e.NextAttemptAt = time.Time{}
+			r.put("C1|100.1", e)
+			entered, release, tickDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+				close(entered)
+				<-release
+				if pending {
+					return deliveryReceipt{present: true, id: "inflight", status: "pending", targetSessionID: "s1"}, nil
+				}
+				return deliveryReceipt{}, &inboundPostError{Status: 503, StatusText: "unavailable"}
+			}
+			go func() { r.tick(true); close(tickDone) }()
+			<-entered
+			response := httptest.NewRecorder()
+			requestDone := make(chan struct{})
+			go func() {
+				r.handleRedrive(response, httptest.NewRequest(http.MethodPost, "/internal/inbound/redrive", strings.NewReader(`{"conversation_id":"C1","include_older":true}`)))
+				close(requestDone)
+			}()
+			acceptedEarly := false
+			select {
+			case <-requestDone:
+				acceptedEarly = true
+			case <-time.After(time.Second):
+			}
+			close(release)
+			<-tickDone
+			<-requestDone
+			if acceptedEarly {
+				t.Fatal("redrive accepted permission before the in-flight retry settled")
+			}
+			if response.Code != http.StatusAccepted {
+				t.Fatal(response.Body.String())
+			}
+			var result map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			restarted, err := newInboundRecovery(r.path, r.deadDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := restarted.state.Entries["C1|100.1"]
+			if pending {
+				if result["replay_count"] != float64(0) || !stored.PendingReceipt || stored.PendingReceiptID != "inflight" {
+					t.Fatalf("pending outcome was incorrectly queued: result=%v entry=%+v", result, stored)
+				}
+			} else if result["replay_count"] != float64(1) || !stored.ReplayIncludeOlder || stored.NextAttemptAt.IsZero() {
+				t.Fatalf("accepted override lost across restart: result=%v entry=%+v", result, stored)
+			}
+		})
 	}
 }
 

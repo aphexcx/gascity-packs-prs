@@ -175,9 +175,10 @@ retries only definite non-delivery, polls outstanding receipts, and excludes
 unpollable or refused records from automatic sends. Its status posts are
 adapter-authored, never session acts or own-thread evidence. A terminal handoff
 notice does not prove submission or reading. Dead letters older than the
-configured 24h replay limit remain recorded and never replay, even by the
-redrive verb; an operator can acknowledge a hand-checked line without deleting
-its history. See the README's held-delivery section for clocks, notice bounds,
+configured 24h replay limit remain recorded and are skipped by automatic replay
+and bare redrive. Explicit `--include-older` previews the eligible count before
+requesting older replay. An operator can acknowledge a hand-checked line without
+deleting its history. See the README's held-delivery section for clocks, notice bounds,
 counts, additive state fields and acknowledgement syntax.
 
 The observer starts with the adapter by default. Set
