@@ -319,7 +319,7 @@ func TestRound2NoticeBackoffAndIncidentEnd(t *testing.T) {
 	}
 }
 
-// P6 and mayor's stricter age ruling: even the verb cannot replay an old record.
+// P6: startup and the bare verb cannot replay an old record.
 func TestRound2ReplayAgeAndNoImportedNotice(t *testing.T) {
 	r, now := round2Recovery(t)
 	for i, age := range []time.Duration{time.Hour, 30 * 24 * time.Hour} {

@@ -45,11 +45,47 @@ def _mod():
 
 def test_inbound_redrive_queues_channel(monkeypatch, capsys) -> None:
     mod = _mod()
-    calls = _mock_conn(mod, monkeypatch, [(202, {"status": "queued"})])
+    calls = _mock_conn(mod, monkeypatch, [
+        (200, {"replay_count": 1, "skipped_for_age": 2,
+               "oldest_skipped_at": "2026-10-01T00:00:00Z"}),
+        (202, {"status": "queued"}),
+    ])
     assert mod.main(["inbound-redrive", "--conversation-id", "C123"]) == 0
     assert calls[0]["url"] == "/internal/inbound/redrive"
-    assert calls[0]["body"] == {"conversation_id": "C123"}
-    assert "queued" in capsys.readouterr().out
+    assert calls[0]["body"] == {"conversation_id": "C123", "preview": True}
+    assert calls[1]["body"] == {"conversation_id": "C123"}
+    out = capsys.readouterr().out
+    assert '"skipped_for_age": 2' in out
+    assert "2026-10-01T00:00:00Z" in out
+    assert "queued" in out
+
+
+def test_inbound_redrive_include_older_prints_before_queue(monkeypatch, capsys) -> None:
+    mod = _mod()
+    calls = []
+
+    def request(method, path, payload):
+        calls.append(payload)
+        if payload.get("preview"):
+            assert payload["include_older"] is True
+            return 200, {"replay_count": 2, "skipped_for_age": 0}
+        assert '"replay_count": 2' in capsys.readouterr().out
+        assert payload == {"conversation_id": "C123", "include_older": True}
+        return 202, {"status": "queued"}
+
+    monkeypatch.setattr(mod, "_internal_request", request)
+    assert mod.main(["inbound-redrive", "--conversation-id", "C123",
+                     "--include-older"]) == 0
+    assert len(calls) == 2
+
+
+def test_inbound_redrive_preview_failure_never_queues(monkeypatch, capsys) -> None:
+    mod = _mod()
+    calls = _mock_conn(mod, monkeypatch, [(500, {"error": "unavailable"})])
+    assert mod.main(["inbound-redrive", "--conversation-id", "C123",
+                     "--include-older"]) == 1
+    assert len(calls) == 1
+    assert calls[0]["body"]["preview"] is True
 
 
 def test_inbound_acknowledge_records_message(monkeypatch, capsys) -> None:

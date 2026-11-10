@@ -392,7 +392,7 @@ run in order in the same tick.
 | `SLACK_INBOUND_HOLD_CEILING` | `15m` | Maximum interval between reposts |
 | `SLACK_INBOUND_HOLD_BOUND` | `30m` | Hold bound, including a final send or receipt poll |
 | `SLACK_INBOUND_HOLD_NOTICE` | `on` | `off/0/false/no` disable; `on/1/true/yes` or empty enable; trimmed and case-insensitive; other values fail startup |
-| `SLACK_INBOUND_REPLAY_MAX_AGE` | `24h` | Positive duration limiting dead-letter replay; `0` or `off` disables replay |
+| `SLACK_INBOUND_REPLAY_MAX_AGE` | `24h` | Positive duration limiting automatic and bare-command replay; `0` or `off` disables those paths |
 
 The queue persists in `.gc/slack/inbound-holds/state.json`, retaining original
 receipts, targets and deadlines across restart. Pending receipts use their own
@@ -439,9 +439,13 @@ eligible line.
 
 Dead letters within the configured age limit replay at startup, on a vouched
 delivery to their target, or through
-`gc slack inbound-redrive --conversation-id C…`. Older records are never
-replayed, including by that verb, and never deleted. Trigger logs count those
-left unreplayed for age and name the oldest timestamp. The admin route's 202
+`gc slack inbound-redrive --conversation-id C…`. The bare verb prints how many
+records it skips for age and the oldest skipped timestamp. To deliberately
+replay older history, use `--include-older`; the CLI previews and flushes the
+eligible count before requesting replay. The service log records the flag and
+counts. Refused, unpollable and incomplete records remain excluded even with
+this flag. History is never deleted. Trigger logs count records left unreplayed
+for age and name the oldest timestamp. The admin route's 202
 means queued. Replays preserve ordering and message-ID dedup, prepend
 `[delivered late: dead-lettered at <time>]`, and append a `replayed_at` history
 record on completion. Alias replay resolves the handle's current session,
@@ -480,6 +484,7 @@ decoders accept them; absent/zero values preserve the previous stored facts.
 | Entry and history | `busy_reaction` | False adds no recovery hourglass; true restores the cancelled eligible affordance |
 | Entry and history | `alias_original_session_id` | Empty uses the existing alias ID as identity; otherwise preserves dedup identity after retargeting |
 | Entry | `last_attempt_at` | Zero means no recorded recovery send; otherwise its latest time |
+| Entry | `replay_include_older` | False enforces the age horizon; true preserves a deliberately queued older replay through ordering and pending receipt checks, then clears on a failed concluded attempt |
 | Entry | `last_vouch_at` | Zero means no vouch acceleration; otherwise limits those accelerations to one per minute |
 | Entry | `pending_since`, `next_poll_at` | Zero uses held time / an immediately due receipt check; otherwise the separate pending clock |
 | Entry | `retry_step` | Zero uses the existing attempt count when loading old state, otherwise starts at the first rung; advances scheduled repost/follower wake rungs without charging receipt polls |

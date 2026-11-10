@@ -61,6 +61,7 @@ func TestRound2StateAndHistoryCompatibility(t *testing.T) {
 		t.Fatalf("base defaults changed: %+v", e)
 	}
 	e.BusyReaction = true
+	e.ReplayIncludeOlder = true
 	e.ReplayBlockedReason = "manual"
 	e.AcknowledgedAt = now
 	e.LastVouchAt = now
@@ -426,5 +427,115 @@ func TestRound2FiveMinuteFollowerWakesHead(t *testing.T) {
 	want := []time.Duration{20 * time.Second, 80 * time.Second, 200 * time.Second, 320 * time.Second, 380 * time.Second}
 	if !reflect.DeepEqual(attempts, want) {
 		t.Fatalf("head attempts=%v want=%v", attempts, want)
+	}
+}
+
+func TestRound2ExplicitOlderReplayPreviewAndEligibility(t *testing.T) {
+	r, now := round2Recovery(t)
+	for i, age := range []time.Duration{time.Hour, 30 * 24 * time.Hour} {
+		_, err := writeInboundDeadLetterRecords(r.deadDir, "C1", []inboundDeadLetterRecord{{
+			Inbound:        testPending("C1", fmt.Sprintf("100.%d", i), "history").inbound,
+			DeadLetteredAt: now.Add(-age),
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.importDeadLetters(); err != nil {
+		t.Fatal(err)
+	}
+	var sent []string
+	r.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
+		sent = append(sent, e.Inbound.ProviderMessageID)
+		return recoveryReceipt("ok", "s1", true), nil
+	}
+	r.tick(true)
+	if !reflect.DeepEqual(sent, []string{"100.0"}) {
+		t.Fatalf("automatic startup replayed old history: %v", sent)
+	}
+	request := func(preview, older bool) map[string]any {
+		t.Helper()
+		body := fmt.Sprintf(`{"conversation_id":"C1","preview":%t,"include_older":%t}`, preview, older)
+		response := httptest.NewRecorder()
+		r.handleRedrive(response, httptest.NewRequest(http.MethodPost, "/internal/inbound/redrive", strings.NewReader(body)))
+		want := http.StatusAccepted
+		if preview {
+			want = http.StatusOK
+		}
+		if response.Code != want {
+			t.Fatalf("redrive response=%d %s", response.Code, response.Body.String())
+		}
+		var result map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	bare := request(false, false)
+	r.tick(false)
+	if bare["skipped_for_age"] != float64(1) || bare["oldest_skipped_at"] != now.Add(-30*24*time.Hour).UTC().Format(time.RFC3339) || len(sent) != 1 {
+		t.Fatalf("bare verb did not honor horizon: %v sent=%v", bare, sent)
+	}
+	preview := request(true, true)
+	r.tick(false)
+	if preview["replay_count"] != float64(1) || len(sent) != 1 {
+		t.Fatalf("preview sent work or miscounted: %v sent=%v", preview, sent)
+	}
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(old)
+	queued := request(false, true)
+	r.tick(false)
+	if queued["replay_count"] != float64(1) || !reflect.DeepEqual(sent, []string{"100.0", "100.1"}) {
+		t.Fatalf("explicit override failed: %v sent=%v", queued, sent)
+	}
+	if !strings.Contains(logs.String(), "verb channel=C1 include_older=true replay_count=1 skipped_for_age=0") {
+		t.Fatalf("missing operator audit: %s", logs.String())
+	}
+}
+
+func TestRound2OlderReplayPermissionSurvivesOnlyItsPendingAttempt(t *testing.T) {
+	r, now := round2Recovery(t)
+	round2Hold(t, r, "100.1")
+	e := r.state.Entries["C1|100.1"]
+	e.DeadLetteredAt = now.Add(-30 * 24 * time.Hour)
+	e.NextAttemptAt = time.Time{}
+	r.put("C1|100.1", e)
+	posts := 0
+	r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+		posts++
+		return deliveryReceipt{present: true, id: "pending", status: "pending"}, nil
+	}
+	response := httptest.NewRecorder()
+	r.handleRedrive(response, httptest.NewRequest(http.MethodPost, "/internal/inbound/redrive", strings.NewReader(`{"conversation_id":"C1","include_older":true}`)))
+	if response.Code != http.StatusAccepted {
+		t.Fatal(response.Body.String())
+	}
+	r.tick(false)
+	if posts != 1 {
+		t.Fatalf("initial replay posts=%d", posts)
+	}
+	restarted, err := newInboundRecovery(r.path, r.deadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(time.Minute)
+	restarted.now = func() time.Time { return *now }
+	restarted.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+		return receiptPollConcluded, recoveryReceipt("pending", "s1", false), nil
+	}
+	restarted.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+		posts++
+		return deliveryReceipt{}, &inboundPostError{Status: 503, StatusText: "503 unavailable"}
+	}
+	restarted.tick(true)
+	if posts != 2 || restarted.state.Entries["C1|100.1"].ReplayIncludeOlder {
+		t.Fatalf("permission not consumed after concluded failure: posts=%d", posts)
+	}
+	*now = now.Add(time.Hour)
+	restarted.tick(true)
+	if posts != 2 {
+		t.Fatal("later startup reused an expired manual override")
 	}
 }

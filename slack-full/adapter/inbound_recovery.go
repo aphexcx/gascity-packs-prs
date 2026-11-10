@@ -262,6 +262,7 @@ func (s *recoverySubmission) message() externalInboundMessage {
 }
 
 type inboundRecoveryEntry struct {
+	ReplayIncludeOlder     bool                   `json:"replay_include_older,omitempty"`
 	AliasOriginalSessionID string                 `json:"alias_original_session_id,omitempty"`
 	BusyReaction           bool                   `json:"busy_reaction,omitempty"`
 	LastVouchAt            time.Time              `json:"last_vouch_at,omitempty"`
@@ -381,16 +382,17 @@ type inboundRecovery struct {
 	stopping      func() bool
 	// One worker owns retries and redrives. Success observations only enqueue
 	// session IDs; they never acquire a channel lock inside a delivery callback.
-	wake     chan struct{}
-	sessions map[string]bool
-	manual   map[string]bool
+	wake               chan struct{}
+	sessions           map[string]bool
+	manual             map[string]bool
+	manualIncludeOlder map[string]bool
 }
 
 func newInboundRecovery(path, deadDir string) (*inboundRecovery, error) {
 	r := &inboundRecovery{path: path, deadDir: deadDir, ceiling: 15 * time.Minute,
 		bound: 30 * time.Minute, replayMaxAge: 24 * time.Hour, gated: true, now: time.Now, wake: make(chan struct{}, 1),
 		counted:  map[string]bool{},
-		sessions: map[string]bool{}, manual: map[string]bool{},
+		sessions: map[string]bool{}, manual: map[string]bool{}, manualIncludeOlder: map[string]bool{},
 		state: inboundRecoveryState{Entries: map[string]inboundRecoveryEntry{}, Notices: map[string]inboundHoldNotice{}}}
 	if path != "" {
 		created, err := missingAncestors(filepath.Dir(path))
@@ -944,7 +946,9 @@ func (r *inboundRecovery) tick(startup bool) {
 	r.mu.Lock()
 	now := r.now()
 	sessions, manual := r.sessions, r.manual
+	includeOlder := r.manualIncludeOlder
 	r.sessions, r.manual = map[string]bool{}, map[string]bool{}
+	r.manualIncludeOlder = map[string]bool{}
 	var keys []string
 	armed, aged := 0, 0
 	var oldest time.Time
@@ -967,8 +971,12 @@ func (r *inboundRecovery) tick(startup bool) {
 			vouched = vouched || sessions[id]
 		}
 		if !e.DeadLetteredAt.IsZero() {
-			eligible := startup || manual[e.Inbound.Conversation.ConversationID] || vouched
-			tooOld := r.replayMaxAge == 0 || now.Sub(e.DeadLetteredAt) > r.replayMaxAge
+			manualEligible := manual[e.Inbound.Conversation.ConversationID] && !e.PendingReceipt && !e.Retiring && !e.Reaction
+			if manualEligible {
+				e.ReplayIncludeOlder = includeOlder[e.Inbound.Conversation.ConversationID]
+			}
+			eligible := startup || manualEligible || vouched
+			tooOld := !e.ReplayIncludeOlder && (r.replayMaxAge == 0 || now.Sub(e.DeadLetteredAt) > r.replayMaxAge)
 			if tooOld && !e.PendingReceipt {
 				e.NextAttemptAt = time.Time{}
 				if eligible {
@@ -1228,6 +1236,7 @@ func (r *inboundRecovery) tick(startup bool) {
 			}
 			block()
 		} else if !e.PendingReceipt {
+			e.ReplayIncludeOlder = false
 			e.NextAttemptAt = time.Time{}
 			e.ReplayNotBefore = now.Add(retryLadderDelay(inboundHoldBackoff, e.RetryStep, r.ceiling))
 			block()
@@ -1320,7 +1329,7 @@ func (r *inboundRecovery) attempt(e inboundRecoveryEntry, allowSend bool) (deliv
 			return receipt, nil, false
 		}
 	}
-	if !e.DeadLetteredAt.IsZero() && (r.replayMaxAge == 0 || r.now().Sub(e.DeadLetteredAt) > r.replayMaxAge) {
+	if !e.DeadLetteredAt.IsZero() && !e.ReplayIncludeOlder && (r.replayMaxAge == 0 || r.now().Sub(e.DeadLetteredAt) > r.replayMaxAge) {
 		return deliveryReceipt{}, errRecoveryExpired, true
 	}
 	if e.Reaction {
@@ -1636,6 +1645,8 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 	var body struct {
 		ConversationID string `json:"conversation_id"`
 		Acknowledge    string `json:"acknowledge,omitempty"`
+		IncludeOlder   bool   `json:"include_older,omitempty"`
+		Preview        bool   `json:"preview,omitempty"`
 	}
 	if err := json.NewDecoder(io.LimitReader(req.Body, 4096)).Decode(&body); err != nil || body.ConversationID == "" {
 		writeAdminError(w, http.StatusBadRequest, "conversation_id is required")
@@ -1643,6 +1654,10 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 	}
 	if err := r.importDeadLetters(); err != nil {
 		writeAdminError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if body.Acknowledge != "" && (body.IncludeOlder || body.Preview) {
+		writeAdminError(w, http.StatusBadRequest, "acknowledge cannot be combined with replay options")
 		return
 	}
 	if body.Acknowledge != "" {
@@ -1655,13 +1670,41 @@ func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request
 		return
 	}
 	r.mu.Lock()
+	count, skipped := 0, 0
+	var oldest time.Time
+	for _, e := range r.state.Entries {
+		if e.Inbound.Conversation.ConversationID != body.ConversationID || e.inactive() || e.DeadLetteredAt.IsZero() || e.PendingReceipt || e.Retiring || e.Reaction {
+			continue
+		}
+		if !body.IncludeOlder && (r.replayMaxAge == 0 || r.now().Sub(e.DeadLetteredAt) > r.replayMaxAge) {
+			skipped++
+			if oldest.IsZero() || e.DeadLetteredAt.Before(oldest) {
+				oldest = e.DeadLetteredAt
+			}
+		} else {
+			count++
+		}
+	}
+	result := map[string]any{"conversation_id": body.ConversationID, "include_older": body.IncludeOlder, "replay_count": count, "skipped_for_age": skipped, "oldest_skipped_at": ""}
+	if !oldest.IsZero() {
+		result["oldest_skipped_at"] = oldest.UTC().Format(time.RFC3339)
+	}
+	if body.Preview {
+		r.mu.Unlock()
+		result["status"] = "preview"
+		writeAdminJSON(w, http.StatusOK, result)
+		return
+	}
 	r.manual[body.ConversationID] = true
+	r.manualIncludeOlder[body.ConversationID] = body.IncludeOlder
 	r.mu.Unlock()
+	log.Printf("inbound replay: verb channel=%s include_older=%t replay_count=%d skipped_for_age=%d oldest=%s", body.ConversationID, body.IncludeOlder, count, skipped, result["oldest_skipped_at"])
 	select {
 	case r.wake <- struct{}{}:
 	default:
 	}
-	writeAdminJSON(w, http.StatusAccepted, map[string]any{"conversation_id": body.ConversationID, "status": "queued"})
+	result["status"] = "queued"
+	writeAdminJSON(w, http.StatusAccepted, result)
 }
 
 // This is an adapter-authored post, deliberately outside session_publish and

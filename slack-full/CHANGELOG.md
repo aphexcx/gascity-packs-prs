@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound. Pending receipts have their own 5s/30s clock. Unpollable and refused
   records remain visible without blocking later messages. Notices have durable
   failure backoff, close at retirement, ignore reactions and do not create own
-  threads. Replay defaults to a configurable 24h maximum age; older history is
-  never replayed or deleted, including by the redrive verb. An acknowledge form
+  threads. Automatic and bare-command replay have a configurable 24h maximum
+  age; `inbound-redrive --include-older` previews its count before explicitly
+  replaying older history, including 30-day records. History is never deleted. An acknowledge form
   records hand checks. Counts deduplicate human lines, recovery restores busy
   marks, and damaged state/history no longer prevents startup. Optional fields
   and rollback decoder compatibility are documented in the README.
