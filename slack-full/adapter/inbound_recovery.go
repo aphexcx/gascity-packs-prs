@@ -235,6 +235,7 @@ func (r *inboundRecovery) run(ctx context.Context, cfg config) {
 type unvouchedDeliveryError struct{ receipt deliveryReceipt }
 
 var errRecoveryOrder = errors.New("receipt resolved; new send waits for an older message")
+var errRecoveryRetarget = errors.New("receipt resolved; alias destination and FIFO must be refreshed")
 var errRecoveryReaction = errors.New("receipt resolved; reaction returns to its no-wake buffer")
 var errRecoveryUncertain = errors.New("concluded receipt still has no delivery proof")
 var errRecoveryExpired = errors.New("dead letter exceeds the replay age limit")
@@ -696,6 +697,7 @@ func (r *inboundRecovery) importDeadLetters() error {
 		}
 		scan := bufio.NewScanner(f)
 		scan.Buffer(make([]byte, 4096), 8<<20)
+		fileEntries := map[string]bool{}
 		for scan.Scan() {
 			var rec inboundDeadLetterRecord
 			if err := json.Unmarshal(scan.Bytes(), &rec); err != nil {
@@ -724,6 +726,7 @@ func (r *inboundRecovery) importDeadLetters() error {
 			if manualRecovery {
 				key += "|manual:" + rec.Inbound.DedupKey
 			}
+			fileEntries[key] = true
 			cur, exists := r.state.Entries[key]
 			if !rec.AcknowledgedAt.IsZero() {
 				if !exists {
@@ -777,6 +780,16 @@ func (r *inboundRecovery) importDeadLetters() error {
 		f.Close()
 		if err != nil {
 			log.Printf("inbound HOLD: LOSS skipped unreadable history tail %s: %v", filepath.Join(r.deadDir, file.Name()), err)
+			// A later completion/acknowledgement may be hidden in the tail.
+			// Retain the parsed records for inspection, never replay them on
+			// the assumption that this incomplete prefix is the whole history.
+			for key, e := range r.state.Entries {
+				if (fileEntries[key] || safePathComponent(e.Inbound.Conversation.ConversationID)+".jsonl" == file.Name()) && !e.inactive() {
+					e.ReplayBlockedReason = "verify by hand: incomplete history scan of " + file.Name()
+					e.Reason = e.ReplayBlockedReason
+					r.state.Entries[key] = e
+				}
+			}
 		}
 	}
 	return r.saveLocked()
@@ -966,15 +979,7 @@ func (r *inboundRecovery) tick(startup bool) {
 			continue
 		}
 		// Resolve before matching vouches and before calculating session FIFO.
-		if e.AliasHandle != "" && !e.PendingReceipt && r.resolveAlias != nil {
-			if id, ok := r.resolveAlias(e.AliasHandle); ok && id != e.AliasSessionID {
-				log.Printf("inbound replay: handle=%s session=%s -> %s", e.AliasHandle, e.AliasSessionID, id)
-				if e.AliasOriginalSessionID == "" {
-					e.AliasOriginalSessionID = e.AliasSessionID
-				}
-				e.AliasSessionID, e.TargetSessions = id, []string{id}
-			}
-		}
+		e = r.resolveRecoveryAlias(e)
 		vouched := false
 		for _, id := range e.TargetSessions {
 			vouched = vouched || sessions[id]
@@ -1121,7 +1126,7 @@ func (r *inboundRecovery) tick(startup bool) {
 		receipt, err, clearPending := r.attempt(e, !blockedHere)
 		// clearPending means attempt crossed into a new POST, except for
 		// the explicit order/reaction/uncertain sentinels below.
-		sent := clearPending && !errors.Is(err, errRecoveryOrder) && !errors.Is(err, errRecoveryReaction) && !errors.Is(err, errRecoveryUncertain) && !errors.Is(err, errRecoveryExpired)
+		sent := clearPending && !errors.Is(err, errRecoveryOrder) && !errors.Is(err, errRecoveryRetarget) && !errors.Is(err, errRecoveryReaction) && !errors.Is(err, errRecoveryUncertain) && !errors.Is(err, errRecoveryExpired)
 		if sent {
 			e.Attempts++
 			e.RetryStep++
@@ -1131,7 +1136,15 @@ func (r *inboundRecovery) tick(startup bool) {
 			e.PendingReceiptID, e.PendingReceipt, e.LegacyUncertain = "", false, false
 			e.NextPollAt = time.Time{}
 		}
-		if errors.Is(err, errRecoveryOrder) {
+		if errors.Is(err, errRecoveryRetarget) {
+			// Polling proved the old send lost. Re-resolve only now, retaining
+			// its original receipt/session provenance until that conclusion.
+			// Block the new destination this tick; the next tick recomputes
+			// its full FIFO before the replacement can be sent.
+			e = r.resolveRecoveryAlias(e)
+			orderKeys = recoveryOrderKeys(e)
+		}
+		if errors.Is(err, errRecoveryOrder) || errors.Is(err, errRecoveryRetarget) {
 			e.NextAttemptAt = now
 			r.put(key, e)
 			block()
@@ -1359,6 +1372,19 @@ func (r *inboundRecovery) takeBusyBefore(marks *busyReactionRegistry, channel, t
 	return marks.takeBefore(channel, thread, cutoff)
 }
 
+func (r *inboundRecovery) resolveRecoveryAlias(e inboundRecoveryEntry) inboundRecoveryEntry {
+	if e.AliasHandle != "" && !e.PendingReceipt && r.resolveAlias != nil {
+		if id, ok := r.resolveAlias(e.AliasHandle); ok && id != e.AliasSessionID {
+			log.Printf("inbound replay: handle=%s session=%s -> %s", e.AliasHandle, e.AliasSessionID, id)
+			if e.AliasOriginalSessionID == "" {
+				e.AliasOriginalSessionID = e.AliasSessionID
+			}
+			e.AliasSessionID, e.TargetSessions = id, []string{id}
+		}
+	}
+	return e
+}
+
 // The final result says the previous pending receipt is resolved. That fact
 // survives a replacement POST's rejection or transport failure.
 func (r *inboundRecovery) attempt(e inboundRecoveryEntry, allowSend bool) (deliveryReceipt, error, bool) {
@@ -1388,6 +1414,9 @@ func (r *inboundRecovery) attempt(e inboundRecoveryEntry, allowSend bool) (deliv
 		if state == receiptPollConcluded && (receipt.verdict(r.gated) != receiptUnconfirmed || receipt.landedUnconfirmed()) {
 			receipt.followUpLanded = receipt.landedUnconfirmed()
 			return receipt, nil, false
+		}
+		if e.AliasHandle != "" && r.resolveAlias != nil {
+			return deliveryReceipt{}, errRecoveryRetarget, true
 		}
 	}
 	if !e.DeadLetteredAt.IsZero() && !e.ReplayIncludeOlder && (r.replayMaxAge == 0 || r.now().Sub(e.DeadLetteredAt) > r.replayMaxAge) {

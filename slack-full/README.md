@@ -440,6 +440,7 @@ journal. They cannot count as session acknowledgement or own-thread evidence.
 The hourglass is removed on HOLD and restored after confirmed recovery of an
 eligible line. A reply cancels that restoration durably, including replies that
 arrive before the pending receipt settles or while a replacement POST runs.
+When a new targeted line enters HOLD, an unanswered predecessor keeps its mark.
 
 Dead letters within the configured age limit replay at startup, on a vouched
 delivery to their target, or through
@@ -453,7 +454,9 @@ for age and name the oldest timestamp. The admin route's 202
 means queued. Replays preserve ordering and message-ID dedup, prepend
 `[delivered late: dead-lettered at <time>]`, and append a `replayed_at` history
 record on completion. Alias replay resolves the handle's current session,
-logging both destinations when changed. Its mention-only routing record remains
+logging both destinations when changed. A pending alias first polls its saved
+receipt; after proven loss, it refreshes the destination and FIFO before any
+replacement send. Its mention-only routing record remains
 provisional while held, is removed on refusal/dead-letter, and becomes confirmed
 with a fresh timestamp after recovery, including after restart.
 
@@ -474,7 +477,10 @@ Torn journal lines are skipped while good target/receipt facts are recovered;
 an incomplete scan never selects an uncertain outstanding receipt. Damaged
 state starts from history with a LOSS log. Unsafe, unreadable or oversized
 history records are skipped with a LOSS log naming the path; nonblocking opens
-prevent FIFOs from hanging startup. Retirement intent resumes failed appends
+prevent FIFOs from hanging startup. If a history scan stops before EOF, its
+unresolved entries require a hand check: an unseen completion or acknowledgement
+may follow the readable prefix, so neither automatic nor explicit redrive replays
+that prefix. Fresh lines still flow. Retirement intent resumes failed appends
 after restart. State-write failures retain in-memory ownership and retry
 persistence, which cannot survive a process loss before storage recovers.
 

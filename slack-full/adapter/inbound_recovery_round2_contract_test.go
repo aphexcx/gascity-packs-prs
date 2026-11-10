@@ -163,6 +163,60 @@ func TestRound2HeldMentionRemovesAndRestoresBusyReaction(t *testing.T) {
 	}
 }
 
+func TestRound2HoldPreservesUnansweredPredecessorBusy(t *testing.T) {
+	for _, alias := range []bool{false, true} {
+		t.Run(fmt.Sprint(alias), func(t *testing.T) {
+			slackStub, reactions := newReactionRecordingSlackStub(t)
+			withSlackAPIStub(t, slackStub)
+			gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if strings.Contains(req.URL.Path, "/bindings") {
+					fmt.Fprint(w, `{"items":[]}`)
+					return
+				}
+				status := "failed"
+				if alias && !strings.HasSuffix(req.URL.Path, "/messages") {
+					status = "delivered"
+				}
+				fmt.Fprintf(w, `{"delivery":{"receipt_id":"r","status":%q,"members":[{"session_id":"s1","status":%q}]}}`, status, status)
+			}))
+			defer gcStub.Close()
+			cfg := recoveryTestConfig(t, gcStub.URL)
+			cfg.slackBotToken, cfg.busyReaction = "test", "hourglass"
+			cfg.busyMarks = newBusyReactionRegistry()
+			reg := newTestHandleAliasRegistry(t)
+			text := "<@" + testBotUserID + "> work"
+			if alias {
+				if err := reg.Set("mayor", "s1"); err != nil {
+					t.Fatal(err)
+				}
+				text = "@mayor: work"
+			}
+			if err := installInboundRecovery(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			oldDone, _ := cfg.busyMarks.markBoth("C1", "99.1", "100.1")
+			close(oldDone) // the previous unanswered message already wears its mark
+			env := botMentionEnvelope(t, "message", "EvHoldPredecessor", "C1", "100.2", "99.1", text, true)
+			done := make(chan struct{})
+			processSlackEvent(cfg, reg, nil, nil, nil, nil, env, func() { close(done) })
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("dispatch did not conclude")
+			}
+			for _, op := range []string{"add", "remove"} {
+				if got := reactions.await(t, 2*time.Second); got.op != op || got.timestamp != "100.2" {
+					t.Fatalf("HOLD removed predecessor or left current mark: %+v", got)
+				}
+			}
+			if ts, ok := cfg.busyMarks.pending("C1", "99.1"); !ok || ts != "100.1" {
+				t.Fatalf("predecessor was not restored: %s %v", ts, ok)
+			}
+			reactions.assertNoCall(t, 50*time.Millisecond)
+		})
+	}
+}
+
 func TestRound2ReplyDuringRecoveryDoesNotRestoreBusy(t *testing.T) {
 	for _, phase := range []string{"initial-post", "pending", "pending-restart", "replacement-post", "settled"} {
 		t.Run(phase, func(t *testing.T) {
@@ -390,6 +444,114 @@ func TestRound2RetargetHistoryKeepsOriginalDedup(t *testing.T) {
 	}
 	if len(rebuilt.state.Entries) != 1 || rebuilt.state.Entries["C1|100.1|alias:old"].DeliveredAt.IsZero() {
 		t.Fatalf("retarget duplicated history: %+v", rebuilt.state.Entries)
+	}
+}
+
+func TestRound2PendingAliasLossRefreshesDestinationAndFIFO(t *testing.T) {
+	r, now := round2Recovery(t)
+	start := *now
+	for _, ts := range []string{"100.1", "100.3"} {
+		if err := r.hold(testPending("C1", ts, "new-session line"), recoveryReceipt("r", "new", false), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msg := testPending("C1", "100.2", "moving alias").inbound
+	pending := deliveryReceipt{present: true, id: "old-pending", status: "pending", targetSessionID: "old"}
+	if err := r.holdAlias(msg, "old", "mayor", "body", pending); err != nil {
+		t.Fatal(err)
+	}
+	r.resolveAlias = func(string) (string, bool) { return "new", true }
+	polls := 0
+	r.poll = func(_ context.Context, id string) (receiptPollState, deliveryReceipt, error) {
+		polls++
+		if id != "old-pending" {
+			t.Fatalf("polled replacement receipt: %s", id)
+		}
+		return receiptPollConcluded, recoveryReceipt(id, "old", false), nil
+	}
+	var sent []string
+	r.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
+		if e.AliasSessionID == "old" {
+			t.Error("replacement sent to stale alias session")
+			return deliveryReceipt{}, &inboundPostError{Status: 404}
+		}
+		sent = append(sent, e.Inbound.ProviderMessageID)
+		return recoveryReceipt("delivered", "new", true), nil
+	}
+	*now = start.Add(5 * time.Second)
+	r.tick(false)
+	e := r.state.Entries["C1|100.2|alias:old"]
+	if len(sent) != 0 || e.PendingReceipt || e.AliasSessionID != "new" || e.AliasOriginalSessionID != "old" || e.Attempts != 0 {
+		t.Fatalf("poll did not preserve routing/FIFO: sent=%v entry=%+v", sent, e)
+	}
+	*now = start.Add(20 * time.Second)
+	r.tick(false)
+	if !reflect.DeepEqual(sent, []string{"100.1", "100.2", "100.3"}) || polls != 1 || r.state.Entries["C1|100.2|alias:old"].DeliveredAt.IsZero() {
+		t.Fatalf("retarget failed or overtook FIFO: sent=%v polls=%d", sent, polls)
+	}
+}
+
+func TestRound2IncompleteHistoryNeverReplaysHiddenCompletion(t *testing.T) {
+	for _, mode := range []string{"no-snapshot", "damaged-snapshot", "snapshot"} {
+		for _, completion := range []string{"delivered", "acknowledged"} {
+			t.Run(mode+"/"+completion, func(t *testing.T) {
+				r, now := round2Recovery(t)
+				round2Hold(t, r, "100.1")
+				e := r.state.Entries["C1|100.1"]
+				r.retire("C1|100.1", e)
+				path := filepath.Join(r.deadDir, "C1.jsonl")
+				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = f.Write(append(bytes.Repeat([]byte("x"), 9<<20), '\n'))
+				closeErr := f.Close()
+				if err != nil || closeErr != nil {
+					t.Fatalf("fixture write: %v %v", err, closeErr)
+				}
+				rec := inboundDeadLetterRecord{Inbound: e.Inbound, Channel: "C1", DeadLetteredAt: *now}
+				if completion == "delivered" {
+					rec.ReplayedAt = *now
+				} else {
+					rec.AcknowledgedAt = *now
+				}
+				if _, err := writeInboundDeadLetterRecords(r.deadDir, "C1", []inboundDeadLetterRecord{rec}); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "no-snapshot" {
+					if err := os.Remove(r.path); err != nil {
+						t.Fatal(err)
+					}
+				} else if mode == "damaged-snapshot" {
+					if err := os.WriteFile(r.path, []byte("{"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				rebuilt, err := newInboundRecovery(r.path, r.deadDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rebuilt.now = r.now
+				if err := rebuilt.importDeadLetters(); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(rebuilt.state.Entries["C1|100.1"].ReplayBlockedReason, "incomplete history") {
+					t.Fatal("partial prefix remained replayable")
+				}
+				round2Hold(t, rebuilt, "100.2")
+				var sent []string
+				rebuilt.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
+					sent = append(sent, e.Inbound.ProviderMessageID)
+					return recoveryReceipt("new", "s1", true), nil
+				}
+				*now = now.Add(time.Minute)
+				rebuilt.manual["C1"] = true
+				rebuilt.tick(true)
+				if !reflect.DeepEqual(sent, []string{"100.2"}) {
+					t.Fatalf("duplicate replay or blocked fresh line: %v", sent)
+				}
+			})
+		}
 	}
 }
 

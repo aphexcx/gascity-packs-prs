@@ -22,7 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   records hand checks. Counts deduplicate human lines, recovery restores busy
   marks only while unanswered, and damaged state/history no longer prevents startup.
   Alias 408/429 use bounded retries and a final attempt before dead-lettering;
-  permanent alias 4xx remain excluded from replay. Optional fields
+  permanent alias 4xx remain excluded from replay. Lost pending aliases refresh
+  their destination and FIFO before replacement. Incomplete history scans keep
+  unresolved records for a hand check instead of risking duplicate replay, and
+  HOLD preserves an unanswered predecessor's busy mark. Optional fields
   and rollback decoder compatibility are documented in the README.
 
 - **Durable inbound holds and ordered redrive** (gp-b06o): an unvouched

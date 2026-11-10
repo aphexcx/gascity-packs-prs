@@ -5263,10 +5263,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						}
 						cfg.deliveredIDs.record(target, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 					}
-					// Final delivery landed: NOW retire the marks
-					// this re-target displaced (codex r7).
-					for _, d := range displaced {
-						go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
+					// HOLD restored these marks: their owners remain unanswered.
+					if !aliasHeld {
+						for _, d := range displaced {
+							go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
+						}
 					}
 					concludeEvent()
 					return
@@ -5365,7 +5366,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// (codex r7 — when an alias dispatch fires, ITS success branch
 	// does this instead, because the alias POST is the delivery that
 	// decides the event).
-	if busyEligible && !displacedOwned {
+	if busyEligible && !displacedOwned && !busyCancelled {
 		for _, d := range busyDisplacedMarks {
 			go removeBusyReaction(cfg, msg.Channel, d.mark)
 		}
