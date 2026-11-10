@@ -463,6 +463,8 @@ binding. Slack's duplicate message/app-mention events do not re-add a mark while
 that destination still has an outstanding recovery entry.
 Recovery waits for the HOLD's in-flight hourglass removal before restoring its
 mark, so delayed Slack cleanup cannot erase a newly confirmed busy indicator.
+HOLD cleanup retains the registry's merged add-completion channels, so a
+concurrent message/app-mention twin cannot add a stale hourglass after removal.
 
 Dead letters within the configured age limit replay at startup, on a vouched
 delivery to their target, or through
@@ -493,6 +495,9 @@ records for its channel/alias copies and removes them from counts and FIFO
 without claiming delivery or deleting history; the admin route returns 200.
 Its notice closes as acknowledged by hand without claiming terminal delivery.
 A late receipt from an in-flight reaction delivery cannot undo acknowledgement.
+Acknowledgement persists without waiting for recovery network calls. An already
+in-flight outcome retains the acknowledgement, and a poll concluding loss cannot
+start a replacement send after the line has been acknowledged.
 Liveness reports separate `held=N dead-lettered=N by-hand=N` counts. A human
 line counts once even with multiple destinations; reactions and peer riders do
 not count. The cumulative missed counter counts each standing line once per

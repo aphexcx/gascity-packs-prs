@@ -246,6 +246,7 @@ var errRecoveryRetarget = errors.New("receipt resolved; alias destination and FI
 var errRecoveryReaction = errors.New("receipt resolved; reaction returns to its no-wake buffer")
 var errRecoveryUncertain = errors.New("concluded receipt still has no delivery proof")
 var errRecoveryExpired = errors.New("dead letter exceeds the replay age limit")
+var errRecoveryInactive = errors.New("recovery ownership ended before a replacement send")
 
 func (e *unvouchedDeliveryError) Error() string { return errDeliveryUnvouched.Error() }
 func (e *unvouchedDeliveryError) Unwrap() error { return errDeliveryUnvouched }
@@ -1237,7 +1238,10 @@ func (r *inboundRecovery) tick(startup bool) {
 			continue
 		}
 		wasPending := e.PendingReceipt
-		receipt, err, clearPending := r.attempt(e, !blockedHere)
+		receipt, err, clearPending := r.attempt(key, e, !blockedHere)
+		if errors.Is(err, errRecoveryInactive) {
+			continue
+		}
 		// clearPending means attempt crossed into a new POST, except for
 		// the explicit order/reaction/uncertain sentinels below.
 		sent := clearPending && !errors.Is(err, errRecoveryOrder) && !errors.Is(err, errRecoveryRetarget) && !errors.Is(err, errRecoveryReaction) && !errors.Is(err, errRecoveryUncertain) && !errors.Is(err, errRecoveryExpired)
@@ -1716,7 +1720,7 @@ func (r *inboundRecovery) resolveRecoveryAlias(e inboundRecoveryEntry) inboundRe
 
 // The final result says the previous pending receipt is resolved. That fact
 // survives a replacement POST's rejection or transport failure.
-func (r *inboundRecovery) attempt(e inboundRecoveryEntry, allowSend bool) (deliveryReceipt, error, bool) {
+func (r *inboundRecovery) attempt(key string, e inboundRecoveryEntry, allowSend bool) (deliveryReceipt, error, bool) {
 	e.Inbound.trustedFilePaths = e.TrustedFilePaths
 	if e.Landed {
 		return deliveryReceipt{followUpLanded: true}, nil, false
@@ -1747,6 +1751,15 @@ func (r *inboundRecovery) attempt(e inboundRecoveryEntry, allowSend bool) (deliv
 		if e.AliasHandle != "" && r.resolveAlias != nil {
 			return deliveryReceipt{}, errRecoveryRetarget, true
 		}
+	}
+	// An acknowledgement may finish while receipt polling is in flight.
+	// Its durable ownership decision forbids a replacement POST.
+	r.mu.Lock()
+	current, exists := r.state.Entries[key]
+	inactive := !exists || current.inactive()
+	r.mu.Unlock()
+	if inactive {
+		return deliveryReceipt{}, errRecoveryInactive, false
 	}
 	if !e.DeadLetteredAt.IsZero() && !e.ReplayIncludeOlder && (r.replayMaxAge == 0 || r.now().Sub(e.DeadLetteredAt) > r.replayMaxAge) {
 		return deliveryReceipt{}, errRecoveryExpired, true
@@ -2039,27 +2052,28 @@ func (r *inboundRecovery) newlyMissed() uint64 {
 }
 
 func (r *inboundRecovery) acknowledge(channel, ts string) (int, error) {
-	r.runMu.Lock()
-	defer r.runMu.Unlock()
+	// Hold only the state lock across local durable writes. A recovery tick
+	// may be blocked on unrelated network I/O; its put merges this terminal
+	// acknowledgement without overwriting the receipt outcome.
 	r.mu.Lock()
-	var selected []string
+	defer r.mu.Unlock()
+	acknowledged := 0
 	for key, e := range r.state.Entries {
-		if e.Inbound.Conversation.ConversationID == channel && e.Inbound.ProviderMessageID == ts && e.DeliveredAt.IsZero() && e.AcknowledgedAt.IsZero() {
-			selected = append(selected, key)
+		if e.Inbound.Conversation.ConversationID != channel || e.Inbound.ProviderMessageID != ts || !e.DeliveredAt.IsZero() || !e.AcknowledgedAt.IsZero() {
+			continue
 		}
-	}
-	r.mu.Unlock()
-	for _, key := range selected {
-		r.mu.Lock()
-		e := r.state.Entries[key]
-		r.mu.Unlock()
 		e.AcknowledgedAt = r.now()
 		if err := r.writeDead(e, time.Time{}); err != nil {
-			return 0, err
+			return acknowledged, err
 		}
-		r.put(key, e)
+		r.state.Entries[key] = e
+		delete(r.queuedReactions, key)
+		acknowledged++
+		if err := r.saveLocked(); err != nil {
+			log.Printf("inbound acknowledgement persist: %v", err)
+		}
 	}
-	return len(selected), nil
+	return acknowledged, nil
 }
 
 func (r *inboundRecovery) handleRedrive(w http.ResponseWriter, req *http.Request) {

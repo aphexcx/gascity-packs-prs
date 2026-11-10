@@ -5072,14 +5072,27 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	cancelHeldBusy := func() {
 		if busyEligible && !busyCancelled {
 			busyCancelled = true
-			for _, tk := range cfg.busyMarks.cancelBoth(msg.Channel, msg.ThreadTS, msg.TS, nil, busyDisplacedMarks) {
+			blocked, cancelled := cfg.busyMarks.cancelBothTaken(msg.Channel, msg.ThreadTS, msg.TS, nil, busyDisplacedMarks)
+			for _, tk := range blocked {
 				go removeBusyReaction(cfg, msg.Channel, tk)
 			}
-			// cancelBoth restores displaced marks; remove this message's
-			// hourglass only after its asynchronous add completes.
+			// Preserve every completion channel before cancellation removes
+			// the registry entry. A twin's add may still be in flight.
+			allAddsDone := make(chan struct{})
+			go func() {
+				defer close(allAddsDone)
+				if busyAddDone != nil {
+					<-busyAddDone
+				}
+				for _, tk := range cancelled {
+					if tk.addDone != nil {
+						<-tk.addDone
+					}
+				}
+			}()
 			go func(finish func()) {
 				defer finish()
-				removeBusyReaction(cfg, msg.Channel, busyTaken{messageTS: msg.TS, addDone: busyAddDone})
+				removeBusyReaction(cfg, msg.Channel, busyTaken{messageTS: msg.TS, addDone: allAddsDone})
 			}(finishBusyRemoval)
 		}
 	}

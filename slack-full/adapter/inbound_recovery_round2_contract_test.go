@@ -218,6 +218,92 @@ func TestRound2RecoveryWaitsForHeldHourglassRemoval(t *testing.T) {
 	}
 }
 
+func TestRound2ConcurrentTwinsHoldWaitsForEveryBusyAdd(t *testing.T) {
+	aliasEntered, releaseAlias := make(chan struct{}), make(chan struct{})
+	firstAdd, twinAdd, releaseTwinAdd := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	removed := make(chan struct{}, 4)
+	defer func() {
+		for _, ch := range []chan struct{}{releaseAlias, releaseTwinAdd} {
+			select {
+			case <-ch:
+			default:
+				close(ch)
+			}
+		}
+	}()
+	var adds atomic.Int32
+	slackStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case strings.HasSuffix(req.URL.Path, "/reactions.add"):
+			if adds.Add(1) == 1 {
+				close(firstAdd)
+			} else {
+				close(twinAdd)
+				<-releaseTwinAdd
+			}
+		case strings.HasSuffix(req.URL.Path, "/reactions.remove"):
+			removed <- struct{}{}
+		}
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	t.Cleanup(slackStub.Close)
+	withSlackAPIStub(t, slackStub)
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.Contains(req.URL.Path, "/bindings") {
+			fmt.Fprint(w, `{"items":[]}`)
+			return
+		}
+		status := "delivered"
+		if strings.HasSuffix(req.URL.Path, "/messages") {
+			close(aliasEntered)
+			<-releaseAlias
+			status = "failed"
+		}
+		fmt.Fprintf(w, `{"delivery":{"receipt_id":"twins","status":%q,"members":[{"session_id":"s1","status":%q}]}}`, status, status)
+	}))
+	t.Cleanup(gcStub.Close)
+	cfg := recoveryTestConfig(t, gcStub.URL)
+	cfg.bindingCheck = newBindingCheckCache()
+	cfg.slackBotToken, cfg.busyReaction = "test", "hourglass"
+	cfg.busyMarks = newBusyReactionRegistry()
+	reg := newTestHandleAliasRegistry(t)
+	if err := reg.Set("mayor", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := installInboundRecovery(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	wait := func(ch <-chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-time.After(3 * time.Second):
+			t.Fatal(what)
+		}
+	}
+	ownerDone, twinDone := make(chan struct{}), make(chan struct{})
+	owner := botMentionEnvelope(t, "message", "EvConcurrentHold", "C1", "100.1", "99.1", "@mayor: work", true)
+	processSlackEvent(cfg, reg, nil, nil, nil, nil, owner, func() { close(ownerDone) })
+	wait(aliasEntered, "alias did not start")
+	wait(firstAdd, "owner add did not start")
+	twin := botMentionEnvelope(t, "app_mention", "EvConcurrentHoldTwin", "C1", "100.1", "99.1", "@mayor: work", true)
+	processSlackEvent(cfg, reg, nil, nil, nil, nil, twin, func() { close(twinDone) })
+	wait(twinAdd, "twin add did not start")
+	close(releaseAlias)
+	wait(ownerDone, "owner did not enter HOLD")
+	wait(twinDone, "twin did not conclude")
+	select {
+	case <-removed:
+		t.Fatal("HOLD cleanup overtook the twin's in-flight add")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseTwinAdd)
+	wait(removed, "HOLD did not remove the merged busy mark")
+	if _, ok := cfg.busyMarks.pending("C1", "99.1"); ok {
+		t.Fatal("held twin left a registry mark")
+	}
+}
+
 func TestRound2HeldMentionRemovesAndRestoresBusyReaction(t *testing.T) {
 	slackStub, reactions := newReactionRecordingSlackStub(t)
 	withSlackAPIStub(t, slackStub)
@@ -1600,6 +1686,99 @@ func TestRound2ExplicitOlderReplayPreviewAndEligibility(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "verb channel=C1 include_older=true replay_count=1 skipped_for_age=0") {
 		t.Fatalf("missing operator audit: %s", logs.String())
+	}
+}
+
+func TestRound2AcknowledgementRemainsResponsiveDuringRecovery(t *testing.T) {
+	for _, phase := range []string{"failed-post", "pending-post", "delivered-post", "failed-poll", "unrelated-post"} {
+		t.Run(phase, func(t *testing.T) {
+			r, now := round2Recovery(t)
+			if phase == "failed-poll" {
+				if err := r.hold(testPending("C1", "100.1", "pending"), deliveryReceipt{present: true, id: "inflight", status: "pending", targetSessionID: "s1"}, false); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				round2Hold(t, r, "100.1")
+			}
+			channel, ts := "C1", "100.1"
+			if phase == "unrelated-post" {
+				channel, ts = "C2", "100.2"
+				if err := r.hold(testPending(channel, ts, "acknowledge queued line"), recoveryReceipt("queued", "s2", false), false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			*now = now.Add(time.Minute)
+			entered, release, tickDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			defer func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			}()
+			posts := 0
+			r.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
+				posts++
+				if phase == "failed-poll" || e.Inbound.ProviderMessageID != "100.1" {
+					t.Error("acknowledged line was sent")
+					return recoveryReceipt("unexpected", "s1", true), nil
+				}
+				close(entered)
+				<-release
+				if phase == "pending-post" {
+					return deliveryReceipt{present: true, id: "new-pending", status: "pending", targetSessionID: "s1"}, nil
+				}
+				return recoveryReceipt("outcome", "s1", phase == "delivered-post"), nil
+			}
+			r.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+				close(entered)
+				<-release
+				return receiptPollConcluded, recoveryReceipt("inflight", "s1", false), nil
+			}
+			go func() { r.tick(false); close(tickDone) }()
+			<-entered
+			response, requestDone := httptest.NewRecorder(), make(chan struct{})
+			go func() {
+				body := fmt.Sprintf(`{"conversation_id":%q,"acknowledge":%q}`, channel, ts)
+				r.handleRedrive(response, httptest.NewRequest(http.MethodPost, "/internal/inbound/redrive", strings.NewReader(body)))
+				close(requestDone)
+			}()
+			select {
+			case <-requestDone:
+			case <-time.After(2 * time.Second):
+				close(release)
+				<-tickDone
+				<-requestDone
+				t.Fatal("acknowledgement waited behind recovery I/O")
+			}
+			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"acknowledged":1`) {
+				t.Fatal(response.Body.String())
+			}
+			key := channel + "|" + ts
+			persisted, err := newInboundRecovery(r.path, r.deadDir)
+			if err != nil || persisted.state.Entries[key].AcknowledgedAt.IsZero() {
+				t.Fatalf("response preceded durable acknowledgement: %v", err)
+			}
+			close(release)
+			<-tickDone
+			e := r.state.Entries[key]
+			if e.AcknowledgedAt.IsZero() || (phase == "delivered-post" && e.DeliveredAt.IsZero()) || (phase == "pending-post" && e.PendingReceiptID != "new-pending") {
+				t.Fatalf("in-flight outcome overwrote acknowledgement or receipt: %+v", e)
+			}
+			if phase == "failed-poll" && posts != 0 {
+				t.Fatal("loss poll reposted an acknowledged line")
+			}
+			if err := os.Remove(r.path); err != nil {
+				t.Fatal(err)
+			}
+			history, err := newInboundRecovery(r.path, r.deadDir)
+			if err == nil {
+				err = history.importDeadLetters()
+			}
+			if err != nil || history.state.Entries[key].AcknowledgedAt.IsZero() {
+				t.Fatalf("history-only restart lost acknowledgement: %v", err)
+			}
+		})
 	}
 }
 

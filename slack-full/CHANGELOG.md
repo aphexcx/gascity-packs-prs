@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after acquiring the channel lock, preserving newer outcomes and one side copy.
   Permanent reaction refusals settle the durable mirror too; legacy refusal
   imports use the same classifier as live delivery.
+  Acknowledgements persist independently of recovery HTTP calls and fence
+  replacement sends after a pending receipt resolves. HOLD cleanup waits for
+  all registered twin reaction adds before removing their merged busy mark.
   Optional fields
   and rollback decoder compatibility are documented in the README.
 
