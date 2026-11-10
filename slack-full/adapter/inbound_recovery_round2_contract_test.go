@@ -59,10 +59,11 @@ func TestRound2StateAndHistoryCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := r.state.Entries["C1|100.1"]
-	if e.Inbound.Text != msg.Text || e.OriginalReceiptID != "r" || e.ReplayBlockedReason != "" || e.BusyReaction || !e.LastVouchAt.IsZero() {
+	if e.Inbound.Text != msg.Text || e.OriginalReceiptID != "r" || e.ReplayBlockedReason != "" || e.BusyReaction || !e.LastVouchAt.IsZero() || e.ReactionReceiptGeneration != 0 {
 		t.Fatalf("base defaults changed: %+v", e)
 	}
 	e.BusyReaction = true
+	e.ReactionReceiptGeneration = 2
 	e.ReplayIncludeOlder = true
 	e.ReplayBlockedReason = "manual"
 	e.AcknowledgedAt = now
@@ -101,7 +102,7 @@ func TestRound2StateAndHistoryCompatibility(t *testing.T) {
 	if err = fromOld.importDeadLetters(); err != nil {
 		t.Fatal(err)
 	}
-	if fromOld.state.Entries["C1|100.1"].OriginalReceiptID != "r" {
+	if fromOld.state.Entries["C1|100.1"].OriginalReceiptID != "r" || fromOld.state.Entries["C1|100.1"].ReactionReceiptGeneration != 0 {
 		t.Fatal("base history lost provenance")
 	}
 	if err = r.writeDead(e, time.Time{}); err != nil {
@@ -469,6 +470,144 @@ func TestRound2RetargetHistoryKeepsOriginalDedup(t *testing.T) {
 	}
 }
 
+func TestRound2MixedFanoutLandedReactionNeverReturnsToBuffer(t *testing.T) {
+	cfg := recoveryTestConfig(t, "http://unused.invalid")
+	r := cfg.inboundRecovery
+	now := time.Now()
+	r.now = func() time.Time { return now }
+	p := testPending("C1", "100.1", "already pasted reaction")
+	p.reaction = true
+	receipt := parseDeliveryReceipt([]byte(`{"delivery":{"receipt_id":"mixed","status":"partial","members":[{"session_id":"s1","status":"delivered"},{"session_id":"s2","status":"pending","delivered_bytes":10,"expected_bytes":10}]}}`))
+	if receipt.verdict(true) != receiptUnconfirmed || !receipt.landedUnconfirmed() {
+		t.Fatal("fixture lacks mixed-fanout paste evidence")
+	}
+	if err := r.hold(p, receipt, false); err != nil {
+		t.Fatal(err)
+	}
+	r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+		t.Fatal("resent a fully pasted reaction")
+		return deliveryReceipt{}, nil
+	}
+	now = now.Add(time.Minute)
+	r.tick(false)
+	if r.state.Entries["C1|100.1"].DeliveredAt.IsZero() || len(cfg.coalescer.reactions["C1"]) != 0 {
+		t.Fatal("mixed-fanout landing evidence was discarded")
+	}
+}
+
+func TestRound2DeadReactionPiggybackCompletionSurvivesRestart(t *testing.T) {
+	for _, outcome := range []string{"delivered", "mixed-paste", "pending"} {
+		for _, historyOnly := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/history-only=%v", outcome, historyOnly), func(t *testing.T) {
+				var posts atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					body, _ := io.ReadAll(req.Body)
+					if strings.Contains(string(body), "durable-reaction") {
+						posts.Add(1)
+						switch outcome {
+						case "pending":
+							fmt.Fprint(w, `{"delivery":{"receipt_id":"new-pending","status":"pending","members":[{"session_id":"s1","status":"pending"}]}}`)
+							return
+						case "mixed-paste":
+							fmt.Fprint(w, `{"delivery":{"receipt_id":"mixed","status":"partial","members":[{"session_id":"s1","status":"delivered"},{"session_id":"s2","status":"pending","delivered_bytes":10,"expected_bytes":10}]}}`)
+							return
+						}
+					}
+					fmt.Fprint(w, `{"delivery":{"receipt_id":"done","status":"delivered","members":[{"session_id":"s1","status":"delivered"}]}}`)
+				}))
+				defer srv.Close()
+				cfg := recoveryTestConfig(t, srv.URL)
+				r := cfg.inboundRecovery
+				now := time.Now()
+				r.now = func() time.Time { return now }
+				p := testPending("C1", "100.1", "durable-reaction")
+				p.reaction = true
+				pending := deliveryReceipt{present: true, id: "old-pending", status: "pending", targetSessionID: "s1"}
+				if err := r.hold(p, pending, false); err != nil {
+					t.Fatal(err)
+				}
+				r.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+					return receiptPollPending, pending, nil
+				}
+				now = now.Add(r.bound)
+				r.tick(false)
+				if r.state.Entries["C1|100.1"].DeadLetteredAt.IsZero() {
+					t.Fatal("fixture did not reach dead-letter history")
+				}
+				retired := r.state.Entries["C1|100.1"]
+				r.poll = func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+					return receiptPollConcluded, recoveryReceipt("old-pending", "s1", false), nil
+				}
+				now = now.Add(time.Minute)
+				r.tick(false)
+				r.tick(false)
+				if !r.queuedReactions["C1|100.1"] || len(cfg.coalescer.reactions["C1"]) != 1 {
+					t.Fatal("reaction handoff duplicated or discarded its durable mirror")
+				}
+				cfg.coalescer.enqueue("C1", p)
+				if len(cfg.coalescer.reactions["C1"]) != 1 || !r.known("C1", "100.1") {
+					t.Fatal("queued recovery mirror admitted a duplicate reaction")
+				}
+				cfg.coalescer.enqueue("C1", testPending("C1", "100.2", "fresh real line"))
+				cfg.coalescer.flushAheadOf("C1", "200.1")
+				if posts.Load() != 1 {
+					t.Fatalf("piggyback sends=%d", posts.Load())
+				}
+				// A delayed writer can append the old receipt after the new
+				// piggyback result. Neither history-only reconstruction nor
+				// clearing its write intent may revive the obsolete receipt.
+				if err := r.writeDead(retired, time.Time{}); err != nil {
+					t.Fatal(err)
+				}
+				r.historyWritten("C1|100.1", retired)
+				if outcome == "pending" && r.state.Entries["C1|100.1"].ReactionReceiptGeneration != 1 {
+					t.Fatal("new pending receipt did not advance its generation")
+				}
+				if historyOnly {
+					if err := os.Remove(r.path); err != nil {
+						t.Fatal(err)
+					}
+				}
+				fresh := coalescingTestConfig(srv.URL, time.Hour)
+				fresh.cityPath, fresh.inboundDeadLetterDir = cfg.cityPath, cfg.inboundDeadLetterDir
+				fresh.deliveryReceiptGate = true
+				if err := installInboundRecovery(&fresh); err != nil {
+					t.Fatal(err)
+				}
+				fresh.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
+					return deliverCoalescedBatch(fresh, channel, batch)
+				}
+				t.Cleanup(func() { fresh.coalescer.flushAll() })
+				reloaded := fresh.inboundRecovery
+				now = now.Add(time.Minute)
+				reloaded.now = func() time.Time { return now }
+				reloaded.poll = func(_ context.Context, id string) (receiptPollState, deliveryReceipt, error) {
+					if outcome != "pending" || id != "new-pending" {
+						t.Fatalf("restart selected stale receipt %q for %s", id, outcome)
+					}
+					return receiptPollConcluded, recoveryReceipt(id, "s1", true), nil
+				}
+				reloaded.tick(true)
+				if reloaded.state.Entries["C1|100.1"].DeliveredAt.IsZero() || len(fresh.coalescer.reactions["C1"]) != 0 {
+					t.Fatal("restart resurrected completed reaction")
+				}
+				fresh.coalescer.enqueue("C1", testPending("C1", "100.3", "next real line"))
+				fresh.coalescer.flushAheadOf("C1", "200.1")
+				if posts.Load() != 1 {
+					t.Fatalf("reaction replayed after restart: %d", posts.Load())
+				}
+				final, err := newInboundRecovery("", r.deadDir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := final.importDeadLetters(); err != nil || final.state.Entries["C1|100.1"].DeliveredAt.IsZero() {
+					t.Fatalf("completion absent from history: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestRound2ReactionOwnershipTransferWaitsForChannelDelivery(t *testing.T) {
 	var delivered atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -529,8 +668,8 @@ func TestRound2ReactionOwnershipTransferWaitsForChannelDelivery(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ownership transfer did not resume")
 	}
-	if r.known("C1", "100.1") {
-		t.Fatal("recovery retained transferred reaction")
+	if !r.known("C1", "100.1") || r.deliveryBlocked("C1", "100.1") {
+		t.Fatal("recovery mirror lost admission dedup or blocked its side-buffer copy")
 	}
 	cfg.coalescer.enqueue("C1", testPending("C1", "100.2", "fresh real line"))
 	cfg.coalescer.flushAheadOf("C1", "200.1")

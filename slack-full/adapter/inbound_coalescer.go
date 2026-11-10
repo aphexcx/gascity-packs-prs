@@ -3219,7 +3219,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	var ownedClaims []string
 	for _, p := range batch {
 		ts := p.inbound.ProviderMessageID
-		if !cfg.recoveryReplay && cfg.inboundRecovery.known(channel, ts) {
+		if !cfg.recoveryReplay && cfg.inboundRecovery.deliveryBlocked(channel, ts) {
 			continue
 		}
 		if cfg.deliveredIDs.seen("", channel, ts) {
@@ -3353,6 +3353,9 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	env.Text = text
 	env, peerItems, receipt, err := postWithPeerRecovery(cfg, env, peerItems)
 	verdict := receipt.verdict(cfg.deliveryReceiptGate)
+	if err == nil {
+		cfg.inboundRecovery.completeBufferedReactions(batch, receipt)
+	}
 	if err == nil && verdict == receiptHeld && !cfg.recoveryReplay && cfg.inboundRecovery == nil {
 		log.Printf("coalesce: HELD chan=%s batch=%d newest_ts=%s gc accepted the batch and has not finished delivering it — not re-posting — %s",
 			channel, len(batch), env.ProviderMessageID, receipt.logField(verdict))

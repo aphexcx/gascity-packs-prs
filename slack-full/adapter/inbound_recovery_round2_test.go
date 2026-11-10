@@ -476,7 +476,7 @@ func TestRound2ReactionsReturnToSideLane(t *testing.T) {
 	}
 	now = now.Add(time.Minute)
 	r.tick(false)
-	if r.known("C1", "100.1") || r.counts()["C1"] != (inboundRecoveryCounts{}) {
+	if r.deliveryBlocked("C1", "100.1") || r.counts()["C1"] != (inboundRecoveryCounts{}) {
 		t.Fatal("lost reaction still timed or counted")
 	}
 	round2Hold(t, r, "100.2")

@@ -27,7 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unresolved records for a hand check instead of risking duplicate replay, and
   HOLD preserves an unanswered predecessor's busy mark, including suppressed
   alias routes and duplicate Slack event twins. Reaction ownership transfers
-  under the channel delivery lock. Optional fields
+  under the channel delivery lock and retains a durable mirror until piggyback
+  completion. Mixed-fanout paste evidence prevents replay; pending reaction
+  receipts carry an optional generation so delayed history writes stay obsolete.
+  Optional fields
   and rollback decoder compatibility are documented in the README.
 
 - **Durable inbound holds and ordered redrive** (gp-b06o): an unvouched

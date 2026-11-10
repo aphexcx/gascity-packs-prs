@@ -265,42 +265,43 @@ func (s *recoverySubmission) message() externalInboundMessage {
 }
 
 type inboundRecoveryEntry struct {
-	ReplayIncludeOlder     bool                   `json:"replay_include_older,omitempty"`
-	AliasOriginalSessionID string                 `json:"alias_original_session_id,omitempty"`
-	BusyReaction           bool                   `json:"busy_reaction,omitempty"`
-	LastVouchAt            time.Time              `json:"last_vouch_at,omitempty"`
-	ReplayBlockedReason    string                 `json:"replay_blocked_reason,omitempty"`
-	AcknowledgedAt         time.Time              `json:"acknowledged_at,omitempty"`
-	LastAttemptAt          time.Time              `json:"last_attempt_at,omitempty"`
-	PendingSince           time.Time              `json:"pending_since,omitempty"`
-	NextPollAt             time.Time              `json:"next_poll_at,omitempty"`
-	RetryStep              int                    `json:"retry_step,omitempty"`
-	ManualRecovery         bool                   `json:"manual_recovery,omitempty"`
-	TrustedFilePaths       []string               `json:"trusted_file_paths,omitempty"`
-	Landed                 bool                   `json:"landed,omitempty"`
-	Parts                  *recoveryParts         `json:"parts,omitempty"`
-	LegacyUncertain        bool                   `json:"legacy_uncertain,omitempty"`
-	Submission             *recoverySubmission    `json:"submission,omitempty"`
-	ComposerHold           *deliveryComposerHold  `json:"composer_hold,omitempty"`
-	AliasSessionID         string                 `json:"alias_session_id,omitempty"`
-	AliasHandle            string                 `json:"alias_handle,omitempty"`
-	AliasBody              string                 `json:"alias_body,omitempty"`
-	Inbound                externalInboundMessage `json:"inbound"`
-	Reaction               bool                   `json:"reaction,omitempty"`
-	Rendered               bool                   `json:"rendered,omitempty"`
-	OriginalReceiptID      string                 `json:"original_receipt_id,omitempty"`
-	PendingReceiptID       string                 `json:"pending_receipt_id,omitempty"`
-	PendingReceipt         bool                   `json:"pending_receipt,omitempty"`
-	TargetSessions         []string               `json:"target_sessions,omitempty"`
-	HeldAt                 time.Time              `json:"held_at"`
-	NextAttemptAt          time.Time              `json:"next_attempt_at"`
-	Attempts               int                    `json:"attempts"`
-	DeadLetteredAt         time.Time              `json:"dead_lettered_at,omitempty"`
-	DeliveredAt            time.Time              `json:"delivered_at,omitempty"`
-	CompletionPending      bool                   `json:"completion_pending,omitempty"`
-	Retiring               bool                   `json:"retiring,omitempty"`
-	ReplayNotBefore        time.Time              `json:"replay_not_before,omitempty"`
-	Reason                 string                 `json:"reason,omitempty"`
+	ReactionReceiptGeneration uint64                 `json:"reaction_receipt_generation,omitempty"`
+	ReplayIncludeOlder        bool                   `json:"replay_include_older,omitempty"`
+	AliasOriginalSessionID    string                 `json:"alias_original_session_id,omitempty"`
+	BusyReaction              bool                   `json:"busy_reaction,omitempty"`
+	LastVouchAt               time.Time              `json:"last_vouch_at,omitempty"`
+	ReplayBlockedReason       string                 `json:"replay_blocked_reason,omitempty"`
+	AcknowledgedAt            time.Time              `json:"acknowledged_at,omitempty"`
+	LastAttemptAt             time.Time              `json:"last_attempt_at,omitempty"`
+	PendingSince              time.Time              `json:"pending_since,omitempty"`
+	NextPollAt                time.Time              `json:"next_poll_at,omitempty"`
+	RetryStep                 int                    `json:"retry_step,omitempty"`
+	ManualRecovery            bool                   `json:"manual_recovery,omitempty"`
+	TrustedFilePaths          []string               `json:"trusted_file_paths,omitempty"`
+	Landed                    bool                   `json:"landed,omitempty"`
+	Parts                     *recoveryParts         `json:"parts,omitempty"`
+	LegacyUncertain           bool                   `json:"legacy_uncertain,omitempty"`
+	Submission                *recoverySubmission    `json:"submission,omitempty"`
+	ComposerHold              *deliveryComposerHold  `json:"composer_hold,omitempty"`
+	AliasSessionID            string                 `json:"alias_session_id,omitempty"`
+	AliasHandle               string                 `json:"alias_handle,omitempty"`
+	AliasBody                 string                 `json:"alias_body,omitempty"`
+	Inbound                   externalInboundMessage `json:"inbound"`
+	Reaction                  bool                   `json:"reaction,omitempty"`
+	Rendered                  bool                   `json:"rendered,omitempty"`
+	OriginalReceiptID         string                 `json:"original_receipt_id,omitempty"`
+	PendingReceiptID          string                 `json:"pending_receipt_id,omitempty"`
+	PendingReceipt            bool                   `json:"pending_receipt,omitempty"`
+	TargetSessions            []string               `json:"target_sessions,omitempty"`
+	HeldAt                    time.Time              `json:"held_at"`
+	NextAttemptAt             time.Time              `json:"next_attempt_at"`
+	Attempts                  int                    `json:"attempts"`
+	DeadLetteredAt            time.Time              `json:"dead_lettered_at,omitempty"`
+	DeliveredAt               time.Time              `json:"delivered_at,omitempty"`
+	CompletionPending         bool                   `json:"completion_pending,omitempty"`
+	Retiring                  bool                   `json:"retiring,omitempty"`
+	ReplayNotBefore           time.Time              `json:"replay_not_before,omitempty"`
+	Reason                    string                 `json:"reason,omitempty"`
 }
 
 type inboundHoldNotice struct {
@@ -390,12 +391,13 @@ type inboundRecovery struct {
 	sessions           map[string]bool
 	manual             map[string]bool
 	manualIncludeOlder map[string]bool
+	queuedReactions    map[string]bool
 }
 
 func newInboundRecovery(path, deadDir string) (*inboundRecovery, error) {
 	r := &inboundRecovery{path: path, deadDir: deadDir, ceiling: 15 * time.Minute,
 		bound: 30 * time.Minute, replayMaxAge: 24 * time.Hour, gated: true, now: time.Now, wake: make(chan struct{}, 1),
-		counted:  map[string]bool{},
+		counted: map[string]bool{}, queuedReactions: map[string]bool{},
 		sessions: map[string]bool{}, manual: map[string]bool{}, manualIncludeOlder: map[string]bool{},
 		state: inboundRecoveryState{Entries: map[string]inboundRecoveryEntry{}, Notices: map[string]inboundHoldNotice{}}}
 	if path != "" {
@@ -502,6 +504,19 @@ func (r *inboundRecovery) known(channel, ts string) bool {
 	return ok
 }
 
+// A queued reaction retains admission dedup while its one side-buffer copy
+// is allowed to deliver. A pending or completed recovery entry blocks sends.
+func (r *inboundRecovery) deliveryBlocked(channel, ts string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := originKey(channel, ts)
+	e, ok := r.state.Entries[key]
+	return ok && (e.inactive() || !r.queuedReactions[key])
+}
+
 func (r *inboundRecovery) busyDeferred(channel, ts, aliasSession string) bool {
 	if r == nil {
 		return false
@@ -533,13 +548,28 @@ func (r *inboundRecovery) isNotice(channel, ts string) bool {
 // A nil error confirms durability. On write failure recovery still owns the
 // payload AND receipt in memory, and tick retries persistence independently.
 func (r *inboundRecovery) hold(p pendingChannelInbound, receipt deliveryReceipt, rendered bool, busy ...bool) error {
-	if p.reaction && receipt.verdict(r.gated) != receiptHeld {
+	if p.reaction && receipt.verdict(r.gated) != receiptHeld && !receipt.landedUnconfirmed() {
 		if r.coalescer != nil {
 			r.coalescer.restore(p.inbound.Conversation.ConversationID, []pendingChannelInbound{p})
 		}
 		return nil
 	}
-	return r.holdEntry(inboundRecoveryEntry{Inbound: redactInboundMessage(p.inbound), Parts: captureRecoveryParts(p), Reaction: p.reaction, Rendered: rendered, BusyReaction: len(busy) > 0 && busy[0]}, receipt)
+	if err := r.holdEntry(inboundRecoveryEntry{Inbound: redactInboundMessage(p.inbound), Parts: captureRecoveryParts(p), Reaction: p.reaction, Rendered: rendered, BusyReaction: len(busy) > 0 && busy[0]}, receipt); err != nil {
+		return err
+	}
+	if p.reaction {
+		key := recoveryKey(p.inbound)
+		r.mu.Lock()
+		e := r.state.Entries[key]
+		r.mu.Unlock()
+		if e.CompletionPending {
+			if err := r.writeDead(e, e.DeliveredAt); err != nil {
+				return err
+			}
+			r.historyWritten(key, e)
+		}
+	}
+	return nil
 }
 
 func (r *inboundRecovery) holdAlias(msg externalInboundMessage, session, handle, body string, receipt deliveryReceipt, busy ...bool) error {
@@ -596,8 +626,17 @@ func (r *inboundRecovery) holdEntry(e inboundRecoveryEntry, receipt deliveryRece
 	if e.AliasSessionID != "" {
 		key += "|alias:" + e.AliasSessionID
 	}
-	if _, ok := r.state.Entries[key]; ok {
-		return r.saveLocked()
+	if cur, ok := r.state.Entries[key]; ok {
+		if !e.Reaction || !r.queuedReactions[key] {
+			return r.saveLocked()
+		}
+		// A queued reaction acquired a new pending receipt. Keep its
+		// original history identity while returning ownership to polling.
+		e.HeldAt, e.DeadLetteredAt = cur.HeldAt, cur.DeadLetteredAt
+		e.OriginalReceiptID, e.Attempts = cur.OriginalReceiptID, cur.Attempts
+		e.ReactionReceiptGeneration = cur.ReactionReceiptGeneration + 1
+		e.CompletionPending = !e.DeadLetteredAt.IsZero()
+		delete(r.queuedReactions, key)
 	}
 	if e.BusyReaction && r.busyMarks != nil {
 		// A reply may already have taken the initial mark while the POST
@@ -606,12 +645,18 @@ func (r *inboundRecovery) holdEntry(e inboundRecoveryEntry, receipt deliveryRece
 		e.BusyReaction = pending && ts == e.Inbound.ProviderMessageID
 	}
 	now := r.now()
-	e.OriginalReceiptID, e.TargetSessions = receipt.id, receiptSessions(receipt)
+	if e.OriginalReceiptID == "" {
+		e.OriginalReceiptID = receipt.id
+	}
+	e.TargetSessions = receiptSessions(receipt)
 	e.Submission, e.ComposerHold = receipt.submission, receipt.composerHold()
 	e.TrustedFilePaths = append([]string(nil), e.Inbound.trustedFilePaths...)
 	e.Landed = receipt.landedUnconfirmed()
-	e.HeldAt, e.NextAttemptAt = now, now.Add(retryLadderDelay(inboundHoldBackoff, 0, r.ceiling))
-	if deadline := now.Add(r.bound); e.NextAttemptAt.After(deadline) {
+	if e.HeldAt.IsZero() {
+		e.HeldAt = now
+	}
+	e.NextAttemptAt = now.Add(retryLadderDelay(inboundHoldBackoff, 0, r.ceiling))
+	if deadline := e.HeldAt.Add(r.bound); e.NextAttemptAt.After(deadline) {
 		e.NextAttemptAt = deadline
 	}
 	if receipt.verdict(r.gated) == receiptHeld {
@@ -699,6 +744,10 @@ func (r *inboundRecovery) importDeadLetters() error {
 		r.quarantineHistoryLocked("", nil)
 		return r.saveLocked()
 	}
+	snapshot := map[string]bool{}
+	for key := range r.state.Entries {
+		snapshot[key] = true
+	}
 	for _, file := range files {
 		if !strings.HasSuffix(file.Name(), ".jsonl") {
 			continue
@@ -766,6 +815,19 @@ func (r *inboundRecovery) importDeadLetters() error {
 				continue
 			}
 			if exists {
+				if rec.Reaction && !snapshot[key] && !cur.inactive() && rec.ReactionReceiptGeneration >= cur.ReactionReceiptGeneration {
+					// History-only reconstruction must use the newest receipt
+					// after a reaction has returned to the side lane and acquired
+					// another pending piggyback. A valid snapshot is newer still.
+					cur.PendingReceiptID, cur.PendingReceipt = rec.PendingReceiptID, rec.PendingReceipt
+					cur.Submission, cur.TargetSessions = rec.Submission, rec.TargetSessions
+					cur.OriginalReceiptID, cur.Reason = rec.OriginalReceiptID, rec.Reason
+					cur.ReactionReceiptGeneration = rec.ReactionReceiptGeneration
+					if rec.ReceiptStateKnown {
+						cur.LegacyUncertain = false
+					}
+					r.state.Entries[key] = cur
+				}
 				if rec.ReplayBlockedReason != "" {
 					cur.ReplayBlockedReason = rec.ReplayBlockedReason
 					r.state.Entries[key] = cur
@@ -777,7 +839,7 @@ func (r *inboundRecovery) importDeadLetters() error {
 				}
 				continue
 			}
-			r.state.Entries[key] = inboundRecoveryEntry{Inbound: rec.Inbound, HeldAt: rec.DeadLetteredAt, ManualRecovery: manualRecovery, ReplayBlockedReason: rec.ReplayBlockedReason,
+			r.state.Entries[key] = inboundRecoveryEntry{Inbound: rec.Inbound, HeldAt: rec.DeadLetteredAt, ManualRecovery: manualRecovery, ReplayBlockedReason: rec.ReplayBlockedReason, ReactionReceiptGeneration: rec.ReactionReceiptGeneration,
 				DeadLetteredAt: rec.DeadLetteredAt, OriginalReceiptID: rec.OriginalReceiptID, Attempts: rec.Attempts, RetryStep: rec.Attempts,
 				TargetSessions: rec.TargetSessions, Reason: rec.Reason, PendingReceiptID: rec.PendingReceiptID, PendingReceipt: rec.PendingReceipt, Submission: rec.Submission, Parts: rec.Parts, TrustedFilePaths: rec.TrustedFilePaths,
 				AliasSessionID: rec.AliasSessionID, AliasOriginalSessionID: rec.AliasOriginalSessionID, AliasHandle: rec.AliasHandle, AliasBody: rec.AliasBody, Rendered: rec.Rendered, Reaction: rec.Reaction, BusyReaction: rec.BusyReaction}
@@ -1000,6 +1062,9 @@ func (r *inboundRecovery) tick(startup bool) {
 	armed, aged := 0, 0
 	var oldest time.Time
 	for key, e := range r.state.Entries {
+		if r.queuedReactions[key] {
+			continue
+		}
 		if e.inactive() && !e.CompletionPending && !e.Retiring {
 			continue
 		}
@@ -1074,8 +1139,7 @@ func (r *inboundRecovery) tick(startup bool) {
 		r.mu.Unlock()
 		if e.CompletionPending {
 			if err := r.writeDead(e, e.DeliveredAt); err == nil {
-				e.CompletionPending = false
-				r.put(key, e)
+				r.historyWritten(key, e)
 			}
 			continue
 		}
@@ -1182,14 +1246,43 @@ func (r *inboundRecovery) tick(startup bool) {
 		}
 		if errors.Is(err, errRecoveryReaction) {
 			if r.coalescer != nil {
-				// A flush must not consume the restored reaction while known()
-				// still points at its old recovery owner and discard that copy.
+				// A flush must not consume the restored reaction before the
+				// delivery filter permits its side-buffer copy to be sent.
 				release := r.coalescer.holdDelivery(e.Inbound.Conversation.ConversationID)
-				r.coalescer.restore(e.Inbound.Conversation.ConversationID, []pendingChannelInbound{e.pending()})
+				// Keep the durable mirror until piggyback delivery completes.
+				// Otherwise an unresolved history row would resurrect it later.
+				e.CompletionPending = !e.DeadLetteredAt.IsZero()
+				r.put(key, e)
+				if e.CompletionPending {
+					if err := r.writeDead(e, time.Time{}); err != nil {
+						log.Printf("inbound reaction handoff persist: %v", err)
+						release()
+						continue
+					}
+					r.historyWritten(key, e)
+				}
 				r.mu.Lock()
-				delete(r.state.Entries, key)
-				_ = r.saveLocked()
+				e = r.state.Entries[key]
+				if e.inactive() || e.PendingReceipt {
+					r.mu.Unlock()
+					release()
+					continue
+				}
+				if r.dirty {
+					if err := r.saveLocked(); err != nil {
+						r.mu.Unlock()
+						release()
+						continue
+					}
+				}
+				if r.queuedReactions == nil {
+					r.queuedReactions = map[string]bool{}
+				}
+				r.queuedReactions[key] = true
 				r.mu.Unlock()
+				p := e.pending()
+				p.inbound.originalReceiptID = e.OriginalReceiptID
+				r.coalescer.restore(e.Inbound.Conversation.ConversationID, []pendingChannelInbound{p})
 				release()
 			}
 			continue
@@ -1336,6 +1429,9 @@ func (r *inboundRecovery) put(key string, e inboundRecoveryEntry) {
 	if cur, exists := r.state.Entries[key]; exists {
 		// A reply racing this attempt permanently cancels restoration.
 		e.BusyReaction = e.BusyReaction && cur.BusyReaction
+		if !cur.AcknowledgedAt.IsZero() {
+			e.AcknowledgedAt = cur.AcknowledgedAt
+		}
 	}
 	// A deletion racing a POST still applies to the durable retry copy.
 	if cur := r.state.Entries[key]; cur.Inbound.Text == deletedBySenderNotice {
@@ -1399,6 +1495,81 @@ func (r *inboundRecovery) takeBusyBefore(marks *busyReactionRegistry, channel, t
 		return marks.takeConversationBefore(channel, cutoff)
 	}
 	return marks.takeBefore(channel, thread, cutoff)
+}
+
+// A delayed history write only clears its own intent; it cannot overwrite a
+// newer receipt, completion, acknowledgement or concurrent busy-intent change.
+func (r *inboundRecovery) historyWritten(key string, written inboundRecoveryEntry) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cur, ok := r.state.Entries[key]
+	if !ok || !cur.CompletionPending || cur.ReactionReceiptGeneration != written.ReactionReceiptGeneration ||
+		cur.PendingReceipt != written.PendingReceipt || cur.PendingReceiptID != written.PendingReceiptID ||
+		!cur.DeliveredAt.Equal(written.DeliveredAt) || cur.ReplayBlockedReason != written.ReplayBlockedReason {
+		return
+	}
+	cur.CompletionPending = false
+	r.state.Entries[key] = compactRecoveryEntry(cur)
+	if err := r.saveLocked(); err != nil {
+		log.Printf("inbound history completion persist: %v", err)
+	}
+}
+
+// Buffered reactions retain a durable recovery mirror until their next real
+// piggyback proves delivery. This callback runs under channel delivery ownership.
+func (r *inboundRecovery) completeBufferedReactions(batch []pendingChannelInbound, receipt deliveryReceipt) {
+	if r == nil {
+		return
+	}
+	verdict, landed := receipt.verdict(true), receipt.landedUnconfirmed()
+	if (verdict == receiptHeld || verdict == receiptUnconfirmed) && !landed {
+		return // holdEntry will retain the new receipt, or the side lane retries.
+	}
+	for _, p := range batch {
+		if !p.reaction {
+			continue
+		}
+		key := recoveryKey(p.inbound)
+		r.mu.Lock()
+		e, exists := r.state.Entries[key]
+		if !exists || !r.queuedReactions[key] {
+			r.mu.Unlock()
+			continue
+		}
+		delete(r.queuedReactions, key)
+		if e.inactive() {
+			r.mu.Unlock()
+			continue
+		}
+		e.PendingReceipt, e.PendingReceiptID = false, ""
+		e.NextPollAt, e.NextAttemptAt = time.Time{}, time.Time{}
+		if verdict == receiptVouched || landed {
+			e.DeliveredAt = r.now()
+			e.Reason = "terminal handoff confirmed"
+			if landed {
+				e.Reason = "terminal paste confirmed; submission unconfirmed"
+			}
+		} else {
+			e.ReplayBlockedReason = "verify by hand: buffered reaction delivery proof unavailable"
+			e.Reason = e.ReplayBlockedReason
+		}
+		e.CompletionPending = !e.DeadLetteredAt.IsZero()
+		r.state.Entries[key] = compactRecoveryEntry(e)
+		if err := r.saveLocked(); err != nil {
+			log.Printf("inbound reaction completion persist: %v", err)
+		}
+		r.mu.Unlock()
+		if e.CompletionPending {
+			if err := r.writeDead(e, e.DeliveredAt); err != nil {
+				log.Printf("inbound reaction completion history: %v", err)
+			} else {
+				r.historyWritten(key, e)
+			}
+		}
+		if !e.DeliveredAt.IsZero() && r.finished != nil {
+			r.finished(e)
+		}
+	}
 }
 
 func (r *inboundRecovery) resolveRecoveryAlias(e inboundRecoveryEntry) inboundRecoveryEntry {
@@ -1488,11 +1659,12 @@ func (r *inboundRecovery) writeDead(e inboundRecoveryEntry, replayed time.Time) 
 		OriginalReceiptID: e.OriginalReceiptID, TargetSessions: e.TargetSessions, ReplayedAt: replayed,
 		ReceiptStateKnown:   true,
 		ReplayBlockedReason: e.ReplayBlockedReason, AcknowledgedAt: e.AcknowledgedAt,
-		ManualRecovery:         e.ManualRecovery,
-		BusyReaction:           e.BusyReaction,
-		AliasOriginalSessionID: e.AliasOriginalSessionID,
-		TrustedFilePaths:       e.TrustedFilePaths,
-		PendingReceiptID:       e.PendingReceiptID, PendingReceipt: e.PendingReceipt, Submission: e.Submission, Parts: e.Parts, AliasSessionID: e.AliasSessionID, AliasHandle: e.AliasHandle, AliasBody: e.AliasBody, Rendered: e.Rendered, Reaction: e.Reaction}})
+		ManualRecovery:            e.ManualRecovery,
+		BusyReaction:              e.BusyReaction,
+		ReactionReceiptGeneration: e.ReactionReceiptGeneration,
+		AliasOriginalSessionID:    e.AliasOriginalSessionID,
+		TrustedFilePaths:          e.TrustedFilePaths,
+		PendingReceiptID:          e.PendingReceiptID, PendingReceipt: e.PendingReceipt, Submission: e.Submission, Parts: e.Parts, AliasSessionID: e.AliasSessionID, AliasHandle: e.AliasHandle, AliasBody: e.AliasBody, Rendered: e.Rendered, Reaction: e.Reaction}})
 	return err
 }
 

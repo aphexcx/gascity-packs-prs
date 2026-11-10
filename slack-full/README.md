@@ -423,6 +423,10 @@ Reactions whose receipt establishes loss return to their coalescer side buffer
 and only ride a real message; pending reactions are polled and never sent alone.
 The ownership handoff is serialized with channel delivery so a concurrent flush
 cannot discard the only reaction copy.
+Recovery retains a durable mirror until the piggyback completes and appends its
+completion to existing dead-letter history. A new pending receipt replaces the
+old one; its generation prevents a delayed history write from reviving an older
+receipt. Complete paste evidence, including mixed fanout, prevents another send.
 
 After a minute, one bot-authored thread reply per channel incident says delivery
 is held and retrying. Pending-only deliveries wait three minutes before a notice,
@@ -499,6 +503,7 @@ decoders accept them; absent/zero values preserve the previous stored facts.
 | Entry and history | `replay_blocked_reason` | Empty permits existing eligibility; nonempty requires a hand check and prevents replay/FIFO blocking |
 | Entry and history | `acknowledged_at` | Zero means unacknowledged; nonzero removes outstanding counts and replay eligibility |
 | Entry and history | `busy_reaction` | False adds no recovery hourglass; true restores the cancelled eligible affordance; reply completion clears the state intent durably |
+| Entry and history | `reaction_receipt_generation` | Zero is the initial/legacy receipt; increases when a buffered reaction acquires a new pending receipt so older history writes cannot replace it |
 | Entry and history | `alias_original_session_id` | Empty uses the existing alias ID as identity; otherwise preserves dedup identity after retargeting |
 | Entry | `last_attempt_at` | Zero means no recorded recovery send; otherwise its latest time |
 | Entry | `replay_include_older` | False enforces the age horizon; true preserves a deliberately queued older replay through ordering and pending receipt checks, then clears on a failed concluded attempt |
