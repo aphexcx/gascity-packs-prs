@@ -550,11 +550,23 @@ func (r *repeatedFailureLog) clear(channel string) {
 // operator can inspect the message and re-post it by hand once the
 // rejection cause is fixed.
 type inboundDeadLetterRecord struct {
-	DeadLetteredAt time.Time              `json:"dead_lettered_at"`
-	Channel        string                 `json:"channel"`
-	Attempts       int                    `json:"attempts"`
-	Reason         string                 `json:"reason"`
-	Inbound        externalInboundMessage `json:"inbound"`
+	ManualRecovery    bool                   `json:"manual_recovery,omitempty"`
+	TrustedFilePaths  []string               `json:"trusted_file_paths,omitempty"`
+	ReceiptStateKnown bool                   `json:"receipt_state_known,omitempty"`
+	Parts             *recoveryParts         `json:"parts,omitempty"`
+	Submission        *recoverySubmission    `json:"submission,omitempty"`
+	OriginalReceiptID string                 `json:"original_receipt_id,omitempty"`
+	TargetSessions    []string               `json:"target_sessions,omitempty"`
+	PendingReceiptID  string                 `json:"pending_receipt_id,omitempty"`
+	PendingReceipt    bool                   `json:"pending_receipt,omitempty"`
+	Rendered          bool                   `json:"rendered,omitempty"`
+	Reaction          bool                   `json:"reaction,omitempty"`
+	ReplayedAt        time.Time              `json:"replayed_at,omitempty"`
+	DeadLetteredAt    time.Time              `json:"dead_lettered_at"`
+	Channel           string                 `json:"channel"`
+	Attempts          int                    `json:"attempts"`
+	Reason            string                 `json:"reason"`
+	Inbound           externalInboundMessage `json:"inbound"`
 	// AliasSessionID/AliasHandle/AliasBody are set only for a lost
 	// address-by-handle injection (gp-3yg): the aliased session it was
 	// meant for, the handle, and the exact rendered reminder. A hand
@@ -624,22 +636,37 @@ func writeInboundDeadLetter(dir, channel string, batch []pendingChannelInbound, 
 // contract as writeInboundDeadLetter.
 func writeAliasDeadLetter(dir, channel string, inbound externalInboundMessage, sessionID, handle, body string, cause error) (string, error) {
 	reason := ""
+	var loss *receiptFollowUpLoss
+	var pendingID string
+	pending := false
 	if cause != nil {
 		reason = truncateReason(cause.Error())
+		if errors.As(cause, &loss) && !loss.resolved {
+			pendingID, pending = loss.receiptID, true
+		}
 	}
 	return writeInboundDeadLetterRecords(dir, channel, []inboundDeadLetterRecord{{
-		DeadLetteredAt: time.Now().UTC(),
-		Channel:        channel,
-		Reason:         reason,
-		Inbound:        inbound,
-		AliasSessionID: sessionID,
-		AliasHandle:    handle,
-		AliasBody:      body,
+		DeadLetteredAt:    time.Now().UTC(),
+		Channel:           channel,
+		Reason:            reason,
+		Inbound:           inbound,
+		AliasSessionID:    sessionID,
+		AliasHandle:       handle,
+		AliasBody:         body,
+		OriginalReceiptID: inbound.originalReceiptID,
+		PendingReceiptID:  pendingID,
+		PendingReceipt:    pending,
+		ReceiptStateKnown: loss != nil,
+		TargetSessions:    []string{sessionID},
 	}})
 }
 
 // writeInboundDeadLetterRecords is the durable append behind both writers.
+var inboundDeadLetterWriteMu sync.Mutex
+
 func writeInboundDeadLetterRecords(dir, channel string, records []inboundDeadLetterRecord) (string, error) {
+	inboundDeadLetterWriteMu.Lock()
+	defer inboundDeadLetterWriteMu.Unlock()
 	created, err := missingAncestors(dir)
 	if err != nil {
 		return "", err
@@ -655,7 +682,7 @@ func writeInboundDeadLetterRecords(dir, channel string, records []inboundDeadLet
 	// reader appears — under the channel flush mutex (codex r2 finding
 	// 1). Regular files ignore it; it is cleared again before Go's
 	// runtime sees the fd so the *os.File behaves like any other.
-	fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_APPEND|syscall.O_CREAT|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0o600)
+	fd, err := syscall.Open(path, syscall.O_RDWR|syscall.O_APPEND|syscall.O_CREAT|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("open %q (no-follow, non-blocking): %w", path, err)
 	}
@@ -679,12 +706,37 @@ func writeInboundDeadLetterRecords(dir, channel string, records []inboundDeadLet
 			return "", fmt.Errorf("enforce 0600 on %q: %w", path, err)
 		}
 	}
-	enc := json.NewEncoder(f)
+	// A failed append may leave an unterminated tail. Preserve those bytes,
+	// separate the next record, and let import quarantine the damaged line.
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+			f.Close()
+			return path, err
+		}
+		if last[0] != '\n' {
+			if _, err := f.Write([]byte("\n")); err != nil {
+				f.Close()
+				return path, err
+			}
+		}
+	}
 	for _, rec := range records {
+		if len(rec.TrustedFilePaths) == 0 {
+			rec.TrustedFilePaths = append([]string(nil), rec.Inbound.trustedFilePaths...)
+		}
+		rec.Inbound.trustedFilePaths = rec.TrustedFilePaths
 		rec.Inbound = redactInboundMessage(rec.Inbound)
 		rec.AliasBody = redactAttachmentText(rec.AliasBody, rec.Inbound)
 		rec.Reason = truncateReason(rec.Reason)
-		if err := enc.Encode(rec); err != nil {
+		data, err := json.Marshal(rec)
+		if err == nil && len(data) >= 8<<20 {
+			err = errors.New("dead-letter record exceeds 8 MiB replay limit")
+		}
+		if err == nil {
+			_, err = f.Write(append(data, '\n'))
+		}
+		if err != nil {
 			_ = f.Close()
 			return path, err
 		}

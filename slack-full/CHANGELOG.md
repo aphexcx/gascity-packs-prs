@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Durable inbound holds and ordered redrive** (gp-b06o): an unvouched
+  channel/DM, peer-bot or alias delivery backs off over minutes, with a configurable 30-minute
+  deadline. One adapter thread reply surfaces the incident and is edited on
+  recovery. Dead letters retain history, replay with a late marker and original
+  receipt provenance, and can be queued with `gc slack inbound-redrive`.
+  Liveness counts held and dead-lettered lines as missed. The gc gf-52ym `held`
+  receipt permits retries and supplies composer state for the notice; `pending`
+  remains polling-only until definite loss. Polled batch completions preserve
+  the submitted journal identity, including across restart.
+  Peer rendering parts survive recovery, completed payloads compact away, and
+  large histories or torn append tails no longer disable adapter startup.
+  Incomplete liveness dead letters remain missed for manual recovery from Slack.
+
 - **Session-proven inbound ingestion receipts** (gp-41p6): local deliveries
   receive `ingested` only after the complete payload appears in a rendered
   Claude or Codex session record. After three minutes without proof, the journal

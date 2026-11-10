@@ -159,8 +159,9 @@ const receiptFollowUpLogLimit = 240
 // enough to ask gc later, to re-post the identical envelope, and to make a
 // standing loss durable.
 type heldDelivery struct {
-	observeReceipt func(deliveryReceipt)
-	receiptID      string
+	observeReceipt  func(deliveryReceipt)
+	receiptID       string
+	receiptResolved bool
 	// leg names the call site for the log line: inbound | coalesce |
 	// alias dispatch.
 	leg     string
@@ -604,6 +605,7 @@ func (f *receiptFollowUps) runFrom(h heldDelivery, repostsLeft int, recovery boo
 // lost handles a definite loss: loud log, one dedup-keyed recovery copy,
 // and a durable record when the loss stands.
 func (f *receiptFollowUps) lost(h heldDelivery, repostsLeft int, cause error) {
+	h.receiptResolved = true
 	where := fmt.Sprintf("leg=%s chan=%s ts=%s", h.leg, h.channel, h.ts)
 	logID := receiptLogID(h.receiptID)
 	log.Printf("receipt follow-up: LOST %s receipt=%s the held delivery never landed: %s", where, logID, describeReceiptErr(cause))
@@ -642,6 +644,8 @@ func (f *receiptFollowUps) lost(h heldDelivery, repostsLeft int, cause error) {
 		return
 	}
 	verdict := receipt.verdict(f.gated)
+	h.receiptID = receipt.id
+	h.receiptResolved = verdict == receiptUnconfirmed || verdict == receiptNoRoute || verdict == receiptVouched
 	switch verdict {
 	case receiptVouched:
 		log.Printf("receipt follow-up: RECOVERED %s the recovery copy landed — %s", where, receipt.logField(verdict))
@@ -676,12 +680,24 @@ func (f *receiptFollowUps) stuck(h heldDelivery, cause error) {
 // so a grep for LOSS finds every message an agent may not have.
 func (f *receiptFollowUps) deadLetter(h heldDelivery, cause error) {
 	where := fmt.Sprintf("leg=%s chan=%s ts=%s receipt=%s", h.leg, h.channel, h.ts, receiptLogID(h.receiptID))
+	cause = &receiptFollowUpLoss{cause: cause, receiptID: h.receiptID, resolved: h.receiptResolved}
 	if h.deadLetter != nil && h.deadLetter(cause) {
 		log.Printf("receipt follow-up: LOSS %s written to the dead-letter file — %s", where, describeReceiptErr(cause))
 		return
 	}
 	log.Printf("receipt follow-up: LOSS %s and the dead-letter write FAILED or is unavailable — this message has NO durable record: %s", where, describeReceiptErr(cause))
 }
+
+// Carries the outstanding recovery-copy receipt to durable alias history.
+// OriginalReceiptID remains the initial receipt, a separate provenance fact.
+type receiptFollowUpLoss struct {
+	cause     error
+	receiptID string
+	resolved  bool
+}
+
+func (e *receiptFollowUpLoss) Error() string { return e.cause.Error() }
+func (e *receiptFollowUpLoss) Unwrap() error { return e.cause }
 
 // receiptLogID makes a gc-supplied receipt id safe for a log line.
 func receiptLogID(id string) string {
@@ -868,6 +884,9 @@ func deadLetterHeldAliasLoss(cfg config, inbound externalInboundMessage, session
 	}
 	log.Printf("receipt follow-up: chan=%s lost injection for session=%s handle=%s written to dead-letter file %s — re-inject alias_body by hand",
 		channel, sanitizeReceiptLogValue(sessionID, receiptLogValueLimit), sanitizeReceiptLogValue(handle, receiptLogValueLimit), path)
+	if err := cfg.inboundRecovery.importDeadLetters(); err != nil {
+		log.Printf("inbound dead-letter index refresh: %v", err)
+	}
 	return true
 }
 
@@ -889,5 +908,8 @@ func deadLetterHeldLoss(cfg config, channel string, batch []pendingChannelInboun
 	}
 	log.Printf("receipt follow-up: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand",
 		channel, len(batch), path)
+	if err := cfg.inboundRecovery.importDeadLetters(); err != nil {
+		log.Printf("inbound dead-letter index refresh: %v", err)
+	}
 	return true
 }

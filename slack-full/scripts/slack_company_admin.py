@@ -403,6 +403,18 @@ def cmd_company_redact(argv: list[str]) -> int:
 
 # --- CLI entry point -------------------------------------------------------
 
+def cmd_inbound_redrive(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="slack inbound-redrive")
+    parser.add_argument("--conversation-id", required=True)
+    args = parser.parse_args(argv)
+    status, data = _internal_request("POST", "/internal/inbound/redrive",
+                                     {"conversation_id": args.conversation_id})
+    if status != 202:
+        raise AdminError(f"inbound-redrive: HTTP {status}: {data}")
+    print(json.dumps(data, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print("error: expected a subcommand "
@@ -411,6 +423,8 @@ def main(argv: list[str]) -> int:
         return 2
     sub, rest = argv[0], argv[1:]
     try:
+        if sub == "inbound-redrive":
+            return cmd_inbound_redrive(rest)
         if sub == "company-status":
             return cmd_company_status(rest)
         if sub == "company-redrive":

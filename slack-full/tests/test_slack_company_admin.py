@@ -43,6 +43,22 @@ def _mod():
     return slack_company_admin
 
 
+def test_inbound_redrive_queues_channel(monkeypatch, capsys) -> None:
+    mod = _mod()
+    calls = _mock_conn(mod, monkeypatch, [(202, {"status": "queued"})])
+    assert mod.main(["inbound-redrive", "--conversation-id", "C123"]) == 0
+    assert calls[0]["url"] == "/internal/inbound/redrive"
+    assert calls[0]["body"] == {"conversation_id": "C123"}
+    assert "queued" in capsys.readouterr().out
+
+
+def test_inbound_redrive_failure_is_not_delivery(monkeypatch, capsys) -> None:
+    mod = _mod()
+    _mock_conn(mod, monkeypatch, [(500, {"error": "history unreadable"})])
+    assert mod.main(["inbound-redrive", "--conversation-id", "C123"]) == 1
+    assert "500" in capsys.readouterr().err
+
+
 # --- fake internal-listener connection -------------------------------------
 
 class _FakeResp:

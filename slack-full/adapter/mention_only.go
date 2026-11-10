@@ -945,7 +945,8 @@ var mentionOnlyConfirmHold = 10 * time.Second
 // prefixes the log lines.
 func retryMentionOnlyFailed(cfg config, lane string, failed []mentionOnlyTarget, inbound externalInboundMessage, confirm mentionOnlyAsyncConfirm) (reached, stillFailed []mentionOnlyTarget) {
 	channel, ts := inbound.Conversation.ConversationID, inbound.ProviderMessageID
-	for attempt, wait := range companyMentionOnlyRetryBackoff {
+	for attempt := range companyMentionOnlyRetryBackoff {
+		wait := retryLadderDelay(companyMentionOnlyRetryBackoff, attempt, 0)
 		if len(failed) == 0 {
 			break
 		}

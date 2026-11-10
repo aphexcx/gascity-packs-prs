@@ -50,6 +50,7 @@ type inboundJournalRecord struct {
 	Bytes              int                      `json:"bytes"`
 	Mode               string                   `json:"mode"`
 	ReceiptID          string                   `json:"receipt_id,omitempty"`
+	OriginalReceiptID  string                   `json:"original_receipt_id,omitempty"`
 	Status             string                   `json:"status"`
 	Windows            []injectionWindow        `json:"windows"`
 	UnseenWindows      []injectionWindow        `json:"-"` // recomputed for mail; never replaces durable membership
@@ -74,6 +75,7 @@ func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt 
 	}
 	r := inboundJournalRecord{Channel: msg.Conversation.ConversationID, ThreadTS: msg.ReplyToMessageID, MessageTS: msg.ProviderMessageID, Target: msg.ExplicitTarget, Bytes: len(msg.Text), Mode: cfg.injectionMode, ReceiptID: receipt.id, Status: receipt.status, Windows: msg.injectionWindows, HandoffSessions: []string{}}
 	r.StartedAt = msg.injectionStartedAt
+	r.OriginalReceiptID = msg.originalReceiptID
 	r.Provider = msg.Conversation.Provider
 	if r.Provider == "" {
 		r.Provider = cfg.provider
