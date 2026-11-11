@@ -52,8 +52,10 @@ func TestStatusDeliveryRowsShowAgeCauseAndStuck(t *testing.T) {
 		NextAttempt: next, Posted: now.Add(-15 * time.Second), Cause: "draft_deferred", Raised: raised, Event: "private message body"}
 	f.l.Changes["pending-id"] = &ledger.ChangeState{ID: "pending-id", Status: "pending", ReceiptID: "receipt-example", Created: now.Add(-5 * time.Minute), Attempts: 1}
 	f.l.Changes["fresh-id"] = &ledger.ChangeState{ID: "fresh-id", Status: "intent", Created: now.Add(-10 * time.Second), Cause: "behind_earlier"}
+	f.l.Changes["fresh-post-id"] = &ledger.ChangeState{ID: "fresh-post-id", Status: "pending", Created: now.Add(-5 * time.Minute), Posted: now.Add(-10 * time.Second)}
 	u := &ledger.ChangeState{ID: "unresolved-id", Status: "unresolved", Reason: "not delivered within the retry bound", Created: now.Add(-25 * time.Hour), Attempts: 1400, Cause: "draft_deferred", Raised: raised}
 	f.l.Changes[u.ID], f.l.Unresolved[u.ID] = u, u
+	u.RaisedEnd, u.Fragment = raised, true
 	old := &ledger.ChangeState{ID: "old-id", Status: "unresolved", Reason: "delivery retries exhausted", Attempts: 4}
 	f.l.Changes[old.ID], f.l.Unresolved[old.ID] = old, old
 	f.mu.Unlock()
@@ -86,7 +88,10 @@ func TestStatusDeliveryRowsShowAgeCauseAndStuck(t *testing.T) {
 	if rows["fresh-id"]["cause"] != "behind_earlier" || rows["unresolved-id"]["cause"] != "draft_deferred" {
 		t.Fatalf("causes: %s", raw)
 	}
-	for _, key := range []string{"cause", "next_attempt", "raised", "created", "age_seconds"} {
+	if rows["unresolved-id"]["raised_end"] != raised.Format(time.RFC3339Nano) || rows["unresolved-id"]["fragment"] != true {
+		t.Fatalf("end mail and fragment marks: %v", rows["unresolved-id"])
+	}
+	for _, key := range []string{"cause", "next_attempt", "raised", "raised_end", "fragment", "created", "age_seconds"} {
 		if _, ok := rows["old-id"][key]; ok {
 			t.Fatalf("empty %s not omitted on an old row: %v", key, rows["old-id"])
 		}
@@ -101,7 +106,7 @@ func TestStatusDeliveryRowsShowAgeCauseAndStuck(t *testing.T) {
 	}
 }
 
-func TestReplayClearsRetryStateAndKeepsRaised(t *testing.T) {
+func TestReplayClearsRetryStateAndMailMarks(t *testing.T) {
 	f := setup(t)
 	f.s.SetPoll(func(context.Context) error { return nil })
 	id := "spaces/room/messages/replay"
@@ -109,7 +114,7 @@ func TestReplayClearsRetryStateAndKeepsRaised(t *testing.T) {
 	b, _ := json.Marshal(m)
 	raised := time.Now().UTC().Add(-time.Hour)
 	c := &ledger.ChangeState{ID: id, Space: "spaces/room", Message: id, Status: "unresolved", Reason: "not delivered within the retry bound", Event: string(b), Attempts: 1400,
-		Created: time.Now().Add(-25 * time.Hour), NextAttempt: time.Now().Add(time.Minute), Posted: time.Now().Add(-time.Minute), Cause: "draft_deferred", Fragment: true, Raised: raised}
+		Created: time.Now().Add(-25 * time.Hour), NextAttempt: time.Now().Add(time.Minute), Posted: time.Now().Add(-time.Minute), Cause: "draft_deferred", Fragment: true, Raised: raised, RaisedEnd: raised}
 	f.mu.Lock()
 	f.l.Changes[id] = c
 	copy := *c
@@ -121,7 +126,7 @@ func TestReplayClearsRetryStateAndKeepsRaised(t *testing.T) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	got := f.l.Changes[id]
-	if got.Status != "intent" || got.Attempts != 0 || !got.NextAttempt.IsZero() || !got.Posted.IsZero() || got.Cause != "" || got.Fragment || !got.Raised.Equal(raised) || time.Since(got.Created) > time.Minute {
+	if got.Status != "intent" || got.Attempts != 0 || !got.NextAttempt.IsZero() || !got.Posted.IsZero() || got.Cause != "" || got.Fragment || !got.Raised.IsZero() || !got.RaisedEnd.IsZero() || time.Since(got.Created) > time.Minute {
 		t.Fatalf("replay: %+v", got)
 	}
 }

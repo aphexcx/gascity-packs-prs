@@ -380,14 +380,15 @@ class ProxyCommandsTest(ProxyFixture):
                             "cause": "draft_deferred", "attempts": 63, "next_attempt": "2026-11-10T21:25:03Z"},
                            {"id": "fresh-id", "status": "intent", "reason": "", "created": "2026-11-10T21:24:00Z", "age_seconds": 63, "cause": "behind_earlier"},
                            {"id": "unresolved-id", "status": "unresolved", "reason": "not delivered within the retry bound", "created": "2026-11-09T20:22:58Z",
-                            "age_seconds": 90061, "cause": "draft_deferred", "attempts": 1440, "raised": "2026-11-09T20:24:58Z"}], "spaces": {}})
+                            "age_seconds": 90061, "cause": "draft_deferred", "attempts": 1440, "raised": "2026-11-09T20:24:58Z",
+                            "raised_end": "2026-11-10T20:22:58Z", "fragment": True}], "spaces": {}})
         result = self.run_command("status")
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines()
         self.assertIn("Backlog: 0; pending: 2; unresolved: 1; unrecorded: 0; quarantine: 0; stuck: 1", lines)
         self.assertIn("  intent waiting-id: retry; age 1h2m; cause draft_deferred; next attempt 2026-11-10T21:25:03Z; posts 63", lines)
         self.assertIn("  intent fresh-id: ; age 1m3s; cause behind_earlier; posts 0", lines)
-        self.assertIn("  unresolved unresolved-id: not delivered within the retry bound; age 25h1m; cause draft_deferred", lines)
+        self.assertIn("  unresolved unresolved-id: not delivered within the retry bound; age 25h1m; cause draft_deferred; raised 2026-11-09T20:24:58Z; ended mail 2026-11-10T20:22:58Z; fragment in input box", lines)
 
 
 class DoctorTest(ProxyFixture):

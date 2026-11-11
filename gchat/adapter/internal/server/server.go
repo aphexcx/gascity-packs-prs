@@ -1536,6 +1536,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		Attempts    int       `json:"attempts,omitempty"`
 		NextAttempt time.Time `json:"next_attempt,omitzero"`
 		Raised      time.Time `json:"raised,omitzero"`
+		RaisedEnd   time.Time `json:"raised_end,omitzero"`
+		Fragment    bool      `json:"fragment,omitempty"`
 	}
 	deliveries := make([]delivery, 0)
 	inFlight, stuck := 0, 0
@@ -1551,12 +1553,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		row := delivery{ID: change.ID, Status: change.Status, Reason: change.Reason, ReceiptID: change.ReceiptID, Created: change.Created,
-			Cause: change.Cause, Attempts: change.Attempts, NextAttempt: change.NextAttempt, Raised: change.Raised}
+			Cause: change.Cause, Attempts: change.Attempts, NextAttempt: change.NextAttempt, Raised: change.Raised, RaisedEnd: change.RaisedEnd, Fragment: change.Fragment}
 		if !change.Created.IsZero() {
 			age := max(now.Sub(change.Created), 0)
 			seconds := int64(age / time.Second)
 			row.AgeSeconds = &seconds
-			if waiting && age >= inbound.DefaultStuckAfter {
+			if waiting && now.Sub(inbound.WaitingSince(change)) >= inbound.DefaultStuckAfter {
 				stuck++
 			}
 		}
@@ -1618,9 +1620,9 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 			c.Created = time.Now().UTC()
 			c.Reason = "operator replay"
 			// POST at once, in the space's order by the new recorded time. A
-			// replayed change keeps its marks: no second waiting mail, and at
-			// most the one end mail (inbound's mailDue). The fragment mark
-			// bounds the POSTs of one life, whose count starts again here.
+			// replay starts a new allowance of one waiting and one end mail.
+			// The fragment mark bounds the POSTs of one life too.
+			c.Raised, c.RaisedEnd = time.Time{}, time.Time{}
 			c.NextAttempt, c.Posted, c.Cause, c.Fragment = time.Time{}, time.Time{}, "", false
 		} else {
 			c.Status = "committed"
@@ -1634,14 +1636,26 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, err)
 		return
 	}
+	result := map[string]string{"id": v.ID, "action": v.Action}
 	if v.Action == "replay" {
 		if err := poll(r.Context()); err != nil {
 			s.ObserveGCError(err)
-			problem(w, 502, err)
+			// The replay is already durable. Report its state even if this
+			// pass could not finish (possibly on another message).
+			result["pass_error"] = "delivery pass could not complete; check gc gchat status"
+		}
+		// As with settle, allow a short local-only read after the delivery
+		// budget expires. This never permits another POST or an unbounded wait.
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), time.Second)
+		defer cancel()
+		l, err := s.snapshot(readCtx)
+		if err != nil {
+			problem(w, 500, err)
 			return
 		}
+		result["status"], result["reason"] = inbound.ReplayResult(l.Changes[v.ID])
 	}
-	respond(w, 200, map[string]string{"id": v.ID, "action": v.Action})
+	respond(w, 200, result)
 }
 
 type stateRequest struct {

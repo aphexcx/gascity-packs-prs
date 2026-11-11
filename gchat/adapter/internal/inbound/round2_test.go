@@ -411,9 +411,8 @@ func TestWaitingMailSaysTheMessageStillArrives(t *testing.T) {
 	}
 }
 
-// Ruling E counts mails per message: a message whose first mail said it ended
-// is never mailed again, also after an operator replay ends it once more.
-func TestMessageFirstMailedAsEndedIsNotMailedAgain(t *testing.T) {
+// R3-1 counts mails per life: replay renews the end mail allowance too.
+func TestMessageFirstMailedAsEndedGetsANewEndMailAfterReplay(t *testing.T) {
 	rf := retrySetup(t)
 	rf.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "surprise" })
 	handle(t, rf.fixture, event("ended-first", "message.created", message()))
@@ -422,20 +421,14 @@ func TestMessageFirstMailedAsEndedIsNotMailedAgain(t *testing.T) {
 	if got := mailsFor(rf, messageName); len(got) != 1 || !got[0].Ended || c.Raised.IsZero() || c.RaisedEnd.IsZero() || rf.l.Unresolved[messageName].RaisedEnd.IsZero() {
 		t.Fatalf("first mail as ended: %d mails, raised %s, raised_end %s", len(got), c.Raised, c.RaisedEnd)
 	}
-	// gc gchat resolve --replay, as the server does it: marks kept.
-	rf.opts.LedgerMu.Lock()
-	replay := rf.l.Unresolved[messageName]
-	replay.Status, replay.Attempts, replay.ReceiptID, replay.Reason, replay.Cause = "intent", 0, "", "operator replay", ""
-	replay.Created = rf.clock.Now().UTC()
-	rf.l.Changes[messageName] = replay
-	delete(rf.l.Unresolved, messageName)
-	rf.opts.LedgerMu.Unlock()
+	rf.clock.Add(time.Second)
+	replay(t, rf, messageName)
 	rf.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "surprise" })
 	for range 3 {
 		rf.poll(t)
 		rf.clock.Add(time.Hour)
 	}
-	if c := rf.change(t, messageName); c.Status != "unresolved" || len(mailsFor(rf, messageName)) != 1 {
+	if c := rf.change(t, messageName); c.Status != "unresolved" || len(mailsFor(rf, messageName)) != 2 {
 		t.Fatalf("after the replay ended: %s, %d mails", c.Status, len(mailsFor(rf, messageName)))
 	}
 }
@@ -524,12 +517,9 @@ func TestWithdrawnAfterAWaitingMailGetsItsEndMail(t *testing.T) {
 	}
 }
 
-// Self-review r1 MAJOR-1 (probe P4): a replay keeps the marks of the message's
-// first life (round 1's rule 7), so the replayed message is not mailed again
-// as waiting. Those marks cover nothing in its second life: a message that
-// waits behind it is mailed on its own, and the replayed message's end at its
-// new bound is mailed (its waiting mail named the old bound).
-func TestReplayedHeadDoesNotSilenceTheMessagesBehindIt(t *testing.T) {
+// R3-1: a replay's new waiting mail names the messages behind it and its
+// current retry bound, so those messages need no separate waiting mail.
+func TestReplayedHeadMailsItsNewWaitAndCoversTheMessagesBehindIt(t *testing.T) {
 	rf := retrySetup(t)
 	rf.script(repeat(4000, failedWith(draftDeferred))...)
 	handle(t, rf.fixture, event("replayed", "message.created", message()))
@@ -540,37 +530,24 @@ func TestReplayedHeadDoesNotSilenceTheMessagesBehindIt(t *testing.T) {
 	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != reasonRetryBound || len(mailsFor(rf, messageName)) != 1 {
 		t.Fatalf("first life: %s %q, %d mails", c.Status, c.Reason, len(mailsFor(rf, messageName)))
 	}
-	// gc gchat resolve --replay, as the server does it: marks kept.
-	rf.opts.LedgerMu.Lock()
-	replay := rf.l.Unresolved[messageName]
-	replay.Status, replay.Attempts, replay.ReceiptID, replay.Reason = "intent", 0, "", "operator replay"
-	replay.Created = rf.clock.Now().UTC()
-	replay.NextAttempt, replay.Posted, replay.Cause = time.Time{}, time.Time{}, ""
-	rf.l.Changes[messageName] = replay
-	delete(rf.l.Unresolved, messageName)
-	rf.opts.LedgerMu.Unlock()
+	replay(t, rf, messageName)
 	rf.poll(t)
 	rf.clock.Add(time.Second)
 	second := secondMessage()
 	handle(t, rf.fixture, event("behind-replay", "message.created", second))
 	rf.clock.Add(2 * time.Minute)
 	rf.poll(t)
-	if c := rf.change(t, second.Name); c.Status != "intent" || c.Cause != "behind_earlier" || len(mailsFor(rf, second.Name)) != 1 {
+	if c := rf.change(t, second.Name); c.Status != "intent" || c.Cause != "behind_earlier" || len(mailsFor(rf, second.Name)) != 0 {
 		t.Fatalf("behind the replayed head: %s %s, %d mails", c.Status, c.Cause, len(mailsFor(rf, second.Name)))
 	}
-	if got := mailsFor(rf, messageName); len(got) != 1 {
-		t.Fatalf("the replayed message was mailed again as waiting: %d mails", len(got))
+	if got := mailsFor(rf, messageName); len(got) != 2 || got[1].Ended || !strings.Contains(got[1].Body, "Waiting behind it: 1 later message") {
+		t.Fatalf("the replayed head must mail its new wait and the message behind it: %+v", got)
 	}
 	rf.clock.Set(rf.change(t, messageName).Created.Add(24*time.Hour + time.Second))
 	rf.poll(t)
 	got := mailsFor(rf, messageName)
-	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != reasonRetryBound || len(got) != 2 || !got[1].Ended {
+	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != reasonRetryBound || len(got) != 2 || got[1].Ended {
 		t.Fatalf("the replayed message at its new bound: %s %q, %d mails", c.Status, c.Reason, len(got))
-	}
-	// gp-t542 self-review r2 NIT-3: its waiting mail was of the life before
-	// the replay, and the end mail says the message was replayed.
-	if !strings.Contains(got[1].Body, "It was replayed since") {
-		t.Fatalf("the replay's end mail does not say it was replayed:\n%s", got[1].Body)
 	}
 }
 

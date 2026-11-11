@@ -70,8 +70,8 @@ type Options struct {
 	// bound, whether it is retrying or held behind an earlier change of its
 	// space. The default is DefaultRetryBound.
 	RetryBound time.Duration
-	// StuckAfter is how long a change may wait in intent or pending, from its
-	// recorded time, before it is raised. The default is DefaultStuckAfter.
+	// StuckAfter counts from the recorded time, or the latest POST if later
+	// while pending, before a waiting mail. The default is DefaultStuckAfter.
 	StuckAfter time.Duration
 	// Raise tells the city's agent about one stuck or unresolved change. Poll
 	// calls it at the end of its pass, outside the gate and the ledger lock,
