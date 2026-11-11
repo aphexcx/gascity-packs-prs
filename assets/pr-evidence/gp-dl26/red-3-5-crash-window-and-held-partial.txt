@@ -1,0 +1,11 @@
+=== RUN   TestLedger050CrashWindowRecordIsNeverPosted
+    round2_test.go:148: the 0.5.0 crash-window record was POSTed: [spaces/example/messages/crashwindow spaces/example/messages/intent]
+--- FAIL: TestLedger050CrashWindowRecordIsNeverPosted (0.08s)
+=== RUN   TestNoSaveWritesTheCrashWindowShape
+--- PASS: TestNoSaveWritesTheCrashWindowShape (0.35s)
+=== RUN   TestHeldWithAPartialMemberKeepsThePartialBound
+    round2_test.go:236: held with a partial member: 25 POSTs in 20 minutes, intent "retry" after 25
+--- FAIL: TestHeldWithAPartialMemberKeepsThePartialBound (0.77s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	1.426s
+FAIL

@@ -1,0 +1,9 @@
+=== RUN   TestBusyAgentBurstFlowsInArrivalOrder
+    round2_test.go:60: burst: POSTs [spaces/room/messages/burst1 spaces/room/messages/burst2 spaces/room/messages/burst3 spaces/room/messages/burst4 spaces/room/messages/burst5] at [committed +0s committed +35s committed +1m10s committed +1m45s committed +2m20s], 2 mails; want five in arrival order by +4s and no mail
+--- FAIL: TestBusyAgentBurstFlowsInArrivalOrder (3.98s)
+=== RUN   TestPendingChangeDoesNotHoldItsSpace
+    round2_test.go:77: the later message waited behind a pending one: [spaces/room/messages/one]
+--- FAIL: TestPendingChangeDoesNotHoldItsSpace (0.10s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	4.282s
+FAIL

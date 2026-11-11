@@ -1,0 +1,8 @@
+--- PASS: TestMissingTokenReplacementResumes (3.28s)
+--- PASS: TestMissingTokenReplacementResumes (3.25s)
+--- PASS: TestMissingTokenReplacementResumes (3.28s)
+--- FAIL: TestMissingTokenReplacementResumes (5.97s)
+--- PASS: TestMissingTokenReplacementResumes (3.20s)
+FAIL
+FAIL	gchat-adapter/internal/app	19.278s
+FAIL

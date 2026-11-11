@@ -1,0 +1,30 @@
+=== RUN   TestProbeDrainAfterStuckHeadMailsEachPendingFollower
+    zz_review_probe_test.go:69: spaces/room/messages/burst2: pending posted +10m16s
+    zz_review_probe_test.go:69: spaces/room/messages/burst3: pending posted +10m16s
+    zz_review_probe_test.go:69: spaces/room/messages/burst4: pending posted +10m16s
+    zz_review_probe_test.go:72: mails in all: 4
+    zz_review_probe_test.go:75: mail for spaces/room/messages/burst2: "A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying."
+    zz_review_probe_test.go:75: mail for spaces/room/messages/burst3: "A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying."
+    zz_review_probe_test.go:75: mail for spaces/room/messages/burst4: "A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying."
+    zz_review_probe_test.go:78: PROBE: 4 mails after the head landed into a busy agent, want 1 (the head's)
+--- FAIL: TestProbeDrainAfterStuckHeadMailsEachPendingFollower (0.52s)
+=== RUN   TestProbeLostWaitingMailResultShadowsTheEndMail
+    zz_review_probe_test.go:105: final: unresolved "receipt concluded with pending delivery" cause unknown raised true raised_end true; raise calls 2, delivered to the agent 1
+    zz_review_probe_test.go:107: delivered: second=false "A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying."
+    zz_review_probe_test.go:113: PROBE: the agent got 1 mails; the end mail was suppressed by gc's dedup on the waiting mail's key
+--- FAIL: TestProbeLostWaitingMailResultShadowsTheEndMail (0.25s)
+=== RUN   TestProbeWithdrawnAfterWaitingMailGetsNoSecondMail
+    zz_review_probe_test.go:136: final: unresolved "message deleted or superseded before retry" cause withdrawn; mails 1
+    zz_review_probe_test.go:138: PROBE: ended unresolved (withdrawn) after a waiting mail that promised one more mail; no second mail
+--- FAIL: TestProbeWithdrawnAfterWaitingMailGetsNoSecondMail (0.46s)
+=== RUN   TestProbeReplayedHeadSilencesTheMessagesBehindIt
+    zz_review_probe_test.go:177: replayed head: intent cause draft_deferred attempts 34; behind: intent cause behind_earlier age 30m0s; mails since replay 0
+    zz_review_probe_test.go:180: PROBE: 30 minutes, a refused replayed head and a message behind it, no mail at all
+    zz_review_probe_test.go:189: at the replay's bound: head unresolved "not delivered within the retry bound" mails for head since replay 0; behind unresolved mails 1
+--- FAIL: TestProbeReplayedHeadSilencesTheMessagesBehindIt (1.37s)
+=== RUN   TestProbeStaleBehindEarlierHeadIsMailed
+    zz_review_probe_test.go:215: a: unresolved; b: intent reason "retry" cause behind_earlier attempts 0; mails for b 1
+--- PASS: TestProbeStaleBehindEarlierHeadIsMailed (0.33s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	3.156s
+FAIL

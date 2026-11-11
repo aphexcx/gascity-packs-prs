@@ -1,0 +1,33 @@
+=== RUN   TestWaitingMessageThatEndsEarlyGetsOneSecondMail
+=== RUN   TestWaitingMessageThatEndsEarlyGetsOneSecondMail/none
+    round2_test.go:373: second mail: ended false, claims the message will not arrive:
+=== RUN   TestWaitingMessageThatEndsEarlyGetsOneSecondMail/before_the_second_mail
+    round2_test.go:373: second mail: ended false, claims the message will not arrive:
+=== RUN   TestWaitingMessageThatEndsEarlyGetsOneSecondMail/after_the_second_mail
+--- FAIL: TestWaitingMessageThatEndsEarlyGetsOneSecondMail (1.22s)
+=== RUN   TestWaitingMailSaysTheMessageStillArrives
+=== RUN   TestWaitingMailSaysTheMessageStillArrives/intent
+    round2_test.go:403: waiting mail: ended false or a zero count:
+=== RUN   TestWaitingMailSaysTheMessageStillArrives/pending
+--- FAIL: TestWaitingMailSaysTheMessageStillArrives (0.42s)
+=== RUN   TestMessageFirstMailedAsEndedIsNotMailedAgain
+    round2_test.go:423: first mail as ended: 1 mails, raised 2026-11-10 20:22:58 +0000 UTC, raised_end 2026-11-10 20:22:58 +0000 UTC
+--- FAIL: TestMessageFirstMailedAsEndedIsNotMailedAgain (0.12s)
+=== RUN   TestEndMailIsNotShadowedByALostWaitingMail
+    round2_test.go:499: the agent got 1 mails; the end mail was dropped as a duplicate of the waiting mail
+--- FAIL: TestEndMailIsNotShadowedByALostWaitingMail (0.39s)
+=== RUN   TestWithdrawnAfterAWaitingMailGetsItsEndMail
+    round2_test.go:522: withdrawn after a waiting mail: unresolved withdrawn, 1 mails
+--- FAIL: TestWithdrawnAfterAWaitingMailGetsItsEndMail (4.24s)
+=== RUN   TestReplayedHeadDoesNotSilenceTheMessagesBehindIt
+    round2_test.go:561: behind the replayed head: intent behind_earlier, 0 mails
+--- FAIL: TestReplayedHeadDoesNotSilenceTheMessagesBehindIt (0.64s)
+=== RUN   TestHeadIsTheLiveOrderTestNotTheCauseWord
+    round2_test.go:603: the head's mail says it waits behind an earlier message:
+--- FAIL: TestHeadIsTheLiveOrderTestNotTheCauseWord (0.71s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	8.025s
+=== RUN   TestEndedDeliveryMailHasItsOwnDedupKey
+--- PASS: TestEndedDeliveryMailHasItsOwnDedupKey (0.11s)
+ok  	gchat-adapter/internal/app	0.433s
+FAIL

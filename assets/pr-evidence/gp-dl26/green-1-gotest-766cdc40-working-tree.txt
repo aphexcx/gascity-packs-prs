@@ -1,0 +1,32 @@
+ok  	gchat-adapter/cmd/gc-gchat-adapter	17.601s
+--- FAIL: TestMissingTokenReplacementResumes (5.42s)
+    app_test.go:235: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
+2026/11/10 18:24:07 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/10 18:24:30 http: proxy error: context canceled
+2026/11/10 18:24:30 http: proxy error: context canceled
+2026/11/10 18:24:32 WARN credential identity changed; rebuilding client operation=identity
+2026/11/10 18:25:15 http: proxy error: context canceled
+2026/11/10 18:25:17 ERROR state lock ownership lost operation=state_lock
+FAIL
+FAIL	gchat-adapter/internal/app	116.321s
+ok  	gchat-adapter/internal/catchup	84.586s
+ok  	gchat-adapter/internal/chat	3.220s
+ok  	gchat-adapter/internal/config	5.237s
+ok  	gchat-adapter/internal/events	12.647s
+ok  	gchat-adapter/internal/fakes/fakegc	0.179s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.499s
+ok  	gchat-adapter/internal/gcclient	0.263s
+ok  	gchat-adapter/internal/inbound	59.410s
+ok  	gchat-adapter/internal/ledger	2.800s
+ok  	gchat-adapter/internal/markdown	0.275s
+ok  	gchat-adapter/internal/media	0.375s
+ok  	gchat-adapter/internal/principal	30.312s
+ok  	gchat-adapter/internal/provenance	0.198s
+ok  	gchat-adapter/internal/puller	23.073s
+ok  	gchat-adapter/internal/server	86.195s
+ok  	gchat-adapter/internal/token	7.086s
+ok  	gchat-adapter/internal/wire	0.100s
+ok  	gchat-adapter/test/contract	0.232s
+ok  	gchat-adapter/test/e2e	766.863s
+FAIL
+rc=1
