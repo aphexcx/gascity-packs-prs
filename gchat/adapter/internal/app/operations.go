@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gchat-adapter/internal/chat"
+	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/puller"
 )
@@ -193,4 +194,27 @@ func sleep(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+// raiseDelivery mails the identity's agent about one stuck or unresolved
+// inbound delivery, the way the notifier sends, but synchronously: the
+// processor records the raise only when this returns nil. The dedup key is
+// inbound.Raise.DedupKey under the city and identity: one per life of the
+// change and kind of mail, so a send whose result was lost is one mail at gc,
+// a mail that says the message ended has its own key, and a replay's mails
+// are never dropped for a key of the life before it.
+func (a *application) raiseDelivery(ctx context.Context, r inbound.Raise) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	const subject = "gchat: delivery"
+	if a.opts.Notify != nil {
+		return a.opts.Notify(ctx, subject, r.Body)
+	}
+	identity := a.cfg.Identity()
+	key := fmt.Sprintf("gchat:%s:%s:%s", a.cfg.Secrets.CityName, identity.Name, r.DedupKey())
+	bin := os.Getenv("GC_BIN")
+	if bin == "" {
+		bin = "gc"
+	}
+	return exec.CommandContext(ctx, bin, "mail", "send", identity.Agent, "--dedup", key, "-s", subject, "-m", r.Body).Run()
 }

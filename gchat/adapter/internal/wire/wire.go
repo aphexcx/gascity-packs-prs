@@ -45,24 +45,43 @@ type InboundEnvelope struct {
 	Message InboundMessage `json:"message"`
 }
 
-// InboundResponse is what gc answers. Delivery.Status is one of
-// delivered | pending | partial | failed | no_route.
-// ReceiptID is set whenever Delivery is present; poll .../receipts/{id} while
-// Status is pending.
+// DeliveryMember is one session's outcome inside gc's fan-out (gc's
+// InboundDeliveryMember). The session id, selector, digest and the "held"
+// block are not decoded.
+type DeliveryMember struct {
+	Status         string `json:"status"`
+	Terminal       bool   `json:"terminal,omitempty"`
+	DeliveredBytes int    `json:"delivered_bytes"`
+	ExpectedBytes  int    `json:"expected_bytes"`
+	// Error is gc's context for a member that did not deliver. It can quote
+	// the session's own state: read it, never store or log it.
+	Error string `json:"error,omitempty"`
+}
+
+// Delivery is gc's InboundDelivery. Status is one of delivered | pending |
+// partial | failed | held | no_route ("held" comes with gc's composer-hold
+// change). ReceiptID is set whenever the object is present; poll
+// .../receipts/{id} while Status is pending. Byte counts are summed over
+// Members, which gc omits when it cannot know them yet.
+type Delivery struct {
+	Status         string           `json:"status"`
+	ReceiptID      string           `json:"receipt_id,omitempty"`
+	Terminal       bool             `json:"terminal,omitempty"`
+	DeliveredBytes int              `json:"delivered_bytes"`
+	ExpectedBytes  int              `json:"expected_bytes"`
+	Members        []DeliveryMember `json:"members,omitempty"`
+}
+
+// InboundResponse is what gc answers to an inbound POST.
 type InboundResponse struct {
-	Delivery struct {
-		Status    string `json:"status"`
-		ReceiptID string `json:"receipt_id,omitempty"`
-	} `json:"delivery"`
+	Delivery Delivery `json:"delivery"`
 }
 
 // ReceiptResponse is gc's answer to GET .../extmsg/inbound/receipts/{id}:
 // State is pending | concluded | unknown; Delivery is set when concluded.
 type ReceiptResponse struct {
-	State    string `json:"state"`
-	Delivery struct {
-		Status string `json:"status"`
-	} `json:"delivery"`
+	State    string   `json:"state"`
+	Delivery Delivery `json:"delivery"`
 }
 
 // PublishRequest is what gc POSTs to <callback_url>/publish.

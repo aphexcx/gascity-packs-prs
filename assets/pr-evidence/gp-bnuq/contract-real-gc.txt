@@ -1,0 +1,11 @@
+=== RUN   TestRealGCContract
+2026/11/10 16:26:56 WARN inbound delivery unresolved change=unknown cause="receipt unavailable or unknown"
+    contract_test.go:171: inbound: production mapper/client accepted; no_route concluded; unknown receipt retained unresolved
+    contract_test.go:239: registration: production builder/client accepted by real gc with HTTP 201
+    contract_test.go:269: outbound: real /publish callback with X-GC-Request; Receipt.Delivered=true; scope, message ID, thread and parts="1" preserved; transcript recorded
+2026/11/10 16:26:58 WARN publish failed operation=publish space=spaces/room key=example-quota message_id="" cause_kind=rate_limited http_status=429
+    contract_test.go:276: outbound: real gc decoded rate_limited receipt and 60-second retry hint
+    contract_test.go:371: supervisor exit: context canceled
+--- PASS: TestRealGCContract (7.79s)
+PASS
+ok  	gchat-adapter/test/contract	8.241s

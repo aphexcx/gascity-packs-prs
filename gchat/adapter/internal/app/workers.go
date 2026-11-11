@@ -77,7 +77,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		lookup = principal.DirectoryLookup(hc, a.cfg.Endpoints.PeopleAPIBase)
 	}
 	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup})
-	proc, err := inbound.New(inbound.Options{Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }})
+	proc, err := inbound.New(inbound.Options{Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,8 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	if err != nil {
 		return err
 	}
-	a.s.SetPoll(proc.Poll)
+	// resolve --replay answers a request: it runs the pass, not the raise.
+	a.s.SetPoll(proc.Pass)
 	defer a.s.SetPoll(nil)
 	if err = a.retry(ctx, "subscription", func() error {
 		var e error

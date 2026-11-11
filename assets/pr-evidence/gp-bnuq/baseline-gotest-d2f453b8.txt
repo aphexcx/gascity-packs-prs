@@ -1,0 +1,30 @@
+# go test ./... -count=1 -timeout=30m at d2f453b8 (base), package lines and failures
+ok  	gchat-adapter/cmd/gc-gchat-adapter	17.759s
+ok  	gchat-adapter/internal/app	97.798s
+ok  	gchat-adapter/internal/catchup	72.569s
+ok  	gchat-adapter/internal/chat	6.968s
+ok  	gchat-adapter/internal/config	6.703s
+ok  	gchat-adapter/internal/events	12.805s
+ok  	gchat-adapter/internal/fakes/fakegc	0.227s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.563s
+ok  	gchat-adapter/internal/gcclient	0.157s
+ok  	gchat-adapter/internal/inbound	39.493s
+ok  	gchat-adapter/internal/ledger	6.624s
+ok  	gchat-adapter/internal/markdown	0.210s
+ok  	gchat-adapter/internal/media	0.145s
+ok  	gchat-adapter/internal/principal	30.194s
+ok  	gchat-adapter/internal/provenance	0.162s
+--- FAIL: TestRunQuarantineRecoversDuringRun (0.00s)
+    --- FAIL: TestRunQuarantineRecoversDuringRun/startup_repaired (3.78s)
+        puller_test.go:1104: condition not met:  context deadline exceeded
+    --- FAIL: TestRunQuarantineRecoversDuringRun/removed (3.78s)
+        puller_test.go:1104: condition not met:  context deadline exceeded
+FAIL
+FAIL	gchat-adapter/internal/puller	27.193s
+ok  	gchat-adapter/internal/server	82.187s
+ok  	gchat-adapter/internal/token	10.629s
+ok  	gchat-adapter/internal/wire	0.168s
+ok  	gchat-adapter/test/contract	0.282s
+ok  	gchat-adapter/test/e2e	581.273s
+FAIL
+rc=1

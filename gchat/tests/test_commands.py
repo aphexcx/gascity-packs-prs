@@ -359,6 +359,36 @@ class ProxyCommandsTest(ProxyFixture):
         for value in ("ACTIVE", "pending-id", "unresolved-id", "unavailable:spaces/AAAA", "permission denied", "credential_refresh_restarts"):
             self.assertIn(value, result.stdout)
 
+    def test_status_text_without_retry_keys_prints_as_before(self):
+        self.respond("/status", {"health": {"state": "ready", "reason": ""}, "subscription": {"state": "ACTIVE", "name": "subscriptions/example"},
+            "backlog": 0, "unresolved": 1, "pending": 1, "unrecorded": 0, "quarantine": 0, "counters": {},
+            "deliveries": [{"id": "pending-id", "status": "pending", "reason": ""},
+                           {"id": "unresolved-id", "status": "unresolved", "reason": "delivery retries exhausted"}], "spaces": {}})
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertIn("Backlog: 0; pending: 1; unresolved: 1; unrecorded: 0; quarantine: 0", lines)
+        self.assertIn("  pending pending-id: ", lines)
+        self.assertIn("  unresolved unresolved-id: delivery retries exhausted", lines)
+        self.assertNotIn("stuck", result.stdout)
+        self.assertNotIn("age", result.stdout)
+
+    def test_status_text_shows_age_cause_and_next_attempt(self):
+        self.respond("/status", {"health": {"state": "ready", "reason": ""}, "subscription": {"state": "ACTIVE", "name": "subscriptions/example"},
+            "backlog": 0, "unresolved": 1, "pending": 2, "stuck": 1, "unrecorded": 0, "quarantine": 0, "counters": {},
+            "deliveries": [{"id": "waiting-id", "status": "intent", "reason": "retry", "created": "2026-11-10T20:22:58Z", "age_seconds": 3725,
+                            "cause": "draft_deferred", "attempts": 63, "next_attempt": "2026-11-10T21:25:03Z"},
+                           {"id": "fresh-id", "status": "intent", "reason": "", "created": "2026-11-10T21:24:00Z", "age_seconds": 63, "cause": "behind_earlier"},
+                           {"id": "unresolved-id", "status": "unresolved", "reason": "not delivered within the retry bound", "created": "2026-11-09T20:22:58Z",
+                            "age_seconds": 90061, "cause": "draft_deferred", "attempts": 1440, "raised": "2026-11-09T20:24:58Z"}], "spaces": {}})
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertIn("Backlog: 0; pending: 2; unresolved: 1; unrecorded: 0; quarantine: 0; stuck: 1", lines)
+        self.assertIn("  intent waiting-id: retry; age 1h2m; cause draft_deferred; next attempt 2026-11-10T21:25:03Z; posts 63", lines)
+        self.assertIn("  intent fresh-id: ; age 1m3s; cause behind_earlier; posts 0", lines)
+        self.assertIn("  unresolved unresolved-id: not delivered within the retry bound; age 25h1m; cause draft_deferred", lines)
+
 
 class DoctorTest(ProxyFixture):
     # Use the same in-process proxy, but only inherit the fixture helpers.

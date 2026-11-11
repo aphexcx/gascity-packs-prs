@@ -1,0 +1,7 @@
+# env -i ... make test from the repo root of a standalone clone at b9d33951 (last lines)
+  <lane>/.gc/gp-bnuq/make-test-clone/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=28213) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2680 passed, 116 skipped, 2 warnings, 10685 subtests passed in 422.64s (0:07:02)
+rc=0

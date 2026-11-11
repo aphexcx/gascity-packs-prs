@@ -1,0 +1,121 @@
+ARGV
+[mail]
+[send]
+[mayor]
+[--dedup]
+[gchat:examplecity:example:delivery:96877f0a2f99f62e794c984e1a1f19947e76392de773924bc8b874dec57a1872]
+[-s]
+[gchat: delivery]
+[-m]
+[A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying.
+
+Space: spaces/AAAA
+Thread: spaces/AAAA/threads/head
+Message: spaces/AAAA/messages/head
+Delivery ID: spaces/AAAA/messages/head
+Recorded: 2026-11-11T01:00:00Z
+State: waiting to be posted to gc (intent)
+Cause: draft_deferred (text in the agent's input box held the message back)
+Age: 2m30s
+POSTs made: 5
+Retrying until: 2026-11-12T01:00:00Z (24 hours after it was recorded)
+Waiting behind it: 3 later messages of this space, the count when this mail was sent; later ones queue behind it too, and gc gchat status lists them
+
+Read the message: gc gchat read --space spaces/AAAA --thread spaces/AAAA/threads/head --since 2026-11-11T00:00:00Z
+If it is not there (an edit or a reaction on an older message), run the same command without --since.
+Every delivery the adapter holds: gc gchat status
+The message will still be delivered to the agent when its session clears, with the same delivery ID. An agent that acts on it now from Chat history must not act on it again when it arrives.
+No further mail is sent while it waits. If it ends unresolved for a reason other than this bound, one more mail says so. If it has not landed by 2026-11-12T01:00:00Z, gc gchat status lists it for gc gchat resolve.
+
+This mail never carries the message's text or its sender; read them in Chat with the command above.
+]
+ARGV
+[mail]
+[send]
+[mayor]
+[--dedup]
+[gchat:examplecity:example:delivery:4e939454a9228324f97bf1532d38d7accd168976f52ed1a2e541ff9ae1afb173:ended]
+[-s]
+[gchat: delivery]
+[-m]
+[A Google Chat message did not reach the agent, and the gchat adapter has stopped trying. It waits for an operator.
+
+Space: spaces/CCCC
+Message: spaces/CCCC/messages/old
+Delivery ID: spaces/CCCC/messages/old
+Recorded: 2026-11-11T01:00:00Z
+State: unresolved
+Cause: unknown (an older version of the adapter stopped after four POSTs and did not record gc's last answer)
+Reason: delivery retries exhausted
+Age: 2m30s
+
+Read the message: gc gchat read --space spaces/CCCC --since 2026-11-11T00:00:00Z
+If it is not there (an edit or a reaction on an older message), run the same command without --since.
+Every delivery the adapter holds: gc gchat status
+After checking whether the agent has the message:
+  gc gchat resolve spaces/CCCC/messages/old --accept marks it delivered.
+  gc gchat resolve spaces/CCCC/messages/old --replay posts it again. A replay can duplicate a turn whose first outcome is unknown.
+
+This mail never carries the message's text or its sender; read them in Chat with the command above.
+]
+ARGV
+[mail]
+[send]
+[mayor]
+[--dedup]
+[gchat:examplecity:example:delivery:18e120386ccba914ec99217126ab1b76b9906962d98d1f58c94c0d86a280dbc1]
+[-s]
+[gchat: delivery]
+[-m]
+[A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying.
+
+Space: spaces/BBBB
+Thread: spaces/BBBB/threads/ends
+Message: spaces/BBBB/messages/ends
+Delivery ID: spaces/BBBB/messages/ends
+Recorded: 2026-11-11T01:00:05Z
+State: waiting to be posted to gc (intent)
+Cause: draft_deferred (text in the agent's input box held the message back)
+Age: 2m25s
+POSTs made: 5
+Retrying until: 2026-11-12T01:00:05Z (24 hours after it was recorded)
+Waiting behind it: none yet; later messages of this space queue behind it until it lands, and gc gchat status lists them
+
+Read the message: gc gchat read --space spaces/BBBB --thread spaces/BBBB/threads/ends --since 2026-11-11T00:00:05Z
+If it is not there (an edit or a reaction on an older message), run the same command without --since.
+Every delivery the adapter holds: gc gchat status
+The message will still be delivered to the agent when its session clears, with the same delivery ID. An agent that acts on it now from Chat history must not act on it again when it arrives.
+No further mail is sent while it waits. If it ends unresolved for a reason other than this bound, one more mail says so. If it has not landed by 2026-11-12T01:00:05Z, gc gchat status lists it for gc gchat resolve.
+
+This mail never carries the message's text or its sender; read them in Chat with the command above.
+]
+ARGV
+[mail]
+[send]
+[mayor]
+[--dedup]
+[gchat:examplecity:example:delivery:18e120386ccba914ec99217126ab1b76b9906962d98d1f58c94c0d86a280dbc1:ended]
+[-s]
+[gchat: delivery]
+[-m]
+[An earlier mail said this Google Chat message was waiting and would still be delivered. It has ended unresolved: the gchat adapter has stopped trying and will not deliver it again on its own. Whether it reached the agent is in the cause and reason below. It waits for an operator.
+
+Space: spaces/BBBB
+Thread: spaces/BBBB/threads/ends
+Message: spaces/BBBB/messages/ends
+Delivery ID: spaces/BBBB/messages/ends
+Recorded: 2026-11-11T01:00:05Z
+State: unresolved
+Cause: unknown (the outcome is not known; the reason says why)
+Reason: receipt concluded with pending delivery
+Age: 2m26s
+
+Read the message: gc gchat read --space spaces/BBBB --thread spaces/BBBB/threads/ends --since 2026-11-11T00:00:05Z
+If it is not there (an edit or a reaction on an older message), run the same command without --since.
+Every delivery the adapter holds: gc gchat status
+After checking whether the agent has the message:
+  gc gchat resolve spaces/BBBB/messages/ends --accept marks it delivered.
+  gc gchat resolve spaces/BBBB/messages/ends --replay posts it again. A replay can duplicate a turn whose first outcome is unknown.
+
+This mail never carries the message's text or its sender; read them in Chat with the command above.
+]

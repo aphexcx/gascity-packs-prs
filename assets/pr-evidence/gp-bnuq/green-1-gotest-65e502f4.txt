@@ -1,0 +1,23 @@
+# go test ./... -count=1 -timeout=30m at 65e502f4 (first head, before the self-review folds)
+ok  	gchat-adapter/cmd/gc-gchat-adapter	17.770s
+ok  	gchat-adapter/internal/app	102.666s
+ok  	gchat-adapter/internal/catchup	80.551s
+ok  	gchat-adapter/internal/chat	3.369s
+ok  	gchat-adapter/internal/config	8.246s
+ok  	gchat-adapter/internal/events	12.728s
+ok  	gchat-adapter/internal/fakes/fakegc	0.232s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.542s
+ok  	gchat-adapter/internal/gcclient	0.155s
+ok  	gchat-adapter/internal/inbound	50.411s
+ok  	gchat-adapter/internal/ledger	3.119s
+ok  	gchat-adapter/internal/markdown	0.179s
+ok  	gchat-adapter/internal/media	0.177s
+ok  	gchat-adapter/internal/principal	30.248s
+ok  	gchat-adapter/internal/provenance	0.103s
+ok  	gchat-adapter/internal/puller	24.518s
+ok  	gchat-adapter/internal/server	84.541s
+ok  	gchat-adapter/internal/token	10.516s
+ok  	gchat-adapter/internal/wire	0.098s
+ok  	gchat-adapter/test/contract	0.286s
+ok  	gchat-adapter/test/e2e	530.801s
+rc=0

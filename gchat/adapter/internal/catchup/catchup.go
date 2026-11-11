@@ -535,7 +535,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		}
 		terminal := true
 		for _, c := range after.Changes {
-			if related(item.Change, c) && c.Status != "committed" && c.Status != "unresolved" {
+			if related(item.Change, c) && !settled(c) {
 				terminal = false
 				break
 			}
@@ -592,6 +592,27 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		r.report(name)
 	}
 	return delivered, err
+}
+
+// settled reports whether a change of a handled item no longer needs catch-up.
+// Committed and unresolved are final. A change in intent that is retrying
+// after a definite "not delivered" (reason "retry"), or that is held back
+// behind an earlier change of its space (cause "behind_earlier"), belongs to
+// the processor's Poll from here on: its ledger record is the obligation, and
+// Poll ends it committed, or unresolved and raised at its bound. Holding the
+// item instead would keep the cursor, health and outbound recovery waiting on
+// it for up to a day. The cause word can be stale (it stays through the POST
+// that follows the release, and through a gc-down answer to that POST); that
+// is harmless here, because the ledger owns the change either way. A pending
+// receipt still holds its item, as does a change whose POST is unanswered.
+func settled(c *ledger.ChangeState) bool {
+	switch c.Status {
+	case "committed", "unresolved":
+		return true
+	case "intent":
+		return c.Reason == "retry" || c.Cause == "behind_earlier"
+	}
+	return false
 }
 
 // Inbound may map an update-before-create to the base ID, or suppress a stale

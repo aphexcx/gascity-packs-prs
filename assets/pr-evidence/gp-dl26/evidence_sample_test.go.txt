@@ -1,0 +1,143 @@
+package app
+
+// Evidence generator for gp-dl26 (not part of the PR): drives the real inbound
+// processor against the fake gc and fake Google, with the app's real mail
+// sender behind a fake gc binary. GCHAT_SAMPLE_DIR names where the argv of
+// every gc mail send is written. Three stories:
+//   - spaces/AAAA: one head that gc keeps refusing and three messages behind
+//     it: one mail, for the head, naming three.
+//   - spaces/BBBB: one message mailed while waiting that then ends unresolved
+//     (its receipt concludes pending without members): a second mail, with
+//     its own dedup key.
+//   - spaces/CCCC: a record adapter 0.5.0 left between two saves: never
+//     POSTed, one mail that says gc's last answer was not recorded.
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/chat"
+	"gchat-adapter/internal/config"
+	"gchat-adapter/internal/fakes/fakegc"
+	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/gcclient"
+	"gchat-adapter/internal/inbound"
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/wire"
+	api "google.golang.org/api/chat/v1"
+)
+
+func TestEvidenceSamplesRound2(t *testing.T) {
+	out := os.Getenv("GCHAT_SAMPLE_DIR")
+	if out == "" {
+		t.Skip("GCHAT_SAMPLE_DIR unset")
+	}
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "mail-args")
+	script := "#!/bin/sh\n{ printf 'ARGV'; for a in \"$@\"; do printf '\\n[%s]' \"$a\"; done; printf '\\n'; } >> \"$GCHAT_TEST_MAIL_ARGS\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GC_BIN", filepath.Join(dir, "gc"))
+	t.Setenv("GCHAT_TEST_MAIL_ARGS", argsFile)
+
+	g := fakegoogle.New(t, nil)
+	g.Configure(func(s *fakegoogle.Server) {
+		for _, name := range []string{"spaces/AAAA", "spaces/BBBB", "spaces/CCCC"} {
+			s.Spaces[name] = &api.Space{Name: name, SpaceType: "SPACE"}
+		}
+	})
+	gc := fakegc.New(t)
+	cfg := &config.Config{Secrets: config.Secrets{CityName: "examplecity"}, Endpoints: config.Endpoints{
+		ChatAPIBase: g.URL(), MediaDir: filepath.Join(dir, "media"), MediaMaxBytes: 1024, StateFile: filepath.Join(dir, "state.json")}}
+	cfg.Settings.Identities = []config.Identity{{Name: "example", Agent: "mayor"}}
+	c, err := chat.New(context.Background(), http.DefaultClient, cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, mu := ledger.New(), &sync.Mutex{}
+	a := &application{cfg: cfg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	start := time.Date(2026, 11, 11, 1, 0, 0, 0, time.UTC)
+	now := start
+	var nowMu sync.Mutex
+	clock := func() time.Time { nowMu.Lock(); defer nowMu.Unlock(); return now }
+	set := func(t time.Time) { nowMu.Lock(); defer nowMu.Unlock(); now = t }
+	p, err := inbound.New(inbound.Options{Config: cfg, Ledger: l, LedgerMu: mu, LedgerPath: cfg.Endpoints.StateFile, GC: gcclient.New(gc.URL(), "examplecity"), Chat: c,
+		IdentityUserID: "users/100", Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RetryDelay: time.Millisecond, Now: clock, Raise: a.raiseDelivery})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred := wire.Delivery{Status: "failed", ExpectedBytes: 120, Members: []wire.DeliveryMember{{Status: "failed", ExpectedBytes: 120,
+		Error: `nudge: preserved draft deferred delivery: target "mayor" has no matching paste prompt`}}}
+	sender := &api.User{Name: "users/200", DisplayName: "Reader", Type: "HUMAN"}
+	handle := func(space, id string, at time.Time) {
+		t.Helper()
+		set(at) // the adapter records the change at this time
+		m := &api.Message{Name: space + "/messages/" + id, Text: "PRIVATE MESSAGE TEXT", CreateTime: at.Format(time.RFC3339),
+			Space: &api.Space{Name: space, SpaceType: "SPACE"}, Sender: sender, Thread: &api.Thread{Name: space + "/threads/" + id}}
+		if out, err := p.Handle(context.Background(), &puller.Event{PubSubID: space + id, Changes: []puller.Change{{Kind: "message.created", Message: m, Space: space}}}); out != puller.Ack || err != nil {
+			t.Fatal(out, err)
+		}
+	}
+	// AAAA: the head is refused (four in-gate POSTs), then three arrive behind it.
+	gc.Configure(func(s *fakegc.Server) { s.Script = slices.Repeat([]wire.Delivery{deferred}, 4) })
+	handle("spaces/AAAA", "head", start)
+	for i := 1; i <= 3; i++ {
+		handle("spaces/AAAA", fmt.Sprintf("behind%d", i), start.Add(time.Duration(i)*time.Second))
+	}
+	// BBBB: refused four times, then waiting.
+	gc.Configure(func(s *fakegc.Server) { s.Script = slices.Repeat([]wire.Delivery{deferred}, 4) })
+	handle("spaces/BBBB", "ends", start.Add(5*time.Second))
+	// CCCC: the 0.5.0 crash-window record, as a 0.5.0 ledger holds it.
+	mu.Lock()
+	event := `{"provider_message_id":"spaces/CCCC/messages/old","conversation":{"scope_id":"examplecity","provider":"gchat","account_id":"example","conversation_id":"spaces/CCCC","kind":"room"},"actor":{"id":"users/200","display_name":"Reader","is_bot":false},"text":"x","reply_to_message_id":"spaces/CCCC/threads/old","received_at":"2026-11-11T01:00:00Z"}`
+	l.Changes["spaces/CCCC/messages/old"] = &ledger.ChangeState{ID: "spaces/CCCC/messages/old", Space: "spaces/CCCC", Message: "spaces/CCCC/messages/old", Kind: "message.created",
+		Status: "intent", Attempts: 4, Reason: "retry", Created: start, Event: event, ProvenanceFramed: true}
+	mu.Unlock()
+	// Every POST from here on is refused, except BBBB's next, which gc takes as pending.
+	gc.Configure(func(s *fakegc.Server) { s.Script = slices.Repeat([]wire.Delivery{deferred}, 400) })
+	set(start.Add(2*time.Minute + 30*time.Second))
+	if err := p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// BBBB's next POST: pending; its receipt concludes pending without members.
+	gc.Configure(func(s *fakegc.Server) { s.Script = []wire.Delivery{{Status: "pending"}} })
+	set(l.Changes["spaces/BBBB/messages/ends"].NextAttempt.Add(time.Second))
+	mu.Lock()
+	// Keep AAAA's head from POSTing in this pass: its next attempt is later.
+	l.Changes["spaces/AAAA/messages/head"].NextAttempt = now.Add(time.Minute)
+	mu.Unlock()
+	if err := p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	gc.SetReceipt(l.Changes["spaces/BBBB/messages/ends"].ReceiptID, wire.ReceiptResponse{State: "concluded", Delivery: wire.Delivery{Status: "pending"}})
+	if err := p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"spaces/AAAA/messages/head", "spaces/BBBB/messages/ends", "spaces/CCCC/messages/old"} {
+		ch := l.Changes[id]
+		t.Logf("%s: %s %q cause %q posts %d raised %s raised_end %s", id, ch.Status, ch.Reason, ch.Cause, ch.Attempts, ch.Raised.Format(time.RFC3339), ch.RaisedEnd.Format(time.RFC3339))
+	}
+	for _, m := range gc.Inbound() {
+		if m.ProviderMessageID == "spaces/CCCC/messages/old" {
+			t.Fatal("the 0.5.0 record was POSTed")
+		}
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "sample-mail-argv.txt"), args, 0644); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -107,6 +107,31 @@ Google Doc, shared with the sender, and your reply carries its link: the
 without an address; find it in the Workspace directory
 (`gws people searchDirectoryPeople`, the `gws-people` skill) before sharing.
 
+## A "gchat: delivery" mail
+
+The adapter mails you `gchat: delivery` when a Chat message has not reached
+you for two minutes, or when it stopped trying. The mail names the space,
+thread and message, never the text. The cause says why: `draft_deferred`
+means text sat in your session's input box and gc would not paste over it;
+the adapter keeps trying, and the message lands once the box is clear. When
+several messages of one conversation wait, one mail names the first and says
+how many wait behind it.
+
+- **A waiting message still arrives.** It is delivered to you as a turn when
+  your session clears, with the same message ID. If you read it and act on it
+  from history now, do not act on it again when it arrives.
+- **Read the message** with the `gc gchat read --space ... --thread ...
+  --since ...` command the mail gives, and answer it in Chat if it still
+  needs an answer.
+- **See what is waiting:** `gc gchat status` lists every delivery still
+  waiting or unresolved, with its age and cause.
+- **Settle an unresolved one** (the mail says so; a message mailed while it
+  waited gets one more mail if it ends this way, and then the adapter will
+  not deliver it again on its own): `gc gchat resolve ID
+  --accept` once the message reached you or you answered it from history;
+  `gc gchat resolve ID --replay` to have it delivered again. A replay can
+  duplicate a turn whose first outcome is unknown, so check first.
+
 ## Limits
 
 - Messages go out as a real person in a real organization. Never post

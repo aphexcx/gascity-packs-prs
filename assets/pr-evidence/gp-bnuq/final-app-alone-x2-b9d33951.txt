@@ -1,0 +1,3 @@
+# go test ./internal/app -count=2 -timeout=20m at b9d33951, the package alone
+ok  	gchat-adapter/internal/app	167.052s
+rc=0

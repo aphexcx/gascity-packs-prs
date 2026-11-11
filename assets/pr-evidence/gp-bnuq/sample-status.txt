@@ -1,0 +1,13 @@
+Health: ready —
+Subscription:
+Expiry: 0001-01-01T00:00:00Z
+Last event: none
+Backlog: 0; pending: 1; unresolved: 1; unrecorded: 0; quarantine: 0; stuck: 1
+Counters:
+Deliveries (only unresolved IDs can be resolved):
+  intent spaces/AAAA/messages/one: retry; age 5m1s; cause draft_deferred; next attempt 2026-11-10T22:50:51.016Z; posts 5
+  unresolved spaces/BBBB/messages/two: unrecognized delivery status; age 5m1s; cause unknown
+Spaces:
+  spaces/AAAA: wake=all backlog=0
+  spaces/BBBB: wake=all backlog=0
+Retained unavailable records are counted under unavailable:<space>; resolve cannot replay them.

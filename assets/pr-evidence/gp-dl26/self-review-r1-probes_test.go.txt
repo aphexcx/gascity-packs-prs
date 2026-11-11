@@ -1,0 +1,222 @@
+package inbound
+
+// Reviewer probes for gp-dl26 round 2 (review clone only; not for the lane).
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/fakes/fakegc"
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/wire"
+	api "google.golang.org/api/chat/v1"
+)
+
+// gcMail models gc mail send --dedup as raiseDelivery drives it: the key is
+// per change, plus ":ended" when Raise.Second; a send whose key is live is
+// suppressed and exits 0. lose makes the next send land but report failure
+// (a 10 s timeout after gc created the mail, or a lost exit status).
+type gcMail struct {
+	mu        sync.Mutex
+	live      map[string]bool
+	delivered []Raise
+	lose      bool
+	calls     int
+}
+
+func (g *gcMail) raise(_ context.Context, r Raise) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls++
+	key := r.ID
+	if r.Second {
+		key += ":ended"
+	}
+	if g.live[key] {
+		return nil // suppressed, exit 0
+	}
+	g.live[key] = true
+	g.delivered = append(g.delivered, r)
+	if g.lose {
+		g.lose = false
+		return errors.New("signal: killed")
+	}
+	return nil
+}
+
+// P1: a stuck head drains into a busy agent. Head mailed once naming three;
+// when it lands, the three behind it are POSTed at once, gc answers pending
+// (busy session), and each is mailed on its own as "has not reached the
+// agent yet" because its age counts from when it was recorded.
+func TestProbeDrainAfterStuckHeadMailsEachPendingFollower(t *testing.T) {
+	rf := retrySetup(t)
+	rf.script(repeat(400, failedWith(draftDeferred))...)
+	names := handleBurst(t, rf, 4)
+	rf.clock.Set(retryStart.Add(10 * time.Minute))
+	rf.poll(t)
+	if got := rf.raises.list(); len(got) != 1 || got[0].ID != names[0] {
+		t.Fatalf("head mail: %d", len(got))
+	}
+	rf.script(wire.Delivery{Status: "delivered"}, wire.Delivery{Status: "pending"}, wire.Delivery{Status: "pending"}, wire.Delivery{Status: "pending"})
+	rf.clock.Set(rf.change(t, names[0]).NextAttempt)
+	rf.poll(t)
+	for _, n := range names[1:] {
+		c := rf.change(t, n)
+		t.Logf("%s: %s posted +%s", n, c.Status, c.Posted.Sub(retryStart))
+	}
+	got := rf.raises.list()
+	t.Logf("mails in all: %d", len(got))
+	for _, r := range got[1:] {
+		first := strings.SplitN(r.Body, "\n", 2)[0]
+		t.Logf("mail for %s: %q", r.ID, first)
+	}
+	if len(got) != 1 {
+		t.Errorf("PROBE: %d mails after the head landed into a busy agent, want 1 (the head's)", len(got))
+	}
+}
+
+// P2: the waiting mail lands at gc but its result is lost. Before the next
+// raise the message ends unresolved for a reason other than the bound. The
+// end mail is built as a first mail (Raised is zero), so it carries the same
+// dedup key as the waiting mail, which gc suppresses while that mail is live.
+// The agent holds only "will still be delivered"; the ledger says raised_end.
+func TestProbeLostWaitingMailResultShadowsTheEndMail(t *testing.T) {
+	g := &gcMail{live: map[string]bool{}, lose: true}
+	rf := retrySetup(t, func(o *Options) { o.Raise = g.raise })
+	rf.script(repeat(6, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("shadow", "message.created", message()))
+	rf.clock.Set(retryStart.Add(2 * time.Minute))
+	rf.poll(t)
+	if c := rf.change(t, messageName); !c.Raised.IsZero() {
+		t.Fatalf("raised recorded although the result was lost")
+	}
+	rf.script(wire.Delivery{Status: "pending"})
+	rf.clock.Set(rf.change(t, messageName).NextAttempt)
+	rf.poll(t)
+	rf.gc.SetReceipt(rf.change(t, messageName).ReceiptID, wire.ReceiptResponse{State: "concluded", Delivery: wire.Delivery{Status: "pending"}})
+	rf.poll(t)
+	rf.clock.Add(2 * time.Minute)
+	rf.poll(t)
+	c := rf.change(t, messageName)
+	t.Logf("final: %s %q cause %s raised %v raised_end %v; raise calls %d, delivered to the agent %d", c.Status, c.Reason, c.Cause, !c.Raised.IsZero(), !c.RaisedEnd.IsZero(), g.calls, len(g.delivered))
+	for _, r := range g.delivered {
+		t.Logf("delivered: second=%v %q", r.Second, strings.SplitN(r.Body, "\n", 2)[0])
+	}
+	if c.Status != "unresolved" || c.RaisedEnd.IsZero() {
+		t.Fatalf("setup: %+v", c)
+	}
+	if len(g.delivered) != 2 {
+		t.Errorf("PROBE: the agent got %d mails; the end mail was suppressed by gc's dedup on the waiting mail's key", len(g.delivered))
+	}
+}
+
+// P3: a message mailed as waiting is then deleted by its sender. The waiting
+// mail promised "If it ends unresolved before <bound> for another reason, one
+// more mail says so". It ends unresolved (withdrawn) with no second mail.
+func TestProbeWithdrawnAfterWaitingMailGetsNoSecondMail(t *testing.T) {
+	rf := retrySetup(t)
+	rf.script(repeat(40, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("withdrawn", "message.created", message()))
+	rf.clock.Set(retryStart.Add(2 * time.Minute))
+	rf.poll(t)
+	got := mailsFor(rf, messageName)
+	if len(got) != 1 || !strings.Contains(got[0].Body, "one more mail says so") {
+		t.Fatalf("waiting mail: %d", len(got))
+	}
+	handle(t, rf.fixture, event("delete", "message.deleted", &api.Message{Name: messageName}))
+	for range 3 {
+		rf.clock.Add(time.Minute)
+		rf.poll(t)
+	}
+	c := rf.change(t, messageName)
+	t.Logf("final: %s %q cause %s; mails %d", c.Status, c.Reason, c.Cause, len(mailsFor(rf, messageName)))
+	if c.Status == "unresolved" && len(mailsFor(rf, messageName)) == 1 {
+		t.Errorf("PROBE: ended unresolved (%s) after a waiting mail that promised one more mail; no second mail", c.Cause)
+	}
+}
+
+// P4: an operator replays a message whose first life was mailed (raised is
+// kept by replay). gc refuses it again. A later message of the same space
+// waits behind it. The replayed head is never mailed (raised), and the later
+// message is never mailed while held back (head-only rule): silence for up
+// to the replayed head's 24 h bound.
+func TestProbeReplayedHeadSilencesTheMessagesBehindIt(t *testing.T) {
+	rf := retrySetup(t)
+	rf.script(repeat(4000, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("replayed", "message.created", message()))
+	rf.clock.Set(retryStart.Add(2 * time.Minute))
+	rf.poll(t)
+	rf.clock.Set(retryStart.Add(25 * time.Hour))
+	rf.poll(t)
+	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != reasonRetryBound {
+		t.Fatalf("first life: %+v", c)
+	}
+	mailsBefore := len(rf.raises.list())
+	// gc gchat resolve --replay, as server.go does it (raised kept).
+	rf.opts.LedgerMu.Lock()
+	replay := rf.l.Unresolved[messageName]
+	replay.Status, replay.Attempts, replay.ReceiptID, replay.Reason = "intent", 0, "", "operator replay"
+	replay.Created = rf.clock.Now().UTC()
+	replay.NextAttempt, replay.Posted, replay.Cause = time.Time{}, time.Time{}, ""
+	rf.l.Changes[messageName] = replay
+	delete(rf.l.Unresolved, messageName)
+	rf.opts.LedgerMu.Unlock()
+	rf.poll(t)
+	rf.clock.Add(time.Second)
+	second := secondMessage()
+	handle(t, rf.fixture, event("behind-replay", "message.created", second))
+	for range 30 {
+		rf.clock.Add(time.Minute)
+		rf.poll(t)
+	}
+	x, y := rf.change(t, messageName), rf.change(t, second.Name)
+	t.Logf("replayed head: %s cause %s attempts %d; behind: %s cause %s age %s; mails since replay %d",
+		x.Status, x.Cause, x.Attempts, y.Status, y.Cause, rf.clock.Now().Sub(y.Created), len(rf.raises.list())-mailsBefore)
+	if len(rf.raises.list())-mailsBefore == 0 {
+		t.Errorf("PROBE: 30 minutes, a refused replayed head and a message behind it, no mail at all")
+	}
+	// The replayed head's own bound (24 h from the replay): it ends silently.
+	rf.clock.Set(x.Created.Add(24*time.Hour + time.Second))
+	for range 3 {
+		rf.poll(t)
+		rf.clock.Add(time.Minute)
+	}
+	x, y = rf.change(t, messageName), rf.change(t, second.Name)
+	t.Logf("at the replay's bound: head %s %q mails for head since replay %d; behind %s mails %d", x.Status, x.Reason, len(mailsFor(rf, messageName))-1, y.Status, len(mailsFor(rf, second.Name)))
+}
+
+var _ = ledger.New
+
+// P5: head by the live order test, not the stored word. A is the stuck head
+// (mailed); B waits behind it (behind_earlier). A is withdrawn while gc is
+// down; B is released, its POST meets gc down, and it keeps the stale word
+// behind_earlier as the new head. It must be mailed (it is the head now).
+func TestProbeStaleBehindEarlierHeadIsMailed(t *testing.T) {
+	rf := retrySetup(t)
+	rf.script(repeat(400, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("a", "message.created", message()))
+	rf.clock.Add(time.Second)
+	b := secondMessage()
+	handle(t, rf.fixture, event("b", "message.created", b))
+	rf.clock.Set(retryStart.Add(10 * time.Minute))
+	rf.poll(t)
+	if got := rf.raises.list(); len(got) != 1 || got[0].ID != messageName {
+		t.Fatalf("head mail: %+v", got)
+	}
+	rf.gc.Configure(func(s *fakegc.Server) { s.CityNotRunning = true })
+	_, _ = rf.p.Handle(context.Background(), event("delete-a", "message.deleted", &api.Message{Name: messageName}))
+	rf.clock.Add(time.Second)
+	_ = rf.p.Poll(context.Background())
+	c := rf.change(t, b.Name)
+	t.Logf("a: %s; b: %s reason %q cause %s attempts %d; mails for b %d", rf.change(t, messageName).Status, c.Status, c.Reason, c.Cause, c.Attempts, len(mailsFor(rf, b.Name)))
+	if c.Status != "intent" || c.Cause != causeBehindEarlier {
+		t.Fatalf("setup: b is not the stale-word head: %+v", c)
+	}
+	if len(mailsFor(rf, b.Name)) != 1 {
+		t.Errorf("PROBE: the new head with a stale behind_earlier word was not mailed")
+	}
+}

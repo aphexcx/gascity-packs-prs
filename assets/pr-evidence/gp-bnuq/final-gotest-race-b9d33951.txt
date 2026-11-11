@@ -1,0 +1,65 @@
+# go test -race ./... -count=1 -timeout=45m at b9d33951 (head), package lines, failures and race frames
+ok  	gchat-adapter/cmd/gc-gchat-adapter	26.780s
+--- FAIL: TestObservedIdentityReplacesContradictedLedgerIdentity (5.28s)
+    app_test.go:360: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
+WARNING: DATA RACE
+Read at 0x00c0007a4270 by goroutine 29060:
+      <lane>/gchat/adapter/internal/app/keyholder_test.go:180 +0x474
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0x164
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x34
+Previous write at 0x00c0007a4270 by goroutine 29174:
+      <lane>/gchat/adapter/internal/app/keyholder_test.go:176 +0xd0
+      <lane>/gchat/adapter/internal/app/operations.go:167 +0x17c
+      <lane>/gchat/adapter/internal/app/app.go:296 +0x40
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x7bc
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2744 +0x74
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0x164
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2742 +0x7a0
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2602 +0xb38
+      _testmain.go:152 +0x100
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/sync/waitgroup.go:238 +0x6c
+      <lane>/gchat/adapter/internal/app/app.go:140 +0x44
+WARNING: DATA RACE
+Read at 0x00c000b2ebf0 by goroutine 29060:
+      <lane>/gchat/adapter/internal/app/keyholder_test.go:180 +0x488
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0x164
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x34
+Previous write at 0x00c000b2ebf0 by goroutine 29174:
+      <lane>/gchat/adapter/internal/app/keyholder_test.go:176 +0x94
+      <lane>/gchat/adapter/internal/app/operations.go:167 +0x17c
+      <lane>/gchat/adapter/internal/app/app.go:296 +0x40
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2260 +0x7bc
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2744 +0x74
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2195 +0x164
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2742 +0x7a0
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/testing/testing.go:2602 +0xb38
+      _testmain.go:152 +0x100
+      /opt/homebrew/Cellar/go/1.27.3/libexec/src/sync/waitgroup.go:238 +0x6c
+      <lane>/gchat/adapter/internal/app/app.go:140 +0x44
+--- FAIL: TestManagedSourceChatRefusalRetriesWithoutSignIn (3.40s)
+--- FAIL: TestSubscriptionRefusalRetriesWithoutSignIn (11.03s)
+    --- FAIL: TestSubscriptionRefusalRetriesWithoutSignIn/403 (6.80s)
+        subscription_test.go:354: health did not become ready in 5s: {State:catching-up Reason:subscription refused: Workspace Events API not enabled (HTTP 403)}
+FAIL
+FAIL	gchat-adapter/internal/app	106.781s
+ok  	gchat-adapter/internal/catchup	99.696s
+ok  	gchat-adapter/internal/chat	6.557s
+ok  	gchat-adapter/internal/config	13.751s
+ok  	gchat-adapter/internal/events	18.647s
+ok  	gchat-adapter/internal/fakes/fakegc	1.362s
+ok  	gchat-adapter/internal/fakes/fakegoogle	2.010s
+ok  	gchat-adapter/internal/gcclient	1.234s
+ok  	gchat-adapter/internal/inbound	62.922s
+ok  	gchat-adapter/internal/ledger	7.643s
+ok  	gchat-adapter/internal/markdown	1.425s
+ok  	gchat-adapter/internal/media	1.207s
+ok  	gchat-adapter/internal/principal	31.275s
+ok  	gchat-adapter/internal/provenance	1.162s
+ok  	gchat-adapter/internal/puller	30.283s
+ok  	gchat-adapter/internal/server	92.529s
+ok  	gchat-adapter/internal/token	14.597s
+ok  	gchat-adapter/internal/wire	1.208s
+ok  	gchat-adapter/test/contract	1.428s
+ok  	gchat-adapter/test/e2e	1400.332s
+FAIL
+rc=1

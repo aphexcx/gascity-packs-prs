@@ -1,0 +1,55 @@
+head 0af1ac618ef156dbfd8aaf4936769f30e0e9c09c vs base 136dbae1f3d6ff0b9ca873ccd0cf49e7dec9e7ee
+files of internal/app and internal/puller that differ between them: gchat/adapter/internal/app/operations.go gchat/adapter/internal/app/raise_test.go 
+TestRevokedTokenReplacementResumes round 1 head: ok  	gchat-adapter/internal/app	3.403s
+TestRevokedTokenReplacementResumes round 1 base: ok  	gchat-adapter/internal/app	3.388s
+TestRevokedTokenReplacementResumes round 2 head: ok  	gchat-adapter/internal/app	3.320s
+TestRevokedTokenReplacementResumes round 2 base: ok  	gchat-adapter/internal/app	3.331s
+TestRevokedTokenReplacementResumes round 3 head: ok  	gchat-adapter/internal/app	3.334s
+TestRevokedTokenReplacementResumes round 3 base: ok  	gchat-adapter/internal/app	3.329s
+TestRevokedTokenReplacementResumes round 4 head: ok  	gchat-adapter/internal/app	3.407s
+TestRevokedTokenReplacementResumes round 4 base: ok  	gchat-adapter/internal/app	3.293s
+TestRevokedTokenReplacementResumes round 5 head: ok  	gchat-adapter/internal/app	3.321s
+TestRevokedTokenReplacementResumes round 5 base: ok  	gchat-adapter/internal/app	3.358s
+TestRevokedTokenReplacementResumes round 6 head: ok  	gchat-adapter/internal/app	3.370s
+TestRevokedTokenReplacementResumes round 6 base: ok  	gchat-adapter/internal/app	3.345s
+TestRevokedTokenReplacementResumes: head 6 ok of 6; base 6 ok of 6
+TestCorruptLedgerServesStatusAndResetResumes round 1 head: ok  	gchat-adapter/internal/app	1.355s
+TestCorruptLedgerServesStatusAndResetResumes round 1 base: ok  	gchat-adapter/internal/app	1.341s
+TestCorruptLedgerServesStatusAndResetResumes round 2 head: ok  	gchat-adapter/internal/app	1.366s
+TestCorruptLedgerServesStatusAndResetResumes round 2 base: ok  	gchat-adapter/internal/app	1.364s
+TestCorruptLedgerServesStatusAndResetResumes round 3 head: ok  	gchat-adapter/internal/app	1.427s
+TestCorruptLedgerServesStatusAndResetResumes round 3 base: ok  	gchat-adapter/internal/app	1.358s
+TestCorruptLedgerServesStatusAndResetResumes round 4 head: ok  	gchat-adapter/internal/app	1.345s
+TestCorruptLedgerServesStatusAndResetResumes round 4 base: ok  	gchat-adapter/internal/app	1.360s
+TestCorruptLedgerServesStatusAndResetResumes round 5 head: ok  	gchat-adapter/internal/app	1.359s
+TestCorruptLedgerServesStatusAndResetResumes round 5 base: ok  	gchat-adapter/internal/app	1.366s
+TestCorruptLedgerServesStatusAndResetResumes round 6 head: ok  	gchat-adapter/internal/app	1.366s
+TestCorruptLedgerServesStatusAndResetResumes round 6 base: ok  	gchat-adapter/internal/app	1.438s
+TestCorruptLedgerServesStatusAndResetResumes: head 6 ok of 6; base 6 ok of 6
+TestSubscriptionRefusalRetriesWithoutSignIn round 1 head: ok  	gchat-adapter/internal/app	8.585s
+TestSubscriptionRefusalRetriesWithoutSignIn round 1 base: ok  	gchat-adapter/internal/app	8.514s
+TestSubscriptionRefusalRetriesWithoutSignIn round 2 head: ok  	gchat-adapter/internal/app	6.518s
+TestSubscriptionRefusalRetriesWithoutSignIn round 2 base: ok  	gchat-adapter/internal/app	8.645s
+TestSubscriptionRefusalRetriesWithoutSignIn round 3 head: ok  	gchat-adapter/internal/app	10.526s
+TestSubscriptionRefusalRetriesWithoutSignIn round 3 base: ok  	gchat-adapter/internal/app	8.626s
+TestSubscriptionRefusalRetriesWithoutSignIn round 4 head: ok  	gchat-adapter/internal/app	8.469s
+TestSubscriptionRefusalRetriesWithoutSignIn round 4 base: ok  	gchat-adapter/internal/app	8.508s
+TestSubscriptionRefusalRetriesWithoutSignIn round 5 head: ok  	gchat-adapter/internal/app	8.467s
+TestSubscriptionRefusalRetriesWithoutSignIn round 5 base: ok  	gchat-adapter/internal/app	8.453s
+TestSubscriptionRefusalRetriesWithoutSignIn round 6 head: ok  	gchat-adapter/internal/app	8.748s
+TestSubscriptionRefusalRetriesWithoutSignIn round 6 base: ok  	gchat-adapter/internal/app	8.488s
+TestSubscriptionRefusalRetriesWithoutSignIn: head 6 ok of 6; base 6 ok of 6
+TestRunQuarantineRecoversDuringRun round 1 head: ok  	gchat-adapter/internal/puller	0.636s
+TestRunQuarantineRecoversDuringRun round 1 base: ok  	gchat-adapter/internal/puller	0.605s
+TestRunQuarantineRecoversDuringRun round 2 head: ok  	gchat-adapter/internal/puller	0.642s
+TestRunQuarantineRecoversDuringRun round 2 base: ok  	gchat-adapter/internal/puller	0.511s
+TestRunQuarantineRecoversDuringRun round 3 head: ok  	gchat-adapter/internal/puller	0.610s
+TestRunQuarantineRecoversDuringRun round 3 base: ok  	gchat-adapter/internal/puller	0.704s
+TestRunQuarantineRecoversDuringRun round 4 head: ok  	gchat-adapter/internal/puller	0.524s
+TestRunQuarantineRecoversDuringRun round 4 base: ok  	gchat-adapter/internal/puller	0.610s
+TestRunQuarantineRecoversDuringRun round 5 head: ok  	gchat-adapter/internal/puller	0.538s
+TestRunQuarantineRecoversDuringRun round 5 base: ok  	gchat-adapter/internal/puller	0.524s
+TestRunQuarantineRecoversDuringRun round 6 head: ok  	gchat-adapter/internal/puller	0.513s
+TestRunQuarantineRecoversDuringRun round 6 base: ok  	gchat-adapter/internal/puller	0.523s
+TestRunQuarantineRecoversDuringRun: head 6 ok of 6; base 6 ok of 6
+done

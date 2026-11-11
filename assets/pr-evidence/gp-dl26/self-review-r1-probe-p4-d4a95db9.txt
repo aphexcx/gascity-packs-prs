@@ -1,0 +1,5 @@
+=== RUN   TestProbeReplayedHeadSilencesTheMessagesBehindIt
+    zz_review_probe_base_test.go:43: replayed head: intent cause draft_deferred attempts 34; behind: intent cause behind_earlier age 30m0s; mails since replay 1
+--- PASS: TestProbeReplayedHeadSilencesTheMessagesBehindIt (1.11s)
+PASS
+ok  	gchat-adapter/internal/inbound	1.328s

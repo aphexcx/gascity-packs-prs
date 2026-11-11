@@ -1,0 +1,16 @@
+=== RUN   TestStuckHeadIsMailedOnceNamingTheMessagesBehindIt
+    round2_test.go:270: one stuck head and three behind gave 4 mails: [{ID:spaces/room/messages/burst1 Space:spaces/room Thread:spaces/room/threads/topic Message:spaces/room/messages/burst1 Body:A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying.
+--- FAIL: TestStuckHeadIsMailedOnceNamingTheMessagesBehindIt (0.33s)
+=== RUN   TestWaitingMessageThatEndsEarlyGetsOneSecondMail
+=== RUN   TestWaitingMessageThatEndsEarlyGetsOneSecondMail/none
+    round2_test.go:360: second mails: 0, want exactly one
+=== RUN   TestWaitingMessageThatEndsEarlyGetsOneSecondMail/before_the_second_mail
+    round2_test.go:360: second mails: 0, want exactly one
+=== RUN   TestWaitingMessageThatEndsEarlyGetsOneSecondMail/after_the_second_mail
+--- FAIL: TestWaitingMessageThatEndsEarlyGetsOneSecondMail (0.70s)
+=== RUN   TestWaitingMailSaysTheMessageStillArrives
+    round2_test.go:392: waiting mail lacks "will still be delivered to the agent when its session clears":
+--- FAIL: TestWaitingMailSaysTheMessageStillArrives (0.16s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	1.430s
+FAIL

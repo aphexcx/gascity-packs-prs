@@ -1,0 +1,160 @@
+package inbound
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/fakes/fakegc"
+)
+
+// Probe R2-1: a waiting mail whose result is lost (gc took it), then a
+// restart that reloads the ledger from JSON, then the retry. With a clock
+// that carries nanoseconds and a monotonic reading (production's time.Now),
+// the retry must reuse the key, so gc keeps one mail.
+func TestProbe2LostMailAcrossRestartKeepsOneMail(t *testing.T) {
+	g := &gcMail{live: map[string]bool{}, lose: true}
+	rf := retrySetup(t, func(o *Options) { o.Raise = g.raise })
+	base := time.Now().Add(-time.Hour) // monotonic + nanoseconds + local zone
+	rf.clock.Set(base)
+	rf.script(repeat(400, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("lost", "message.created", message()))
+	before := rf.change(t, messageName)
+	t.Logf("created in memory: %s (ns %d)", before.Created.Format(time.RFC3339Nano), before.Created.Nanosecond())
+	rf.clock.Set(base.Add(2*time.Minute + 30*time.Second))
+	rf.poll(t)
+	if c := rf.change(t, messageName); !c.Raised.IsZero() || len(g.delivered) != 1 {
+		t.Fatalf("setup: lost result: raised %s, delivered %d", c.Raised, len(g.delivered))
+	}
+	keyBefore := g.delivered[0].DedupKey()
+	rf.restart(t)
+	rf.opts.Raise = g.raise
+	rf.rebuild(t)
+	after := rf.change(t, messageName)
+	t.Logf("created after reload: %s equal=%v", after.Created.Format(time.RFC3339Nano), after.Created.Equal(before.Created))
+	var keys []string
+	rec := func(ctx context.Context, r Raise) error { keys = append(keys, r.DedupKey()); return g.raise(ctx, r) }
+	rf.opts.Raise = rec
+	rf.rebuild(t)
+	rf.clock.Add(2 * time.Minute)
+	rf.poll(t)
+	c := rf.change(t, messageName)
+	t.Logf("key before %s; retry keys %v; delivered %d; raised %s", keyBefore, keys, len(g.delivered), c.Raised)
+	if len(keys) != 1 || keys[0] != keyBefore || len(g.delivered) != 1 || c.Raised.IsZero() {
+		t.Fatalf("HARM: a lost-result mail retried after a restart is %d mails at gc", len(g.delivered))
+	}
+}
+
+// endGate holds the first END mail in the Raise call until release.
+type endGate struct {
+	next    func(context.Context, Raise) error
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *endGate) raise(ctx context.Context, r Raise) error {
+	if r.Ended {
+		first := false
+		b.once.Do(func() { first = true })
+		if first {
+			close(b.started)
+			<-b.release
+		}
+	}
+	return b.next(ctx, r)
+}
+
+// Probe R2-2: the README says a mail in flight across a replay leaves the
+// replayed message "mailed on its own terms, as a message never mailed", and
+// that "A message is mailed at most twice". Life 1 was mailed waiting (stamped)
+// and then its END mail is in flight when the replay starts.
+func TestProbe2ReplayAcrossEndMailAfterAStampedWaitingMail(t *testing.T) {
+	g := &gcMail{live: map[string]bool{}}
+	b := &endGate{next: g.raise, started: make(chan struct{}), release: make(chan struct{})}
+	rf := retrySetup(t, func(o *Options) { o.Raise = b.raise })
+	rf.script(repeat(5, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("first-life", "message.created", message()))
+	rf.clock.Set(retryStart.Add(2 * time.Minute))
+	rf.poll(t) // POST 5 failed, waiting mail delivered and stamped
+	c := rf.change(t, messageName)
+	if c.Raised.IsZero() || len(g.deliveredFor(messageName)) != 1 {
+		t.Fatalf("setup: waiting mail: raised %s, %d mails", c.Raised, len(g.deliveredFor(messageName)))
+	}
+	rf.script()
+	rf.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "surprise" })
+	rf.clock.Set(c.NextAttempt)
+	// Poll: POST 6 answers "surprise" -> unresolved unknown; the end mail goes out and is held.
+	done := make(chan error, 1)
+	go func() { done <- rf.p.Poll(context.Background()) }()
+	select {
+	case <-b.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no end mail")
+	}
+	if c := rf.change(t, messageName); c.Status != "unresolved" {
+		t.Fatalf("setup: life 1 did not end: %s %q", c.Status, c.Reason)
+	}
+	rf.clock.Add(time.Minute)
+	replay(t, rf, messageName)
+	rf.script(repeat(400, failedWith(draftDeferred))...)
+	if err := rf.p.Pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	close(b.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	c = rf.change(t, messageName)
+	t.Logf("life 2 after the in-flight end mail: %s created %s raised %s raised_end %s waitingMailed=%v",
+		c.Status, c.Created.Format(time.RFC3339), c.Raised.Format(time.RFC3339), c.RaisedEnd, waitingMailed(&c))
+	rf.clock.Add(time.Second)
+	second := secondMessage()
+	handle(t, rf.fixture, event("behind", "message.created", second))
+	for range 10 {
+		rf.clock.Add(time.Minute)
+		rf.poll(t)
+	}
+	mails := g.deliveredFor(messageName)
+	t.Logf("after 10 minutes of life 2: %d mails for the message at gc (kinds %v); %d for the message behind it", len(mails), kinds(mails), len(g.deliveredFor(second.Name)))
+	// End life 2 for a reason other than its bound.
+	rf.script()
+	rf.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "surprise" })
+	rf.clock.Set(rf.change(t, messageName).NextAttempt)
+	rf.poll(t)
+	rf.poll(t)
+	mails = g.deliveredFor(messageName)
+	t.Logf("after life 2 ends: %d mails for the message at gc (kinds %v)", len(mails), kinds(mails))
+	if len(mails) > 0 {
+		last := mails[len(mails)-1]
+		first, _, _ := strings.Cut(last.Body, "\n")
+		t.Logf("last mail opens: %q", first)
+	}
+	if len(mails) > 2 {
+		t.Errorf("WORDING: one message got %d mails; README says 'A message is mailed at most twice', CHANGELOG 'no message is mailed more than twice'", len(mails))
+	}
+	if n := 0; true {
+		for _, m := range mails {
+			if !m.Ended && m.Recorded.Equal(rf.change(t, messageName).Created) {
+				n++
+			}
+		}
+		if n == 0 {
+			t.Errorf("WORDING: life 2 got no waiting mail of its own; README says the replayed message is then mailed 'as a message never mailed'")
+		}
+	}
+}
+
+func kinds(rs []Raise) []string {
+	var out []string
+	for _, r := range rs {
+		k := "waiting"
+		if r.Ended {
+			k = "ended"
+		}
+		out = append(out, k+"@"+r.Recorded.Format("15:04:05"))
+	}
+	return out
+}

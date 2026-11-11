@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+
+- A Chat message gc answers `failed` or `held` (nothing reached the agent's
+  terminal) is retried until it lands, no longer given up after four POSTs:
+  the first four run as before, then the waits are 8, 16 and 32 seconds and
+  one minute, for up to 24 hours from when the adapter recorded it (then it
+  is unresolved as `not delivered within the retry bound`). `partial` keeps
+  its four-POST bound (a `partial` first met after the fourth POST stops
+  there), and so does `held` with a `partial` member, also when gc answers
+  the message's other POSTs `failed`: the record keeps the mark across a
+  restart, and a replay clears it. gc's `held` status, from gc's
+  composer-hold change, is understood.
+- The messages of one space reach gc in the order they were recorded: a later
+  message waits while an earlier one is retrying or not yet posted. A message
+  pending at gc holds nothing back, so a burst to a busy agent flows.
+- A retrying message, or one waiting behind it, no longer keeps catch-up
+  open: health can read `ready` while messages wait or are stuck, and
+  outbound recovery keeps running. `status` and the mail show them.
+- A message waiting two minutes or more, and one that becomes unresolved, is
+  mailed to the identity's agent (`gchat: delivery`): ids, cause, age and
+  commands, never the text, the sender or gc's error text. Of the messages
+  waiting in one space only the first is mailed, naming how many wait behind
+  it. The waiting mail says the message still arrives when the session
+  clears. A message mailed while waiting gets one more mail if it ends
+  unresolved for a reason other than the 24-hour bound, a withdrawal
+  included; no message is mailed more than twice in one life (a replay
+  starts a new one). A withdrawn message never mailed while waiting, and an
+  unresolved row from before this version, are not mailed. A mail still in
+  flight when a replay starts marks nothing, so the replay is mailed as if
+  that mail had not been sent; each life of a message has its own mail keys
+  at gc.
+- `gc gchat status` shows each delivery's age, cause, POST count, next attempt
+  and raise time, and counts `stuck` deliveries.
+- A receipt that concludes `pending` after every member took the whole paste
+  commits as `landed_unconfirmed` (counted under `turns:<space>` and
+  `unconfirmed:<space>`); a terminal hold is unresolved with the cause `held`.
+- A pending receipt's one-hour deadline counts from the latest POST, not from
+  when the message was recorded.
+- A record adapter 0.5.0 left between two saves after a fourth "not
+  delivered" (intent, four POSTs, no cause) is never posted again: it ends
+  unresolved as `delivery retries exhausted`, cause `unknown`, and is mailed.
+- The ledger's change record gains `next_attempt`, `posted`, `cause`,
+  `fragment`, `raised` and `raised_end`, each omitted when empty; the version
+  stays 1 and a 0.5.0 ledger loads and saves unchanged. Going back to 0.5.0
+  turns a waiting message with four or more POSTs unresolved without a mail
+  and posts a message that waited behind another at once: resolve waiting
+  rows first.
+
 ## 0.5.0 — 2026-11-09
 
 - Prefer a prebuilt adapter on PATH (or GC_GCHAT_ADAPTER_BIN) before building;

@@ -1,0 +1,10 @@
+c1ae854f + round2_test.go/round3_test.go of the fold (TestDedupKeyIsPerLifeAndKind stripped: Raise.Recorded is new) + zz_red_shim_test.go (DedupKey = the app's c1ae854f key)
+--- PASS: TestEndMailIsNotShadowedByALostWaitingMail (0.23s)
+    round3_test.go:303: the replay's end: unresolved "unrecognized delivery status", raised_end 2026-11-10 20:35:06 +0000 UTC, 2 mails at gc
+--- FAIL: TestRaiseCompletingAcrossAReplayStampsNothing (0.56s)
+    round3_test.go:352: waiting mails at gc for the two lives: 1:
+--- FAIL: TestRaiseCompletingAcrossAReplayOfAWaitingMessage (0.58s)
+--- PASS: TestRaiseCompletingAcrossAnEndInTheSameLifeIsMarked (0.45s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	2.117s
+FAIL

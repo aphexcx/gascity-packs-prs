@@ -102,6 +102,30 @@ type ChangeState struct {
 	// ProvenanceFramed marks adapter-authored frames; legacy records default
 	// to false so user text resembling a frame is never trusted or stripped.
 	ProvenanceFramed bool `json:"provenance_framed,omitempty"`
+	// NextAttempt is the earliest time of the next POST of a change that gc
+	// answered "not delivered" four or more times.
+	NextAttempt time.Time `json:"next_attempt,omitzero"`
+	// Posted is when the latest POST was made; a pending receipt's deadline
+	// counts from it. Records written before it existed count from Created.
+	Posted time.Time `json:"posted,omitzero"`
+	// Cause says, in one word of a closed set, why the change is waiting or
+	// unresolved. It is for status and the raise mail; no retry reads it.
+	// Reason "retry" stays the mark of a clean retry.
+	Cause string `json:"cause,omitempty"`
+	// Fragment marks a change gc answered, on any POST of its current life,
+	// that a fragment of the message is in a terminal ("partial", or "held"
+	// with a "partial" member). Such a change is not POSTed after its fourth
+	// POST, or after that answer when it came later, whatever gc answers to
+	// its other POSTs. A replay clears it.
+	Fragment bool `json:"fragment,omitempty"`
+	// Raised is when the city's agent was first told about this change. It
+	// is set only after the mail was sent.
+	Raised time.Time `json:"raised,omitzero"`
+	// RaisedEnd is when the city's agent was told that this change ended
+	// unresolved. A change is mailed at most twice in one life (a replay
+	// starts a new one): once while it waits and once when it ends, the second only when the end is not the retry bound
+	// the first mail named.
+	RaisedEnd time.Time `json:"raised_end,omitzero"`
 }
 
 type SendState struct {

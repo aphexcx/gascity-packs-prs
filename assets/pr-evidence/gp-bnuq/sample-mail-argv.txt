@@ -1,0 +1,59 @@
+ARGV
+[mail]
+[send]
+[mayor]
+[--dedup]
+[gchat:examplecity:example:delivery:135ce9a7a6db6239c98030b60eefa4ed08851a37330e0f95fac0f72d85ef2651]
+[-s]
+[gchat: delivery]
+[-m]
+[A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying.
+
+Space: spaces/AAAA
+Thread: spaces/AAAA/threads/one
+Message: spaces/AAAA/messages/one
+Delivery ID: spaces/AAAA/messages/one
+Recorded: 2026-11-10T22:48:41Z
+State: waiting to be posted to gc (intent)
+Cause: draft_deferred (text in the agent's input box held the message back)
+Age: 2m10s
+POSTs made: 5
+Retrying until: 2026-11-11T22:48:41Z (24 hours after it was recorded)
+
+Read the message: gc gchat read --space spaces/AAAA --thread spaces/AAAA/threads/one --since 2026-11-10T21:48:41Z
+If it is not there (an edit or a reaction on an older message), run the same command without --since.
+Every delivery the adapter holds: gc gchat status
+No further mail is sent for this message. If it has not landed by 2026-11-11T22:48:41Z, or it ends unresolved for another reason, gc gchat status lists it for gc gchat resolve.
+
+This mail never carries the message's text or its sender; read them in Chat with the command above.
+]
+ARGV
+[mail]
+[send]
+[mayor]
+[--dedup]
+[gchat:examplecity:example:delivery:e0749c513e46683cb42396f2025201d043fc3001d3c390ef8beb7ccf6714e4b6]
+[-s]
+[gchat: delivery]
+[-m]
+[A Google Chat message did not reach the agent, and the gchat adapter has stopped trying. It waits for an operator.
+
+Space: spaces/BBBB
+Thread: spaces/BBBB/threads/two
+Message: spaces/BBBB/messages/two
+Delivery ID: spaces/BBBB/messages/two
+Recorded: 2026-11-10T22:48:41Z
+State: unresolved
+Cause: unknown (the outcome is not known; the reason says why)
+Reason: unrecognized delivery status
+Age: 2m10s
+
+Read the message: gc gchat read --space spaces/BBBB --thread spaces/BBBB/threads/two --since 2026-11-10T21:48:41Z
+If it is not there (an edit or a reaction on an older message), run the same command without --since.
+Every delivery the adapter holds: gc gchat status
+After checking whether the agent has the message:
+  gc gchat resolve spaces/BBBB/messages/two --accept marks it delivered.
+  gc gchat resolve spaces/BBBB/messages/two --replay posts it again. A replay can duplicate a turn whose first outcome is unknown.
+
+This mail never carries the message's text or its sender; read them in Chat with the command above.
+]

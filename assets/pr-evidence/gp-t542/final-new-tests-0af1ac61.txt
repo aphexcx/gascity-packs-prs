@@ -1,0 +1,26 @@
+head 0af1ac618ef156dbfd8aaf4936769f30e0e9c09c
+--- PASS: TestEndMailIsNotShadowedByALostWaitingMail (0.29s)
+--- PASS: TestReplayedHeadDoesNotSilenceTheMessagesBehindIt (0.55s)
+--- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound (7.40s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures (0.15s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures,_restart_after_the_first_answer (0.14s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/failure,_partial,_two_failures (0.14s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures (0.15s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures,_restart_after_the_first_answer (0.13s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment (3.34s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment,_restart_after_the_first_answer (3.34s)
+--- PASS: TestFragmentMessageDoesNotHoldItsSpace (0.22s)
+--- PASS: TestReplayClearsTheFragmentMark (0.61s)
+--- PASS: TestRaiseCompletingAcrossAReplayStampsNothing (0.63s)
+--- PASS: TestRaiseCompletingAcrossAReplayOfAWaitingMessage (0.73s)
+--- PASS: TestRaiseCompletingAcrossAnEndInTheSameLifeIsMarked (0.44s)
+--- PASS: TestDedupKeyIsPerLifeAndKind (0.00s)
+--- PASS: TestLostMailKeepsItsKeyWithinALifeAcrossARestart (0.20s)
+ok  	gchat-adapter/internal/inbound	11.266s
+--- PASS: TestChangeRetryFieldsRoundTripAndAreAbsentWhenZero (0.02s)
+ok  	gchat-adapter/internal/ledger	0.117s
+--- PASS: TestReplayClearsRetryStateAndKeepsRaised (0.03s)
+ok  	gchat-adapter/internal/server	0.266s
+--- PASS: TestDeliveryRaiseMailsTheIdentityAgentWithPerLifeDedup (0.17s)
+--- PASS: TestEndedDeliveryMailHasItsOwnDedupKey (0.15s)
+ok  	gchat-adapter/internal/app	0.521s

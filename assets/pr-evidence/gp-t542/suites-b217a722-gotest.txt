@@ -1,0 +1,69 @@
+head b217a722e35b75eed314cd5734b250e1ea1e14ad
+ok  	gchat-adapter/cmd/gc-gchat-adapter	17.162s
+2026/11/10 21:28:00 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+--- FAIL: TestCorruptLedgerServesStatusAndResetResumes (4.08s)
+    app_test.go:467: health did not become recovery-required in 1s: {State: Reason:}
+    testing.go:1619: TempDir RemoveAll cleanup: unlinkat <tmp>/TestCorruptLedgerServesStatusAndResetResumes189072275/001: directory not empty
+2026/11/10 21:28:22 http: proxy error: context canceled
+2026/11/10 21:28:22 http: proxy error: context canceled
+2026/11/10 21:28:24 WARN credential identity changed; rebuilding client operation=identity
+2026/11/10 21:29:06 http: proxy error: context canceled
+2026/11/10 21:29:08 ERROR state lock ownership lost operation=state_lock
+FAIL
+FAIL	gchat-adapter/internal/app	108.828s
+ok  	gchat-adapter/internal/catchup	100.072s
+ok  	gchat-adapter/internal/chat	3.275s
+ok  	gchat-adapter/internal/config	7.997s
+ok  	gchat-adapter/internal/events	11.397s
+ok  	gchat-adapter/internal/fakes/fakegc	0.307s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.668s
+ok  	gchat-adapter/internal/gcclient	0.291s
+ok  	gchat-adapter/internal/inbound	100.825s
+ok  	gchat-adapter/internal/ledger	2.524s
+ok  	gchat-adapter/internal/markdown	0.306s
+ok  	gchat-adapter/internal/media	0.242s
+ok  	gchat-adapter/internal/principal	30.328s
+ok  	gchat-adapter/internal/provenance	0.229s
+2026/11/10 21:27:41 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:27:41 INFO unknown event acknowledged pubsub_id=m2 type=google.workspace.chat.future.v1.created subject=//chat.googleapis.com/spaces/room
+2026/11/10 21:27:41 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:27:41 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:27:41 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:27:41 ERROR event nacked pubsub_id=m0 subject=//chat.googleapis.com/spaces/room outcome=99 cause=<nil>
+2026/11/10 21:27:41 ERROR event nacked pubsub_id=m0 subject=//chat.googleapis.com/spaces/room outcome=0 cause=<nil>
+2026/11/10 21:27:41 ERROR event nacked pubsub_id=m0 subject=//chat.googleapis.com/spaces/room outcome=1 cause=temporary
+2026/11/10 21:27:41 INFO event quarantined pubsub_id=m0 subject="" path=<tmp>/TestRunQuarantinefalse3351165623/001/quarantine/m0.json cause=permanent
+2026/11/10 21:27:41 INFO event quarantined pubsub_id=m0 subject="" path=<tmp>/TestRunQuarantinetrue3318735746/001/quarantine/m0.json cause="decode google.workspace.chat.message.v1.created change 0: unexpected end of JSON input"
+2026/11/10 21:27:42 ERROR quarantine failed pubsub_id=m0 subject=//workspaceevents.googleapis.com/subscriptions/example cause="ledger unavailable"
+2026/11/10 21:27:42 INFO event quarantined pubsub_id=m0 subject=//workspaceevents.googleapis.com/subscriptions/example path=<tmp>/TestRunQuarantineRecordFailureRedelivers2835477432/001/quarantine/m0.json cause=<nil>
+2026/11/10 21:27:42 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:27:47 WARN quarantine configuration incomplete consequence="quarantine storage unavailable: quarantine path is not a directory (symlinks are refused): not-a-directory; recovery will be attempted on each quarantine; events will be nacked only if recovery fails"
+2026/11/10 21:27:47 ERROR quarantine failed pubsub_id=m0 subject=//chat.googleapis.com/spaces/room cause="quarantine path is not a directory (symlinks are refused): not-a-directory"
+2026/11/10 21:27:47 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:27:47 ERROR event nacked pubsub_id=m0 subject=//chat.googleapis.com/spaces/room outcome=0 cause="context canceled"
+2026/11/10 21:27:48 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:27:48 ERROR pubsub receive retry code=ResourceExhausted cause="rpc error: code = ResourceExhausted desc = injected mid-handler failure" delay=857.685µs
+2026/11/10 21:27:48 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:27:48 ERROR pubsub receive retry code=ResourceExhausted cause="rpc error: code = ResourceExhausted desc = injected mid-handler failure" delay=186.991µs
+2026/11/10 21:27:58 WARN quarantine configuration incomplete consequence="MediaDir is empty: malformed events and Quarantine outcomes will be nacked; RecordQuarantine is nil: quarantines will not be counted"
+2026/11/10 21:28:07 WARN quarantine configuration incomplete consequence="quarantine storage unavailable: quarantine path is not a directory (symlinks are refused): media; recovery will be attempted on each quarantine; events will be nacked only if recovery fails"
+2026/11/10 21:28:08 INFO event quarantined pubsub_id=m0 subject=//chat.googleapis.com/spaces/room path=<tmp>/TestRunQuarantineRejectsReplacedSymlink2520038618/001/quarantine/m0.json cause=<nil>
+2026/11/10 21:28:08 INFO event quarantined pubsub_id=m1 subject="" path=<tmp>/TestRunQuarantineRecoversDuringRunreplaced1515039097/001/media/quarantine/m1.json cause="decode google.workspace.chat.message.v1.created change 0: unexpected end of JSON input"
+2026/11/10 21:28:09 INFO event quarantined pubsub_id=m1 subject="" path=<tmp>/TestRunQuarantineRecoversDuringRunstartup_repaired2133752857/001/media/quarantine/m1.json cause="decode google.workspace.chat.message.v1.created change 0: unexpected end of JSON input"
+2026/11/10 21:28:09 INFO event quarantined pubsub_id=m1 subject="" path=<tmp>/TestRunQuarantineRecoversDuringRunremoved3990977542/001/media/quarantine/m1.json cause="decode google.workspace.chat.message.v1.created change 0: unexpected end of JSON input"
+2026/11/10 21:28:09 ERROR quarantine failed pubsub_id=m1 subject=//chat.googleapis.com/spaces/room cause="quarantine path is not a directory (symlinks are refused): quarantine"
+2026/11/10 21:28:09 ERROR quarantine failed pubsub_id=m1 subject=//chat.googleapis.com/spaces/room cause="quarantine path is not a directory (symlinks are refused): quarantine"
+2026/11/10 21:28:09 INFO event quarantined pubsub_id=m2 subject="" path=<tmp>/TestRunQuarantineRecoversDuringRunremoved3990977542/001/media/quarantine/m2.json cause="decode google.workspace.chat.message.v1.created change 0: unexpected end of JSON input"
+2026/11/10 21:28:09 INFO event quarantined pubsub_id=m2 subject="" path=<tmp>/TestRunQuarantineRecoversDuringRunreplaced1515039097/001/media/quarantine/m2.json cause="decode google.workspace.chat.message.v1.created change 0: unexpected end of JSON input"
+--- FAIL: TestRunQuarantineRecoversDuringRun (0.00s)
+    --- FAIL: TestRunQuarantineRecoversDuringRun/startup_repaired (3.58s)
+        puller_test.go:1104: condition not met:  context deadline exceeded
+FAIL
+FAIL	gchat-adapter/internal/puller	28.140s
+ok  	gchat-adapter/internal/server	89.321s
+ok  	gchat-adapter/internal/token	9.765s
+ok  	gchat-adapter/internal/wire	0.239s
+ok  	gchat-adapter/test/contract	0.350s
+ok  	gchat-adapter/test/e2e	549.820s
+FAIL
+rc=1

@@ -1,0 +1,30 @@
+# go test ./... -count=1 -timeout=30m at b9d33951 (head), package lines and failures
+ok  	gchat-adapter/cmd/gc-gchat-adapter	18.399s
+--- FAIL: TestObservedIdentityReplacesContradictedLedgerIdentity (4.96s)
+    app_test.go:363: Post "http://adapter/publish": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+--- FAIL: TestSubscriptionRefusalRetriesWithoutSignIn (10.32s)
+    --- FAIL: TestSubscriptionRefusalRetriesWithoutSignIn/403 (6.12s)
+        subscription_test.go:354: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
+FAIL
+FAIL	gchat-adapter/internal/app	102.748s
+ok  	gchat-adapter/internal/catchup	80.685s
+ok  	gchat-adapter/internal/chat	6.790s
+ok  	gchat-adapter/internal/config	9.849s
+ok  	gchat-adapter/internal/events	12.445s
+ok  	gchat-adapter/internal/fakes/fakegc	0.417s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.685s
+ok  	gchat-adapter/internal/gcclient	0.402s
+ok  	gchat-adapter/internal/inbound	53.516s
+ok  	gchat-adapter/internal/ledger	6.827s
+ok  	gchat-adapter/internal/markdown	0.446s
+ok  	gchat-adapter/internal/media	0.090s
+ok  	gchat-adapter/internal/principal	30.408s
+ok  	gchat-adapter/internal/provenance	0.084s
+ok  	gchat-adapter/internal/puller	30.189s
+ok  	gchat-adapter/internal/server	83.681s
+ok  	gchat-adapter/internal/token	10.888s
+ok  	gchat-adapter/internal/wire	0.146s
+ok  	gchat-adapter/test/contract	0.424s
+ok  	gchat-adapter/test/e2e	516.870s
+FAIL
+rc=1

@@ -1,0 +1,31 @@
+head c1ae854f87b2b1c1a0e00972b00cd6c803d674ce
+--- PASS: TestRetriesExhaustedAndPendingFailureRetries (1.45s)
+    --- PASS: TestRetriesExhaustedAndPendingFailureRetries/partial (0.53s)
+    --- PASS: TestRetriesExhaustedAndPendingFailureRetries/receipt_failed (0.35s)
+    --- PASS: TestRetriesExhaustedAndPendingFailureRetries/receipt_partial (0.35s)
+    --- PASS: TestRetriesExhaustedAndPendingFailureRetries/receipt_no_route (0.22s)
+--- PASS: TestRaiseBodyWording (1.26s)
+    --- PASS: TestRaiseBodyWording/waiting (0.62s)
+    --- PASS: TestRaiseBodyWording/partial (0.64s)
+    --- PASS: TestRaiseBodyWording/one_hour (0.00s)
+--- PASS: TestHeldWithAPartialMemberKeepsThePartialBound (0.55s)
+--- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound (28.18s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures (0.52s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures,_restart_after_the_first_answer (0.52s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/failure,_partial,_two_failures (0.67s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures (0.60s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures,_restart_after_the_first_answer (0.44s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment (14.71s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment,_restart_after_the_first_answer (10.72s)
+--- PASS: TestFragmentMessageDoesNotHoldItsSpace (0.56s)
+--- PASS: TestReplayClearsTheFragmentMark (1.56s)
+--- PASS: TestRaiseCompletingAcrossAReplayStampsNothing (4.90s)
+--- PASS: TestRaiseCompletingAcrossAnEndInTheSameLifeIsMarked (0.70s)
+PASS
+ok  	gchat-adapter/internal/inbound	39.505s
+--- PASS: TestChangeRetryFieldsRoundTripAndAreAbsentWhenZero (0.05s)
+PASS
+ok  	gchat-adapter/internal/ledger	0.287s
+--- PASS: TestReplayClearsRetryStateAndKeepsRaised (0.08s)
+PASS
+ok  	gchat-adapter/internal/server	0.408s

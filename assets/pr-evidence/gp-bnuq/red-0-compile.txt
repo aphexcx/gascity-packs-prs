@@ -1,0 +1,68 @@
+# gchat-adapter/internal/wire [gchat-adapter/internal/wire.test]
+internal/wire/wire_test.go:152:60: d.Terminal undefined (type struct{Status string "json:\"status\""; ReceiptID string "json:\"receipt_id,omitempty\""} has no field or method Terminal)
+internal/wire/wire_test.go:152:74: d.DeliveredBytes undefined (type struct{Status string "json:\"status\""; ReceiptID string "json:\"receipt_id,omitempty\""} has no field or method DeliveredBytes)
+internal/wire/wire_test.go:152:101: d.ExpectedBytes undefined (type struct{Status string "json:\"status\""; ReceiptID string "json:\"receipt_id,omitempty\""} has no field or method ExpectedBytes)
+internal/wire/wire_test.go:152:131: d.Members undefined (type struct{Status string "json:\"status\""; ReceiptID string "json:\"receipt_id,omitempty\""} has no field or method Members)
+internal/wire/wire_test.go:155:12: undefined: DeliveryMember
+internal/wire/wire_test.go:157:26: d.Members undefined (type struct{Status string "json:\"status\""; ReceiptID string "json:\"receipt_id,omitempty\""} has no field or method Members)
+internal/wire/wire_test.go:158:46: d.Members undefined (type struct{Status string "json:\"status\""; ReceiptID string "json:\"receipt_id,omitempty\""} has no field or method Members)
+# gchat-adapter/internal/ledger_test [gchat-adapter/internal/ledger.test]
+internal/ledger/ledger_test.go:119:9: c.NextAttempt undefined (type *ledger.ChangeState has no field or method NextAttempt)
+internal/ledger/ledger_test.go:119:36: c.Posted undefined (type *ledger.ChangeState has no field or method Posted)
+internal/ledger/ledger_test.go:119:57: c.Cause undefined (type *ledger.ChangeState has no field or method Cause)
+internal/ledger/ledger_test.go:119:75: c.Raised undefined (type *ledger.ChangeState has no field or method Raised)
+internal/ledger/ledger_test.go:143:3: unknown field NextAttempt in struct literal of type ledger.ChangeState
+internal/ledger/ledger_test.go:143:37: unknown field Posted in struct literal of type ledger.ChangeState
+internal/ledger/ledger_test.go:143:71: unknown field Cause in struct literal of type ledger.ChangeState
+internal/ledger/ledger_test.go:143:96: unknown field Raised in struct literal of type ledger.ChangeState
+FAIL	gchat-adapter/internal/ledger [build failed]
+FAIL	gchat-adapter/internal/wire [build failed]
+# gchat-adapter/internal/fakes/fakegc [gchat-adapter/internal/fakes/fakegc.test]
+internal/fakes/fakegc/fakegc_test.go:719:15: undefined: wire.Delivery
+internal/fakes/fakegc/fakegc_test.go:719:56: undefined: wire.DeliveryMember
+internal/fakes/fakegc/fakegc_test.go:720:17: undefined: wire.Delivery
+internal/fakes/fakegc/fakegc_test.go:720:61: undefined: wire.DeliveryMember
+internal/fakes/fakegc/fakegc_test.go:721:34: s.Script undefined (type *Server has no field or method Script)
+internal/fakes/fakegc/fakegc_test.go:721:50: undefined: wire.Delivery
+# gchat-adapter/internal/gcclient [gchat-adapter/internal/gcclient.test]
+internal/gcclient/gcclient_test.go:661:19: undefined: wire.Delivery
+internal/gcclient/gcclient_test.go:661:82: undefined: wire.DeliveryMember
+internal/gcclient/gcclient_test.go:662:41: s.Script undefined (type *fakegc.Server has no field or method Script)
+internal/gcclient/gcclient_test.go:662:57: undefined: wire.Delivery
+FAIL	gchat-adapter/internal/gcclient [build failed]
+FAIL	gchat-adapter/internal/fakes/fakegc [build failed]
+# gchat-adapter/internal/inbound [gchat-adapter/internal/inbound.test]
+internal/inbound/retry_test.go:50:10: undefined: Raise
+internal/inbound/retry_test.go:54:47: undefined: Raise
+internal/inbound/retry_test.go:60:29: undefined: Raise
+internal/inbound/retry_test.go:75:10: rf.opts.Raise undefined (type Options has no field or method Raise)
+internal/inbound/retry_test.go:90:4: p.wait undefined (type *Processor has no field or method wait)
+internal/inbound/retry_test.go:109:10: rf.opts.Raise undefined (type Options has no field or method Raise)
+internal/inbound/retry_test.go:131:48: undefined: wire.Delivery
+internal/inbound/retry_test.go:135:35: undefined: wire.Delivery
+internal/inbound/retry_test.go:139:27: undefined: wire.Delivery
+internal/inbound/inbound_test.go:1392:27: f.l.Changes[messageName].Posted undefined (type *ledger.ChangeState has no field or method Posted)
+internal/inbound/retry_test.go:109:10: too many errors
+FAIL	gchat-adapter/internal/inbound [build failed]
+# gchat-adapter/internal/server [gchat-adapter/internal/server.test]
+internal/server/status_test.go:52:3: unknown field NextAttempt in struct literal of type ledger.ChangeState
+internal/server/status_test.go:52:22: unknown field Posted in struct literal of type ledger.ChangeState
+internal/server/status_test.go:52:58: unknown field Cause in struct literal of type ledger.ChangeState
+internal/server/status_test.go:52:83: unknown field Raised in struct literal of type ledger.ChangeState
+internal/server/status_test.go:54:119: unknown field Cause in struct literal of type ledger.ChangeState
+internal/server/status_test.go:55:169: unknown field Cause in struct literal of type ledger.ChangeState
+internal/server/status_test.go:55:194: unknown field Raised in struct literal of type ledger.ChangeState
+internal/server/status_test.go:112:45: unknown field NextAttempt in struct literal of type ledger.ChangeState
+internal/server/status_test.go:112:87: unknown field Posted in struct literal of type ledger.ChangeState
+internal/server/status_test.go:112:125: unknown field Cause in struct literal of type ledger.ChangeState
+internal/server/status_test.go:112:125: too many errors
+FAIL	gchat-adapter/internal/server [build failed]
+# gchat-adapter/internal/app [gchat-adapter/internal/app.test]
+internal/app/raise_test.go:37:15: undefined: inbound.Raise
+internal/app/raise_test.go:38:14: a.raiseDelivery undefined (type *application has no field or method raiseDelivery)
+internal/app/raise_test.go:52:14: a.raiseDelivery undefined (type *application has no field or method raiseDelivery)
+internal/app/raise_test.go:62:15: undefined: inbound.Raise
+internal/app/raise_test.go:63:14: a.raiseDelivery undefined (type *application has no field or method raiseDelivery)
+internal/app/raise_test.go:67:14: a.raiseDelivery undefined (type *application has no field or method raiseDelivery)
+FAIL	gchat-adapter/internal/app [build failed]
+FAIL

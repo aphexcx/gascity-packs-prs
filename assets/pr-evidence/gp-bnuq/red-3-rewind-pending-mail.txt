@@ -1,0 +1,25 @@
+--- FAIL: TestClockRewindDoesNotParkARetry (0.14s)
+    retry_test.go:751: retry parked by a rewound clock: posts=4
+--- FAIL: TestPendingRaiseNamesTheReceiptDeadline (0.07s)
+    retry_test.go:773: body lacks "2026-11-10T21:22:58Z":
+        A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying.
+
+        Space: spaces/room
+        Thread: spaces/room/threads/topic
+        Message: spaces/room/messages/one
+        Delivery ID: spaces/room/messages/one
+        Recorded: 2026-11-10T20:22:58Z
+        State: waiting for gc's receipt (pending)
+        Cause: none recorded
+        Age: 2m0s
+        POSTs made: 1
+        Retrying until: 2026-11-11T20:22:58Z (24h0m0s after it was recorded)
+
+        Read the message (from an hour before it was recorded): gc gchat read --space spaces/room --thread spaces/room/threads/topic --since 2026-11-10T19:22:58Z
+        Every delivery the adapter holds: gc gchat status
+        This is the only mail for this message. If it has not landed by 2026-11-11T20:22:58Z, the adapter stops trying and gc gchat status lists it for gc gchat resolve.
+
+        This mail never carries the message's text or its sender; read them in Chat with the command above.
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.425s
+FAIL

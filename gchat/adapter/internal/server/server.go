@@ -1524,23 +1524,43 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	// Status, rather than reason text, determines what is still in flight and
 	// what an operator can resolve. Do not include the persisted message body.
+	// The retry fields are left out when empty, so an old row reads as before.
 	type delivery struct {
-		ID        string `json:"id"`
-		Status    string `json:"status"`
-		Reason    string `json:"reason"`
-		ReceiptID string `json:"receipt_id,omitempty"`
+		ID          string    `json:"id"`
+		Status      string    `json:"status"`
+		Reason      string    `json:"reason"`
+		ReceiptID   string    `json:"receipt_id,omitempty"`
+		Created     time.Time `json:"created,omitzero"`
+		AgeSeconds  *int64    `json:"age_seconds,omitempty"`
+		Cause       string    `json:"cause,omitempty"`
+		Attempts    int       `json:"attempts,omitempty"`
+		NextAttempt time.Time `json:"next_attempt,omitzero"`
+		Raised      time.Time `json:"raised,omitzero"`
 	}
 	deliveries := make([]delivery, 0)
-	inFlight := 0
+	inFlight, stuck := 0, 0
+	now := time.Now()
 	for _, change := range l.Changes {
+		waiting := false
 		switch change.Status {
 		case "intent", "pending":
 			inFlight++
+			waiting = true
 		case "unresolved":
 		default:
 			continue
 		}
-		deliveries = append(deliveries, delivery{change.ID, change.Status, change.Reason, change.ReceiptID})
+		row := delivery{ID: change.ID, Status: change.Status, Reason: change.Reason, ReceiptID: change.ReceiptID, Created: change.Created,
+			Cause: change.Cause, Attempts: change.Attempts, NextAttempt: change.NextAttempt, Raised: change.Raised}
+		if !change.Created.IsZero() {
+			age := max(now.Sub(change.Created), 0)
+			seconds := int64(age / time.Second)
+			row.AgeSeconds = &seconds
+			if waiting && age >= inbound.DefaultStuckAfter {
+				stuck++
+			}
+		}
+		deliveries = append(deliveries, row)
 	}
 	sort.Slice(deliveries, func(i, j int) bool { return deliveries[i].ID < deliveries[j].ID })
 	var lastEvent any
@@ -1550,7 +1570,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
-	status["pending"], status["deliveries"] = inFlight, deliveries
+	status["pending"], status["deliveries"], status["stuck"] = inFlight, deliveries, stuck
 	if s.opts.SubscriptionStatus != nil {
 		failures, next, state, err := s.opts.SubscriptionStatus()
 		kind, code := logCause(err)
@@ -1597,6 +1617,11 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 			c.ReceiptID = ""
 			c.Created = time.Now().UTC()
 			c.Reason = "operator replay"
+			// POST at once, in the space's order by the new recorded time. A
+			// replayed change keeps its marks: no second waiting mail, and at
+			// most the one end mail (inbound's mailDue). The fragment mark
+			// bounds the POSTs of one life, whose count starts again here.
+			c.NextAttempt, c.Posted, c.Cause, c.Fragment = time.Time{}, time.Time{}, "", false
 		} else {
 			c.Status = "committed"
 			c.Reason = "operator accepted"

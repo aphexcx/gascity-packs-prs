@@ -3,6 +3,8 @@ package wire
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -130,5 +132,36 @@ func TestOutboundResultJSON(t *testing.T) {
 				t.Fatalf("result: %+v", result)
 			}
 		})
+	}
+}
+
+// gc's InboundDelivery with members, as gc at aphexcx/gascity PR 99 (head
+// ee972774c3e411f5c30b500d81044c97bb920fce) sends it, including the "held"
+// status and its held block. The adapter decodes the status, the terminal
+// flags, the byte counts and each member's error text; the held block and the
+// member's session, selector and digest are not decoded.
+func TestDeliveryMembersJSON(t *testing.T) {
+	body := `{"delivery":{"receipt_id":"ir-1-2","status":"pending","terminal":true,"delivered_bytes":220,"expected_bytes":240,"members":[` +
+		`{"session_id":"s-1","selector":"mayor","status":"pending","terminal":true,"delivered_bytes":120,"expected_bytes":120,"digest":"d1","error":"draft ownership lost"},` +
+		`{"session_id":"s-2","status":"held","held":{"state":"unowned_draft","since":"2026-11-10T20:22:58Z","age_ms":1200},"delivered_bytes":100,"expected_bytes":120,"digest":"d2"}]}}`
+	var response InboundResponse
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
+		t.Fatal(err)
+	}
+	d := response.Delivery
+	if d.ReceiptID != "ir-1-2" || d.Status != "pending" || !d.Terminal || d.DeliveredBytes != 220 || d.ExpectedBytes != 240 || len(d.Members) != 2 {
+		t.Fatalf("delivery: %+v", d)
+	}
+	want := []DeliveryMember{{Status: "pending", Terminal: true, DeliveredBytes: 120, ExpectedBytes: 120, Error: "draft ownership lost"},
+		{Status: "held", DeliveredBytes: 100, ExpectedBytes: 120}}
+	if !reflect.DeepEqual(d.Members, want) {
+		t.Fatalf("members:\n got %+v\nwant %+v", d.Members, want)
+	}
+	var receipt ReceiptResponse
+	if err := json.Unmarshal([]byte(`{"receipt_id":"ir-1-2","state":"concluded",`+strings.TrimPrefix(body, "{")), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.State != "concluded" || !reflect.DeepEqual(receipt.Delivery, d) {
+		t.Fatalf("receipt: %+v", receipt)
 	}
 }

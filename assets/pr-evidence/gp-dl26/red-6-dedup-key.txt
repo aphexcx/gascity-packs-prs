@@ -1,0 +1,6 @@
+=== RUN   TestSecondDeliveryMailHasItsOwnDedupKey
+    raise_test.go:98: dedup keys: first "gchat:examplecity:example:delivery:3610ae5c008421172446476cfdd7468333d38c1cba442b7015fcc998b7e34182" second "gchat:examplecity:example:delivery:3610ae5c008421172446476cfdd7468333d38c1cba442b7015fcc998b7e34182"
+--- FAIL: TestSecondDeliveryMailHasItsOwnDedupKey (0.17s)
+FAIL
+FAIL	gchat-adapter/internal/app	0.405s
+FAIL

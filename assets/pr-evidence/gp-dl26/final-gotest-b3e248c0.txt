@@ -1,0 +1,23 @@
+head b3e248c0127a38cf254b33611ee33ec678ee867e
+ok  	gchat-adapter/cmd/gc-gchat-adapter	19.603s
+ok  	gchat-adapter/internal/app	110.000s
+ok  	gchat-adapter/internal/catchup	97.017s
+ok  	gchat-adapter/internal/chat	3.340s
+ok  	gchat-adapter/internal/config	7.685s
+ok  	gchat-adapter/internal/events	12.142s
+ok  	gchat-adapter/internal/fakes/fakegc	0.255s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.544s
+ok  	gchat-adapter/internal/gcclient	0.265s
+ok  	gchat-adapter/internal/inbound	75.638s
+ok  	gchat-adapter/internal/ledger	5.157s
+ok  	gchat-adapter/internal/markdown	0.249s
+ok  	gchat-adapter/internal/media	0.227s
+ok  	gchat-adapter/internal/principal	30.304s
+ok  	gchat-adapter/internal/provenance	0.166s
+ok  	gchat-adapter/internal/puller	25.751s
+ok  	gchat-adapter/internal/server	88.690s
+ok  	gchat-adapter/internal/token	9.438s
+ok  	gchat-adapter/internal/wire	0.173s
+ok  	gchat-adapter/test/contract	0.331s
+ok  	gchat-adapter/test/e2e	576.362s
+rc=0
