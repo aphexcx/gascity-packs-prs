@@ -1,0 +1,5 @@
+head c1ae854f87b2b1c1a0e00972b00cd6c803d674ce
+ok  	gchat-adapter/internal/inbound	57.585s
+ok  	gchat-adapter/internal/ledger	3.996s
+ok  	gchat-adapter/internal/server	74.007s
+rc=0

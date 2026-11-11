@@ -1,0 +1,35 @@
+=== RUN   TestFragmentOnAnyAnswerKeepsTheFourPOSTBound
+=== RUN   TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures
+    round3_test.go:92: a message that delivered a fragment was POSTed 124 times, want 4
+=== RUN   TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures,_restart_after_the_first_answer
+    round3_test.go:92: a message that delivered a fragment was POSTed 124 times, want 4
+=== RUN   TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/failure,_partial,_two_failures
+    round3_test.go:92: a message that delivered a fragment was POSTed 124 times, want 4
+=== RUN   TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures
+    round3_test.go:92: a message that delivered a fragment was POSTed 124 times, want 4
+=== RUN   TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures,_restart_after_the_first_answer
+    round3_test.go:92: a message that delivered a fragment was POSTed 124 times, want 4
+=== RUN   TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment
+=== RUN   TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment,_restart_after_the_first_answer
+--- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound (29.81s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures (3.28s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures,_restart_after_the_first_answer (3.30s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/failure,_partial,_two_failures (3.53s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures (3.36s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures,_restart_after_the_first_answer (3.63s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment (7.89s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment,_restart_after_the_first_answer (4.83s)
+=== RUN   TestFragmentMessageDoesNotHoldItsSpace
+    round3_test.go:121: the message behind the fragment head: intent behind_earlier "" after 4 POSTs
+--- FAIL: TestFragmentMessageDoesNotHoldItsSpace (0.20s)
+=== RUN   TestReplayClearsTheFragmentMark
+    round3_test.go:134: first life: intent "retry"
+--- FAIL: TestReplayClearsTheFragmentMark (0.15s)
+=== RUN   TestRaiseCompletingAcrossAReplayStampsNothing
+    round3_test.go:229: the replayed record after the first life's mail: intent, raised 2026-11-10 20:24:05 +0000 UTC, raised_end 2026-11-10 20:24:05 +0000 UTC
+--- FAIL: TestRaiseCompletingAcrossAReplayStampsNothing (0.19s)
+=== RUN   TestRaiseCompletingAcrossAnEndInTheSameLifeIsMarked
+--- PASS: TestRaiseCompletingAcrossAnEndInTheSameLifeIsMarked (0.52s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	31.211s
+FAIL

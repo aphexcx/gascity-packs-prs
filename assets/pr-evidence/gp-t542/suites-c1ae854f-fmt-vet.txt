@@ -1,0 +1,5 @@
+head c1ae854f87b2b1c1a0e00972b00cd6c803d674ce
+gofmt -l .
+rc=0
+go vet ./...
+rc=0

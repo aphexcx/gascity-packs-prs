@@ -1,0 +1,169 @@
+package inbound
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/wire"
+	api "google.golang.org/api/chat/v1"
+)
+
+// gcDedupRaise emulates `gc mail send --dedup KEY` with the key the app
+// builds in raiseDelivery (internal/app/operations.go): one key per change
+// ID, plus ":ended" for an end mail. gc suppresses a send while a mail with
+// the same key is live (un-archived) in the mailbox and EXITS 0
+// (gascity cmd/gc/cmd_mail.go: "Suppression exits 0."). Here no mail is ever
+// archived. The first call blocks until release is closed, as a slow send.
+type gcDedupRaise struct {
+	once       sync.Once
+	started    chan struct{}
+	release    chan struct{}
+	mu         sync.Mutex
+	live       map[string]bool
+	delivered  []Raise
+	suppressed []Raise
+}
+
+func newGCDedupRaise() *gcDedupRaise {
+	return &gcDedupRaise{started: make(chan struct{}), release: make(chan struct{}), live: map[string]bool{}}
+}
+
+func (g *gcDedupRaise) raise(_ context.Context, r Raise) error {
+	first := false
+	g.once.Do(func() { first = true })
+	if first {
+		close(g.started)
+		<-g.release
+	}
+	key := r.ID
+	if r.Ended {
+		key += ":ended"
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.live[key] {
+		g.suppressed = append(g.suppressed, r)
+		return nil
+	}
+	g.live[key] = true
+	g.delivered = append(g.delivered, r)
+	return nil
+}
+
+func (g *gcDedupRaise) lists(id string) (delivered, suppressed []Raise) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, r := range g.delivered {
+		if r.ID == id {
+			delivered = append(delivered, r)
+		}
+	}
+	for _, r := range g.suppressed {
+		if r.ID == id {
+			suppressed = append(suppressed, r)
+		}
+	}
+	return
+}
+
+func kinds(rs []Raise) []string {
+	var out []string
+	for _, r := range rs {
+		if r.Ended {
+			out = append(out, "ended")
+		} else {
+			out = append(out, "waiting")
+		}
+	}
+	return out
+}
+
+// Probe A: the WAITING mail of life 1 is in flight; within the flight life 1
+// ends (a fragment at its sixth POST) and the operator replays it. The fix
+// stamps nothing, so life 2 is "mailed on its own terms": its waiting mail
+// goes out under the same gc dedup key as life 1's live waiting mail, gc
+// suppresses it and exits 0, the adapter stamps Raised on life 2 (not before
+// its Created), and life 2 then covers the message behind it, which is never
+// mailed. That is the M2 harm, reached through gc's dedup.
+func TestProbeReplayAcrossWaitingMailReusesTheDedupKey(t *testing.T) {
+	rf := retrySetup(t)
+	g := newGCDedupRaise()
+	rf.opts.Raise = g.raise
+	rf.rebuild(t)
+	failed := failedWith(draftDeferred)
+	// Life 1: four in-gate failures, a fifth failure (Poll), then a fragment.
+	rf.script(failed, failed, failed, failed, failed, partialAnswerBase())
+	handle(t, rf.fixture, event("life-1", "message.created", message()))
+	rf.clock.Set(retryStart.Add(2 * time.Minute))
+	done := make(chan error, 1)
+	go func() { done <- rf.p.Poll(context.Background()) }()
+	select {
+	case <-g.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiting mail of life 1 was not sent")
+	}
+	if c := rf.change(t, messageName); c.Status != "intent" || c.Attempts != 5 {
+		t.Fatalf("setup: %s after %d POSTs", c.Status, c.Attempts)
+	}
+	// In the flight: the sixth POST answers partial (life 1 ends), then the
+	// operator replays, and the replay's pass meets a busy session.
+	rf.clock.Add(time.Minute)
+	if err := rf.p.Pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if c := rf.change(t, messageName); c.Status != "unresolved" {
+		t.Fatalf("setup: life 1 did not end: %s %q", c.Status, c.Reason)
+	}
+	rf.clock.Add(time.Second)
+	replayBase(t, rf, messageName)
+	rf.script(repeat(400, failed)...)
+	if err := rf.p.Pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	close(g.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if c := rf.change(t, messageName); !c.Raised.IsZero() {
+		t.Logf("at 136dbae1 the stamp landed on life 2 at release: %s", c.Raised.Format(time.RFC3339))
+	}
+	rf.clock.Add(time.Second)
+	second := secondMessage()
+	handle(t, rf.fixture, event("behind", "message.created", second))
+	for range 10 {
+		rf.clock.Add(time.Minute)
+		rf.poll(t)
+	}
+	c := rf.change(t, messageName)
+	delivered, suppressed := g.lists(messageName)
+	behindDelivered, behindSuppressed := g.lists(second.Name)
+	t.Logf("head: status %s, created %s, raised %s, waitingMailed=%v", c.Status, c.Created.Format(time.RFC3339), c.Raised.Format(time.RFC3339), waitingMailed(&c))
+	t.Logf("head mails delivered by gc: %v; suppressed by gc (exit 0): %v", kinds(delivered), kinds(suppressed))
+	t.Logf("message behind it: %d delivered, %d suppressed; status %s cause %s", len(behindDelivered), len(behindSuppressed), rf.change(t, second.Name).Status, rf.change(t, second.Name).Cause)
+	if waitingMailed(&c) && len(behindDelivered) == 0 {
+		t.Errorf("HARM: life 2's own waiting mail never reached the agent (gc dedup), yet the ledger marks it mailed in this life, so the message behind it is covered and never mailed")
+	}
+}
+
+var _ = api.Message{}
+
+func partialAnswerBase() wire.Delivery {
+	return wire.Delivery{Status: "partial", DeliveredBytes: 40, ExpectedBytes: 120, Members: []wire.DeliveryMember{{Status: "partial", DeliveredBytes: 40, ExpectedBytes: 120}}}
+}
+
+func replayBase(t *testing.T, rf *retryFixture, id string) {
+	t.Helper()
+	rf.opts.LedgerMu.Lock()
+	defer rf.opts.LedgerMu.Unlock()
+	c := rf.l.Unresolved[id]
+	if c == nil {
+		t.Fatalf("replay: %s is not unresolved", id)
+	}
+	c.Status, c.Attempts, c.ReceiptID, c.Reason = "intent", 0, "", "operator replay"
+	c.Created = rf.clock.Now().UTC()
+	c.NextAttempt, c.Posted, c.Cause = time.Time{}, time.Time{}, ""
+	rf.l.Changes[id] = c
+	delete(rf.l.Unresolved, id)
+}

@@ -1,0 +1,60 @@
+package inbound
+
+import (
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/fakes/fakegc"
+	"gchat-adapter/internal/wire"
+)
+
+// Probe D: the fragment arrives through a concluded receipt read by Pass
+// (POST 1 answered pending; its receipt concludes partial), then gc answers
+// failed. The bound must still stop at the fourth POST.
+func TestProbeFragmentViaReceiptKeepsTheBound(t *testing.T) {
+	rf := retrySetup(t)
+	failed := failedWith(draftDeferred)
+	rf.script(append([]wire.Delivery{{Status: "pending"}}, repeat(400, failed)...)...)
+	handle(t, rf.fixture, event("via-receipt", "message.created", message()))
+	c := rf.change(t, messageName)
+	if c.Status != "pending" || c.Attempts != 1 {
+		t.Fatalf("setup: %s %d", c.Status, c.Attempts)
+	}
+	rf.gc.Configure(func(s *fakegc.Server) {
+		r := wire.ReceiptResponse{State: "concluded"}
+		r.Delivery = partialAnswer()
+		r.Delivery.ReceiptID = c.ReceiptID
+		s.Receipts[c.ReceiptID] = r
+	})
+	rf.clock.Add(time.Second)
+	rf.poll(t)
+	for range 60 {
+		rf.clock.Add(time.Minute)
+		rf.poll(t)
+	}
+	c = rf.change(t, messageName)
+	t.Logf("%s %q fragment=%v POSTs=%d", c.Status, c.Reason, c.Fragment, len(rf.gc.Inbound()))
+	if c.Status != "unresolved" || c.Reason != reasonExhausted || len(rf.gc.Inbound()) != 4 {
+		t.Errorf("fragment via receipt did not keep the bound")
+	}
+}
+
+// Probe E: a fragment on a late POST (the ninth): the change stops at that
+// answer, nine POSTs, while the mail/README/ledger text say four.
+func TestProbeLateFragmentPOSTCount(t *testing.T) {
+	rf := retrySetup(t)
+	failed := failedWith(draftDeferred)
+	rf.script(append(repeat(8, failed), partialAnswer())...)
+	handle(t, rf.fixture, event("late", "message.created", message()))
+	for range 10 {
+		rf.clock.Add(time.Minute)
+		rf.poll(t)
+	}
+	c := rf.change(t, messageName)
+	got := mailsFor(rf, messageName)
+	body := ""
+	if n := len(got); n > 0 {
+		body = got[n-1].Body
+	}
+	t.Logf("%s %q POSTs=%d mails=%d\nlast mail:\n%s", c.Status, c.Reason, len(rf.gc.Inbound()), len(got), body)
+}

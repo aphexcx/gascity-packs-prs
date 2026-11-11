@@ -1,0 +1,9 @@
+136dbae1 + the extended ledger_test.go and status_test.go of c1ae854f
+# gchat-adapter/internal/ledger_test [gchat-adapter/internal/ledger.test]
+internal/ledger/ledger_test.go:148:96: unknown field Fragment in struct literal of type ledger.ChangeState
+FAIL	gchat-adapter/internal/ledger [build failed]
+# gchat-adapter/internal/server [gchat-adapter/internal/server.test]
+internal/server/status_test.go:112:150: unknown field Fragment in struct literal of type ledger.ChangeState
+internal/server/status_test.go:124:128: got.Fragment undefined (type *ledger.ChangeState has no field or method Fragment)
+FAIL	gchat-adapter/internal/server [build failed]
+FAIL

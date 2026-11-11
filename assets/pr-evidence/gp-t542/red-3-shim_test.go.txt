@@ -1,0 +1,12 @@
+package inbound
+
+// Red shim (gp-t542 fold): the key the app sent at c1ae854f
+// (internal/app/operations.go raiseDelivery): per change, plus ":ended".
+// The sha256 and the city prefix do not change which keys collide.
+func (r Raise) DedupKey() string {
+	key := r.ID
+	if r.Ended {
+		key += ":ended"
+	}
+	return key
+}

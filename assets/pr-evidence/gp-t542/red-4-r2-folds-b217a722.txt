@@ -1,0 +1,27 @@
+b217a722 + round2_test.go/round3_test.go of the r2 fold
+    round2_test.go:573: the replay's end mail does not say it was replayed:
+--- FAIL: TestReplayedHeadDoesNotSilenceTheMessagesBehindIt (2.70s)
+    round3_test.go:107: the cause line does not tell its word (draft_deferred):
+    round3_test.go:107: the cause line does not tell its word (draft_deferred):
+    round3_test.go:107: the cause line does not tell its word (draft_deferred):
+    round3_test.go:107: the cause line does not tell its word (draft_deferred):
+    round3_test.go:107: the cause line does not tell its word (draft_deferred):
+--- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound (9.17s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures (0.16s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/partial_then_three_failures,_restart_after_the_first_answer (0.13s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/failure,_partial,_two_failures (0.14s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures (0.15s)
+    --- FAIL: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/held_with_a_partial_member_then_three_failures,_restart_after_the_first_answer (0.16s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment (4.61s)
+    --- PASS: TestFragmentOnAnyAnswerKeepsTheFourPOSTBound/never_a_fragment,_restart_after_the_first_answer (3.82s)
+--- PASS: TestLostMailKeepsItsKeyWithinALifeAcrossARestart (0.21s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	12.390s
+FAIL
+
+mutation: raise.go report() Recorded: c.Created -> Recorded: now (a key that changes on every send)
+    round3_test.go:430: the mail names another life: recorded 2026-11-10 20:49:17.338496 -0600 CST, created 2026-11-11 02:46:47.338496 +0000 UTC
+--- FAIL: TestLostMailKeepsItsKeyWithinALifeAcrossARestart (0.17s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.560s
+FAIL

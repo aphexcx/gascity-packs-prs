@@ -1,0 +1,34 @@
+head 0af1ac618ef156dbfd8aaf4936769f30e0e9c09c
+ok  	gchat-adapter/cmd/gc-gchat-adapter	25.735s
+2026/11/10 21:51:23 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789
+2026/11/10 21:51:45 http: proxy error: context canceled
+2026/11/10 21:51:45 http: proxy error: context canceled
+2026/11/10 21:51:48 WARN credential identity changed; rebuilding client operation=identity
+2026/11/10 21:52:32 http: proxy error: context canceled
+2026/11/10 21:52:34 ERROR state lock ownership lost operation=state_lock
+--- FAIL: TestSubscriptionRefusalRetriesWithoutSignIn (11.69s)
+    --- FAIL: TestSubscriptionRefusalRetriesWithoutSignIn/404 (7.18s)
+        subscription_test.go:354: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
+FAIL
+FAIL	gchat-adapter/internal/app	119.062s
+ok  	gchat-adapter/internal/catchup	116.440s
+ok  	gchat-adapter/internal/chat	3.435s
+ok  	gchat-adapter/internal/config	2.788s
+ok  	gchat-adapter/internal/events	12.141s
+ok  	gchat-adapter/internal/fakes/fakegc	0.339s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.608s
+ok  	gchat-adapter/internal/gcclient	0.334s
+ok  	gchat-adapter/internal/inbound	118.134s
+ok  	gchat-adapter/internal/ledger	3.582s
+ok  	gchat-adapter/internal/markdown	0.273s
+ok  	gchat-adapter/internal/media	0.239s
+ok  	gchat-adapter/internal/principal	30.280s
+ok  	gchat-adapter/internal/provenance	0.247s
+ok  	gchat-adapter/internal/puller	27.108s
+ok  	gchat-adapter/internal/server	96.583s
+ok  	gchat-adapter/internal/token	8.682s
+ok  	gchat-adapter/internal/wire	0.303s
+ok  	gchat-adapter/test/contract	0.384s
+ok  	gchat-adapter/test/e2e	620.542s
+FAIL
+rc=1
