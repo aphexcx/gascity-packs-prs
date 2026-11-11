@@ -69,9 +69,10 @@ func TestDeliveryRaiseUsesTheNotifyHookAndReportsItsFailure(t *testing.T) {
 	}
 }
 
-// gp-dl26, ruling E: the one second mail of a message (it ended after a
-// waiting mail) has its own dedup key; gc would drop a repeat of the first.
-func TestSecondDeliveryMailHasItsOwnDedupKey(t *testing.T) {
+// gp-dl26, ruling E and self-review r1 MINOR-1: a mail that says the message
+// ended has its own dedup key, never the waiting mail's; gc drops a mail
+// whose key is still live.
+func TestEndedDeliveryMailHasItsOwnDedupKey(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GCHAT_TEST_MAIL_ARGS\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
@@ -80,10 +81,10 @@ func TestSecondDeliveryMailHasItsOwnDedupKey(t *testing.T) {
 	t.Setenv("GC_BIN", filepath.Join(dir, "gc"))
 	a := raiseApp(Options{})
 	keys := map[bool]string{}
-	for _, second := range []bool{false, true} {
-		argsFile := filepath.Join(dir, fmt.Sprintf("args-%v", second))
+	for _, ended := range []bool{false, true} {
+		argsFile := filepath.Join(dir, fmt.Sprintf("args-%v", ended))
 		t.Setenv("GCHAT_TEST_MAIL_ARGS", argsFile)
-		if err := a.raiseDelivery(t.Context(), inbound.Raise{ID: "spaces/AAAA/messages/BBBB", Body: "body", Second: second}); err != nil {
+		if err := a.raiseDelivery(t.Context(), inbound.Raise{ID: "spaces/AAAA/messages/BBBB", Body: "body", Ended: ended}); err != nil {
 			t.Fatal(err)
 		}
 		b, err := os.ReadFile(argsFile)
@@ -91,10 +92,10 @@ func TestSecondDeliveryMailHasItsOwnDedupKey(t *testing.T) {
 			t.Fatal(err)
 		}
 		args := strings.Split(string(b), "\n")
-		keys[second] = args[slices.Index(args, "--dedup")+1]
+		keys[ended] = args[slices.Index(args, "--dedup")+1]
 	}
 	first := fmt.Sprintf("gchat:examplecity:example:delivery:%x", sha256.Sum256([]byte("spaces/AAAA/messages/BBBB")))
 	if keys[false] != first || keys[true] != first+":ended" {
-		t.Fatalf("dedup keys: first %q second %q", keys[false], keys[true])
+		t.Fatalf("dedup keys: waiting %q ended %q", keys[false], keys[true])
 	}
 }

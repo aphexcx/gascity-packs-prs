@@ -2,16 +2,19 @@ package inbound
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gchat-adapter/internal/fakes/fakegc"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/wire"
+	api "google.golang.org/api/chat/v1"
 )
 
 // Round 2 of PR 88 (bead gp-dl26): the read's probes made durable.
@@ -366,7 +369,10 @@ func TestWaitingMessageThatEndsEarlyGetsOneSecondMail(t *testing.T) {
 				return
 			}
 			body := got[0].Body
-			for _, want := range []string{"stopped trying", "receipt concluded with pending delivery", "earlier mail", "will not arrive", "gc gchat resolve " + messageName} {
+			if !got[0].Ended || strings.Contains(got[0].Body, "will not arrive") {
+				t.Fatalf("second mail: ended %v, claims the message will not arrive:\n%s", got[0].Ended, got[0].Body)
+			}
+			for _, want := range []string{"stopped trying", "receipt concluded with pending delivery", "earlier mail", "will not deliver it again on its own", "gc gchat resolve " + messageName} {
 				if !strings.Contains(body, want) {
 					t.Fatalf("second mail lacks %q:\n%s", want, body)
 				}
@@ -393,6 +399,9 @@ func TestWaitingMailSaysTheMessageStillArrives(t *testing.T) {
 			if c := rf.change(t, messageName); len(got) != 1 || c.Status != state {
 				t.Fatalf("%s: %d mails", c.Status, len(got))
 			}
+			if got[0].Ended || strings.Contains(got[0].Body, "0 later messages") {
+				t.Fatalf("waiting mail: ended %v or a zero count:\n%s", got[0].Ended, got[0].Body)
+			}
 			for _, want := range []string{"will still be delivered to the agent when its session clears", "must not act on it again when it arrives", messageName} {
 				if !strings.Contains(got[0].Body, want) {
 					t.Fatalf("waiting mail lacks %q:\n%s", want, got[0].Body)
@@ -410,7 +419,7 @@ func TestMessageFirstMailedAsEndedIsNotMailedAgain(t *testing.T) {
 	handle(t, rf.fixture, event("ended-first", "message.created", message()))
 	rf.poll(t)
 	c := rf.change(t, messageName)
-	if got := mailsFor(rf, messageName); len(got) != 1 || got[0].Second || c.Raised.IsZero() || c.RaisedEnd.IsZero() || rf.l.Unresolved[messageName].RaisedEnd.IsZero() {
+	if got := mailsFor(rf, messageName); len(got) != 1 || !got[0].Ended || c.Raised.IsZero() || c.RaisedEnd.IsZero() || rf.l.Unresolved[messageName].RaisedEnd.IsZero() {
 		t.Fatalf("first mail as ended: %d mails, raised %s, raised_end %s", len(got), c.Raised, c.RaisedEnd)
 	}
 	// gc gchat resolve --replay, as the server does it: marks kept.
@@ -428,5 +437,169 @@ func TestMessageFirstMailedAsEndedIsNotMailedAgain(t *testing.T) {
 	}
 	if c := rf.change(t, messageName); c.Status != "unresolved" || len(mailsFor(rf, messageName)) != 1 {
 		t.Fatalf("after the replay ended: %s, %d mails", c.Status, len(mailsFor(rf, messageName)))
+	}
+}
+
+// gcMail models gc mail send --dedup as the app drives it: one key per
+// change, plus ":ended" for a mail that says the message ended; a send whose
+// key is still live is suppressed and exits 0. lose makes the next send land
+// at gc but report a failure (the 10 s limit killed it after gc took it).
+type gcMail struct {
+	mu        sync.Mutex
+	live      map[string]bool
+	delivered []Raise
+	lose      bool
+}
+
+func (g *gcMail) raise(_ context.Context, r Raise) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	key := r.ID
+	if r.Ended {
+		key += ":ended"
+	}
+	if g.live[key] {
+		return nil
+	}
+	g.live[key] = true
+	g.delivered = append(g.delivered, r)
+	if g.lose {
+		g.lose = false
+		return errors.New("signal: killed")
+	}
+	return nil
+}
+
+// Self-review r1 MINOR-1 (probe P2): the waiting mail reaches gc but its
+// result is lost; the message then ends unresolved within the minute. The end
+// mail must not carry the waiting mail's key, or gc drops it and the agent
+// keeps only "will still be delivered".
+func TestEndMailIsNotShadowedByALostWaitingMail(t *testing.T) {
+	g := &gcMail{live: map[string]bool{}, lose: true}
+	rf := retrySetup(t, func(o *Options) { o.Raise = g.raise })
+	rf.script(repeat(6, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("shadow", "message.created", message()))
+	rf.clock.Set(retryStart.Add(2 * time.Minute))
+	rf.poll(t)
+	if c := rf.change(t, messageName); !c.Raised.IsZero() || len(g.delivered) != 1 {
+		t.Fatalf("setup: the waiting mail's result is lost: raised %s, delivered %d", c.Raised, len(g.delivered))
+	}
+	rf.script(wire.Delivery{Status: "pending"})
+	rf.clock.Set(rf.change(t, messageName).NextAttempt)
+	rf.poll(t)
+	rf.gc.SetReceipt(rf.change(t, messageName).ReceiptID, wire.ReceiptResponse{State: "concluded", Delivery: wire.Delivery{Status: "pending"}})
+	rf.poll(t)
+	rf.clock.Add(2 * time.Minute)
+	rf.poll(t)
+	c := rf.change(t, messageName)
+	if c.Status != "unresolved" || c.RaisedEnd.IsZero() {
+		t.Fatalf("ended: %s %q, raised_end %s", c.Status, c.Reason, c.RaisedEnd)
+	}
+	if len(g.delivered) != 2 || !g.delivered[1].Ended {
+		t.Fatalf("the agent got %d mails; the end mail was dropped as a duplicate of the waiting mail", len(g.delivered))
+	}
+}
+
+// Self-review r1 MINOR-3 (probe P3), ruling E: a message mailed as waiting and
+// then withdrawn by its sender gets its one end mail: the waiting mail said it
+// would still arrive. It does not advise a replay. A withdrawn message never
+// mailed while waiting is still never mailed (round 1's exception;
+// TestWithdrawnAndOldUnresolvedChangesAreNotRaised).
+func TestWithdrawnAfterAWaitingMailGetsItsEndMail(t *testing.T) {
+	rf := retrySetup(t)
+	rf.script(repeat(40, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("withdrawn", "message.created", message()))
+	rf.clock.Set(retryStart.Add(2 * time.Minute))
+	rf.poll(t)
+	handle(t, rf.fixture, event("delete", "message.deleted", &api.Message{Name: messageName}))
+	for range 3 {
+		rf.clock.Add(time.Minute)
+		rf.poll(t)
+	}
+	c := rf.change(t, messageName)
+	got := mailsFor(rf, messageName)
+	if c.Status != "unresolved" || c.Cause != "withdrawn" || len(got) != 2 || !got[1].Ended {
+		t.Fatalf("withdrawn after a waiting mail: %s %s, %d mails", c.Status, c.Cause, len(got))
+	}
+	if body := got[1].Body; !strings.Contains(body, "withdrew") || strings.Contains(body, "--replay") {
+		t.Fatalf("withdrawn end mail:\n%s", body)
+	}
+}
+
+// Self-review r1 MAJOR-1 (probe P4): a replay keeps the marks of the message's
+// first life (round 1's rule 7), so the replayed message is not mailed again
+// as waiting. Those marks cover nothing in its second life: a message that
+// waits behind it is mailed on its own, and the replayed message's end at its
+// new bound is mailed (its waiting mail named the old bound).
+func TestReplayedHeadDoesNotSilenceTheMessagesBehindIt(t *testing.T) {
+	rf := retrySetup(t)
+	rf.script(repeat(4000, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("replayed", "message.created", message()))
+	rf.clock.Set(retryStart.Add(2 * time.Minute))
+	rf.poll(t)
+	rf.clock.Set(retryStart.Add(25 * time.Hour))
+	rf.poll(t)
+	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != reasonRetryBound || len(mailsFor(rf, messageName)) != 1 {
+		t.Fatalf("first life: %s %q, %d mails", c.Status, c.Reason, len(mailsFor(rf, messageName)))
+	}
+	// gc gchat resolve --replay, as the server does it: marks kept.
+	rf.opts.LedgerMu.Lock()
+	replay := rf.l.Unresolved[messageName]
+	replay.Status, replay.Attempts, replay.ReceiptID, replay.Reason = "intent", 0, "", "operator replay"
+	replay.Created = rf.clock.Now().UTC()
+	replay.NextAttempt, replay.Posted, replay.Cause = time.Time{}, time.Time{}, ""
+	rf.l.Changes[messageName] = replay
+	delete(rf.l.Unresolved, messageName)
+	rf.opts.LedgerMu.Unlock()
+	rf.poll(t)
+	rf.clock.Add(time.Second)
+	second := secondMessage()
+	handle(t, rf.fixture, event("behind-replay", "message.created", second))
+	rf.clock.Add(2 * time.Minute)
+	rf.poll(t)
+	if c := rf.change(t, second.Name); c.Status != "intent" || c.Cause != "behind_earlier" || len(mailsFor(rf, second.Name)) != 1 {
+		t.Fatalf("behind the replayed head: %s %s, %d mails", c.Status, c.Cause, len(mailsFor(rf, second.Name)))
+	}
+	if got := mailsFor(rf, messageName); len(got) != 1 {
+		t.Fatalf("the replayed message was mailed again as waiting: %d mails", len(got))
+	}
+	rf.clock.Set(rf.change(t, messageName).Created.Add(24*time.Hour + time.Second))
+	rf.poll(t)
+	got := mailsFor(rf, messageName)
+	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != reasonRetryBound || len(got) != 2 || !got[1].Ended {
+		t.Fatalf("the replayed message at its new bound: %s %q, %d mails", c.Status, c.Reason, len(got))
+	}
+}
+
+// Self-review r1 MINOR-4 (probe P5), ruling D: the head is decided by the live
+// order test, never by the stored cause word. A is the mailed head and B
+// waits behind it; A is withdrawn while gc is down; B is released, its POST
+// meets gc down, and B keeps the stale word behind_earlier as the new head.
+// B is mailed, and its mail does not say it waits behind an earlier message.
+func TestHeadIsTheLiveOrderTestNotTheCauseWord(t *testing.T) {
+	rf := retrySetup(t)
+	rf.script(repeat(400, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("a", "message.created", message()))
+	rf.clock.Add(time.Second)
+	b := secondMessage()
+	handle(t, rf.fixture, event("b", "message.created", b))
+	rf.clock.Set(retryStart.Add(10 * time.Minute))
+	rf.poll(t)
+	if got := rf.raises.list(); len(got) != 1 || got[0].ID != messageName {
+		t.Fatalf("head mail: %d", len(got))
+	}
+	rf.gc.Configure(func(s *fakegc.Server) { s.CityNotRunning = true })
+	_, _ = rf.p.Handle(context.Background(), event("delete-a", "message.deleted", &api.Message{Name: messageName}))
+	rf.clock.Add(time.Second)
+	_ = rf.p.Poll(context.Background())
+	if c := rf.change(t, b.Name); c.Status != "intent" || c.Cause != "behind_earlier" {
+		t.Fatalf("setup: B is not the head with a stale word: %s %s", c.Status, c.Cause)
+	}
+	got := mailsFor(rf, b.Name)
+	if len(got) != 1 {
+		t.Fatalf("the new head with a stale behind_earlier word was not mailed: %d", len(got))
+	}
+	if strings.Contains(got[0].Body, "an earlier message of the same space has not landed yet") {
+		t.Fatalf("the head's mail says it waits behind an earlier message:\n%s", got[0].Body)
 	}
 }

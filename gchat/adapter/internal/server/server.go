@@ -1618,7 +1618,8 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 			c.Created = time.Now().UTC()
 			c.Reason = "operator replay"
 			// POST at once, in the space's order by the new recorded time. A
-			// replayed change was raised already and is not raised again.
+			// replayed change keeps its marks: no second waiting mail, and at
+			// most the one end mail (inbound's mailDue).
 			c.NextAttempt, c.Posted, c.Cause = time.Time{}, time.Time{}, ""
 		} else {
 			c.Status = "committed"

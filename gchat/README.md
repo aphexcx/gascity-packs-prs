@@ -338,8 +338,12 @@ it from Chat history must not act on it again when it arrives.
 A message that becomes unresolved is mailed too, unless its sender withdrew
 it. A message is mailed at most twice: once while it waits, and once more if
 it then ends unresolved for a reason other than the 24-hour bound its first
-mail named. That second mail says the message will not arrive. The ledger
-keeps both marks (`raised`, `raised_end`), so a restart sends neither again.
+mail named, a withdrawal by its sender included. That second mail says the
+adapter will not deliver it again on its own; the cause and reason say
+whether it reached the agent. The ledger keeps both marks (`raised`,
+`raised_end`), so a restart sends neither again. A replay keeps them too: a
+replayed message is not mailed again while it waits, the messages that wait
+behind it are mailed on their own, and its end is mailed once.
 The mail never carries the message's text, its sender or gc's error text. A
 mail that fails is tried again a minute later. The retry state lives in the
 ledger: after a restart the next POST still waits for its time, and a POST
@@ -371,7 +375,7 @@ terminal reason omits `; retry pending`.
 | `behind_earlier` | It waited 24 hours behind an earlier message of its space and was never posted. | Settle the earlier message, then `--replay`. |
 | `held` | gc holds a paste it cannot finish without an operator. | Look at the session before anything else; `--accept` if the message is there, else `--replay`. |
 | `unknown` | The outcome is not known: a lost POST response, an interrupted POST, a rejected POST, a receipt past its deadline or concluded pending without a whole paste, a status the adapter does not know, no answer from gc at all for 24 hours (`not delivered within the retry bound` while gc was down), or a record adapter 0.5.0 left between two saves (`delivery retries exhausted`; gc's last answer was not recorded). The reason says which. | Check whether the turn arrived; `--accept` if it did, `--replay` if not. |
-| `withdrawn` | The sender deleted or edited the message before it was delivered. | Nothing; it is not mailed. |
+| `withdrawn` | The sender deleted or edited the message before it was delivered. | Nothing; an edit arrives as its own message. It is mailed only when a waiting mail went out for it, to say it will not be delivered. |
 | none | Unresolved before causes were recorded. | Check, then accept or replay; it is not mailed. |
 
 `receipt pending beyond deadline` comes one hour after the latest POST (after

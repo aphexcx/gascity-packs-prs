@@ -103,9 +103,10 @@ type Raise struct {
 	Thread  string
 	Message string
 	Body    string
-	// Second marks the one mail that follows a waiting mail when the message
-	// ends unresolved. It needs its own dedup key: gc drops a repeated one.
-	Second bool
+	// Ended marks a mail that says the message ended unresolved. It has its
+	// own dedup key: a waiting mail of the same message may have reached gc
+	// with its result lost, and gc drops a mail whose key is still live.
+	Ended bool
 }
 
 type Processor struct {

@@ -199,8 +199,8 @@ func sleep(ctx context.Context, d time.Duration) error {
 // raiseDelivery mails the identity's agent about one stuck or unresolved
 // inbound delivery, the way the notifier sends, but synchronously: the
 // processor records the raise only when this returns nil. The dedup key is
-// per change, so a send whose result was lost is one mail at gc. The one
-// second mail of a change (it ended after a waiting mail) has its own key.
+// per change and per kind of mail, so a send whose result was lost is one
+// mail at gc: a mail that says the message ended has its own key.
 func (a *application) raiseDelivery(ctx context.Context, r inbound.Raise) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -210,7 +210,7 @@ func (a *application) raiseDelivery(ctx context.Context, r inbound.Raise) error 
 	}
 	identity := a.cfg.Identity()
 	key := fmt.Sprintf("gchat:%s:%s:delivery:%x", a.cfg.Secrets.CityName, identity.Name, sha256.Sum256([]byte(r.ID)))
-	if r.Second {
+	if r.Ended {
 		key += ":ended"
 	}
 	bin := os.Getenv("GC_BIN")

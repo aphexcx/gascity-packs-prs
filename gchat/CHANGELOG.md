@@ -21,9 +21,10 @@
   waiting in one space only the first is mailed, naming how many wait behind
   it. The waiting mail says the message still arrives when the session
   clears. A message mailed while waiting gets one more mail if it ends
-  unresolved before the 24-hour bound; no message is mailed more than twice.
-  A withdrawn message and an unresolved row from before this version are not
-  mailed.
+  unresolved for a reason other than the 24-hour bound, a withdrawal
+  included; no message is mailed more than twice. A withdrawn message never
+  mailed while waiting, and an unresolved row from before this version, are
+  not mailed.
 - `gc gchat status` shows each delivery's age, cause, POST count, next attempt
   and raise time, and counts `stuck` deliveries.
 - A receipt that concludes `pending` after every member took the whole paste

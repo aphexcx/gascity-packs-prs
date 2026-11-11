@@ -126,8 +126,8 @@ how many wait behind it.
 - **See what is waiting:** `gc gchat status` lists every delivery still
   waiting or unresolved, with its age and cause.
 - **Settle an unresolved one** (the mail says so; a message mailed while it
-  waited gets one more mail if it ends this way, and then it will not
-  arrive): `gc gchat resolve ID
+  waited gets one more mail if it ends this way, and then the adapter will
+  not deliver it again on its own): `gc gchat resolve ID
   --accept` once the message reached you or you answered it from history;
   `gc gchat resolve ID --replay` to have it delivered again. A replay can
   duplicate a turn whose first outcome is unknown, so check first.
