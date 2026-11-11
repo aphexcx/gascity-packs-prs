@@ -1619,8 +1619,9 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 			c.Reason = "operator replay"
 			// POST at once, in the space's order by the new recorded time. A
 			// replayed change keeps its marks: no second waiting mail, and at
-			// most the one end mail (inbound's mailDue).
-			c.NextAttempt, c.Posted, c.Cause = time.Time{}, time.Time{}, ""
+			// most the one end mail (inbound's mailDue). The fragment mark
+			// bounds the POSTs of one life, whose count starts again here.
+			c.NextAttempt, c.Posted, c.Cause, c.Fragment = time.Time{}, time.Time{}, "", false
 		} else {
 			c.Status = "committed"
 			c.Reason = "operator accepted"

@@ -112,6 +112,11 @@ type ChangeState struct {
 	// unresolved. It is for status and the raise mail; no retry reads it.
 	// Reason "retry" stays the mark of a clean retry.
 	Cause string `json:"cause,omitempty"`
+	// Fragment marks a change gc answered, on any POST of its current life,
+	// that a fragment of the message is in a terminal ("partial", or "held"
+	// with a "partial" member). Such a change is POSTed at most four times,
+	// whatever gc answers to its other POSTs. A replay clears it.
+	Fragment bool `json:"fragment,omitempty"`
 	// Raised is when the city's agent was first told about this change. It
 	// is set only after the mail was sent.
 	Raised time.Time `json:"raised,omitzero"`

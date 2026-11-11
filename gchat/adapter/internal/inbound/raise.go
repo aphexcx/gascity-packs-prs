@@ -61,13 +61,19 @@ func (p *Processor) raise(ctx context.Context) {
 		}
 		at := p.opts.Now().UTC()
 		ended := c.Status == "unresolved"
+		marked := false
 		err = p.update(func(l *ledger.Ledger) {
 			// resolve copies the Unresolved record back into Changes: mark both.
 			for _, records := range []map[string]*ledger.ChangeState{l.Changes, l.Unresolved} {
 				record := records[c.ID]
-				if record == nil {
+				// Only the life the mail was written for. A replay while the
+				// mail was in flight gave the record a fresh recorded time: a
+				// mark there would read as a mail of the replay's life and
+				// cover the messages behind it (gp-t542).
+				if record == nil || !record.Created.Equal(c.Created) {
 					continue
 				}
+				marked = true
 				if record.Raised.IsZero() {
 					record.Raised = at
 				}
@@ -81,6 +87,9 @@ func (p *Processor) raise(ctx context.Context) {
 			p.raiseTried[c.ID] = p.opts.Now()
 			p.opts.Logger.Warn("inbound delivery raise not recorded", "change", c.ID)
 			continue
+		}
+		if !marked {
+			p.opts.Logger.Info("inbound delivery raise not recorded: the change was replayed or is gone", "change", c.ID)
 		}
 		delete(p.raiseTried, c.ID)
 	}
@@ -230,7 +239,7 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		// Only a record written by adapter 0.5.0 ends this way (resume).
 		line("Cause", c.Cause+" (an older version of the adapter stopped after four POSTs and did not record gc's last answer)")
 	case c.Reason == reasonExhausted:
-		line("Cause", c.Cause+" (gc's answer to the fourth or a later POST said a fragment of the message is in the terminal)")
+		line("Cause", c.Cause+" (from gc's last answer; gc answered one of the message's POSTs that a fragment of it is in the terminal, and the adapter stops retrying such a message after four POSTs)")
 	default:
 		line("Cause", c.Cause+" ("+causeMeaning[c.Cause]+")")
 	}

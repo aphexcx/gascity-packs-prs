@@ -1151,7 +1151,9 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 // and is retried until it lands or a bound ends it, never by count. "partial"
 // put a fragment in the terminal and each retry can add another, so it keeps
 // the four-POST bound. So does "held" with a "partial" member: gc ranks held
-// above partial when a fan-out has both (gp-dl26, ruling F).
+// above partial when a fan-out has both (gp-dl26, ruling F). The change keeps
+// the mark (Fragment), so the bound holds when a later answer is "failed",
+// across a restart too (gp-t542).
 func (p *Processor) outcome(id string, d wire.Delivery) error {
 	status := d.Status
 	if status == "pending" && d.ReceiptID == "" {
@@ -1186,7 +1188,8 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 			c.Status, c.Cause = "pending", ""
 		case "failed", "held", "partial":
 			c.Cause = waitCause(d)
-			if fragment(d) && c.Attempts >= firstPOSTs {
+			c.Fragment = c.Fragment || fragment(d)
+			if c.Fragment && c.Attempts >= firstPOSTs {
 				// One save: an intent record with four POSTs would read as due.
 				markUnresolved(l, id, c, reasonExhausted)
 				exhausted = true

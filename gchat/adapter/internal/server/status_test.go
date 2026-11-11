@@ -109,7 +109,7 @@ func TestReplayClearsRetryStateAndKeepsRaised(t *testing.T) {
 	b, _ := json.Marshal(m)
 	raised := time.Now().UTC().Add(-time.Hour)
 	c := &ledger.ChangeState{ID: id, Space: "spaces/room", Message: id, Status: "unresolved", Reason: "not delivered within the retry bound", Event: string(b), Attempts: 1400,
-		Created: time.Now().Add(-25 * time.Hour), NextAttempt: time.Now().Add(time.Minute), Posted: time.Now().Add(-time.Minute), Cause: "draft_deferred", Raised: raised}
+		Created: time.Now().Add(-25 * time.Hour), NextAttempt: time.Now().Add(time.Minute), Posted: time.Now().Add(-time.Minute), Cause: "draft_deferred", Fragment: true, Raised: raised}
 	f.mu.Lock()
 	f.l.Changes[id] = c
 	copy := *c
@@ -121,7 +121,7 @@ func TestReplayClearsRetryStateAndKeepsRaised(t *testing.T) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	got := f.l.Changes[id]
-	if got.Status != "intent" || got.Attempts != 0 || !got.NextAttempt.IsZero() || !got.Posted.IsZero() || got.Cause != "" || !got.Raised.Equal(raised) || time.Since(got.Created) > time.Minute {
+	if got.Status != "intent" || got.Attempts != 0 || !got.NextAttempt.IsZero() || !got.Posted.IsZero() || got.Cause != "" || got.Fragment || !got.Raised.Equal(raised) || time.Since(got.Created) > time.Minute {
 		t.Fatalf("replay: %+v", got)
 	}
 }

@@ -7,8 +7,10 @@
   the first four run as before, then the waits are 8, 16 and 32 seconds and
   one minute, for up to 24 hours from when the adapter recorded it (then it
   is unresolved as `not delivered within the retry bound`). `partial` keeps
-  its four-POST bound, and so does `held` with a `partial` member. gc's
-  `held` status, from gc's composer-hold change, is understood.
+  its four-POST bound, and so does `held` with a `partial` member, also when
+  gc answers the message's other POSTs `failed`: the record keeps the mark
+  across a restart, and a replay clears it. gc's `held` status, from gc's
+  composer-hold change, is understood.
 - The messages of one space reach gc in the order they were recorded: a later
   message waits while an earlier one is retrying or not yet posted. A message
   pending at gc holds nothing back, so a burst to a busy agent flows.
@@ -24,7 +26,8 @@
   unresolved for a reason other than the 24-hour bound, a withdrawal
   included; no message is mailed more than twice. A withdrawn message never
   mailed while waiting, and an unresolved row from before this version, are
-  not mailed.
+  not mailed. A mail still in flight when a replay starts marks nothing, so
+  the replayed message is mailed on its own terms.
 - `gc gchat status` shows each delivery's age, cause, POST count, next attempt
   and raise time, and counts `stuck` deliveries.
 - A receipt that concludes `pending` after every member took the whole paste
@@ -36,7 +39,7 @@
   delivered" (intent, four POSTs, no cause) is never posted again: it ends
   unresolved as `delivery retries exhausted`, cause `unknown`, and is mailed.
 - The ledger's change record gains `next_attempt`, `posted`, `cause`,
-  `raised` and `raised_end`, each omitted when empty; the version stays 1 and
+  `fragment`, `raised` and `raised_end`, each omitted when empty; the version stays 1 and
   a 0.5.0 ledger loads and saves unchanged. Going back to 0.5.0 turns a
   waiting message with four or more POSTs unresolved without a mail and posts
   a message that waited behind another at once: resolve waiting rows first.
