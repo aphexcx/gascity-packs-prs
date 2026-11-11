@@ -1169,7 +1169,8 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 // delivered": nothing reached the terminal, so the change goes back to intent
 // and is retried until it lands or a bound ends it, never by count. "partial"
 // put a fragment in the terminal and each retry can add another, so it keeps
-// the four-POST bound. So does "held" with a "partial" member: gc ranks held
+// the four-POST bound: no POST after the fourth, nor after a fragment answer
+// that comes later. So does "held" with a "partial" member: gc ranks held
 // above partial when a fan-out has both (gp-dl26, ruling F). The change keeps
 // the mark (Fragment), so the bound holds when a later answer is "failed",
 // across a restart too (gp-t542).

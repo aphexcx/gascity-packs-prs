@@ -122,8 +122,8 @@ type ChangeState struct {
 	// is set only after the mail was sent.
 	Raised time.Time `json:"raised,omitzero"`
 	// RaisedEnd is when the city's agent was told that this change ended
-	// unresolved. A change is mailed at most twice: once while it waits and
-	// once when it ends, the second only when the end is not the retry bound
+	// unresolved. A change is mailed at most twice in one life (a replay
+	// starts a new one): once while it waits and once when it ends, the second only when the end is not the retry bound
 	// the first mail named.
 	RaisedEnd time.Time `json:"raised_end,omitzero"`
 }

@@ -102,6 +102,10 @@ func TestFragmentOnAnyAnswerKeepsTheFourPOSTBound(t *testing.T) {
 			if len(got) != 1 || !got[0].Ended || strings.Contains(got[0].Body, "fourth or a later POST said") || !strings.Contains(got[0].Body, "fragment") {
 				t.Fatalf("end mail of a fragment message (%d mails):\n%+v", len(got), got)
 			}
+			// gc's last answer was draft_deferred: the mail says what that means.
+			if c.Cause != causeDraftDeferred || !strings.Contains(got[0].Body, "Cause: draft_deferred ("+causeMeaning[causeDraftDeferred]+"; ") {
+				t.Fatalf("the cause line does not tell its word (%s):\n%s", c.Cause, got[0].Body)
+			}
 		})
 	}
 }
@@ -399,5 +403,41 @@ func TestDedupKeyIsPerLifeAndKind(t *testing.T) {
 	keys := map[string]bool{first.DedupKey(): true, ended.DedupKey(): true, replayed.DedupKey(): true}
 	if len(keys) != 3 || !strings.HasSuffix(ended.DedupKey(), ":ended") || strings.Contains(first.DedupKey(), messageName) {
 		t.Fatalf("keys: waiting %q ended %q replayed %q", first.DedupKey(), ended.DedupKey(), replayed.DedupKey())
+	}
+}
+
+// Self-review r2 MINOR-2: within one life a mail keeps its key, across a
+// restart too, so a mail gc took whose result was lost stays one mail at gc
+// when it is tried again. The clock is a wall clock reading with nanoseconds,
+// a monotonic reading and a local zone; the ledger is reloaded from its JSON.
+func TestLostMailKeepsItsKeyWithinALifeAcrossARestart(t *testing.T) {
+	g := &gcMail{live: map[string]bool{}, lose: true}
+	rf := retrySetup(t, func(o *Options) { o.Raise = g.raise })
+	start := time.Now().In(time.FixedZone("CST", -6*60*60)).Add(-time.Hour)
+	if start.Nanosecond() == 0 {
+		start = start.Add(123456789)
+	}
+	rf.clock.Set(start)
+	rf.script(repeat(400, failedWith(draftDeferred))...)
+	handle(t, rf.fixture, event("lost", "message.created", message()))
+	rf.clock.Set(start.Add(2*time.Minute + 30*time.Second))
+	rf.poll(t)
+	if c := rf.change(t, messageName); !c.Raised.IsZero() || len(g.delivered) != 1 {
+		t.Fatalf("setup: the waiting mail's result is lost: raised %s, %d mails at gc", c.Raised, len(g.delivered))
+	}
+	first := g.delivered[0]
+	if c := rf.change(t, messageName); !first.Recorded.Equal(c.Created) {
+		t.Fatalf("the mail names another life: recorded %s, created %s", first.Recorded, c.Created)
+	}
+	rf.restart(t)
+	var tried []Raise
+	rf.opts.Raise = func(ctx context.Context, r Raise) error { tried = append(tried, r); return g.raise(ctx, r) }
+	rf.rebuild(t)
+	rf.clock.Add(2 * time.Minute)
+	rf.poll(t)
+	c := rf.change(t, messageName)
+	if len(tried) != 1 || tried[0].DedupKey() != first.DedupKey() || len(g.delivered) != 1 || c.Raised.IsZero() {
+		t.Fatalf("the waiting mail tried again after a restart: %d tries, same key %v, %d mails at gc, raised %s",
+			len(tried), len(tried) == 1 && tried[0].DedupKey() == first.DedupKey(), len(g.delivered), c.Raised)
 	}
 }

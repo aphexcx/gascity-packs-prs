@@ -7,9 +7,10 @@
   the first four run as before, then the waits are 8, 16 and 32 seconds and
   one minute, for up to 24 hours from when the adapter recorded it (then it
   is unresolved as `not delivered within the retry bound`). `partial` keeps
-  its four-POST bound, and so does `held` with a `partial` member, also when
-  gc answers the message's other POSTs `failed`: the record keeps the mark
-  across a restart, and a replay clears it. gc's `held` status, from gc's
+  its four-POST bound (a `partial` first met after the fourth POST stops
+  there), and so does `held` with a `partial` member, also when gc answers
+  the message's other POSTs `failed`: the record keeps the mark across a
+  restart, and a replay clears it. gc's `held` status, from gc's
   composer-hold change, is understood.
 - The messages of one space reach gc in the order they were recorded: a later
   message waits while an earlier one is retrying or not yet posted. A message
@@ -24,11 +25,12 @@
   it. The waiting mail says the message still arrives when the session
   clears. A message mailed while waiting gets one more mail if it ends
   unresolved for a reason other than the 24-hour bound, a withdrawal
-  included; no message is mailed more than twice. A withdrawn message never
-  mailed while waiting, and an unresolved row from before this version, are
-  not mailed. A mail still in flight when a replay starts marks nothing, so
-  the replayed message is mailed on its own terms; each life of a message has
-  its own mail keys at gc.
+  included; no message is mailed more than twice in one life (a replay
+  starts a new one). A withdrawn message never mailed while waiting, and an
+  unresolved row from before this version, are not mailed. A mail still in
+  flight when a replay starts marks nothing, so the replay is mailed as if
+  that mail had not been sent; each life of a message has its own mail keys
+  at gc.
 - `gc gchat status` shows each delivery's age, cause, POST count, next attempt
   and raise time, and counts `stuck` deliveries.
 - A receipt that concludes `pending` after every member took the whole paste

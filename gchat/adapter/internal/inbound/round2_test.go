@@ -567,6 +567,11 @@ func TestReplayedHeadDoesNotSilenceTheMessagesBehindIt(t *testing.T) {
 	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != reasonRetryBound || len(got) != 2 || !got[1].Ended {
 		t.Fatalf("the replayed message at its new bound: %s %q, %d mails", c.Status, c.Reason, len(got))
 	}
+	// gp-t542 self-review r2 NIT-3: its waiting mail was of the life before
+	// the replay, and the end mail says the message was replayed.
+	if !strings.Contains(got[1].Body, "It was replayed since") {
+		t.Fatalf("the replay's end mail does not say it was replayed:\n%s", got[1].Body)
+	}
 }
 
 // Self-review r1 MINOR-4 (probe P5), ruling D: the head is decided by the live

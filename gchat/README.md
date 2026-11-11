@@ -340,18 +340,21 @@ agent's session clears, with the same delivery ID, so an agent that acts on
 it from Chat history must not act on it again when it arrives.
 
 A message that becomes unresolved is mailed too, unless its sender withdrew
-it. A message is mailed at most twice: once while it waits, and once more if
-it then ends unresolved for a reason other than the 24-hour bound its first
+it. A message is mailed at most twice in each life (its first, and each
+replay): once while it waits, and once more if it then ends unresolved for a reason other than the 24-hour bound its first
 mail named, a withdrawal by its sender included. That second mail says the
 adapter will not deliver it again on its own; the cause and reason say
 whether it reached the agent. The ledger keeps both marks (`raised`,
 `raised_end`), so a restart sends neither again. A replay keeps them too: a
 replayed message is not mailed again while it waits, the messages that wait
-behind it are mailed on their own, and its end is mailed once. A mail still
-in flight when a replay starts marks nothing: the replayed message is then
-mailed on its own terms, as a message never mailed. Each life of a message
-(the first, and each replay) has its own mail keys at gc, so gc never drops a
-replay's mail as a repeat of a mail from before the replay.
+behind it are mailed on their own, and its end is mailed at most once, saying
+the message was replayed. A mail still in flight when a replay starts marks
+nothing: the replay is mailed as if that mail had not been sent, while the
+marks of mails sent before it still hold. So a message mailed while waiting,
+whose end mail was in flight when it was replayed, can get the replay's end
+mail too: three mails in all. Each life of a message has its own mail keys at
+gc, so gc never drops a replay's mail as a repeat of a mail from before the
+replay.
 The mail never carries the message's text, its sender or gc's error text. A
 mail that fails is tried again a minute later. The retry state lives in the
 ledger: after a restart the next POST still waits for its time, and a POST

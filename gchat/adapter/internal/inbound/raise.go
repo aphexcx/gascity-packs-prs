@@ -96,7 +96,8 @@ func (p *Processor) raise(ctx context.Context) {
 }
 
 // mailDue reports whether a change is due a mail, the throttle aside. A
-// message is mailed at most twice (gp-dl26, rulings D and E):
+// message is mailed at most twice in one life (gp-dl26, rulings D and E; a
+// replay starts a new life, gp-t542):
 //   - Once while it waits: in intent or pending for StuckAfter since it was
 //     recorded, never mailed before. A change in intent that waits behind an
 //     earlier one is named in the mail of the first of them whose mail
@@ -211,7 +212,12 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 	case second && c.Cause == causeWithdrawn:
 		b.WriteString("An earlier mail said this Google Chat message was waiting and would still be delivered. Its sender withdrew it: the message was deleted or edited in Chat, and the gchat adapter will not deliver it. An edit arrives as its own message.\n\n")
 	case second:
-		b.WriteString("An earlier mail said this Google Chat message was waiting and would still be delivered. It has ended unresolved: the gchat adapter has stopped trying and will not deliver it again on its own. Whether it reached the agent is in the cause and reason below. It waits for an operator.\n\n")
+		ended := "It has ended unresolved"
+		if !waitingMailed(c) {
+			// The waiting mail was of the life before a replay.
+			ended = "It was replayed since (gc gchat resolve --replay), and the replay has ended unresolved"
+		}
+		b.WriteString("An earlier mail said this Google Chat message was waiting and would still be delivered. " + ended + ": the gchat adapter has stopped trying and will not deliver it again on its own. Whether it reached the agent is in the cause and reason below. It waits for an operator.\n\n")
 	default:
 		b.WriteString("A Google Chat message did not reach the agent, and the gchat adapter has stopped trying. It waits for an operator.\n\n")
 	}
@@ -239,7 +245,14 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		// Only a record written by adapter 0.5.0 ends this way (resume).
 		line("Cause", c.Cause+" (an older version of the adapter stopped after four POSTs and did not record gc's last answer)")
 	case c.Reason == reasonExhausted:
-		line("Cause", c.Cause+" (gc answered one of the message's POSTs that a fragment of it is in the terminal; the adapter stops retrying such a message at its fourth POST, or at that answer when it comes later)")
+		// The word is gc's last answer. Its meaning is told where it cannot
+		// contradict the fragment: "not_delivered" would read as nothing in
+		// the terminal.
+		why := ""
+		if c.Cause == causeDraftDeferred || c.Cause == causePendingInteraction {
+			why = causeMeaning[c.Cause] + "; "
+		}
+		line("Cause", c.Cause+" ("+why+"gc answered one of the message's POSTs that a fragment of it is in the terminal; the adapter stops retrying such a message at its fourth POST, or at that answer when it comes later)")
 	default:
 		line("Cause", c.Cause+" ("+causeMeaning[c.Cause]+")")
 	}
