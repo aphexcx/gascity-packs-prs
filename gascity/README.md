@@ -243,6 +243,54 @@ Default formula routes use these qualified targets: `gc.run-operator`,
 `gc.implementation-worker`, `gc.gap-analyst`, `gc.implementation-reviewer`,
 and `gc.publisher`.
 
+## Standing notes
+
+`template-fragments/gc-standing-notes.template.md` defines `gc-standing-notes`:
+notes for every worker that sit beside the role text and travel with this
+pack's version, so every city that opts a lane in renders the same notes at
+the same pin. Its first note is THE DEEPENING NOTE: once per PR, at the
+worker's self-review and before the push, a deepening read of the modules the
+diff touched (the codebase-design skill), written as a `Deepening note`
+section of the PR body.
+
+The role fragment does not call it. A city opts a lane in with one line in
+that lane's `prompt.template.md`, right after its
+`{{ template "gc-role-worker" . }}` line:
+
+```text
+{{ templateFirst . "gc-standing-notes" }}
+```
+
+Write it with `templateFirst` (gc v1.2.0 and later), never as
+`{{ template "gc-standing-notes" . }}`: when the city's import of this pack is
+older than the commit that carries the fragment (before the import moves, or
+after it rolls back), `templateFirst` renders nothing and the lane keeps its
+role text, while the plain call makes gc fall back to the lane's raw prompt
+source and the lane loses its role text. That fallback prints one stderr line
+and exits 0, `gc prime --strict` included through gc v1.5.1; later builds fail
+`--strict`, but a plain render still returns the raw source. The price of
+`templateFirst` is silence: an old import or a misspelt name drops the note
+without a word, so once the import has moved and the line is in, run
+`gc prime <lane>` and check that the note appears exactly once, after the role
+text. A city that does not add the line renders exactly what it rendered
+before. A note that belongs to one city stays in that city's own prompt
+template, after this call.
+
+### Code ownership
+
+`template-fragments/gc-code-ownership.template.md` defines `gc-code-ownership`,
+one sentence verbatim from Anthropic's guide
+[Prompting Claude Fable 5.2, "Say who owns the code"](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-2#say-who-owns-the-code):
+in Anthropic's testing on small coding tasks it raised the share of tries
+that merged repeated code from under a tenth to about half, at about 1.5
+times the output tokens and with more changes nobody asked for. It is its own
+fragment, not a standing note: a city turns it on lane by lane with
+`{{ templateFirst . "gc-code-ownership" }}` after the role line, in the
+`templateFirst` form for the reason above. Leave it out where the owner
+wants the code changed as little as possible (a fork rebased on an upstream, a
+customer's repository): a scope rule elsewhere in the prompt does not cancel
+it.
+
 ## Worker workspaces
 
 The unit of isolation is the agent. A rig role agent starts in the rig root

@@ -4,7 +4,9 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import shlex
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -622,3 +624,224 @@ def test_provenance_explicit_scope_missing_value_is_named(
     result = run_gc(gc_test_bin, workspace, 'custom', 'provenance', option)
     assert result.returncode == 2, result.stderr
     assert f'missing value for {option.rstrip("=")}' in result.stderr
+
+
+# gp-rj21: the standing notes and the code-ownership sentence each reach a lane
+# through their own call line in the CITY's own lane prompt, after its
+# gc-role-worker call, written with templateFirst as the README says. These
+# render that city lane with real gc: the text after the role text, no change
+# for a city that does not add the line, and what each call form does on an
+# import of this pack that predates the fragments.
+ROLE_CALL = '{{ template "gc-role-worker" . }}'
+STANDING_NOTES_CALL = '{{ templateFirst . "gc-standing-notes" }}'
+CODE_OWNERSHIP_CALL = '{{ templateFirst . "gc-code-ownership" }}'
+# A template comment without trim markers renders nothing (provenance only).
+TEMPLATE_COMMENT = re.compile(r"\{\{/\*.*?\*/\}\}", re.S)
+# The bead-id prefixes of the stores this pack is built against; no bead id
+# reaches a prompt through these fragments.
+BEAD_ID = re.compile(r"\b(?:ci|cp|cs|dy|gf|gp|hw)-[a-z0-9]{3,}")
+FRAGMENTS_DIR = REPO_ROOT / "gascity" / "template-fragments"
+STANDING_NOTES_FRAGMENT = FRAGMENTS_DIR / "gc-standing-notes.template.md"
+CODE_OWNERSHIP_FRAGMENT = FRAGMENTS_DIR / "gc-code-ownership.template.md"
+CODE_OWNERSHIP_SENTENCE = (
+    "This codebase is yours: what it's for and how it's built are your call, "
+    "and you'll keep building on it."
+)
+
+
+def render_city_lane(
+    gc_test_bin: Path, root: Path, *, gascity_pack: Path, prompt: str, binding: str = "gascity",
+    strict: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Render a city-side lane: a city agent whose prompt.template.md calls
+    the fragments of the Gas City pack the city imports under `binding`."""
+    workspace = _write_workspace_scaffold(
+        root,
+        workspace_name="standing-notes",
+        pack_toml=textwrap.dedent(
+            f"""\
+            [pack]
+            name = "standing-notes"
+            schema = 2
+
+            [imports.{binding}]
+            source = {json.dumps(str(gascity_pack.resolve()))}
+            """
+        ),
+        city_toml=textwrap.dedent(
+            """\
+            [workspace]
+            provider = "codex"
+
+            [providers.codex]
+            base = "builtin:codex"
+
+            [[rigs]]
+            name = "fixture"
+            """
+        ),
+    )
+    lane = workspace.city_dir / "agents" / "lane"
+    lane.mkdir(parents=True)
+    lane.joinpath("agent.toml").write_text('scope = "city"\nprovider = "codex"\n', encoding="utf-8")
+    lane.joinpath("prompt.template.md").write_text(prompt, encoding="utf-8")
+    return run_gc(
+        gc_test_bin, workspace, "--city", str(workspace.city_dir), "prime",
+        *(["--strict"] if strict else []), "lane",
+        cwd=workspace.city_dir,
+    )
+
+
+def gascity_pack_without_new_fragments(root: Path) -> Path:
+    """This pack as it was before gp-rj21: the same tree, minus both fragments."""
+    pack = root / "gascity"
+    shutil.copytree(REPO_ROOT / "gascity", pack, ignore=shutil.ignore_patterns("tests", "__pycache__"))
+    for fragment in (STANDING_NOTES_FRAGMENT, CODE_OWNERSHIP_FRAGMENT):
+        pack.joinpath("template-fragments", fragment.name).unlink()
+    return pack
+
+
+def fragment_text(fragment: Path) -> str:
+    """A fragment's body as text/template emits it: `-}}` and `{{-` trim the
+    whitespace next to them, an untrimmed comment emits nothing, and these
+    bodies hold no other template action."""
+    text = fragment.read_text(encoding="utf-8")
+    body = text.split("-}}", 1)[1].rsplit("{{-", 1)[0]
+    return TEMPLATE_COMMENT.sub("", body).strip(" \t\r\n")
+
+
+def standing_notes_text() -> str:
+    return fragment_text(STANDING_NOTES_FRAGMENT)
+
+
+@pytest.mark.parametrize("binding", ["gascity", "gc", "custom"])
+def test_city_lane_renders_the_standing_notes_once_after_the_role_text(
+    tmp_path: Path, gc_test_bin: Path, binding: str,
+) -> None:
+    role_only = render_city_lane(
+        gc_test_bin, tmp_path / "role-only", gascity_pack=REPO_ROOT / "gascity",
+        prompt=f"{ROLE_CALL}\n", binding=binding,
+    )
+    both = render_city_lane(
+        gc_test_bin, tmp_path / "both", gascity_pack=REPO_ROOT / "gascity",
+        prompt=f"{ROLE_CALL}\n\n{STANDING_NOTES_CALL}\n", binding=binding,
+    )
+
+    for result in (role_only, both):
+        assert result.returncode == 0, result.stderr
+        assert "gc: prompt template" not in result.stderr, result.stderr
+    assert_clean_worker_render(both.stdout, "# GC Role Worker")
+    # The role text, unchanged, then the notes, once: byte for byte.
+    assert both.stdout == role_only.stdout + "\n" + standing_notes_text() + "\n"
+    assert both.stdout.count("# Standing Notes") == 1
+    assert both.stdout.count("THE DEEPENING NOTE") == 1
+    assert both.stdout.index("## Invariants") < both.stdout.index("# Standing Notes")
+    assert "{{" not in both.stdout
+    # The bead of record sits in a template comment: no bead id renders.
+    notes = both.stdout[len(role_only.stdout):]
+    assert BEAD_ID.search(notes) is None, BEAD_ID.search(notes)
+    assert "gp-gsww" not in both.stdout
+
+
+@pytest.mark.parametrize("binding", ["gascity", "custom"])
+def test_city_lane_renders_the_code_ownership_sentence_once_where_called(
+    tmp_path: Path, gc_test_bin: Path, binding: str,
+) -> None:
+    head = REPO_ROOT / "gascity"
+    assert fragment_text(CODE_OWNERSHIP_FRAGMENT) == CODE_OWNERSHIP_SENTENCE
+    renders = {
+        name: render_city_lane(gc_test_bin, tmp_path / name, gascity_pack=head, prompt=prompt, binding=binding)
+        for name, prompt in (
+            ("role", f"{ROLE_CALL}\n"),
+            ("ownership", f"{ROLE_CALL}\n\n{CODE_OWNERSHIP_CALL}\n"),
+            ("notes", f"{ROLE_CALL}\n\n{STANDING_NOTES_CALL}\n"),
+            ("all", f"{ROLE_CALL}\n\n{STANDING_NOTES_CALL}\n\n{CODE_OWNERSHIP_CALL}\n"),
+        )
+    }
+    for result in renders.values():
+        assert result.returncode == 0, result.stderr
+        assert "gc: prompt template" not in result.stderr, result.stderr
+        assert_clean_worker_render(result.stdout, "# GC Role Worker")
+    role = renders["role"].stdout
+    assert renders["ownership"].stdout == role + "\n" + CODE_OWNERSHIP_SENTENCE + "\n"
+    assert renders["all"].stdout == (
+        role + "\n" + standing_notes_text() + "\n\n" + CODE_OWNERSHIP_SENTENCE + "\n"
+    )
+    # Two separate switches: the sentence only where its own line calls it.
+    assert renders["all"].stdout.count(CODE_OWNERSHIP_SENTENCE) == 1
+    for name in ("role", "notes"):
+        assert "This codebase is yours" not in renders[name].stdout, name
+    assert "THE DEEPENING NOTE" not in renders["ownership"].stdout
+
+
+def test_city_lane_without_the_calls_renders_byte_identical_to_the_pack_without_the_fragments(
+    tmp_path: Path, gc_test_bin: Path,
+) -> None:
+    prompt = f"{ROLE_CALL}\n"
+    with_fragments = render_city_lane(
+        gc_test_bin, tmp_path / "with", gascity_pack=REPO_ROOT / "gascity", prompt=prompt,
+    )
+    without_fragments = render_city_lane(
+        gc_test_bin, tmp_path / "without",
+        gascity_pack=gascity_pack_without_new_fragments(tmp_path / "base-pack"), prompt=prompt,
+    )
+
+    for result in (with_fragments, without_fragments):
+        assert result.returncode == 0, result.stderr
+        assert "gc: prompt template" not in result.stderr, result.stderr
+    # Anchored to a real render: two raw-source fallbacks would also be equal.
+    assert_clean_worker_render(with_fragments.stdout, "# GC Role Worker")
+    assert with_fragments.stdout == without_fragments.stdout
+    assert "Standing Notes" not in with_fragments.stdout
+    assert "This codebase is yours" not in with_fragments.stdout
+
+
+@pytest.mark.parametrize("name", ["gc-standing-notes", "gc-code-ownership"])
+def test_city_lane_calling_a_new_fragment_with_template_on_a_pack_without_it_falls_back_to_raw_source(
+    tmp_path: Path, gc_test_bin: Path, name: str,
+) -> None:
+    """Why the README says never to write the plain call: gc renders an
+    undefined template call by returning the prompt's raw source with one
+    stderr line, so the lane loses its role text. `--strict` exits 0 on it
+    through gc v1.5.1 and fails it with no output from
+    gastownhall/gascity#8316 on."""
+    prompt = f'{ROLE_CALL}\n\n{{{{ template "{name}" . }}}}\n'
+    old_pin = gascity_pack_without_new_fragments(tmp_path / "base-pack")
+
+    rendered = render_city_lane(
+        gc_test_bin, tmp_path / "render", gascity_pack=old_pin, prompt=prompt, strict=False,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    assert rendered.stdout == prompt
+    assert "# GC Role Worker" not in rendered.stdout
+    assert f'template "{name}" not defined' in rendered.stderr
+
+    strict = render_city_lane(
+        gc_test_bin, tmp_path / "strict", gascity_pack=old_pin, prompt=prompt,
+    )
+    assert f'template "{name}" not defined' in strict.stderr
+    assert (strict.returncode, strict.stdout) in ((0, prompt), (1, "")), (strict.returncode, strict.stdout)
+
+
+@pytest.mark.parametrize("call", [STANDING_NOTES_CALL, CODE_OWNERSHIP_CALL])
+def test_city_lane_calling_a_new_fragment_with_templatefirst_on_a_pack_without_it_keeps_its_role_text(
+    tmp_path: Path, gc_test_bin: Path, call: str,
+) -> None:
+    """The README's form: on an import below the fragment's commit the call
+    renders nothing, silently, and the lane renders its role text."""
+    old_pin = gascity_pack_without_new_fragments(tmp_path / "base-pack")
+    role_only = render_city_lane(
+        gc_test_bin, tmp_path / "role-only", gascity_pack=old_pin, prompt=f"{ROLE_CALL}\n",
+    )
+    rendered = render_city_lane(
+        gc_test_bin, tmp_path / "render", gascity_pack=old_pin, prompt=f"{ROLE_CALL}\n\n{call}\n",
+    )
+
+    for result in (role_only, rendered):
+        assert result.returncode == 0, result.stderr
+        assert "gc: prompt template" not in result.stderr, result.stderr
+    assert_clean_worker_render(rendered.stdout, "# GC Role Worker")
+    # The role text, then the blank line and the empty call's line end.
+    assert rendered.stdout == role_only.stdout + "\n\n"
+    assert "Standing Notes" not in rendered.stdout
+    assert "This codebase is yours" not in rendered.stdout
