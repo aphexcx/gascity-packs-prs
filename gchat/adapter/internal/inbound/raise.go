@@ -98,8 +98,8 @@ func (p *Processor) raise(ctx context.Context) {
 // mailDue reports whether a change is due a mail, the throttle aside. A
 // message is mailed at most twice in one life (gp-dl26, rulings D and E; a
 // replay starts a new life, gp-t542):
-//   - Once while it waits: in intent or pending for StuckAfter since it was
-//     recorded, never mailed before. A change in intent that waits behind an
+//   - Once while it waits: in intent or pending for StuckAfter since
+//     WaitingSince, never mailed in this life. A change in intent that waits behind an
 //     earlier one is named in the mail of the first of them whose mail
 //     covers it (covers), not mailed on its own; the live order test decides
 //     it, never the stored cause word. A pending change holds nothing back
@@ -111,7 +111,7 @@ func (p *Processor) raise(ctx context.Context) {
 func (p *Processor) mailDue(l *ledger.Ledger, c *ledger.ChangeState, now time.Time) bool {
 	switch c.Status {
 	case "intent", "pending":
-		if !c.Raised.IsZero() || now.Sub(c.Created) < p.opts.StuckAfter {
+		if !c.Raised.IsZero() || now.Sub(WaitingSince(c)) < p.opts.StuckAfter {
 			return false
 		}
 		return c.Status == "pending" || !coveredAhead(l, c)
@@ -128,11 +128,20 @@ func (p *Processor) mailDue(l *ledger.Ledger, c *ledger.ChangeState, now time.Ti
 }
 
 // waitingMailed reports a waiting mail sent in the change's current life. A
-// replay gives a change a fresh recorded time and keeps its marks (round 1's
-// rule 7: it is not mailed again as waiting), so a mark older than the
-// recorded time belongs to an earlier life and names an earlier bound.
+// replay gives a change a fresh recorded time and clears its marks. Older
+// ledgers can retain a mark from an earlier life, naming an earlier bound.
 func waitingMailed(c *ledger.ChangeState) bool {
 	return !c.Raised.IsZero() && !c.Raised.Before(c.Created)
+}
+
+// WaitingSince is the start of the wait that can trigger a waiting mail.
+// While gc has a pending delivery, time before its latest POST does not count.
+// Created is also the fallback for ledgers that predate Posted.
+func WaitingSince(c *ledger.ChangeState) time.Time {
+	if c.Status == "pending" && c.Posted.After(c.Created) {
+		return c.Posted
+	}
+	return c.Created
 }
 
 // coveredAhead reports whether an earlier change of c's space in intent will
@@ -307,6 +316,9 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 	} else {
 		b.WriteString("After checking whether the agent has the message:\n")
 		b.WriteString("  gc gchat resolve " + c.ID + " --accept marks it delivered.\n")
+		if c.Fragment {
+			b.WriteString("  Before a replay, clear the fragment first from the agent's input box, then run:\n")
+		}
 		b.WriteString("  gc gchat resolve " + c.ID + " --replay posts it again. A replay can duplicate a turn whose first outcome is unknown.\n")
 	}
 	b.WriteString("\nThis mail never carries the message's text or its sender; read them in Chat with the command above.\n")

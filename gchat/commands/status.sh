@@ -28,7 +28,10 @@ printf '%s\n' "$result" | jq -r '
         (if .age_seconds != null then "; age \(.age_seconds | age)" else "" end) +
         (if (.cause // "") != "" then "; cause \(.cause)" else "" end) +
         (if waiting and (.next_attempt // "") != "" then "; next attempt \(.next_attempt)" else "" end) +
-        (if waiting and .created != null then "; posts \(.attempts // 0)" else "" end)),
+        (if waiting and .created != null then "; posts \(.attempts // 0)" else "" end) +
+        (if .raised then "; raised \(.raised)" else "" end) +
+        (if .raised_end then "; ended mail \(.raised_end)" else "" end) +
+        (if .fragment then "; fragment in input box" else "" end)),
     "Spaces:", ((.spaces // {}) | to_entries | sort_by(.key)[] |
         "  \(.key): wake=\(.value.wake) backlog=\(.value.backlog_count // ((.value.backlog // []) | length))",
         ((.value.page_token // "" | fromjson?) // {} |

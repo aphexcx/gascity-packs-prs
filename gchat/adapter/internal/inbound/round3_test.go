@@ -158,7 +158,7 @@ func TestReplayClearsTheFragmentMark(t *testing.T) {
 
 // replay is gc gchat resolve --replay as the server does it (server.go): the
 // record moves back to Changes in intent with its retry state cleared and its
-// mail marks kept, recorded at the current time.
+// mail marks cleared, recorded at the current time.
 func replay(t *testing.T, rf *retryFixture, id string) {
 	t.Helper()
 	rf.opts.LedgerMu.Lock()
@@ -171,6 +171,7 @@ func replay(t *testing.T, rf *retryFixture, id string) {
 	c.Created = rf.clock.Now().UTC()
 	c.NextAttempt, c.Posted, c.Cause = time.Time{}, time.Time{}, ""
 	c.Fragment = false
+	c.Raised, c.RaisedEnd = time.Time{}, time.Time{}
 	rf.l.Changes[id] = c
 	delete(rf.l.Unresolved, id)
 }

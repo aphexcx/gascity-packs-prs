@@ -129,8 +129,11 @@ how many wait behind it.
   waited gets one more mail if it ends this way, and then the adapter will
   not deliver it again on its own): `gc gchat resolve ID
   --accept` once the message reached you or you answered it from history;
-  `gc gchat resolve ID --replay` to have it delivered again. A replay can
-  duplicate a turn whose first outcome is unknown, so check first.
+  `gc gchat resolve ID --replay` to have it delivered again. If a fragment
+  remains in your input box, clear the fragment first, then replay. A replay
+  can duplicate a turn whose first outcome is unknown, so check first. The
+  answer says whether it landed or is waiting and why. A replay starts a new
+  allowance of one waiting mail and one end mail; one that lands sends none.
 
 ## Limits
 

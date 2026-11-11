@@ -325,8 +325,10 @@ becomes unresolved with the cause `held`; any other concluded pending receipt
 stays unresolved as `receipt concluded with pending delivery`.
 
 `status` shows each delivery's age and cause, and for a waiting one its next
-attempt and the number of POSTs; `stuck` counts the deliveries waiting two
-minutes or more. The adapter mails the identity's agent (`[[identity]].agent`,
+attempt and the number of POSTs, plus the waiting and end mail times and any
+fragment mark. `stuck` counts deliveries waiting two minutes or more since
+they were recorded, or, while pending, since their latest POST if later.
+The adapter mails the identity's agent (`[[identity]].agent`,
 default `mayor`) about such a message, with the subject `gchat: delivery`.
 When several messages of a space wait, only the first of them is mailed: the
 others wait behind it, and its mail says how many did when it was sent. The
@@ -345,16 +347,14 @@ replay): once while it waits, and once more if it then ends unresolved for a rea
 mail named, a withdrawal by its sender included. That second mail says the
 adapter will not deliver it again on its own; the cause and reason say
 whether it reached the agent. The ledger keeps both marks (`raised`,
-`raised_end`), so a restart sends neither again. A replay keeps them too: a
-replayed message is not mailed again while it waits, the messages that wait
-behind it are mailed on their own, and its end is mailed at most once, saying
-the message was replayed. A mail still in flight when a replay starts marks
-nothing: the replay is mailed as if that mail had not been sent, while the
-marks of mails sent before it still hold. So a message mailed while waiting,
-whose end mail was in flight when it was replayed, can get the replay's end
-mail too: three mails in all. Each life of a message has its own mail keys at
-gc, so gc never drops a replay's mail as a repeat of a mail from before the
-replay.
+`raised_end`), so a restart sends neither again. A replay clears both marks:
+it gets one new waiting mail if still waiting two minutes after the replay
+(or its latest pending POST, if later), and one new end mail under the same
+rule. A replay that lands sends no mail. Its waiting mail covers the messages
+behind it. A mail still in flight when a replay starts marks nothing in the
+new life. Each life has its own mail keys at gc, so an earlier mail never
+suppresses the replay's mail. A burst released by a stuck head, or after a gc
+outage, gets two minutes from each pending POST before a waiting mail is due.
 The mail never carries the message's text, its sender or gc's error text. A
 mail that fails is tried again a minute later. The retry state lives in the
 ledger: after a restart the next POST still waits for its time, and a POST
@@ -368,14 +368,19 @@ This version never posts such a record again: it ends unresolved as
 ended it, and is mailed. Going back to adapter 0.5.0 over a ledger this
 version wrote turns a waiting message with four or more POSTs unresolved
 without a mail, and posts a message that waited behind another at once:
-resolve the waiting rows before a roll back.
+resolve the waiting rows before a roll back. This follow-up adds no ledger
+fields. Adapter 0.5.0 still reads it, but drops the retry and mail fields on
+save and does not implement the replay mail or pending-age rules.
 
 An unresolved delivery stays in the ledger and is never automatically
 reposted. Read its ID, reason and cause in `status`; verify whether the turn
 arrived, then use `resolve ID --accept` to treat it as delivered or `--replay`
 to post it again. Replay can duplicate a turn whose first outcome is unknown.
 A replay is posted at once and takes its place in its space's order by the
-time of the replay. Status is authoritative: `receipt lookup failed beyond
+time of the replay. Its answer reports `landed`, or `waiting` and why, using
+the result of that pass; a message with no gc route reports `not_routed`.
+If a fragment remains in the input box, clear the fragment first, then replay.
+Status is authoritative: `receipt lookup failed beyond
 deadline; retry pending` is still pending and cannot be resolved. The
 terminal reason omits `; retry pending`.
 

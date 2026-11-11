@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Resolve reports whether a replay landed or is waiting and why. Each replay
+  clears its waiting and end mail marks, so a stuck replay is mailed once
+  after two minutes even if an earlier life was mailed. Clear a fragment
+  from the input box before replaying it. Pending waiting-mail age counts
+  from the later of recording and the latest POST; a burst released by a
+  stuck head or gc outage gets a fresh two minutes. No ledger field is added.
+- Text status includes the raise time, end mail time and fragment mark.
+
 - A Chat message gc answers `failed` or `held` (nothing reached the agent's
   terminal) is retried until it lands, no longer given up after four POSTs:
   the first four run as before, then the waits are 8, 16 and 32 seconds and
