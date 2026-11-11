@@ -112,9 +112,14 @@ type ChangeState struct {
 	// unresolved. It is for status and the raise mail; no retry reads it.
 	// Reason "retry" stays the mark of a clean retry.
 	Cause string `json:"cause,omitempty"`
-	// Raised is when the city's agent was told about this change. It is set
-	// only after the mail was sent, and a change is raised at most once.
+	// Raised is when the city's agent was first told about this change. It
+	// is set only after the mail was sent.
 	Raised time.Time `json:"raised,omitzero"`
+	// RaisedEnd is when the city's agent was told that this change ended
+	// unresolved. A change is mailed at most twice: once while it waits and
+	// once when it ends, the second only when the end is not the retry bound
+	// the first mail named.
+	RaisedEnd time.Time `json:"raised_end,omitzero"`
 }
 
 type SendState struct {

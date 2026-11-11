@@ -123,6 +123,11 @@ func TestLedger050LoadsAndSavesUnchanged(t *testing.T) {
 	if c := l.Changes["spaces/example/messages/intent"]; c == nil || c.Status != "intent" || c.Attempts != 2 || c.Reason != "retry" {
 		t.Fatalf("0.5.0 intent: %+v", c)
 	}
+	// 0.5.0's crash window between its two saves after a fourth "not
+	// delivered" (gp-dl26): inbound ends it without a POST.
+	if c := l.Changes["spaces/example/messages/crashwindow"]; c == nil || c.Status != "intent" || c.Attempts != 4 || c.Reason != "retry" {
+		t.Fatalf("0.5.0 crash-window record: %+v", c)
+	}
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := l.Clone().Save(path); err != nil {
 		t.Fatal(err)
@@ -140,7 +145,7 @@ func TestChangeRetryFieldsRoundTripAndAreAbsentWhenZero(t *testing.T) {
 	at := time.Date(2026, 11, 10, 20, 22, 58, 123456789, time.UTC)
 	l := ledger.New()
 	l.Changes["waiting"] = &ledger.ChangeState{ID: "waiting", Status: "intent", Attempts: 7, Reason: "retry", Created: at,
-		NextAttempt: at.Add(time.Minute), Posted: at.Add(30 * time.Second), Cause: "draft_deferred", Raised: at.Add(2 * time.Minute)}
+		NextAttempt: at.Add(time.Minute), Posted: at.Add(30 * time.Second), Cause: "draft_deferred", Raised: at.Add(2 * time.Minute), RaisedEnd: at.Add(3 * time.Minute)}
 	l.Changes["plain"] = &ledger.ChangeState{ID: "plain", Status: "committed", Created: at}
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := l.Save(path); err != nil {
@@ -156,7 +161,7 @@ func TestChangeRetryFieldsRoundTripAndAreAbsentWhenZero(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"next_attempt", "posted", "cause", "raised"} {
+	for _, key := range []string{"next_attempt", "posted", "cause", "raised", "raised_end"} {
 		if _, ok := doc.Changes["waiting"][key]; !ok {
 			t.Errorf("set %s missing from JSON: %s", key, raw)
 		}

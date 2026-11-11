@@ -11,13 +11,10 @@ import (
 	"gchat-adapter/internal/ledger"
 )
 
-// raise reports what is due at the end of a poll pass: every change in intent
-// or pending that has waited StuckAfter since it was recorded, and every
-// unresolved change with a cause other than withdrawn, each only while it was
-// never raised. An unresolved row from before causes has none and is never
-// raised. raise runs outside the gate and the ledger lock, makes at most
-// RaisesPerPass calls, and marks a change raised only after its call
-// succeeded. A change whose call failed waits raiseRetry before the next try.
+// raise reports what is due at the end of a poll pass (mailDue), oldest
+// first. It runs outside the gate and the ledger lock, makes at most
+// RaisesPerPass calls, and marks a change only after its call succeeded. A
+// change whose call failed waits raiseRetry before the next try.
 func (p *Processor) raise(ctx context.Context) {
 	if p.opts.Raise == nil || ctx.Err() != nil || !p.raiseMu.TryLock() {
 		return
@@ -29,13 +26,13 @@ func (p *Processor) raise(ctx context.Context) {
 	}
 	now := p.opts.Now()
 	for id := range p.raiseTried {
-		if c := l.Changes[id]; c == nil || !c.Raised.IsZero() || c.Status == "committed" {
+		if c := l.Changes[id]; c == nil || !p.mailDue(l, c, now) {
 			delete(p.raiseTried, id)
 		}
 	}
 	var due []*ledger.ChangeState
 	for _, c := range l.Changes {
-		if p.dueRaise(c, now) {
+		if p.dueRaise(l, c, now) {
 			due = append(due, c)
 		}
 	}
@@ -54,7 +51,7 @@ func (p *Processor) raise(ctx context.Context) {
 		}
 		now := p.opts.Now()
 		c = current.Changes[c.ID]
-		if c == nil || !p.dueRaise(c, now) {
+		if c == nil || !p.dueRaise(current, c, now) {
 			continue
 		}
 		if err := p.opts.Raise(ctx, p.report(current, c, now)); err != nil {
@@ -63,11 +60,19 @@ func (p *Processor) raise(ctx context.Context) {
 			continue
 		}
 		at := p.opts.Now().UTC()
+		ended := c.Status == "unresolved"
 		err = p.update(func(l *ledger.Ledger) {
 			// resolve copies the Unresolved record back into Changes: mark both.
 			for _, records := range []map[string]*ledger.ChangeState{l.Changes, l.Unresolved} {
-				if record := records[c.ID]; record != nil && record.Raised.IsZero() {
+				record := records[c.ID]
+				if record == nil {
+					continue
+				}
+				if record.Raised.IsZero() {
 					record.Raised = at
+				}
+				if ended && record.RaisedEnd.IsZero() {
+					record.RaisedEnd = at
 				}
 			}
 		})
@@ -81,26 +86,48 @@ func (p *Processor) raise(ctx context.Context) {
 	}
 }
 
-// dueRaise: in intent or pending for StuckAfter since recorded, or unresolved
-// with a cause other than withdrawn; never raised; not tried in the last minute.
-func (p *Processor) dueRaise(c *ledger.ChangeState, now time.Time) bool {
-	if !c.Raised.IsZero() {
-		return false
-	}
+// mailDue reports whether a change is due a mail, the throttle aside. A
+// message is mailed at most twice in its life (gp-dl26, rulings D and E):
+//   - Once while it waits: in intent or pending for StuckAfter since it was
+//     recorded, never mailed before, and the head of its space. A change held
+//     back behind an earlier change in intent is named in that change's mail
+//     instead; the live order test decides it, never the stored cause word.
+//     A pending change holds nothing back and is mailed on its own.
+//   - Once when it ends unresolved with a cause other than withdrawn, unless
+//     a waiting mail already named the retry bound that ended it. An
+//     unresolved row from before causes has none and is never mailed.
+func (p *Processor) mailDue(l *ledger.Ledger, c *ledger.ChangeState, now time.Time) bool {
 	switch c.Status {
 	case "intent", "pending":
-		if now.Sub(c.Created) < p.opts.StuckAfter {
-			return false
-		}
+		return c.Raised.IsZero() && now.Sub(c.Created) >= p.opts.StuckAfter && !(c.Status == "intent" && heldBack(l, c))
 	case "unresolved":
-		if c.Cause == "" || c.Cause == causeWithdrawn {
+		if c.Cause == "" || c.Cause == causeWithdrawn || !c.RaisedEnd.IsZero() {
 			return false
 		}
-	default:
+		return c.Raised.IsZero() || c.Reason != reasonRetryBound
+	}
+	return false
+}
+
+// dueRaise is mailDue and not tried in the last minute.
+func (p *Processor) dueRaise(l *ledger.Ledger, c *ledger.ChangeState, now time.Time) bool {
+	if !p.mailDue(l, c, now) {
 		return false
 	}
 	tried, ok := p.raiseTried[c.ID]
 	return !ok || now.Sub(tried) >= raiseRetry
+}
+
+// behind counts the changes of c's space that are in intent and later than
+// c: the messages that wait for c to land.
+func behind(l *ledger.Ledger, c *ledger.ChangeState) int {
+	n := 0
+	for _, other := range l.Changes {
+		if other.Space == c.Space && other.ID != c.ID && other.Status == "intent" && earlier(c, other) {
+			n++
+		}
+	}
+	return n
 }
 
 func hours(d time.Duration) string {
@@ -131,12 +158,17 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		thread = m.Thread
 	}
 	waiting := c.Status != "unresolved"
+	// The one mail that follows a waiting mail, when the message ended.
+	second := !waiting && !c.Raised.IsZero()
 	stop := c.Created.Add(p.opts.RetryBound).UTC().Format(time.RFC3339)
 	var b strings.Builder
 	line := func(key, value string) { fmt.Fprintf(&b, "%s: %s\n", key, value) }
-	if waiting {
+	switch {
+	case waiting:
 		b.WriteString("A Google Chat message has not reached the agent yet. The gchat adapter keeps it and keeps trying.\n\n")
-	} else {
+	case second:
+		b.WriteString("An earlier mail said this Google Chat message was waiting and would still be delivered. It has ended unresolved: the gchat adapter has stopped trying, and the message will not arrive as a turn. It waits for an operator.\n\n")
+	default:
 		b.WriteString("A Google Chat message did not reach the agent, and the gchat adapter has stopped trying. It waits for an operator.\n\n")
 	}
 	line("Space", c.Space)
@@ -155,10 +187,15 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		line("State", "unresolved")
 	}
 	switch {
+	case c.Cause == "" && c.Status == "pending":
+		line("Cause", "none (gc has the message and has not concluded its delivery)")
 	case c.Cause == "":
 		line("Cause", "none recorded")
+	case c.Reason == reasonExhausted && c.Cause == causeUnknown:
+		// Only a record written by adapter 0.5.0 ends this way (resume).
+		line("Cause", c.Cause+" (an older version of the adapter stopped after four POSTs and did not record gc's last answer)")
 	case c.Reason == reasonExhausted:
-		line("Cause", c.Cause+" (gc answered partial four times: a fragment of the message may be in the terminal)")
+		line("Cause", c.Cause+" (gc's answer to the fourth or a later POST said a fragment of the message is in the terminal)")
 	default:
 		line("Cause", c.Cause+" ("+causeMeaning[c.Cause]+")")
 	}
@@ -175,6 +212,15 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		}
 		line("Retrying until", bound)
 	}
+	if c.Status == "intent" {
+		// The head of its space: the later messages of the space wait for it.
+		n := behind(l, c)
+		noun := "messages"
+		if n == 1 {
+			noun = "message"
+		}
+		line("Waiting behind it", fmt.Sprintf("%d later %s of this space, the count when this mail was sent; later ones queue behind it too, and gc gchat status lists them", n, noun))
+	}
 	// Created is when the adapter recorded the change; a catch-up record or a
 	// replay is younger than its message, whose revision may be older.
 	since := c.Created
@@ -190,12 +236,18 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 	b.WriteString("If it is not there (an edit or a reaction on an older message), run the same command without --since.\n")
 	b.WriteString("Every delivery the adapter holds: gc gchat status\n")
 	if waiting {
-		b.WriteString("No further mail is sent for this message. If it has not landed by " + stop + ", or it ends unresolved for another reason, gc gchat status lists it for gc gchat resolve.\n")
+		if c.Status == "pending" {
+			b.WriteString("gc has the message, and it may already be in the agent's session. If gc reports that it was not delivered, the adapter tries again, and the message ")
+		} else {
+			b.WriteString("The message ")
+		}
+		b.WriteString("will still be delivered to the agent when its session clears, with the same delivery ID. An agent that acts on it now from Chat history must not act on it again when it arrives.\n")
+		b.WriteString("No further mail is sent while it waits. If it ends unresolved before " + stop + " for another reason, one more mail says so. If it has not landed by " + stop + ", gc gchat status lists it for gc gchat resolve.\n")
 	} else {
 		b.WriteString("After checking whether the agent has the message:\n")
 		b.WriteString("  gc gchat resolve " + c.ID + " --accept marks it delivered.\n")
 		b.WriteString("  gc gchat resolve " + c.ID + " --replay posts it again. A replay can duplicate a turn whose first outcome is unknown.\n")
 	}
 	b.WriteString("\nThis mail never carries the message's text or its sender; read them in Chat with the command above.\n")
-	return Raise{ID: c.ID, Space: c.Space, Thread: thread, Message: c.Message, Body: b.String()}
+	return Raise{ID: c.ID, Space: c.Space, Thread: thread, Message: c.Message, Body: b.String(), Second: second}
 }

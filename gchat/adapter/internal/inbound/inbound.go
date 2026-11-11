@@ -70,9 +70,7 @@ type Options struct {
 	// space. The default is DefaultRetryBound.
 	RetryBound time.Duration
 	// StuckAfter is how long a change may wait in intent or pending, from its
-	// recorded time, before it is raised. It also bounds how long a pending
-	// change holds back the later changes of its space, from its latest POST.
-	// The default is DefaultStuckAfter.
+	// recorded time, before it is raised. The default is DefaultStuckAfter.
 	StuckAfter time.Duration
 	// Raise tells the city's agent about one stuck or unresolved change. Poll
 	// calls it at the end of its pass, outside the gate and the ledger lock,
@@ -105,6 +103,9 @@ type Raise struct {
 	Thread  string
 	Message string
 	Body    string
+	// Second marks the one mail that follows a waiting mail when the message
+	// ends unresolved. It needs its own dedup key: gc drops a repeated one.
+	Second bool
 }
 
 type Processor struct {
@@ -371,17 +372,15 @@ func sentAt(c *ledger.ChangeState) time.Time {
 	return c.Posted
 }
 
-// heldBack reports whether an earlier change of c's space is unsettled: in
-// intent, or in pending for less than StuckAfter since its latest POST. A
-// pending change can still conclude "failed" and retry, so a later message
-// must not overtake it, but a receipt can stay pending for an hour and most
-// such messages have landed: the hold on the space is bounded.
-func (p *Processor) heldBack(l *ledger.Ledger, c *ledger.ChangeState, now time.Time) bool {
+// heldBack reports whether an earlier change of c's space is in intent: a
+// later message never overtakes one that is still retrying or not yet sent.
+// A pending change holds nothing (gp-dl26, ruling B). Holding behind it spaced
+// a busy agent's burst one receipt apart and mailed false alarms. The cost,
+// accepted: a later message can reach the agent before an earlier one whose
+// receipt then concludes "failed" and is retried, as adapter 0.5.0 allows.
+func heldBack(l *ledger.Ledger, c *ledger.ChangeState) bool {
 	for _, other := range l.Changes {
-		if other.Space != c.Space || other.ID == c.ID || !earlier(other, c) {
-			continue
-		}
-		if other.Status == "intent" || (other.Status == "pending" && now.Before(sentAt(other).Add(p.opts.StuckAfter))) {
+		if other.Space == c.Space && other.ID != c.ID && other.Status == "intent" && earlier(other, c) {
 			return true
 		}
 	}
@@ -983,7 +982,8 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 // gc keeps answering "not delivered" stays in intent with NextAttempt set, and
 // each call makes at most one POST, none before NextAttempt: Poll drives it,
 // and a Pub/Sub redelivery takes the same path. A change never overtakes an
-// unsettled earlier change of its space (heldBack) and ends at RetryBound.
+// earlier change of its space that is in intent (heldBack) and ends at
+// RetryBound.
 func (p *Processor) resume(ctx context.Context, id string) error {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1003,11 +1003,18 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		if c.Attempts > 0 && c.Reason != reasonRetry {
 			return p.unresolved(id, "interrupted POST; delivery unknown")
 		}
+		if c.Reason == reasonRetry && c.Attempts >= firstPOSTs && c.Cause == "" {
+			// Written by adapter 0.5.0 between the save that put a fourth "not
+			// delivered" back in intent and the save that ended it (gp-dl26,
+			// ruling C). This code never writes it: every retry carries a
+			// cause. End it as 0.5.0 would have, never POST it again.
+			return p.unresolved(id, reasonExhausted)
+		}
 		now := p.opts.Now()
 		if !now.Before(c.Created.Add(p.opts.RetryBound)) {
 			return p.unresolved(id, reasonRetryBound)
 		}
-		if p.heldBack(l, c, now) {
+		if heldBack(l, c) {
 			if c.Cause == causeBehindEarlier {
 				return nil
 			}
@@ -1142,7 +1149,8 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 // delivered": nothing reached the terminal, so the change goes back to intent
 // and is retried until it lands or a bound ends it, never by count. "partial"
 // put a fragment in the terminal and each retry can add another, so it keeps
-// the four-POST bound.
+// the four-POST bound. So does "held" with a "partial" member: gc ranks held
+// above partial when a fan-out has both (gp-dl26, ruling F).
 func (p *Processor) outcome(id string, d wire.Delivery) error {
 	status := d.Status
 	if status == "pending" && d.ReceiptID == "" {
@@ -1177,7 +1185,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 			c.Status, c.Cause = "pending", ""
 		case "failed", "held", "partial":
 			c.Cause = waitCause(d)
-			if status == "partial" && c.Attempts >= firstPOSTs {
+			if fragment(d) && c.Attempts >= firstPOSTs {
 				// One save: an intent record with four POSTs would read as due.
 				markUnresolved(l, id, c, reasonExhausted)
 				exhausted = true
@@ -1193,6 +1201,23 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reasonExhausted)
 	}
 	return err
+}
+
+// fragment reports an answer that says part of the message is in a terminal:
+// "partial", or "held" with a "partial" member.
+func fragment(d wire.Delivery) bool {
+	if d.Status == "partial" {
+		return true
+	}
+	if d.Status != "held" {
+		return false
+	}
+	for _, m := range d.Members {
+		if m.Status == "partial" {
+			return true
+		}
+	}
+	return false
 }
 
 // unresolved ends a change for an operator and records its cause.

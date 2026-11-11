@@ -266,10 +266,12 @@ func TestRetryWaitsDoubleToTheCapAndEndAtTheBound(t *testing.T) {
 	}
 }
 
-// (c) A later message of a space waits for an unsettled earlier one; another
+// (c) A later message of a space waits for an earlier one in intent; another
 // space flows; the later one follows in the same pass once the first lands.
+// A pending change holds nothing (gp-dl26, ruling B):
+// TestPendingChangeDoesNotHoldItsSpace.
 func TestSpaceOrderHoldsBehindAnUnsettledMessage(t *testing.T) {
-	for _, first := range []string{"intent", "pending"} {
+	for _, first := range []string{"intent"} {
 		t.Run(first, func(t *testing.T) {
 			rf := retrySetup(t)
 			if first == "intent" {
@@ -694,32 +696,6 @@ func TestHeldIsRetriedLikeFailed(t *testing.T) {
 			t.Fatalf("held receipt: %+v", c)
 		}
 	})
-}
-
-// (n) A pending change holds its space back for StuckAfter from its POST.
-func TestPendingChangeHoldsItsSpaceForABoundedTime(t *testing.T) {
-	rf := retrySetup(t)
-	rf.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
-	handle(t, rf.fixture, event("first", "message.created", message()))
-	second := secondMessage()
-	rf.clock.Add(time.Second)
-	handle(t, rf.fixture, event("second", "message.created", second))
-	rf.clock.Set(retryStart.Add(2*time.Minute - time.Second))
-	rf.poll(t)
-	if got := postedIDs(rf.fixture); len(got) != 1 || len(rf.raises.list()) != 0 {
-		t.Fatalf("before StuckAfter: posts=%v raises=%d", got, len(rf.raises.list()))
-	}
-	rf.clock.Set(retryStart.Add(2 * time.Minute))
-	rf.poll(t)
-	if got := postedIDs(rf.fixture); len(got) != 2 || got[1] != second.Name {
-		t.Fatalf("the later message was not released: %v", got)
-	}
-	if got := rf.raises.list(); len(got) != 1 || got[0].ID != messageName {
-		t.Fatalf("the pending change was not raised: %+v", got)
-	}
-	if c := rf.change(t, messageName); c.Status != "pending" {
-		t.Fatalf("first: %+v", c)
-	}
 }
 
 func TestRetryOptionsMustBePositive(t *testing.T) {

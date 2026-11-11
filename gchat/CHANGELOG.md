@@ -7,16 +7,23 @@
   the first four run as before, then the waits are 8, 16 and 32 seconds and
   one minute, for up to 24 hours from when the adapter recorded it (then it
   is unresolved as `not delivered within the retry bound`). `partial` keeps
-  its four-POST bound. gc's `held` status, from gc's composer-hold change, is
-  understood.
+  its four-POST bound, and so does `held` with a `partial` member. gc's
+  `held` status, from gc's composer-hold change, is understood.
 - The messages of one space reach gc in the order they were recorded: a later
-  message waits while an earlier one is retrying, or while an earlier one is
-  pending at gc for up to two minutes after its POST.
+  message waits while an earlier one is retrying or not yet posted. A message
+  pending at gc holds nothing back, so a burst to a busy agent flows.
+- A retrying message, or one waiting behind it, no longer keeps catch-up
+  open: health can read `ready` while messages wait or are stuck, and
+  outbound recovery keeps running. `status` and the mail show them.
 - A message waiting two minutes or more, and one that becomes unresolved, is
-  mailed once to the identity's agent (`gchat: delivery`, one dedup key per
-  message): ids, cause, age and commands, never the text, the sender or gc's
-  error text. A withdrawn message and an unresolved row from before this
-  version are not mailed.
+  mailed to the identity's agent (`gchat: delivery`): ids, cause, age and
+  commands, never the text, the sender or gc's error text. Of the messages
+  waiting in one space only the first is mailed, naming how many wait behind
+  it. The waiting mail says the message still arrives when the session
+  clears. A message mailed while waiting gets one more mail if it ends
+  unresolved before the 24-hour bound; no message is mailed more than twice.
+  A withdrawn message and an unresolved row from before this version are not
+  mailed.
 - `gc gchat status` shows each delivery's age, cause, POST count, next attempt
   and raise time, and counts `stuck` deliveries.
 - A receipt that concludes `pending` after every member took the whole paste
@@ -24,10 +31,14 @@
   `unconfirmed:<space>`); a terminal hold is unresolved with the cause `held`.
 - A pending receipt's one-hour deadline counts from the latest POST, not from
   when the message was recorded.
-- The ledger's change record gains `next_attempt`, `posted`, `cause` and
-  `raised`, each omitted when empty; the version stays 1 and a 0.5.0 ledger
-  loads and saves unchanged. Going back to 0.5.0 turns a waiting message with
-  four or more POSTs unresolved as `delivery retries exhausted`.
+- A record adapter 0.5.0 left between two saves after a fourth "not
+  delivered" (intent, four POSTs, no cause) is never posted again: it ends
+  unresolved as `delivery retries exhausted`, cause `unknown`, and is mailed.
+- The ledger's change record gains `next_attempt`, `posted`, `cause`,
+  `raised` and `raised_end`, each omitted when empty; the version stays 1 and
+  a 0.5.0 ledger loads and saves unchanged. Going back to 0.5.0 turns a
+  waiting message with four or more POSTs unresolved without a mail and posts
+  a message that waited behind another at once: resolve waiting rows first.
 
 ## 0.5.0 — 2026-11-09
 

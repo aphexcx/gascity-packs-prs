@@ -5,7 +5,9 @@
 // at gchat 0.5.0 (gascity-packs d2f453b83a428546dfe7fa01dc2bd831c0b47ae0),
 // before the change record gained next_attempt, posted, cause and raised. It
 // holds one change in each delivery state, the shapes a box running 0.5.0
-// leaves behind:
+// leaves behind. The record "crashwindow" is the one 0.5.0 leaves when it
+// stops between the save that puts a fourth "not delivered" back in intent
+// and the save that ends it as "delivery retries exhausted" (gp-dl26):
 //
 //	go run ./internal/ledger/testdata/gen-ledger-0.5.0.go internal/ledger/testdata/ledger-0.5.0.json
 package main
@@ -31,6 +33,7 @@ func main() {
 	event := `{"provider_message_id":"%s","conversation":{"scope_id":"examplecity","provider":"gchat","account_id":"example","conversation_id":"spaces/example","kind":"room"},"actor":{"id":"users/200","display_name":"Reader","is_bot":false},"text":"example","reply_to_message_id":"spaces/example/threads/one","received_at":"2026-11-10T20:22:58Z"}`
 	for _, c := range []*ledger.ChangeState{
 		{ID: "spaces/example/messages/intent", Status: "intent", Attempts: 2, Reason: "retry"},
+		{ID: "spaces/example/messages/crashwindow", Status: "intent", Attempts: 4, Reason: "retry"},
 		{ID: "spaces/example/messages/pending", Status: "pending", Attempts: 1, ReceiptID: "ir-1-1"},
 		{ID: "spaces/example/messages/committed", Status: "committed", Attempts: 1, ReceiptID: "ir-1-2", Reason: "delivered"},
 		{ID: "spaces/example/messages/unresolved", Status: "unresolved", Attempts: 4, ReceiptID: "ir-1-3", Reason: "delivery retries exhausted"},
