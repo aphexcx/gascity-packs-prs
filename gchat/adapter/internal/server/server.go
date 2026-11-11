@@ -1644,7 +1644,11 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 			// pass could not finish (possibly on another message).
 			result["pass_error"] = "delivery pass could not complete; check gc gchat status"
 		}
-		l, err := s.snapshot(r.Context())
+		// As with settle, allow a short local-only read after the delivery
+		// budget expires. This never permits another POST or an unbounded wait.
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), time.Second)
+		defer cancel()
+		l, err := s.snapshot(readCtx)
 		if err != nil {
 			problem(w, 500, err)
 			return

@@ -156,4 +156,33 @@ func TestReplayReportsItsPassAndStartsANewMailLife(t *testing.T) {
 			}
 		})
 	}
+	t.Run("deadline after replay was saved", func(t *testing.T) {
+		f := setup(t)
+		id := "spaces/room/messages/deadline"
+		m := wire.InboundMessage{ProviderMessageID: id, Conversation: conversation("spaces/room")}
+		event, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := &ledger.ChangeState{ID: id, Space: "spaces/room", Message: id, Status: "unresolved", Event: string(event)}
+		f.l.Changes[id], f.l.Unresolved[id] = c, c
+		called := false
+		f.s.SetPoll(func(ctx context.Context) error {
+			called = true
+			<-ctx.Done()
+			return ctx.Err()
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		r := httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(`{"id":"`+id+`","action":"replay"}`)).WithContext(ctx)
+		w := httptest.NewRecorder()
+		f.s.resolve(w, r)
+		result := decode[map[string]string](t, w.Body.Bytes())
+		if !called || ctx.Err() != context.DeadlineExceeded || f.l.Changes[id].Status != "intent" {
+			t.Fatalf("setup: replay must be saved before deadline, called=%t err=%v state=%s", called, ctx.Err(), f.l.Changes[id].Status)
+		}
+		if w.Code != 200 || result["status"] != "waiting" || result["reason"] == "" || result["pass_error"] == "" {
+			t.Fatalf("saved replay lost its result after deadline: %d %s", w.Code, w.Body)
+		}
+	})
 }
