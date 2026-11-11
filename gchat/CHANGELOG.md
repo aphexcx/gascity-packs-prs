@@ -27,7 +27,8 @@
   included; no message is mailed more than twice. A withdrawn message never
   mailed while waiting, and an unresolved row from before this version, are
   not mailed. A mail still in flight when a replay starts marks nothing, so
-  the replayed message is mailed on its own terms.
+  the replayed message is mailed on its own terms; each life of a message has
+  its own mail keys at gc.
 - `gc gchat status` shows each delivery's age, cause, POST count, next attempt
   and raise time, and counts `stuck` deliveries.
 - A receipt that concludes `pending` after every member took the whole paste
@@ -39,10 +40,11 @@
   delivered" (intent, four POSTs, no cause) is never posted again: it ends
   unresolved as `delivery retries exhausted`, cause `unknown`, and is mailed.
 - The ledger's change record gains `next_attempt`, `posted`, `cause`,
-  `fragment`, `raised` and `raised_end`, each omitted when empty; the version stays 1 and
-  a 0.5.0 ledger loads and saves unchanged. Going back to 0.5.0 turns a
-  waiting message with four or more POSTs unresolved without a mail and posts
-  a message that waited behind another at once: resolve waiting rows first.
+  `fragment`, `raised` and `raised_end`, each omitted when empty; the version
+  stays 1 and a 0.5.0 ledger loads and saves unchanged. Going back to 0.5.0
+  turns a waiting message with four or more POSTs unresolved without a mail
+  and posts a message that waited behind another at once: resolve waiting
+  rows first.
 
 ## 0.5.0 — 2026-11-09
 

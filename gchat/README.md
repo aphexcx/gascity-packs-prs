@@ -299,12 +299,14 @@ After that the adapter waits 8, 16 and 32 seconds, then one minute between
 POSTs, for up to 24 hours from the time it recorded the message. The usual
 cause is text in the agent's input box (`draft_deferred`): gc will not paste
 over it, and the message lands once the box clears. `partial` means a fragment
-already reached the terminal, and each retry can add another, so a message gc
-answers `partial` to any of its POSTs is posted at most four times in all,
-whatever gc answers to its other POSTs. So is a message that gc answers `held`
-with a `partial` member: when a message goes to several sessions, gc ranks
-`held` above `partial`. The ledger keeps that mark (`fragment`) across a
-restart. A replay clears it: the replay's POSTs are counted from one again.
+already reached the terminal, and each retry can add another. So once gc has
+answered `partial` to any POST of a message, the message is not posted after
+its fourth POST, whatever gc answers to its other POSTs; if that answer comes
+after the fourth POST, the adapter stops there. The same goes for a message
+that gc answers `held` with a `partial` member: when a message goes to several
+sessions, gc ranks `held` above `partial`. The ledger keeps that mark
+(`fragment`) across a restart. A replay clears it: the replay's POSTs are
+counted from one again.
 
 The messages of one space reach gc in the order the adapter recorded them. A
 message waits (`behind_earlier`) while an earlier message of its space is
@@ -347,7 +349,9 @@ whether it reached the agent. The ledger keeps both marks (`raised`,
 replayed message is not mailed again while it waits, the messages that wait
 behind it are mailed on their own, and its end is mailed once. A mail still
 in flight when a replay starts marks nothing: the replayed message is then
-mailed on its own terms, as a message never mailed.
+mailed on its own terms, as a message never mailed. Each life of a message
+(the first, and each replay) has its own mail keys at gc, so gc never drops a
+replay's mail as a repeat of a mail from before the replay.
 The mail never carries the message's text, its sender or gc's error text. A
 mail that fails is tried again a minute later. The retry state lives in the
 ledger: after a restart the next POST still waits for its time, and a POST
@@ -375,7 +379,7 @@ terminal reason omits `; retry pending`.
 | Cause of an unresolved delivery | What happened | What to do |
 | --- | --- | --- |
 | `draft_deferred`, `pending_interaction`, `not_delivered` with `not delivered within the retry bound` | gc did not take the message for 24 hours. | Clear what blocks the agent's session, then `--replay`. |
-| `not_delivered` (or another waiting cause) with `delivery retries exhausted` | gc answered one of the message's POSTs `partial`, or `held` with a `partial` member, so the adapter stopped at the fourth POST, or at that answer when it came later: a fragment may be in the terminal. The cause is from gc's last answer. | Look at the session; `--accept` if the agent has the message, else `--replay`. |
+| `not_delivered` (or another waiting cause) with `delivery retries exhausted` | gc answered one of the message's POSTs `partial`, or `held` with a `partial` member, so the adapter stopped at the fourth POST, or at that answer when it came later: a fragment may be in the terminal. | Look at the session; `--accept` if the agent has the message. Otherwise clear any fragment left in the agent's input box, then `--replay`. A replay into a box that still holds the fragment meets `draft_deferred` and waits up to 24 hours, usually with no mail of its own: a replayed message keeps the marks of the mails sent before the replay. `gc gchat status` shows it. |
 | `behind_earlier` | It waited 24 hours behind an earlier message of its space and was never posted. | Settle the earlier message, then `--replay`. |
 | `held` | gc holds a paste it cannot finish without an operator. | Look at the session before anything else; `--accept` if the message is there, else `--replay`. |
 | `unknown` | The outcome is not known: a lost POST response, an interrupted POST, a rejected POST, a receipt past its deadline or concluded pending without a whole paste, a status the adapter does not know, no answer from gc at all for 24 hours (`not delivered within the retry bound` while gc was down), or a record adapter 0.5.0 left between two saves (`delivery retries exhausted`; gc's last answer was not recorded). The reason says which. | Check whether the turn arrived; `--accept` if it did, `--replay` if not. |

@@ -440,10 +440,11 @@ func TestMessageFirstMailedAsEndedIsNotMailedAgain(t *testing.T) {
 	}
 }
 
-// gcMail models gc mail send --dedup as the app drives it: one key per
-// change, plus ":ended" for a mail that says the message ended; a send whose
-// key is still live is suppressed and exits 0. lose makes the next send land
-// at gc but report a failure (the 10 s limit killed it after gc took it).
+// gcMail models gc mail send --dedup as the app drives it, with the key the
+// app sends (Raise.DedupKey: one per life of the change and kind of mail); a
+// send whose key is still live is suppressed and exits 0. lose makes the next
+// send land at gc but report a failure (the 10 s limit killed it after gc
+// took it).
 type gcMail struct {
 	mu        sync.Mutex
 	live      map[string]bool
@@ -454,10 +455,7 @@ type gcMail struct {
 func (g *gcMail) raise(_ context.Context, r Raise) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	key := r.ID
-	if r.Ended {
-		key += ":ended"
-	}
+	key := r.DedupKey()
 	if g.live[key] {
 		return nil
 	}

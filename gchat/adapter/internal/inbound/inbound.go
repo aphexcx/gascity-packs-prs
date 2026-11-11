@@ -5,6 +5,7 @@ package inbound
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,6 +108,24 @@ type Raise struct {
 	// own dedup key: a waiting mail of the same message may have reached gc
 	// with its result lost, and gc drops a mail whose key is still live.
 	Ended bool
+	// Recorded is when the change's current life was recorded (its Created;
+	// a replay starts a new life). The dedup key carries it.
+	Recorded time.Time
+}
+
+// DedupKey is the mail's key at gc below the app's city and identity: one
+// per life of the change and kind of mail. A retry of one mail keeps its key,
+// so a send whose result was lost stays one mail at gc. A replay's life has
+// keys of its own: gc drops a send whose key is still live, and a key of the
+// earlier life must not drop a mail of the replay (gp-t542). The hash keeps
+// the change ID out of the key.
+func (r Raise) DedupKey() string {
+	sum := sha256.Sum256([]byte(r.ID + "\x00" + r.Recorded.UTC().Format(time.RFC3339Nano)))
+	key := fmt.Sprintf("delivery:%x", sum)
+	if r.Ended {
+		key += ":ended"
+	}
+	return key
 }
 
 type Processor struct {

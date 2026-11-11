@@ -89,7 +89,7 @@ func (p *Processor) raise(ctx context.Context) {
 			continue
 		}
 		if !marked {
-			p.opts.Logger.Info("inbound delivery raise not recorded: the change was replayed or is gone", "change", c.ID)
+			p.opts.Logger.Info("inbound delivery raise sent for an earlier life of the change; the replayed record keeps no mark of it", "change", c.ID)
 		}
 		delete(p.raiseTried, c.ID)
 	}
@@ -239,7 +239,7 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		// Only a record written by adapter 0.5.0 ends this way (resume).
 		line("Cause", c.Cause+" (an older version of the adapter stopped after four POSTs and did not record gc's last answer)")
 	case c.Reason == reasonExhausted:
-		line("Cause", c.Cause+" (from gc's last answer; gc answered one of the message's POSTs that a fragment of it is in the terminal, and the adapter stops retrying such a message after four POSTs)")
+		line("Cause", c.Cause+" (gc answered one of the message's POSTs that a fragment of it is in the terminal; the adapter stops retrying such a message at its fourth POST, or at that answer when it comes later)")
 	default:
 		line("Cause", c.Cause+" ("+causeMeaning[c.Cause]+")")
 	}
@@ -297,5 +297,5 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		b.WriteString("  gc gchat resolve " + c.ID + " --replay posts it again. A replay can duplicate a turn whose first outcome is unknown.\n")
 	}
 	b.WriteString("\nThis mail never carries the message's text or its sender; read them in Chat with the command above.\n")
-	return Raise{ID: c.ID, Space: c.Space, Thread: thread, Message: c.Message, Body: b.String(), Ended: !waiting}
+	return Raise{ID: c.ID, Space: c.Space, Thread: thread, Message: c.Message, Body: b.String(), Ended: !waiting, Recorded: c.Created}
 }
