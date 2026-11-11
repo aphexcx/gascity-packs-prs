@@ -134,6 +134,8 @@ how many wait behind it.
   can duplicate a turn whose first outcome is unknown, so check first. The
   answer says whether it landed or is waiting and why. A replay starts a new
   allowance of one waiting mail and one end mail; one that lands sends none.
+  A saved replay returns its state even if the pass could not finish, with
+  `pass_error` in the answer; command success alone does not mean it landed.
 
 ## Limits
 

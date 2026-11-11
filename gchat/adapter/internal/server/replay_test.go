@@ -3,11 +3,15 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"gchat-adapter/internal/fakes/fakegc"
+	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/wire"
@@ -16,13 +20,26 @@ import (
 // Exercise the public resolve endpoint and the real processor together: each
 // replay has its own answer and mail allowance, including after an end mail.
 func TestReplayReportsItsPassAndStartsANewMailLife(t *testing.T) {
-	for _, answer := range []string{"delivered", "pending", "draft_deferred", "no_route", "outage", "fragment"} {
+	for _, answer := range []string{"delivered", "pending", "draft_deferred", "no_route", "outage", "fragment", "fragment_then_outage"} {
 		t.Run(answer, func(t *testing.T) {
 			f := setup(t)
 			now := time.Now().UTC()
 			var mails []inbound.Raise
+			client := f.options.GC
+			if answer == "fragment_then_outage" {
+				var posts atomic.Int32
+				gc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if posts.Add(1) == 1 {
+						respond(w, 200, wire.InboundResponse{Delivery: wire.Delivery{Status: "partial"}})
+					} else {
+						http.Error(w, "unavailable", http.StatusServiceUnavailable)
+					}
+				}))
+				t.Cleanup(gc.Close)
+				client = gcclient.New(gc.URL, "examplecity")
+			}
 			p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: f.l, LedgerMu: f.mu,
-				LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: f.options.GC,
+				LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: client,
 				RetryDelay: time.Nanosecond, Now: func() time.Time { return now },
 				Raise: func(_ context.Context, r inbound.Raise) error { mails = append(mails, r); return nil },
 			})
@@ -71,6 +88,8 @@ func TestReplayReportsItsPassAndStartsANewMailLife(t *testing.T) {
 				wantReason = "temporarily unavailable"
 			} else if answer == "fragment" {
 				wantReason = "clear the fragment first"
+			} else if answer == "fragment_then_outage" {
+				wantReason = "fragment"
 			}
 			if code != 200 || response["status"] != wantStatus || !strings.Contains(response["reason"], wantReason) {
 				t.Errorf("resolve must report %s and %q: %d %s", wantStatus, wantReason, code, raw)
@@ -78,9 +97,12 @@ func TestReplayReportsItsPassAndStartsANewMailLife(t *testing.T) {
 			if strings.Contains(string(raw), m.Text) || len(mails) != 0 {
 				t.Fatalf("resolve leaked text or sent mail: %s, %d mails", raw, len(mails))
 			}
-			if answer == "outage" {
+			if answer == "outage" || answer == "fragment_then_outage" {
 				if response["pass_error"] == "" {
 					t.Error("failed pass must be visible")
+				}
+				if strings.Contains(response["reason"], "nothing was delivered") {
+					t.Error("a fragment must not be described as nothing delivered")
 				}
 				return
 			}

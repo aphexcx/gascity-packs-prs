@@ -355,6 +355,9 @@ behind it. A mail still in flight when a replay starts marks nothing in the
 new life. Each life has its own mail keys at gc, so an earlier mail never
 suppresses the replay's mail. A burst released by a stuck head, or after a gc
 outage, gets two minutes from each pending POST before a waiting mail is due.
+An upgrade does not clear marks on a replay already in flight under an older
+adapter: those marks keep their earlier suppression rules. Replays requested
+on this version start the new mail allowance.
 The mail never carries the message's text, its sender or gc's error text. A
 mail that fails is tried again a minute later. The retry state lives in the
 ledger: after a restart the next POST still waits for its time, and a POST
@@ -379,6 +382,12 @@ to post it again. Replay can duplicate a turn whose first outcome is unknown.
 A replay is posted at once and takes its place in its space's order by the
 time of the replay. Its answer reports `landed`, or `waiting` and why, using
 the result of that pass; a message with no gc route reports `not_routed`.
+Once the replay is saved, the command succeeds even if its delivery pass
+cannot finish: the answer includes `pass_error` alongside the message's
+state. Previously that case returned HTTP 502. Scripts should inspect the
+answer's `status`, `reason` and optional `pass_error`; command success alone
+does not mean delivery. `waiting for an operator` means the adapter has
+stopped retrying, including when a withdrawn message only needs accepting.
 If a fragment remains in the input box, clear the fragment first, then replay.
 Status is authoritative: `receipt lookup failed beyond
 deadline; retry pending` is still pending and cannot be resolved. The

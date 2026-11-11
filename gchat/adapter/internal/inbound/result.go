@@ -27,6 +27,9 @@ func ReplayResult(c *ledger.ChangeState) (status, reason string) {
 		}
 		return "waiting", reason
 	case "intent":
+		if c.Fragment {
+			return "waiting", "gc reported a fragment in the agent's input box; the adapter is still retrying"
+		}
 		if meaning := causeMeaning[c.Cause]; meaning != "" {
 			return "waiting", meaning + "; the adapter will retry"
 		}
