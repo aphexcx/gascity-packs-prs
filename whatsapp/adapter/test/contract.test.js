@@ -27,9 +27,10 @@ const CONTRACT_V1_BOX_ROUTES = [
   'GET /v1/window',
   'GET /v1/media/<media_id>',
 ];
+const FILES_OUT_ROUTES = ['POST /v1/uploads'];
 
-test('the fake gateway serves exactly the contract v1 box routes', () => {
-  assert.deepEqual([...FAKE_GATEWAY_ROUTES].sort(), [...CONTRACT_V1_BOX_ROUTES].sort());
+test('the fake gateway serves v1 plus the additive files-out route', () => {
+  assert.deepEqual([...FAKE_GATEWAY_ROUTES].sort(), [...CONTRACT_V1_BOX_ROUTES, ...FILES_OUT_ROUTES].sort());
 });
 
 test('every contract route answers on the fake through the adapter\'s client', async (t) => {
@@ -52,8 +53,10 @@ test('every contract route answers on the fake through the adapter\'s client', a
   const media = await client.media('m1');
   assert.equal(media.bytes.toString(), 'jpeg');
   assert.equal(media.contentType, 'image/jpeg');
+  const up = await client.upload({ bytes: Buffer.from('jpeg'), size: 4, name: 'photo.jpg', mime: 'image/jpeg', sha256: 'a'.repeat(64) }, 'upload-k1');
+  assert.equal(up.media_id, 'media.out.1');
   const unauth = createGatewayClient({ url: gw.url, credential: 'wrong' });
   await assert.rejects(unauth.inbox({}), (err) => err.status === 401 && err.auth === true);
   const seen = new Set(gw.requests.map((q) => q.route.replace(/^GET \/v1\/media\/.+$/, 'GET /v1/media/<media_id>')));
-  for (const route of CONTRACT_V1_BOX_ROUTES) assert.ok(seen.has(route), `${route} was exercised`);
+  for (const route of [...CONTRACT_V1_BOX_ROUTES, ...FILES_OUT_ROUTES]) assert.ok(seen.has(route), `${route} was exercised`);
 });

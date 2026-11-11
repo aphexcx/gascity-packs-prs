@@ -60,6 +60,8 @@ export function loadConfig() {
     listenInternal: getenv('LISTEN_INTERNAL', '127.0.0.1:8791'),
     registerOnStart: getenv('REGISTER_ON_START', 'true') !== 'false',
     stateDir: getenv('WHATSAPP_STATE_DIR', path.join(cityPath, '.gc', 'whatsapp')),
+    cityDir: cityPath,
+    outboundRootConfig: process.env.WHATSAPP_OUTBOUND_ROOTS,
     mediaDir: getenv('WHATSAPP_MEDIA_DIR', path.join(cityPath, '.gc', 'whatsapp-media', 'inbound')),
     gatewayURL: getenv('WHATSAPP_GATEWAY_URL'),
     credential: getenv('WHATSAPP_GATEWAY_CREDENTIAL'),
@@ -271,6 +273,10 @@ export async function main() {
     ledger,
     onWindowClosed: (conversationId) => keeper.noteRefusedNudge(conversationId),
     updateLanguage: cfg.updateLanguage,
+    cityDir: cfg.cityDir,
+    mediaDir: cfg.mediaDir,
+    outboundRootConfig: cfg.outboundRootConfig,
+    mediaGateway,
   });
 
   let authState = cfg.credential ? 'unverified' : 'not enrolled';

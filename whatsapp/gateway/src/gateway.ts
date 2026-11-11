@@ -39,6 +39,7 @@ import {
   verifySignature,
 } from "./meta.js";
 import { movesWindow, windowClosesAt, windowOpen } from "./window.js";
+import { isMediaKind, upload, validFilename } from "./uploads.js";
 
 const DAY = 86_400;
 
@@ -346,6 +347,14 @@ interface OwnerRow {
 }
 
 function parseSend(body: Obj): SendRequest {
+  if (isMediaKind(body.type)) {
+    const m = isObj(body.media) ? body.media : {};
+    const mediaId = boundedString(m.id, 1, 128);
+    if (!mediaId || (m.caption !== undefined && (body.type === "audio" || typeof m.caption !== "string" || [...m.caption].length > 1024))
+      || (m.filename !== undefined && (body.type !== "document" || !validFilename(m.filename)))) throw new HttpError(400, "bad_request");
+    return { type: body.type, mediaId, ...(m.caption !== undefined ? { caption: m.caption as string } : {}),
+      ...(m.filename !== undefined ? { filename: m.filename as string } : {}) };
+  }
   switch (body.type) {
     case "text": {
       const text = typeof body.text === "string" ? body.text : null;
@@ -1017,7 +1026,7 @@ export function createGateway(deps: Deps) {
     const to = parseTo(body.to);
     const key = boundedString(body.idempotency_key, 1, 200);
     if (!key) throw new HttpError(400, "bad_request");
-    const req = parseSend(body);
+    let req = parseSend(body);
     const now = deps.now();
     // `to` names THIS city's owners by their conversation_id (the id the box files one under), by
     // their current user_id, or by a number one shows: the number whose newest pairing (its mark)
@@ -1071,6 +1080,12 @@ export function createGateway(deps: Deps) {
     if (req.type !== "template" && !windowOpen(owner.last_inbound_at, now)) {
       log({ event: "send_refused", reason: "window_closed", type: req.type });
       throw new HttpError(422, "window_closed");
+    }
+    if ("mediaId" in req) {
+      const grant = await db.prepare("SELECT meta_id FROM uploads WHERE city_id = ? AND media_id = ? AND kind = ? AND state = 'ready' AND expires_at > ?")
+        .bind(cityId, req.mediaId, req.type, now).first<{ meta_id: string }>();
+      if (!grant) throw new HttpError(404, "media_not_found");
+      req = { ...req, mediaId: grant.meta_id };
     }
     const client = graph();
     const claim = await db
@@ -1301,6 +1316,7 @@ export function createGateway(deps: Deps) {
     "/v1/inbox": { GET: inbox },
     "/v1/inbox/ack": { POST: (r) => ack(r) },
     "/v1/send": { POST: (r) => send(r) },
+    "/v1/uploads": { POST: async (r) => upload(r, await cityOf(r), db, deps.now(), graph) },
     "/v1/read": { POST: (r) => read(r) },
     "/v1/window": { GET: (r) => windows(r) },
     "/v1/admin/enroll-codes": { POST: (r) => mintEnrollCode(r) },
@@ -1340,6 +1356,7 @@ export function createGateway(deps: Deps) {
    */
   async function maintain(): Promise<Record<string, number>> {
     const now = deps.now();
+    await db.prepare("DELETE FROM uploads WHERE expires_at <= ?").bind(now).run();
     // A link past its 8 days may still join an id to an unbind whose own 8 days run later (a
     // notice that landed after the unbind; the codex self-review r3, finding 1). Before it goes,
     // its component's floor is written on both its ids, so the record outlives the link exactly as

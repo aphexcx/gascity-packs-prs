@@ -80,6 +80,7 @@ export interface WebhookBatch {
 export type SendRequest =
   | { type: "text"; text: string }
   | { type: "reaction"; messageId: string; emoji: string }
+  | { type: "image" | "document" | "audio" | "video"; mediaId: string; caption?: string; filename?: string }
   | { type: "template"; name: string; language: string; params: string[] };
 
 export interface GraphClient {
@@ -298,6 +299,14 @@ export function sendBody(to: string, req: SendRequest): Record<string, unknown> 
       return { ...head, type: "text", text: { body: req.text, preview_url: false } };
     case "reaction":
       return { ...head, type: "reaction", reaction: { message_id: req.messageId, emoji: req.emoji } };
+    case "image":
+    case "document":
+    case "audio":
+    case "video":
+      return { ...head, type: req.type, [req.type]: { id: req.mediaId,
+        ...(req.caption !== undefined ? { caption: req.caption } : {}),
+        ...(req.filename !== undefined ? { filename: req.filename } : {}),
+      } };
     case "template":
       return {
         ...head,
@@ -366,6 +375,19 @@ export async function graphSend(g: GraphClient, body: Record<string, unknown>): 
 export async function graphMarkRead(g: GraphClient, messageId: string): Promise<void> {
   const res = await postMessages(g, readBody(messageId));
   await res.body?.cancel();
+}
+
+/** Multipart bytes flow directly to Meta; no FormData/Blob/arrayBuffer copy. */
+export async function graphUpload(g: GraphClient, body: ReadableStream<Uint8Array>, contentType: string): Promise<string> {
+  const res = await graphCall({ ...g, timeoutMs: 120_000 }, `${g.base}/${g.version}/${g.phoneNumberId}/media`, {
+    method: "POST", headers: { "content-type": contentType }, body,
+  });
+  if (!res.ok) throw await graphFailure(res);
+  try {
+    const answer = await res.json() as { id?: unknown };
+    if (typeof answer.id === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(answer.id)) return answer.id;
+  } catch { /* A malformed success is uncertain, never retry it. */ }
+  throw new GraphError(res.status, null);
 }
 
 /**

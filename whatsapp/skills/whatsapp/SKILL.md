@@ -204,7 +204,36 @@ the reason. If it was not transcribed, say so and ask them to type it.
 A reaction arrives as `[reaction <emoji> to <message id>]` and rarely needs
 an answer.
 
-You send text only. Files out come in a later round.
+To send one file the owner asked for or would expect:
+
+```
+gc whatsapp publish --to <conversation_id> --file <path> --caption-file <path>
+```
+
+The caption is optional. `--caption "a short caption"` also works; audio
+cannot have a caption. Use `--caption-file`, not `--text-file`, with a file.
+The limits are 5 MB for a photo, 16 MB for audio or video, and 100 MB for a
+document. JPEG, PNG and static WebP photos, PDF/text/Office documents, AAC,
+AMR, MP3, M4A or mono Opus Ogg audio, and MP4/3GP video are supported. The
+file's bytes must match its extension; changing its name does not convert it.
+Captions can be up to 1,024 characters. Keep them short.
+
+Files follow the same 24-hour window. They cannot go in the update template
+and never open the window. If refused, wait for the owner to write again.
+The command prints a key before sending: rerun with that `--idempotency-key`
+to resume an interrupted upload/send without repeating it. An uncertain
+outcome needs the operator's check before any new key.
+
+Files must be inside the city directory or its inbound media store, unless
+the operator configured `WHATSAPP_OUTBOUND_ROOTS`. Secret and credential
+directories stay forbidden even inside those roots. A refusal names why.
+Hard-linked files are refused too. If the adapter cannot verify a file's
+path, ask the operator to check it; do not bypass the refusal.
+
+- Never send a secret, credential or key file.
+- Never send a file from one person's conversation into another's unless
+  they asked.
+- Never send a file the owner did not ask for or would not expect.
 
 ## When the door needs an operator
 

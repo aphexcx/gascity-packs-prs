@@ -57,6 +57,7 @@ spec's SCOPE item 3) is pinned route by route by the adapter's fake gateway
 | `WHATSAPP_ROUTE_AGENT` | the default route's agent for the paste probe, default `mayor` |
 | `WHATSAPP_KEEPER_UPDATE_HOUR`, `WHATSAPP_CITY_TZ` | the keeper's daily update hour (default 10) and the city's zone |
 | `WHATSAPP_UPDATE_LANGUAGE` | the update template's language, default `en_US` |
+| `WHATSAPP_OUTBOUND_ROOTS` | allowed absolute directories for outbound files and caption files, separated by the platform path delimiter (`:` on the city boxes); default the city directory and inbound media store. An explicit empty/invalid list fails closed. Denied secret/key paths always remain denied. |
 | `WHATSAPP_MEDIA_DIR`, `WHATSAPP_MEDIA_MAX_BYTES`, `WHATSAPP_MEDIA_QUOTA_BYTES`, `WHATSAPP_MEDIA_MIN_FREE_BYTES`, `WHATSAPP_MEDIA_DOWNLOAD_TIMEOUT_MS`, `WHATSAPP_TRANSCRIBE_TIMEOUT_MS` | the inbound media store (default `<city>/.gc/whatsapp-media/inbound`) and its limits |
 | `ELEVENLABS_API_KEY` | optional Scribe key for voice notes (falls back to `~/.config/elevenlabs/api-key`; without one a voice note is saved and marked not transcribed) |
 
@@ -176,6 +177,60 @@ A template never opens or extends the window; only the owner's next message
 does. Whether a text is an actual update is the mayor's skill rule (Afik:
 "only if there is an actual update").
 
+## Files out
+
+`gc whatsapp publish --to <conversation_id> --file <path>` sends one image,
+document, audio file or video. Add `--caption` or `--caption-file` if needed
+(up to 1,024 characters; no audio captions). `--text-file` cannot accompany a
+file: use `--caption-file`. A file cannot use `--update`.
+
+JPEG, PNG and static WebP images cap at 5 MB, AAC/AMR/MP3/M4A/mono Opus Ogg
+audio and MP4/3GP video at 16 MB, and PDF, UTF-8 text and Office documents at
+100 MB (1 MB = 1,000,000 bytes). The adapter checks the actual size and a
+signature against the extension before upload; it never transcodes. The
+gateway's [Files out contract](gateway/README.md#files-out-gp-755k) cites the
+current Meta list and its additional image/codec constraints.
+
+The adapter resolves symlinks and permits only regular files within
+`WHATSAPP_OUTBOUND_ROOTS`. Both supplied and resolved paths must avoid
+`.gc/services`, `.gc/keys`, components `secrets`, `.ssh`, `.config`, and
+filenames ending `.env` or `.pem` or beginning `id_` (case-insensitive, a
+tighter rule). Caption files have the same restriction. Never send a secret,
+credential or key, an unexpected file, or another person's file without
+their request.
+
+The adapter also checks the kernel pathname of the opened descriptor before
+and after reading, so replacing a parent directory cannot authorize a secret
+file. Hard-linked files are refused, including otherwise allowed aliases.
+Linux uses `/proc/self/fd`; macOS uses the OS-shipped `/usr/sbin/lsof` for
+this process and descriptor. If that facility is unavailable, or on another
+OS, file publishing fails closed with `kernel descriptor path inspection
+unavailable`. No additional package is installed. This per-file check covers
+the capability, so no new doctor row is added.
+
+The key printed by the publish command covers the whole upload and send.
+`outbound_progress.json` holds the name, bytes, SHA256, caption and upload
+handle; the gateway also durably deduplicates uploads, covering a crash
+before the box records that handle. A retry with the same file, caption and
+key resumes without repeating either successful operation. A changed file
+conflicts. A failed upload sends nothing; an uncertain Meta outcome stays
+spent under that key and requires an operator check before any new key.
+The transcript names the file and its byte count/SHA256, never its bytes.
+File recovery records remain in the journal for 30 days after their last
+update, covering the gateway's idempotency horizon; text's seven-day/1,024
+entry pruning never evicts them. File records are bounded by age, not count.
+An expired/missing handle is a permanent `media_expired` receipt with guidance
+to check the chat before starting a new key. The adapter still asks for a
+completed send's stored answer first, so a delivered file is recovered even
+after its upload handle expires.
+
+The window rule is unchanged. A closed window is `window_closed`; wait for
+the owner to write again. A file never goes out by the update template and
+never opens or extends the window. Uploads use the media client's existing
+120-second deadline (`WHATSAPP_MEDIA_DOWNLOAD_TIMEOUT_MS`); text calls keep
+their existing deadline. No new doctor row: gateway reachability and
+credentials are already covered, and file/path validation is per publish.
+
 ## The window-keeper
 
 For a conversation whose business consented (`gc whatsapp invite
@@ -199,6 +254,7 @@ update or nothing.
 | Verb | What it does |
 | --- | --- |
 | `gc whatsapp publish --to <conversation_id> --text-file <path>` | free-form text inside the window |
+| `gc whatsapp publish --to <conversation_id> --file <path> [--caption-file <path>]` | one allowed file inside the window; upload/send resume under the printed key |
 | `gc whatsapp publish --update --to <conversation_id> --text "..."` | the update template outside the window |
 | `gc whatsapp invite [--proactive-consent] [--hours "Mon-Fri 09:00-18:00"] [--tz <zone>]` | a 6-digit, 24-hour invite code and the two lines the owner is told |
 | `gc whatsapp consent <conversation_id> --off\|--on` | the keeper's consent; `--off` on the owner's word, at once |

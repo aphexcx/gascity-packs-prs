@@ -132,6 +132,96 @@ owner's **reaction** as the owner writing, so it moves the clock. Two reasons:
 
 **This is a judgment call for the founders.** One line in `src/window.ts` flips it.
 
+## Files out (gp-755k)
+
+Additive to v1; the frozen text above is unchanged. Posted on gp-nn90 and
+gp-9hf1 before implementation. Times remain integer Unix seconds.
+
+`POST /v1/uploads`, under the city bearer, accepts one raw file body. Required
+headers: `Content-Type` (one MIME below), `Content-Length` (the file bytes),
+`X-Filename` (encodeURIComponent of a basename), `X-Content-SHA256` (the box's
+64 lowercase hex digest), and `Idempotency-Key` (1..200 printable ASCII chars).
+No Content-Encoding or Transfer-Encoding is accepted. Success is
+`200 {media_id, expires_at}`: an opaque handle owned by this city, expiring
+30 days from the upload claim. Only metadata and the Meta id are kept in D1;
+the file is never buffered or stored by the gateway.
+
+RULING 1 invariant: nothing goes to Meta for missing, zero, non-numeric or
+chunked/unknown length, an off-list MIME, or a declared length over that kind's
+cap. Accepted bodies stream through an exact-length limiter: Meta receives at
+most the declared bytes. An understated body forwards exactly the declared
+bytes then aborts; an overstated body aborts at EOF. Either mismatch returns
+`400 media_length_mismatch`, yields no handle, and does not retry Meta under
+that key. The adapter checks actual bytes, size and signature before upload.
+
+Header failures are `400 bad_upload`, `411 length_required`,
+`413 media_too_large`, or `415 unsupported_media_type`; none contacts Meta.
+An upload key is per city and binds MIME, name, length and declared digest.
+A repeated completed upload returns its original handle without another Meta
+call; differing metadata returns `409 idempotency_conflict`. An active claim
+returns `409 in_flight` for 180 seconds. A claim abandoned after that, a network
+failure, Meta 5xx, or success without an id returns `outcome_unknown` and never
+uploads again under that key. Meta's explicit 4xx refusal frees the claim and
+returns `502 meta_error` with numeric `meta_status` and `meta_code`, as sends
+do. Expired handles return `410 media_expired`; a new publish key is required.
+Upload claims remain 30 days, including failed/unknown claims.
+
+`POST /v1/send` additionally accepts `type: image|document|audio|video` and
+`media: {id, caption?, filename?}`. `id` is this city's unexpired upload handle
+of the same kind, never a URL or a raw Meta id. Unknown, expired, wrong-kind or
+another city's handles return `404 media_not_found` before a new Meta send.
+Only image/document/video allow a caption (at most 1024 Unicode code points);
+only document allows a filename (a basename, at most 255 characters).
+An Ogg/Opus file is sent as basic audio; no voice-specific option is added.
+The window, send idempotency, errors and status delivery are the existing text
+rules: `window_closed` outside the window, a repeated completed key still
+answers its first id, and uncertain outcomes never resend automatically.
+Files never use the update template and never open or extend a window.
+
+Limits and MIME allow-list, read 2026-11-10 from Meta's page updated Oct 30,
+2026: https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/media
+(the old Cloud API reference URL redirects there). MB is conservatively
+enforced as 1,000,000 bytes on both sides.
+
+| Kind | Cap | MIME types |
+| --- | --- | --- |
+| image | 5 MB | image/jpeg, image/png, image/webp (static) |
+| audio | 16 MB | audio/aac, audio/amr, audio/mpeg, audio/mp4, audio/ogg (mono Opus) |
+| video | 16 MB | video/mp4, video/3gpp (H.264; AAC audio if present) |
+| document | 100 MB | text/plain, application/pdf, application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.openxmlformats-officedocument.presentationml.presentation |
+
+Meta additionally requires 8-bit RGB/RGBA images and static WebP at most 4096
+pixels per edge; codec/decode rejection by Meta remains a refused upload/send.
+The box checks signatures against extensions, including container member
+names for Office files and media tracks for MP4, and refuses unrecognized
+bytes. It does not transcode. Caption/filename and audio rules were read the
+same day at the image-messages, document-messages, audio-messages and
+video-messages pages under
+https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/ .
+
+`gc whatsapp publish --to <conversation_id> --file <path>` takes optional
+`--caption` or `--caption-file`; text/update flags cannot accompany a file.
+The adapter resolves symlinks and permits files only inside
+`WHATSAPP_OUTBOUND_ROOTS` (path-delimiter separated absolute directories;
+default the city directory and inbound media directory). Explicit empty or
+invalid roots fail closed. Both the supplied and resolved path must avoid
+`.gc/services`, `.gc/keys`, components `secrets`, `.ssh`, `.config`, and
+basenames ending `.env` or `.pem` or starting `id_`. These exclusions apply
+even to configured roots. Caption files obey the same path rule.
+
+The publish key binds the conversation, name, byte count, SHA256 and caption.
+Its journal records the upload handle before sending, and deterministic
+separate upload/send keys recover a lost response or a crash without a second
+upload/send. A failed upload sends nothing. The transcript records the name,
+byte count, SHA256 and caption, never file bytes. A changed file under a live
+publish key is a conflict. Local failures do not contact the gateway.
+
+Migration 0004 adds the upload metadata/claim table only. Old gateway code
+ignores it during the deploy gap. Apply migrations, deploy the gateway, then
+roll the pack per city; an old gateway refuses the new route, sending nothing.
+Only the mayor deploys and runs the post-merge live proof (one image and one
+PDF to the founder, inside the window); this lane tests exclusively on fakes.
+
 ## Business-scoped user ids (gp-ac0u)
 
 Meta names a WhatsApp user by a **wa_id** (the phone number), a **user_id** (a business-scoped
@@ -381,6 +471,50 @@ ship their binaries as optional dependencies.
 
 ## Deploy (the mayor's hand)
 
+**Files-out upgrade (gp-755k), after merge, on the already-live gateway:**
+
+1. In the Houmanoids deploy checkout, enter `whatsapp/gateway/` and run
+   `$PNPM install --frozen-lockfile` using the supported Node/pnpm toolchain.
+   Record the currently deployed Worker version and each city's pack pin
+   for rollback. Run `$PNPM exec wrangler d1 migrations
+   list whatsapp-gateway --remote`; confirm 0001–0003 are applied and
+   `0004_uploads.sql` is pending. Run `$PNPM exec wrangler d1 migrations apply
+   whatsapp-gateway --remote`, then list again and confirm 0004 applied.
+   The migration adds only `uploads`, metadata and claims with no media
+   bytes. The old Worker ignores it during this deploy gap; all old routes
+   continue to work. Apply 0004 **before deploying the new gateway**:
+   reversing that order makes upload/media-send requests fail and the daily
+   cron throw before it can run any retention cleanup, because `uploads`
+   does not exist yet.
+2. From that same directory, run `$PNPM exec wrangler deploy`. Check the
+   existing text door first: inside the owner's window, send one requested
+   text with `gc whatsapp publish --to <conversation_id> --text "Deploy check"`
+   and confirm its receipt and message id. Before each city's pin roll,
+   choose its allowed outbound directories and set `WHATSAPP_OUTBOUND_ROOTS`
+   in that city's adapter env (absolute directories separated by the host's
+   path delimiter). The default includes the city directory and inbound
+   media store; explicitly choose narrower roots where appropriate.
+   Then roll the pack pin and restart the whatsapp adapter per city,
+   through the mayor's normal city procedure.
+   Before this deploy an upgraded adapter's file upload receives 404 and
+   sends nothing. Text and inbound flows are unchanged.
+3. On citadel, with the founder's phone inside its window, send one requested
+   image and one PDF using `gc whatsapp publish --to <conversation_id> --file
+   <allowed-path> --caption "Requested live proof"`. Record both printed
+   idempotency keys and message ids, confirm receipt on the phone and the
+   name/bytes/SHA256 in the transcript. Repeating each key must return its
+   first message id with no duplicate on the phone. This live proof, the
+   deploy and city pin rolls are the mayor's work; lane tests use fakes only.
+4. If the checks fail, stop file publishes and restore each affected city's
+   previous pack pin and adapter env, then restart its adapter. From
+   `whatsapp/gateway/`, run `$PNPM exec wrangler rollback <previous-version-id>`
+   using the recorded Worker version and repeat the text check. Leave 0004
+   and its upload rows in place: the previous Worker ignores the additive
+   table. Preserve adapter journals and retry keys for recovery when files
+   out is restored; do not resend an uncertain file under a fresh key.
+
+The original initial-setup/deploy runbook follows.
+
 Everything below happens in the **Houmanoids** Cloudflare account, which holds `dynasty.computer`.
 Never Robert's account or his domain.
 
@@ -589,13 +723,15 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   UPDATE phones SET city_id = '<new>' WHERE city_id = '<old>';
   UPDATE deliveries SET city_id = '<new>' WHERE city_id = '<old>';
   UPDATE media SET city_id = '<new>' WHERE city_id = '<old>';
+  UPDATE uploads SET city_id = '<new>' WHERE city_id = '<old>';
   UPDATE sends SET city_id = '<new>' WHERE city_id = '<old>';
   DELETE FROM invite_codes WHERE city_id = '<old>' AND used_at IS NULL;
   UPDATE credentials SET revoked_at = unixepoch() WHERE city_id = '<old>' AND revoked_at IS NULL
   ```
 
   The new city is fresh, so no row collides. The box re-reads every held delivery from
-  `after=0`.
+  `after=0`. Moving upload grants and claims keeps a restored outbound journal's
+  pending file handles and idempotency keys usable under the new credential.
 - **Unbind an owner** (so it can join another city by a new invite code), by any id it is known
   by: its `conversation_id`, its current `user_id`, or the number a PR 73 binding holds:
 
@@ -634,6 +770,9 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   redelivery. The daily cron also clears any id left on a body-less row.
 - **Sends** keep the owner's `conversation_id` with their idempotency key for 30 days (statuses
   reach the city under it), even after the owner is unbound.
+- **Uploads.** The `uploads` table keeps each file's name in clear, its type,
+  size, declared SHA-256, city, handles and idempotency state for 30 days.
+  The daily cron purges expired rows. It stores no file bytes.
 - **Media.** Media ids are kept 7 days (Meta's lifetime for a webhook media id). No media bytes
   are ever stored: `GET /v1/media/<id>` streams Meta's bytes through.
 - **Strangers.** An unknown sender's row (last canned reply, code attempts) is pruned after 7 days.

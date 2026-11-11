@@ -94,11 +94,28 @@ export function fakeGraph() {
   const failures: Failure[] = [];
   const media = new Map<string, { mime: string; bytes: Uint8Array }>();
   /** Runs after Meta "accepts" a send and before the answer leaves (a status can race the send). */
-  const hooks: { onSend: ((wamid: string) => Promise<void>) | null } = { onSend: null };
+  const hooks: { onSend: ((wamid: string) => Promise<void>) | null; onUpload: (() => Promise<void>) | null } = { onSend: null, onUpload: null };
   let sent = 0;
   const impl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const req = new Request(input, init);
     const url = new URL(req.url);
+    if (req.method === "POST" && url.pathname.endsWith("/media")) {
+      const record = { url, method: req.method, authorization: req.headers.get("authorization"),
+        body: { chunks: [] as Uint8Array[], complete: false } };
+      calls.push(record);
+      const reader = req.body!.getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        record.body.chunks.push(value);
+      }
+      record.body.complete = true;
+      if (hooks.onUpload) await hooks.onUpload();
+      const failure = failures.shift();
+      if (failure === "network") throw new TypeError("fetch failed");
+      if (failure) return Response.json(failure.body, { status: failure.status });
+      return Response.json({ id: `upload-${uniq()}` });
+    }
     const body = req.method === "POST" ? ((await req.json()) as Record<string, any>) : null;
     calls.push({ url, method: req.method, authorization: req.headers.get("authorization"), body });
     const failure = failures.shift();

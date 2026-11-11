@@ -35,8 +35,9 @@
 // message ids, the settled receipt), so a retry under the same key resumes
 // at the failed chunk and never asks for a delivered one again, and a
 // settled key answers its receipt without a gateway call, across restarts.
-// A lost progress write is therefore safe: the retry re-asks the gateway
-// under the same chunk key and gets the same answer.
+// Text retries can reconstruct their chunk keys after a lost progress write.
+// Files must persist their upload handle before sending. A missing file entry
+// can still recover a completed send by its key, even after the window closes.
 //
 // THE RECIPIENT (gp-g02t; the mayor's (A), 12:05Z 11/6). A reply names its
 // conversation, the key the inbound side files the owner under (render.js
@@ -82,6 +83,8 @@ import path from 'node:path';
 import { conversationRef } from './gc.js';
 import { isTransient } from './http.js';
 import { lastFour, writeFileAtomic } from './ledger.js';
+import { killPoint } from './clock.js';
+import { outboundRoots, prepareFile, readCaption, fileTranscript } from './outbound-file.js';
 
 export const outboundChunkChars = 4096;
 export const PROGRESS_FILE = 'outbound_progress.json';
@@ -151,7 +154,10 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 
 // The per-key progress store: key -> {endpoint, conversation_id, text_sha256,
 // transcript_sha256?, chunks, delivered, message_ids, receipt?, recording?,
-// updated_at}. Bounded by age and count; rewritten atomically on change.
+// updated_at}. Text entries are bounded by age and count. File recovery records
+// stay for the gateway's 30-day idempotency horizon and are never count-evicted:
+// keeping the handle lets a pending send resume without another upload.
+// Rewritten atomically on change; no media bytes are stored here.
 // An entry written before gp-g02t names its conversation under wa_id, that
 // field's old name; the value was always the conversation id gc (or the
 // operator's --to) named, and entryConversation reads either.
@@ -173,11 +179,13 @@ function createProgressStore({ file, clock, log, cap = 1024, ttlMs = 7 * DAY_MS 
   const prune = () => {
     const now = clock();
     for (const [key, e] of entries) {
-      if (now - (Number(e.updated_at) || 0) > ttlMs) entries.delete(key);
+      const retention = e.endpoint === 'file' ? 30 * DAY_MS : ttlMs;
+      if (now - (Number(e.updated_at) || 0) > retention) entries.delete(key);
     }
-    if (entries.size > cap) {
-      const oldest = [...entries.entries()].sort((a, b) => (a[1].updated_at || 0) - (b[1].updated_at || 0));
-      for (const [key] of oldest.slice(0, entries.size - cap)) entries.delete(key);
+    const counted = [...entries.entries()].filter(([, e]) => e.endpoint !== 'file');
+    if (counted.length > cap) {
+      const oldest = counted.sort((a, b) => (a[1].updated_at || 0) - (b[1].updated_at || 0));
+      for (const [key] of oldest.slice(0, counted.length - cap)) entries.delete(key);
     }
   };
 
@@ -189,10 +197,13 @@ function createProgressStore({ file, clock, log, cap = 1024, ttlMs = 7 * DAY_MS 
       prune();
       try {
         writeFileAtomic(file, `${JSON.stringify({ version: 1, entries: Object.fromEntries(entries) })}\n`);
+        return true;
       } catch (err) {
-        // Safe to carry on: a retry re-asks the gateway under the same
-        // chunk key and gets the same answer without a second Meta call.
+        // Text can reconstruct its chunk key; file callers must check this
+        // result before uploading or sending. Receipt writes can be retried
+        // through the gateway's stored answer under the same send key.
         log(`outbound progress write failed (${err.code ?? err.message}); kept in memory`);
+        return false;
       }
     },
   };
@@ -220,6 +231,10 @@ export function createPublisher({
   ledger,
   onWindowClosed = () => {},
   updateLanguage = 'en_US',
+  cityDir,
+  mediaDir,
+  outboundRootConfig,
+  mediaGateway = gateway,
 }) {
   const progress = createProgressStore({ file: path.join(stateDir, PROGRESS_FILE), clock, log });
   const updatesFile = path.join(stateDir, UPDATES_FILE);
@@ -309,6 +324,10 @@ export function createPublisher({
       kind = 'transient';
       reason = 'in_flight';
       hint = 'The gateway is still sending this key to WhatsApp: retry shortly with the same idempotency key.';
+    } else if (err?.progressSave) {
+      kind = 'transient';
+      reason = 'outbound_progress_unavailable';
+      hint = 'The file send is paused because its journal could not be saved. Restore state-directory writes, then retry with the same idempotency key.';
     } else if (isTransient(err) || err?.malformed || err?.noMessageId) {
       kind = 'transient';
       reason = 'gateway_unavailable';
@@ -333,9 +352,9 @@ export function createPublisher({
     const entries = Array.isArray(answer?.windows) ? answer.windows : [];
     const entry = entries.find((w) => isObject(w) && String(w.conversation_id) === conversationId);
     if (!entry) return { refused: 'not_listed' };
-    if (!Object.hasOwn(entry, 'user_id')) return { to: conversationId }; // PR 73's window: its owner key
+    if (!Object.hasOwn(entry, 'user_id')) return { to: conversationId, closes: entry.window_closes_at }; // PR 73's window: its owner key
     const userId = typeof entry.user_id === 'string' ? entry.user_id.trim() : '';
-    return userId ? { to: userId } : { refused: 'no_user_id' };
+    return userId ? { to: userId, closes: entry.window_closes_at } : { refused: 'no_user_id' };
   }
 
   // Resolves the recipient, then sends to it; a failed read or a refusal is
@@ -350,7 +369,7 @@ export function createPublisher({
     if (resolved.refused) {
       return failure(Object.assign(new Error('no recipient'), { status: 403, recipient: resolved.refused }), context);
     }
-    return send(resolved.to);
+    return send(resolved.to, resolved.closes);
   }
 
   // Runs one key's work once: a concurrent call with the same key awaits
@@ -448,6 +467,104 @@ export function createPublisher({
     return { status: 200, json };
   }
 
+  async function handleFile(pub, { key, sessionId, conversationId, conversation, cli }) {
+    let file, caption;
+    try {
+      if (pub.text !== undefined && pub.text !== '') return bad('use caption or caption_file with file, not text');
+      if (pub.caption !== undefined && pub.caption_file !== undefined) return bad('use caption or caption_file, not both');
+      if (pub.caption !== undefined && typeof pub.caption !== 'string') return bad('caption must be text');
+      const roots = outboundRoots({ cityDir, mediaDir, configured: outboundRootConfig });
+      file = prepareFile(pub.file, { roots });
+      caption = pub.caption_file !== undefined ? readCaption(pub.caption_file, { roots }) : (pub.caption ?? '');
+      if ([...caption].length > 1024) return bad('caption exceeds 1024 characters');
+      if (file.kind === 'audio' && caption) return bad('WhatsApp audio does not support a caption');
+    } catch (err) { return bad(err.code ? `file refused: ${err.code}` : err.message); }
+    const descriptor = { name: file.name, size: file.size, sha256: file.sha256, mime: file.mime, kind: file.kind };
+    const text = fileTranscript(descriptor, caption);
+    const textSha = sha256Hex(JSON.stringify([conversationId, descriptor, caption]));
+    const existing = progress.get(key);
+    if (existing && (existing.endpoint !== 'file' || entryConversation(existing) !== conversationId || existing.text_sha256 !== textSha)) return conflict(conversation, key);
+    if (existing?.receipt) {
+      const answer = { status: 200, json: clone(existing.receipt) };
+      return cli ? withTranscript(answer, { key, sessionId, conversationId, text }) : answer;
+    }
+    const context = { conversationId, conversation, key, chunks: 1, delivered: 0 };
+    const answer = await once(key, { conversationId, textSha, endpoint: 'file' }, conversation,
+      () => chain(conversationId, () => toOwner(context, async (to, closes) => {
+        let entry = progress.get(key);
+        if (!entry) {
+          entry = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
+            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [] };
+        }
+        const operation = sha256Hex(JSON.stringify([key, conversationId, textSha]));
+        let uploading = false;
+        try {
+          const recoverOnly = !entry.media_id && (!Number.isFinite(closes) || closes * 1000 <= clock());
+          const saveBeforeSend = () => {
+            if (!progress.save(key, entry)) throw Object.assign(new Error('file journal write failed'), { progressSave: true });
+          };
+          if (!entry.media_id && !recoverOnly) {
+            saveBeforeSend();
+            killPoint('before-media-upload', key);
+            uploading = true;
+            const uploaded = await mediaGateway.upload(file, `file-upload:${operation}`);
+            uploading = false;
+            killPoint('after-media-upload', key);
+            if (!str(uploaded?.media_id) || !Number.isFinite(uploaded.expires_at)) throw Object.assign(new Error('invalid upload answer'), { malformed: true });
+            entry.media_id = uploaded.media_id;
+            entry.media_expires_at = uploaded.expires_at;
+          }
+          // A delayed resume starts the send's retention horizon now, not at
+          // upload time. Save before sending so a lost reply cannot age it out.
+          if (!recoverOnly) saveBeforeSend();
+          killPoint('after-media-journal', key);
+          // With no journal handle, probe the existing send key before refusing.
+          // The gateway checks that key before the window and grant. This sentinel
+          // is not a gateway UUID handle, so even a window reopening during the
+          // request cannot cause a new Meta send. No upload is made for the probe.
+          const sent = await gateway.send({ to, idempotency_key: `file-send:${operation}`, type: file.kind,
+            media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } });
+          killPoint('after-media-send', key);
+          if (!str(sent?.message_id)) throw Object.assign(new Error('missing message id'), { noMessageId: true });
+          entry.delivered = 1;
+          entry.message_ids = [sent.message_id];
+          entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
+            metadata: { chunks: '1', message_ids: sent.message_id, file_name: file.name, file_bytes: String(file.size), file_sha256: file.sha256 } };
+          progress.save(key, entry);
+          killPoint('after-media-receipt', key);
+          ledger?.noteSend?.(conversationId, { type: file.kind, message_id: sent.message_id, at: clock() });
+          return { status: 200, json: entry.receipt };
+        } catch (err) {
+          if (err?.status === 422 && err.json?.error === 'window_closed') ledger?.noteWindowClosed?.(conversationId, clock());
+          const refused = failure(err, context);
+          if (!entry.media_id && err?.json?.error === 'media_not_found') {
+            refused.json.failure_kind = 'transient';
+            refused.json.metadata.reason = 'window_changed';
+            refused.json.metadata.hint = 'No completed send was found and the window changed during recovery. Retry with the same idempotency key.';
+            refused.json.error = refused.json.metadata.hint;
+          } else if (err?.json?.error === 'media_not_found' || err?.json?.error === 'media_expired') {
+            refused.json.failure_kind = 'permanent';
+            refused.json.metadata.reason = 'media_expired';
+            refused.json.metadata.hint = 'The upload handle is unavailable or expired. The gateway found no completed send under this key. '
+              + 'Check the chat, then start a new publish with a fresh key if the owner still needs the file; repeating this key cannot restore the handle.';
+            refused.json.error = refused.json.metadata.hint;
+          }
+          if (uploading && err?.json?.error === 'outcome_unknown') {
+            refused.json.metadata.hint = 'Meta may have kept the upload, but the gateway has no confirmed handle. Nothing was sent to the owner. '
+              + 'This key will not upload again; an operator must decide whether to start a new publish with a fresh key.';
+            refused.json.error = refused.json.metadata.hint;
+          }
+          if (refused.json.metadata.reason === 'window_closed') {
+            refused.json.metadata.hint = 'Files can be sent only after the owner writes again. A file cannot use the update template. '
+              + `Retry with the same --idempotency-key ${key} to recover any completed send without sending twice.`;
+            refused.json.error = refused.json.metadata.hint;
+          }
+          return refused;
+        }
+      })));
+    return cli ? withTranscript(answer, { key, sessionId, conversationId, text }) : answer;
+  }
+
   async function handlePublish(raw) {
     try {
       let pub;
@@ -458,14 +575,16 @@ export function createPublisher({
       if (!sessionId) return { status: 400, json: { error: ATTRIBUTION_ERROR } };
       const conversationId = str(pub.conversation?.conversation_id);
       if (!conversationId) return bad('conversation.conversation_id (the owner\'s conversation id) is required');
-      if (typeof pub.text !== 'string' || !pub.text.trim()) return bad('text is required');
       if (pub.idempotency_key !== undefined && (typeof pub.idempotency_key !== 'string' || !pub.idempotency_key)) {
         return bad('idempotency_key must be a non-empty string when given');
       }
       const key = pub.idempotency_key || `whatsapp-${crypto.randomUUID()}`;
       const conversation = { ...conversationRef(city, conversationId), ...pub.conversation, conversation_id: conversationId };
-      const textSha = sha256Hex(pub.text);
       const cli = metadata.origin === 'cli';
+      if (Object.hasOwn(pub, 'file')) return await handleFile(pub, { key, sessionId, conversationId, conversation, cli });
+      if (typeof pub.text !== 'string' || !pub.text.trim()) return bad('text is required');
+      if (pub.caption !== undefined || pub.caption_file !== undefined) return bad('a caption requires a file');
+      const textSha = sha256Hex(pub.text);
 
       // A settled key answers its receipt: gc's retry, and gc's call-back
       // for a CLI publish (or an update) under the same key, never re-send.
@@ -550,6 +669,7 @@ export function createPublisher({
       let body;
       try { body = JSON.parse(raw); } catch { return bad('invalid JSON'); }
       if (!isObject(body)) return bad('the body must be a JSON object');
+      if (Object.hasOwn(body, 'file') || body.caption !== undefined || body.caption_file !== undefined) return bad('files cannot use the update template');
       const to = str(body.to);
       if (!to) return bad('to (the owner\'s conversation id) is required');
       if (typeof body.text !== 'string' || !body.text.trim()) {

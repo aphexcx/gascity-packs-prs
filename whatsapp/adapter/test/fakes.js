@@ -12,6 +12,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mediaTypes } from '../src/outbound-file.js';
 
 export const ADAPTER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CITY = 'test-city';
@@ -103,6 +104,10 @@ export async function startFakeGateway({ clock } = {}) {
     ackBehaviour: [], // 'ok' | 500 | 'hang'
     sends: [], // every Graph call the gateway would make
     sendAnswers: new Map(), // idempotency_key -> answer
+    uploads: new Map(), // outbound handle -> fake Meta bytes and metadata
+    uploadAnswers: new Map(),
+    uploadCalls: [],
+    uploadFailures: [],
     sendFailOn: new Set(), // idempotency keys that answer 500 once
     bound: new Set(),
     // PR 76's additions (gp-ac0u, gp-0g2s at ba82ab46): an owner's user_id
@@ -188,7 +193,9 @@ export async function startFakeGateway({ clock } = {}) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://gw');
     const route = `${req.method} ${url.pathname}`;
-    const body = req.method === 'POST' ? await readJSON(req) : undefined;
+    const rawUpload = [];
+    if (route === 'POST /v1/uploads') for await (const chunk of req) rawUpload.push(chunk);
+    const body = route === 'POST /v1/uploads' ? undefined : req.method === 'POST' ? await readJSON(req) : undefined;
     g.requests.push({ route, at: now(), body });
     if (route === 'GET /healthz') return send(res, 200, { ok: true, pending_total: g.deliveries.size - g.acked.size, last_webhook_at: null });
     if (route === 'POST /v1/enroll') {
@@ -198,6 +205,23 @@ export async function startFakeGateway({ clock } = {}) {
     }
     const auth = req.headers.authorization ?? '';
     if (g.revoked || auth !== `Bearer ${g.credential}`) return send(res, 401, { error: 'unauthorized' });
+
+    if (route === 'POST /v1/uploads') {
+      const key = req.headers['idempotency-key'];
+      if (g.uploadAnswers.has(key)) return send(res, 200, g.uploadAnswers.get(key));
+      const rule = mediaTypes[req.headers['content-type']];
+      const bytes = Buffer.concat(rawUpload);
+      if (!rule) return send(res, 415, { error: 'unsupported_media_type' });
+      if (bytes.length > rule.maxBytes) return send(res, 413, { error: 'media_too_large' });
+      const failure = g.uploadFailures.shift();
+      if (failure) return send(res, failure, { error: 'meta_error' });
+      const answer = { media_id: `media.out.${g.uploads.size + 1}`, expires_at: Math.floor(now() / 1000) + 30 * 86400 };
+      const upload = { ...answer, bytes, kind: rule.kind, mime: req.headers['content-type'], name: decodeURIComponent(req.headers['x-filename']), key };
+      g.uploads.set(answer.media_id, upload);
+      g.uploadCalls.push(upload);
+      g.uploadAnswers.set(key, answer);
+      return send(res, 200, answer);
+    }
 
     if (route === 'POST /v1/invites') {
       const invite = { code: String(100000 + g.invites.length), expires_at: Math.floor((now() + DAY_MS) / 1000) };
@@ -237,6 +261,10 @@ export async function startFakeGateway({ clock } = {}) {
       if (g.v2Owners.has(owner) && !g.userIds.get(owner)) return send(res, 403, { error: 'not_bound' });
       if (g.sendFailOn.has(key)) { g.sendFailOn.delete(key); return send(res, 500, { error: 'graph failed' }); }
       if (type !== 'template' && !g.windowOpen(owner)) return send(res, 422, { error: 'window_closed' });
+      if (['image', 'audio', 'video', 'document'].includes(type)) {
+        const uploaded = g.uploads.get(body.media?.id);
+        if (!uploaded || uploaded.kind !== type || uploaded.expires_at <= now() / 1000) return send(res, 404, { error: 'media_not_found' });
+      }
       const answer = { message_id: `wamid.out.${g.sends.length + 1}` };
       g.sends.push({ ...body, owner, at: now() });
       g.sendAnswers.set(key, answer);
@@ -274,6 +302,7 @@ export const FAKE_GATEWAY_ROUTES = [
   'GET /v1/inbox',
   'POST /v1/inbox/ack',
   'POST /v1/send',
+  'POST /v1/uploads',
   'POST /v1/read',
   'GET /v1/window',
   'GET /v1/media/<media_id>',
@@ -453,7 +482,10 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
 
     if (req.method === 'POST' && p === '/extmsg/inbound') return inbound(req, res, body);
     if (req.method === 'POST' && p === '/extmsg/adapters') { f.registrations.push(body); return send(res, 200, { status: 'registered' }); }
-    if (req.method === 'POST' && p === '/extmsg/outbound') { f.outbound.push(body); return send(res, 200, { ok: true }); }
+    if (req.method === 'POST' && p === '/extmsg/outbound') {
+      f.outbound.push(body);
+      return send(res, 200, f.recordOutbounds ? { TranscriptEntry: { id: f.outbound.length } } : { ok: true });
+    }
     const receipt = p.match(/^\/extmsg\/inbound\/receipts\/(.+)$/);
     if (req.method === 'GET' && receipt) {
       const id = decodeURIComponent(receipt[1]);
