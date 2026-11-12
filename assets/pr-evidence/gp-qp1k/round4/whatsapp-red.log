@@ -1,0 +1,144 @@
+TAP version 13
+# Subtest: never-silent committed proof replay repairs the template activity after a notice write fault
+    # Subtest: text: definite-failure
+    ok 1 - text: definite-failure
+      ---
+      duration_ms: 221.053459
+      type: 'test'
+      ...
+    # Subtest: text: uncertain-stop
+    ok 2 - text: uncertain-stop
+      ---
+      duration_ms: 243.671209
+      type: 'test'
+      ...
+    # Subtest: text: health
+    ok 3 - text: health
+      ---
+      duration_ms: 184.441417
+      type: 'test'
+      ...
+    # Subtest: captioned-file: definite-failure
+    ok 4 - captioned-file: definite-failure
+      ---
+      duration_ms: 415.958083
+      type: 'test'
+      ...
+    # Subtest: captioned-file: uncertain-stop
+    ok 5 - captioned-file: uncertain-stop
+      ---
+      duration_ms: 442.199667
+      type: 'test'
+      ...
+    # Subtest: captioned-file: health
+    ok 6 - captioned-file: health
+      ---
+      duration_ms: 400.746334
+      type: 'test'
+      ...
+    # Subtest: update-template: definite-failure
+    not ok 7 - update-template: definite-failure
+      ---
+      duration_ms: 152.921833
+      type: 'test'
+      location: '<worktree>/whatsapp/adapter/test/never-silent.test.js:240:83'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+        + []
+        - [
+        -   1794470460000
+        - ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1794470460000
+      actual:
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://<worktree>/whatsapp/adapter/test/never-silent.test.js:276:14)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://<worktree>/whatsapp/adapter/test/never-silent.test.js:240:75)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: update-template: uncertain-stop
+    not ok 8 - update-template: uncertain-stop
+      ---
+      duration_ms: 207.530792
+      type: 'test'
+      location: '<worktree>/whatsapp/adapter/test/never-silent.test.js:240:83'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+        + []
+        - [
+        -   1794470460000
+        - ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1794470460000
+      actual:
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://<worktree>/whatsapp/adapter/test/never-silent.test.js:276:14)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://<worktree>/whatsapp/adapter/test/never-silent.test.js:240:75)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: update-template: health
+    not ok 9 - update-template: health
+      ---
+      duration_ms: 155.19075
+      type: 'test'
+      location: '<worktree>/whatsapp/adapter/test/never-silent.test.js:240:83'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+        + []
+        - [
+        -   1794470460000
+        - ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1794470460000
+      actual:
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://<worktree>/whatsapp/adapter/test/never-silent.test.js:276:14)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://<worktree>/whatsapp/adapter/test/never-silent.test.js:240:75)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    1..9
+not ok 1 - never-silent committed proof replay repairs the template activity after a notice write fault
+  ---
+  duration_ms: 2424.905959
+  type: 'test'
+  location: '<worktree>/whatsapp/adapter/test/never-silent.test.js:238:1'
+  failureType: 'subtestsFailed'
+  error: '3 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 10
+# suites 0
+# pass 6
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2468.318458
