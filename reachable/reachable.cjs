@@ -116,7 +116,7 @@ function stopIdentity(input) {
 
 // The active file is read through one descriptor. A retained boundary digest
 // also catches truncate-and-rewrite on a filesystem that reuses the inode.
-function readEvents(city, cursor, { now = Date.now(), start = performance.now() } = {}) {
+function readEvents(city, cursor, { start = performance.now() } = {}) {
   const dir = path.join(city, '.gc');
   const file = path.join(dir, 'events.jsonl');
   const fd = fs.openSync(file, 'r');
@@ -145,10 +145,11 @@ function readEvents(city, cursor, { now = Date.now(), start = performance.now() 
       const archives = names.flatMap(name => {
         const m = /^events\.jsonl\.archive-(\d{8}T\d{6}Z)-seq-(\d+)-(\d+)\.gz$/.exec(name);
         if (!m) return [];
-        const stamp = m[1].replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
-        return Number(m[3]) > seq && (cursor || Date.parse(stamp) >= now - LIMITS.age) ? [{ name, first: Number(m[2]) }] : [];
+        // Message expiry belongs in reduction. Older routing and wake rows
+        // still identify the authors of replies delivered within 24 hours.
+        return Number(m[3]) > seq ? [{ name, first: Number(m[2]) }] : [];
       }).sort((a, b) => a.first - b.first);
-      for (const archive of archives) {
+      for (const [index, archive] of archives.entries()) {
         checkDeadline(start);
         const decodedOffset = cursor?.archive?.name === archive.name ? cursor.archive.offset : 0;
         const contents = archiveSlice(path.join(dir, archive.name), decodedOffset, start);
@@ -159,6 +160,9 @@ function readEvents(city, cursor, { now = Date.now(), start = performance.now() 
         for (const row of recovered) rows.push(row);
         if (recovered.length) seq = recovered.at(-1).seq;
         if (contents.length === CHUNK) return { rows, caughtUp: false, cursor: { dev: cursor?.dev || 0, ino: cursor?.ino || 0, offset: cursor?.offset || 0, boundary: cursor?.boundary || '', seq, archive: { name: archive.name, offset: decodedOffset + end } } };
+        // Persist progress between small archives too; their aggregate can
+        // exceed the deadline even when each one fits in a single slice.
+        if (index + 1 < archives.length) return { rows, caughtUp: false, cursor: { dev: cursor?.dev || 0, ino: cursor?.ino || 0, offset: cursor?.offset || 0, boundary: cursor?.boundary || '', seq } };
       }
     }
     checkDeadline(start);

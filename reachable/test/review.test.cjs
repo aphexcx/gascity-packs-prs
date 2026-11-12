@@ -236,6 +236,33 @@ test('codex 2: city-relative local imports resolve channels and unrelated packs'
   assert.deepEqual(aliasesFromImports(imports, f.city), ['talk']);
   assert.equal(install({ ...f.o, imports }).installed, true);
 });
+test('codex 3: cold replay retains old wake and inbound identities for recent replies', t => {
+  for (const source of ['wake', 'inbound']) {
+    const f = fixture(t); f.o.env.GC_SESSION_ID = 'session-new';
+    command('mode', ['enforce'], f.o);
+    const ts = new Date(NOW - 2 * 86400000).toISOString();
+    const old = source === 'wake' ? { seq: 1, type: 'session.woke', ts, subject: 'mayor', session_id: 'session-old' } : { ...row(1, 'extmsg.inbound', { target_session: 'session-old' }), ts };
+    fs.writeFileSync(f.log + '.archive-20251231T120000Z-seq-1-1.gz', zlib.gzipSync(line(old)));
+    fs.writeFileSync(f.log, line(row(2, 'extmsg.inbound', { target_session: '' })) + line({ ...row(3, 'extmsg.outbound', { session: 'session-old' }), subject: 'session-old' }) + line({ seq: 4, type: 'session.woke', ts: new Date(NOW - 10000).toISOString(), subject: 'mayor', session_id: 'session-new' }));
+    assert.deepEqual(runHook({ ...input('after-handoff'), tool_name: 'Write' }, f.o), {});
+    assert.equal(command('status', ['--json'], f.o).waiting.length, 0);
+  }
+});
+test('codex 3: multiple archives preserve progress before the per-call deadline', t => {
+  const f = fixture(t);
+  for (let seq = 1; seq <= 4; seq++) fs.writeFileSync(f.log + `.archive-20260102T120000Z-seq-${seq}-${seq}.gz`, zlib.gzipSync(line(row(seq, 'example.padding'))));
+  fs.writeFileSync(f.log, line(row(5, 'example.padding')));
+  const shim = path.join(f.city, 'slow-archive.cjs');
+  fs.writeFileSync(shim, 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600);');
+  const before = process.env.NODE_OPTIONS; process.env.NODE_OPTIONS = '--require ' + shim;
+  try {
+    let result = readEvents(f.city, null, { now: NOW });
+    assert.equal(result.caughtUp, false);
+    const seen = result.rows.map(r => r.seq);
+    for (let n = 0; !result.caughtUp && n < 5; n++) { result = readEvents(f.city, result.cursor, { now: NOW }); seen.push(...result.rows.map(r => r.seq)); }
+    assert.deepEqual(seen, [1, 2, 3, 4, 5]);
+  } finally { if (before === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = before; }
+});
 test('review 6: resolved manifests determine aliases for every supported source form', t => {
   const f = fixture(t); const gcHome = path.join(f.city, 'home');
   const sources = [

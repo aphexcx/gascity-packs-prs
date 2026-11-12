@@ -7,4 +7,4 @@ Exit: 0
 First full run: 1 failed, 2694 passed, 126 skipped, 2 warnings, 10734 subtests passed
 Failure: existing PnpmShimTests concurrent wait-message count assertion
 Independent PnpmShimTests rerun: 17 passed, 513 deselected
-Final standalone reachable suite after twelve further regression cases: 66 passed, 0 failed
+Final standalone reachable suite after fourteen further regression cases: 68 passed, 0 failed

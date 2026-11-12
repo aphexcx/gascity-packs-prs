@@ -118,6 +118,9 @@ Archives replay in bounded decoded slices, including the window before a
 rotated archive is published. Stop records a sequence fence so unread older
 messages stay seen. The registered five-second harness timeout leaves cleanup
 time after the internal two-second measurement deadline.
+Cold replay also reads old archives for session identities. Old messages do
+not become waits. Progress is saved between archives, and enforcement waits
+until catch-up completes; a city with a long history can need several calls.
 Stop uses the harness prompt ID, or a bounded read of its transcript to obtain
 the last user-row UUID. It keeps only the hashed identity, so two tool-free
 turns with the same answer remain distinct without storing their text.
