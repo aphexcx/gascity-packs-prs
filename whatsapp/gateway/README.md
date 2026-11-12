@@ -20,7 +20,7 @@ A city box never holds a Meta secret. It holds one gateway credential, minted at
 - Built by bead gp-nn90 on the base aphexcx/gascity-packs-prs main
   8cb01a83bdaa6b4b42aeb63bae1ee4a6d369262f. The box side is the `whatsapp` pack's adapter
   (`whatsapp/adapter/`, bead gp-9hf1), which implements the other half of the contract below.
-- Robert Welch's whatsapp-ingress Worker was read as a reference for the relay
+- A hosting partner's whatsapp-ingress Worker was read as a reference for the relay
   contract it proved. Nothing was copied from it, and nothing here talks to it.
 
 ## Layout
@@ -516,7 +516,7 @@ ship their binaries as optional dependencies.
 The original initial-setup/deploy runbook follows.
 
 Everything below happens in the **Houmanoids** Cloudflare account, which holds `dynasty.computer`.
-Never Robert's account or his domain.
+Never a hosting partner's account or its domain.
 
 **Before step 1: the boxes' adapter** (gp-g02t). Every box that runs the whatsapp pack must run
 its adapter at this change's pack pin, or later, before step 3. That adapter keys every owner by

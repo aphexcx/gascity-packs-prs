@@ -66,7 +66,7 @@ the full Go verification was still incomplete at review time. The mayor's
 post-READY gate and read are not claimed by this self-review.
 
 `history-check.log` verifies the base is an ancestor, the removed snapshot is not,
-all 351 Syndi commit IDs are unchanged, and the changed paths are within scope.
+all 351 commit IDs of the customer city's mayor are unchanged, and the changed paths are within scope.
 The evidence commit changes no pack source: the whole `gchat/` tree remains
 `411470a83efecf6a8d41da6316f424bd800b60ab`, as at the reviewed source commit.
 `source-identity.log` is empty and its diff command exited zero. The compressed
