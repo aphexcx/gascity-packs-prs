@@ -42,4 +42,3 @@ The first form reacts to the latest message routed to your session, with
 `eyes` when you give no name. The second names one message by its channel
 id and its timestamp. Use the second when another message may have reached
 you since.
-

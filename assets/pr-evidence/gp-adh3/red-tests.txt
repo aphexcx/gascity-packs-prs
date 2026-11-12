@@ -11,8 +11,8 @@ name = 'gchat'
 >       rows = table_rows(read(name))
                ^^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_texting_rules.py:75: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_texting_rules.py:75:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
 
@@ -35,8 +35,8 @@ name = 'slack'
 >       rows = table_rows(read(name))
                ^^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_texting_rules.py:75: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_texting_rules.py:75:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 text = '{{ define "slack-v0" -}}\nYou are bound to a Slack conversation shared with humans and other agents.\n{{- if .Templat...e human see it. Company delegation never happens in DMs; requests and\nresults stay visible in the room.\n{{- end }}\n'
 
@@ -59,8 +59,8 @@ name = 'whatsapp'
 >       rows = table_rows(read(name))
                ^^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_texting_rules.py:75: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_texting_rules.py:75:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 text = '---\nname: whatsapp\ndescription: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor...hat has not written to you. A bound phone wrote\n  at least its invite code; any other number is not yours to reach.\n'
 
@@ -80,8 +80,8 @@ ________________ test_the_five_rows_are_the_same_in_every_text _________________
 >       gchat = table_rows(read("gchat"))
                 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_texting_rules.py:86: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_texting_rules.py:86:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
 
@@ -104,8 +104,8 @@ lead = '- **A reaction comes first.**'
 >       gchat = rule(read("gchat"), lead)
                 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_texting_rules.py:93: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_texting_rules.py:93:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
 lead = '- **A reaction comes first.**'
@@ -129,8 +129,8 @@ lead = '- **A reaction alone.**'
 >       gchat = rule(read("gchat"), lead)
                 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_texting_rules.py:93: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_texting_rules.py:93:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
 lead = '- **A reaction alone.**'
@@ -154,8 +154,8 @@ lead = '- **✅ and ⏰ are yours, and never a promise.**'
 >       gchat = rule(read("gchat"), lead)
                 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_texting_rules.py:93: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_texting_rules.py:93:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
 lead = '- **✅ and ⏰ are yours, and never a promise.**'
@@ -179,8 +179,8 @@ lead = '- **Fixed means fixed.**'
 >       gchat = rule(read("gchat"), lead)
                 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/test_texting_rules.py:93: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_texting_rules.py:93:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
 lead = '- **Fixed means fixed.**'
@@ -217,10 +217,10 @@ ______________________ test_reaction_vocabulary_contract _______________________
     def test_reaction_vocabulary_contract() -> None:
         prompt = FRAGMENT.read_text(encoding="utf-8")
         normalized = " ".join(prompt.split())
-    
+
         assert prompt.startswith('{{ define "slack-v0" -}}\n')
         assert prompt.endswith("{{- end }}\n")
-    
+
         respond = prompt.index("## When to respond")
 >       reactions = prompt.index("## Reactions")
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

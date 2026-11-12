@@ -28,7 +28,7 @@ __________________ test_the_rules_are_the_same_in_every_text ___________________
 >           assert rules_block(read(name)) == gchat, f"{name} differs from gchat"
 E           AssertionError: slack differs from gchat
 E           assert ['- **A react...at only', ...] == ['- **A react...at only', ...]
-E             
+E
 E             Right contains 5 more items, first extra item: '- Reply once per message. Do not follow up in the same thread unless you'
 E             Use -v to get more diff
 
@@ -38,15 +38,15 @@ ______________________ test_reaction_vocabulary_contract _______________________
     def test_reaction_vocabulary_contract() -> None:
         prompt = FRAGMENT.read_text(encoding="utf-8")
         normalized = " ".join(prompt.split())
-    
+
         assert prompt.startswith('{{ define "slack-v0" -}}\n')
         assert prompt.endswith("{{- end }}\n")
-    
+
         respond = prompt.index("## When to respond")
         reactions = prompt.index("## Reactions")
         reply = prompt.index("## How to reply")
         assert respond < reactions < reply
-    
+
         section = prompt[reactions:reply]
         for name in ("eyes", "mag", "+1", "white_check_mark", "alarm_clock"):
             assert f"| `{name}` |" in section, name
@@ -55,7 +55,7 @@ ______________________ test_reaction_vocabulary_contract _______________________
             "gc slack react --conversation-id Cxxx --message-id 1234.5678 [--emoji NAME]"
             in section
         )
-    
+
         assert (
             "a message to you that only confirms, thanks, agrees or closes a topic "
             "gets 👍 as the whole answer. No text follows it."
