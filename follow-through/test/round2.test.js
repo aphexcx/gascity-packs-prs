@@ -201,7 +201,7 @@ test('round2 wake consistency: no backward-day wake from a short midnight span',
   }
 });
 
-test('round2 night cap: status and doctor name owners with no daytime hours', async t => {
+test('round2 night cap: status names daytime exclusion without failing health', async t => {
   const h = harness(t);
   await h.edit(s => {
     consent(s, 'slack/invented-night-owner', true, opened);
@@ -210,10 +210,11 @@ test('round2 night cap: status and doctor name owners with no daytime hours', as
     setReminder(s, 'slack/invented-night-owner', 'Invented night reminder', opened + HOUR, opened);
   });
   await tick({ dir: h.dir, now: opened + HOUR, send: h.send });
-  assert.equal(h.mails.size, 1, 'requested reminders still arrive at night');
+  assert.equal([...h.mails.values()].filter(r => r.kind === 'reminder').length, 1, 'requested reminders still arrive at night');
+  assert.equal([...h.mails.values()].filter(r => r.kind === 'hours-notice').length, 1);
   const state = readState(h.dir);
   assert.match(statusText(status(state, opened + HOUR), state.owners), /Next wake slack\/invented-night-owner: none \(no recorded hours between 08:00 and 20:00\)/);
-  assert.deepEqual(doctor(state, opened + HOUR), ['owner has no recorded hours between 08:00 and 20:00: slack/invented-night-owner']);
+  assert.deepEqual(doctor(state, opened + HOUR), []);
 });
 
 test('round2 mail bodies: owner request, local and UTC times, mayor decides', async t => {

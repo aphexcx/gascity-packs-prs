@@ -16,6 +16,17 @@ const conversation = 'slack/example';
 const fakeSource = `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
+const sent = fs.existsSync(process.env.FT_TEST_SENT) ? fs.readFileSync(process.env.FT_TEST_SENT, 'utf8').trim().split('\\n').map(JSON.parse) : [];
+if (args[0] === 'bd') {
+  const key = args[args.indexOf('--metadata-field') + 1].slice('mail.dedup_key='.length);
+  if (!args.includes('--all') || !args.includes('--include-ephemeral') || !args.includes('--include-infra') ||
+      args[2] !== process.env.GC_CITY_PATH) process.exit(2);
+  if (process.env.FT_TEST_HISTORY_FAIL === 'yes') process.exit(1);
+  console.log(JSON.stringify(sent.filter(row => row.key === key).slice(0, 1).map(row => ({
+    id: 'invented-mail', issue_type: 'message', status: row.archived ? 'closed' : 'open', metadata: { 'mail.dedup_key': key },
+  }))));
+  process.exit(0);
+}
 fs.appendFileSync(process.env.FT_TEST_CALLS, JSON.stringify(args) + '\\n');
 const key = args[args.indexOf('--dedup') + 1];
 let calls = fs.readFileSync(process.env.FT_TEST_CALLS, 'utf8').trim().split('\\n').length;
@@ -24,8 +35,7 @@ if (process.env.FT_TEST_KILL_DURING === 'yes' && calls === 1) {
   process.kill(process.ppid, 'SIGKILL');
   process.exit(1);
 }
-const sent = fs.existsSync(process.env.FT_TEST_SENT) ? fs.readFileSync(process.env.FT_TEST_SENT, 'utf8').trim().split('\\n').map(JSON.parse) : [];
-if (!sent.some(row => row.key === key)) {
+if (!sent.some(row => row.key === key && !row.archived)) {
   fs.appendFileSync(process.env.FT_TEST_SENT, JSON.stringify({ key, args }) + '\\n');
 }
 `;
@@ -36,7 +46,7 @@ function fixture(t, overrides = {}) {
   const bin = path.join(root, 'fake-gc.cjs');
   fs.writeFileSync(bin, fakeSource, { mode: 0o700 });
   const dir = path.join(root, 'state');
-  const env = { ...process.env, GC_BIN: bin, FT_TEST_CALLS: path.join(root, 'calls.jsonl'),
+  const env = { ...process.env, GC_CITY_PATH: root, GC_BIN: bin, FT_TEST_CALLS: path.join(root, 'calls.jsonl'),
     FT_TEST_SENT: path.join(root, 'sent.jsonl'), ...overrides };
   const rows = file => fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
   const run = (time = now, killPhase = '') => new Promise(resolve => {
@@ -112,10 +122,34 @@ test('3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated
   }
 });
 
+test('archived fake-gc mail survives SIGKILL and a week of replay without another send', async t => {
+  for (const kind of ['follow-up', 'reminder']) await t.test(kind, async t => {
+    const h = fixture(t);
+    await seed(h, kind);
+    assert.equal((await h.run(now, 'sent')).signal, 'SIGKILL');
+    fs.writeFileSync(h.env.FT_TEST_SENT, h.sent().map(row => JSON.stringify({ ...row, archived: true })).join('\n') + '\n');
+    for (let day = 1; day <= 7; day++) assert.equal((await h.run(now + day * 86400000)).code, 0);
+    assert.equal(h.calls().length, 1);
+    assert.equal(h.sent().length, 1);
+    const raise = readState(h.dir).raises[0];
+    assert.equal(raise.state, 'sent');
+    assert.equal(raise.message_id, 'invented-mail');
+  });
+});
+
+test('unavailable mail history stops bounded recovery without replaying an uncertain send', async t => {
+  const h = fixture(t, { FT_TEST_HISTORY_FAIL: 'yes' });
+  await seed(h, 'reminder');
+  assert.equal((await h.run(now, 'sent')).signal, 'SIGKILL');
+  for (const minute of [1, 3, 7, 15, 31, 60]) assert.equal((await h.run(now + minute * 60000)).code, 0);
+  assert.equal(h.calls().length, 1);
+  assert.equal(readState(h.dir).raises[0].state, 'stopped');
+});
+
 test('13: three real gc failures then success make one delivered mail with one key', async t => {
   const h = fixture(t, { FT_TEST_FAILS: '3' });
   await seed(h, 'reminder');
-  for (let minute = 0; minute < 4; minute++) assert.equal((await h.run(now + minute * 60000)).code, 0);
+  for (const minute of [0, 1, 3, 7]) assert.equal((await h.run(now + minute * 60000)).code, 0);
   assert.equal(h.calls().length, 4);
   assert.equal(h.sent().length, 1);
   assert.equal(new Set(h.calls().map(args => args[5])).size, 1);
