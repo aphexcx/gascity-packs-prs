@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { readState, resolveStateDir, withState } from './state.js';
@@ -13,7 +12,7 @@ const specs = {
   consent: { on: boolean, off: boolean },
   hours: { hours: string, clear: boolean, tz: string },
   add: { conversation: string, summary: string, 'summary-file': string },
-  list: { conversation: string, all: boolean, json: boolean },
+  list: { conversation: string, wake: string, all: boolean, json: boolean },
   done: {}, drop: {},
   remind: { conversation: string, at: string, in: string, text: string, 'text-file': string, list: boolean, cancel: string, json: boolean },
   status: { json: boolean }, tick: {}, doctor: {},
@@ -22,7 +21,7 @@ const help = {
   consent: 'consent CONVERSATION --on | --off',
   hours: 'hours CONVERSATION --hours "Mon-Fri 09:00-18:00" --tz ZONE | --clear [--tz ZONE] | --tz ZONE',
   add: 'add --conversation PROVIDER/ID --summary TEXT | --summary-file PATH',
-  list: 'list [--conversation PROVIDER/ID] [--all] [--json]',
+  list: 'list [--conversation PROVIDER/ID] [--wake WAKE_ID] [--all] [--json]',
   done: 'done ID', drop: 'drop ID',
   remind: 'remind --conversation PROVIDER/ID (--at RFC3339 | --in DURATION) (--text TEXT | --text-file PATH)\nremind --list [--json] | --cancel ID',
   status: 'status [--json]', tick: 'tick (scheduled order)', doctor: 'doctor (pack health check)',
@@ -81,7 +80,8 @@ async function main(args) {
     return;
   }
   if (verb === 'list') {
-    const rows = readState(dir).items.filter(i => (values.all || ['open', 'raised'].includes(i.state)) && (!values.conversation || i.conversation === values.conversation));
+    const rows = readState(dir).items.filter(i => (values.all || values.wake || ['open', 'raised'].includes(i.state)) &&
+      (!values.conversation || i.conversation === values.conversation) && (!values.wake || i.wake_id === values.wake));
     printRows(rows, values.json, i => `${i.id} ${i.state} ${i.conversation}: ${i.summary} (opened ${iso(i.opened_at)})`);
     return;
   }
@@ -123,7 +123,7 @@ async function main(args) {
   });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await main(process.argv.slice(2)).catch(error => {
     console.error(String(error.message).replace(/[\r\n\u2028\u2029]+/g, ' '));
     process.exitCode = 1;

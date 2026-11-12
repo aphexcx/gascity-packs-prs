@@ -1,9 +1,34 @@
 import { randomUUID } from 'node:crypto';
 import { withState } from './state.js';
 import { DAY, HOUR, MINUTE, nextWake, recentWakes, wakeAllowed } from './schedule.js';
-import { sendMail } from './mail.js';
+import { assertMailBody, MAIL_TIMEOUT_MS, MAX_MAIL_BODY_BYTES, sendMail } from './mail.js';
 
 export const iso = ms => ms == null ? null : new Date(ms).toISOString();
+export const MAX_WAKE_ITEMS = 25;
+export const TICK_BUDGET_MS = 90_000;
+
+export function followUpBody(conversation, wakeId, items, maxBytes = MAX_MAIL_BODY_BYTES) {
+  const prefix = [`Follow-up due in ${conversation}.`, `Wake ${wakeId}.`];
+  const tail = 'Read the follow-through skill before you write to the owner. Each item gets one follow-up, or none.';
+  const lines = items.slice(0, MAX_WAKE_ITEMS).map(i => `${i.id}: ${i.summary} (opened ${iso(i.opened_at)})`);
+  const assemble = shown => [...prefix, ...shown,
+    ...(items.length > shown.length ? [`${items.length - shown.length} more are due. See them all: gc follow-through list --wake ${wakeId}`] : []), tail].join('\n');
+  while (lines.length > 1 && Buffer.byteLength(assemble(lines)) > maxBytes) lines.pop();
+  if (Buffer.byteLength(assemble(lines)) > maxBytes) {
+    const available = maxBytes - Buffer.byteLength(assemble([''])) - Buffer.byteLength('…');
+    if (available < Buffer.byteLength(items[0].id)) throw new Error('mail body cannot fit the item ID');
+    let shortened = '';
+    let size = 0;
+    for (const char of lines[0]) {
+      const bytes = Buffer.byteLength(char);
+      if (size + bytes > available) break;
+      shortened += char;
+      size += bytes;
+    }
+    lines[0] = shortened + '…';
+  }
+  return assertMailBody(assemble(lines));
+}
 
 function makeRaise(state, kind, conversation, now, fields) {
   const id = randomUUID();
@@ -21,13 +46,14 @@ function plan(state, now) {
       // Mark even an empty wake so an item added later cannot retroactively
       // enter that wake. It remains open for the next scheduled wake.
       state.wakes[key] = now;
-      const items = state.items.filter(i => i.conversation === conversation && i.state === 'open' && i.opened_at + 12 * HOUR <= scheduled);
+      const items = state.items.filter(i => i.conversation === conversation && i.state === 'open' && i.opened_at + 12 * HOUR <= scheduled)
+        .sort((a, b) => a.opened_at - b.opened_at);
       if (!items.length) continue;
-      for (const item of items) { item.state = 'raised'; item.raised_at = now; }
+      const wakeId = `wake-${randomUUID()}`;
+      const body = followUpBody(conversation, wakeId, items);
+      for (const item of items) { item.state = 'raised'; item.raised_at = now; item.wake_id = wakeId; }
       makeRaise(state, 'follow-up', conversation, now, {
-        scheduled_at: scheduled, item_ids: items.map(i => i.id), subject: 'follow-through: follow-up due',
-        body: [`Follow-up due in ${conversation}.`, ...items.map(i => `${i.id}: ${i.summary} (opened ${iso(i.opened_at)})`),
-          'Read the follow-through skill before you write to the owner. Each item gets one follow-up, or none.'].join('\n'),
+        scheduled_at: scheduled, wake_id: wakeId, item_ids: items.map(i => i.id), subject: 'follow-through: follow-up due', body,
       });
     }
   }
@@ -38,30 +64,37 @@ function plan(state, now) {
     const late = Math.floor((now - reminder.due_at) / MINUTE);
     makeRaise(state, 'reminder', reminder.conversation, now, {
       reminder_id: reminder.id, subject: 'follow-through: reminder due',
-      body: [`Reminder due in ${reminder.conversation}.`, `${reminder.id}: ${reminder.text}`,
+      body: assertMailBody([`Reminder due in ${reminder.conversation}.`, `${reminder.id}: ${reminder.text}`,
         `Set ${iso(reminder.set_at)} for ${iso(reminder.due_at)}.`,
         ...(now - reminder.due_at > 5 * MINUTE ? [`This reminder is ${late} minutes late.`] : []),
-        'Read the follow-through skill before you write to the owner.'].join('\n'),
+        'Read the follow-through skill before you write to the owner.'].join('\n')),
     });
   }
 }
 
 // afterPersist is a test-only dependency injection point: tests kill a real
 // child here. All production clocks and senders default to the real runtime.
-export async function tick({ dir, now, clock = now === undefined ? Date.now : () => now, send = sendMail, afterPersist = () => {} }) {
+export async function tick({ dir, now, clock = now === undefined ? Date.now : () => now, send = sendMail, afterPersist = () => {},
+  monotonic = () => performance.now(), budgetMs = TICK_BUDGET_MS }) {
+  const deadline = monotonic() + budgetMs;
   return withState(dir, async (state, save) => {
     const started = clock();
     plan(state, started);
     state.last_tick_at = started;
     save();
     await afterPersist('planned');
-    for (const raise of state.raises) {
-      if (raise.state !== 'pending') continue;
+    // New raises go first; otherwise oldest attempted first. Persisting the
+    // attempt before spawning gc also rotates the queue after a killed tick.
+    const pending = state.raises.filter(r => r.state === 'pending')
+      .sort((a, b) => (a.last_attempt_at ?? -Infinity) - (b.last_attempt_at ?? -Infinity));
+    for (const raise of pending) {
       const attemptAt = clock();
       if (attemptAt - raise.created_at >= DAY) { raise.state = 'failed'; save(); continue; }
       if (raise.last_attempt_at !== null && attemptAt - raise.last_attempt_at < MINUTE) continue;
       // Retries remain subject to consent, hours, grace and the evening cap.
       if (raise.kind === 'follow-up' && !wakeAllowed(state.owners[raise.conversation], raise.scheduled_at, attemptAt)) continue;
+      // Leave a full send timeout plus time to persist and release the lock.
+      if (deadline - monotonic() < MAIL_TIMEOUT_MS + 1000) break;
       raise.last_attempt_at = attemptAt;
       raise.attempts++;
       save();
@@ -74,7 +107,7 @@ export async function tick({ dir, now, clock = now === undefined ? Date.now : ()
       else raise.error = result.error || 'mail command failed';
       save();
     }
-  });
+  }, { lockTimeoutMs: budgetMs });
 }
 
 export function status(state, now = Date.now()) {

@@ -10,17 +10,18 @@
   },
   "items": [
     {
-      "id": "item-70b66734-350e-4719-8638-acfd172632ac",
+      "id": "item-c0862d17-cbb2-4e93-b6bf-4ae1946de959",
       "conversation": "slack/example",
       "summary": "Invented follow-up",
       "opened_at": 1794214800000,
       "state": "raised",
-      "raised_at": 1794301200000
+      "raised_at": 1794301200000,
+      "wake_id": "wake-88384d2c-c010-4897-b881-acfd22d0348f"
     }
   ],
   "reminders": [
     {
-      "id": "reminder-8039a8ee-6510-4a03-9cf4-150be18ed189",
+      "id": "reminder-f6dfd5d2-49d8-46fd-bdba-850a6ae069f4",
       "conversation": "slack/example",
       "text": "Invented reminder",
       "due_at": 1794301200000,
@@ -31,8 +32,8 @@
   ],
   "raises": [
     {
-      "id": "20a00532-a71e-452a-8d53-c7064266fce4",
-      "key": "follow-through:20a00532-a71e-452a-8d53-c7064266fce4",
+      "id": "45be47c4-96b4-4c7f-80d4-9b7aa2aa5e02",
+      "key": "follow-through:45be47c4-96b4-4c7f-80d4-9b7aa2aa5e02",
       "kind": "follow-up",
       "conversation": "slack/example",
       "created_at": 1794301200000,
@@ -41,16 +42,17 @@
       "last_attempt_at": 1794301200000,
       "error": null,
       "scheduled_at": 1794301200000,
+      "wake_id": "wake-88384d2c-c010-4897-b881-acfd22d0348f",
       "item_ids": [
-        "item-70b66734-350e-4719-8638-acfd172632ac"
+        "item-c0862d17-cbb2-4e93-b6bf-4ae1946de959"
       ],
       "subject": "follow-through: follow-up due",
-      "body": "Follow-up due in slack/example.\nitem-70b66734-350e-4719-8638-acfd172632ac: Invented follow-up (opened 2026-11-09T09:00:00.000Z)\nRead the follow-through skill before you write to the owner. Each item gets one follow-up, or none.",
+      "body": "Follow-up due in slack/example.\nWake wake-88384d2c-c010-4897-b881-acfd22d0348f.\nitem-c0862d17-cbb2-4e93-b6bf-4ae1946de959: Invented follow-up (opened 2026-11-09T09:00:00.000Z)\nRead the follow-through skill before you write to the owner. Each item gets one follow-up, or none.",
       "sent_at": 1794301200000
     },
     {
-      "id": "19369a72-468c-4626-9ce2-fdbd4521346d",
-      "key": "follow-through:19369a72-468c-4626-9ce2-fdbd4521346d",
+      "id": "f895c4fa-f184-4a4e-aaaf-31e875072759",
+      "key": "follow-through:f895c4fa-f184-4a4e-aaaf-31e875072759",
       "kind": "reminder",
       "conversation": "slack/example",
       "created_at": 1794301200000,
@@ -58,9 +60,9 @@
       "attempts": 1,
       "last_attempt_at": 1794301200000,
       "error": null,
-      "reminder_id": "reminder-8039a8ee-6510-4a03-9cf4-150be18ed189",
+      "reminder_id": "reminder-f6dfd5d2-49d8-46fd-bdba-850a6ae069f4",
       "subject": "follow-through: reminder due",
-      "body": "Reminder due in slack/example.\nreminder-8039a8ee-6510-4a03-9cf4-150be18ed189: Invented reminder\nSet 2026-11-09T09:00:00.000Z for 2026-11-10T09:00:00.000Z.\nRead the follow-through skill before you write to the owner.",
+      "body": "Reminder due in slack/example.\nreminder-f6dfd5d2-49d8-46fd-bdba-850a6ae069f4: Invented reminder\nSet 2026-11-09T09:00:00.000Z for 2026-11-10T09:00:00.000Z.\nRead the follow-through skill before you write to the owner.",
       "sent_at": 1794301200000
     }
   ],

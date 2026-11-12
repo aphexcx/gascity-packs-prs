@@ -6,8 +6,8 @@ Base: `28918336555abbeb4f52af3c05029e801c59cb6f`, fetched from
 ## Verification
 
 Node runtime: `pnpm exec node --version` = `v24.21.0`.
-From `follow-through/test`, `pnpm exec node --test`: **33 passed, 0 failed**
-after self-review fixes (`16-self-review-green.log`). Earlier red runs and
+From `follow-through/test`, `pnpm exec node --test`: **37 passed, 0 failed**
+after native review fixes (`19-native-review-green.log`). Earlier red runs and
 their exit codes are retained in `checks.tsv`. The initial directory-operand
 run was a harness error, not accepted as red-first evidence; the next run
 correctly failed on the missing state and scheduling implementations.
@@ -15,7 +15,7 @@ correctly failed on the missing state and scheduling implementations.
 From the repository root, `pnpm exec make test`: **2695 passed, 130 skipped,
 10689 subtests passed, 2 warnings** (`12-make-test.log`, `make-check.tsv`).
 The warnings are Python's existing os.fork-in-a-thread deprecation in the
-Slack tests. The Makefile now includes `follow-through/tests`, whose four
+Slack tests. The Makefile now includes `follow-through/tests`, whose five
 tests run the Node behavior suite and the shipped wrappers, check Make/CI
 registration, and verify the README's operational facts.
 
@@ -41,11 +41,11 @@ ship. Tests use scratch cities; no test sends mail to the actual mayor.
 | 6 | DONE | engine no-zone suppression; status names owners without zones |
 | 7 | DONE | model/CLI item creation, filtering, terminal records, limits and unknown IDs |
 | 8 | DONE | engine.test.js: each item included once across thirty days of ticks |
-| 9 | DONE | schedule wake table, both DST days, east/west zones, empty-wake test |
+| 9 | DONE | schedule/DST/empty wakes; ruling 2: one bounded mail, oldest 25, durable wake filter, overflow |
 | 10 | DONE | grace/outage/cutoff tests, live clock recheck, dispatch's 120-second ruling |
 | 11 | DONE | consent off blocks open items and pending follow-up retries |
 | 12 | DONE | fake gc arguments: agent, notify, unique stable dedup key, both subjects |
-| 13 | DONE | three actual fake-gc failures then success; minute throttle and 24-hour expiry |
+| 13 | DONE | fake-gc failures/recovery; minute throttle, 24-hour expiry, fair retry order and tick budget |
 | 14 | DONE | generated fixed mail bodies below; late reminder assertion |
 | 15 | DONE | CLI/model time, duration, text-file, list, cancel, validation tests |
 | 16 | DONE | reminder set/fired by different processes, outage catch-up, repeated tick |
@@ -106,4 +106,29 @@ fixing; `15-self-review-red.log` records all three failures, and
   The pending record is durable and the next tick sends it.
 
 The immutable self-review record is retained outside the branch at
-`/tmp/gp-91f7/self-review-r1.md`. Native DEEP review follows these fixes.
+`/Users/tailor512/city/assets/ops/pr-evidence/gp-91f7/self-review-r1.md`.
+
+## Native DEEP round 1
+
+Reviewed `0c4a3de13655216142b8c01a20dce666033b7e68`. Verdict BLOCK:
+0 BLOCKER, 3 MAJOR, 0 MINOR, 0 NIT. All three findings were reproduced in
+`17-native-review-red.log` and `18-bounded-mail-red.log` before fixing.
+`19-native-review-green.log` records 37 passing tests after the fixes.
+
+- FIXED: lexical-versus-canonical entrypoint identity. Every command, the
+  order and doctor now execute through directory symlinks. The Python
+  regression exercises all entrypoints through a symlinked pack directory.
+- FIXED: starvation under an external deadline. Both raise kinds now attempt
+  unattempted then least recently attempted mail, within a 90-second tick
+  budget that reserves the send timeout and a persistence margin. The class
+  regression puts eight slow failing raises before a healthy ninth, reloads
+  state across six ticks and simulates deadline kills; both kinds progress.
+- FIXED: unbounded argv payloads. Dispatch ruling 2 keeps one mail per wake,
+  showing up to 25 oldest items with an overflow count and exact wake-list
+  command. All due items retain that wake ID, including later terminal
+  records. Tests exercise 26, 100 and 500 items, UTF-8 shortening, maximum
+  reminder text and conversation byte limits across mutation verbs.
+
+The immutable native record is retained outside the branch at
+`/Users/tailor512/city/assets/ops/pr-evidence/gp-91f7/codex-deep-r1.md`.
+Native round 2 reviews this complete set of fixes.

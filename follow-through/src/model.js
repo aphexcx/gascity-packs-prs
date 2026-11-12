@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { assertZone, parseHours } from './zoned.js';
 import { DAY, HOUR, MINUTE } from './schedule.js';
 
+export const MAX_CONVERSATION_BYTES = 512;
+
 function ownerFor(state, conversation) {
   if (typeof conversation !== 'string' || !/^[A-Za-z0-9._-]+\/[^\s\x00-\x1f\x7f]+$/.test(conversation)) {
     throw new Error('conversation must be provider/conversation-id');
   }
+  if (Buffer.byteLength(conversation) > MAX_CONVERSATION_BYTES) throw new Error(`conversation must be at most ${MAX_CONVERSATION_BYTES} bytes (UTF-8)`);
   return state.owners[conversation] ??= { consent: null, consent_at: null, hours: null, tz: null };
 }
 

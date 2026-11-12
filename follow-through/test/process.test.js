@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { withState, readState } from '../src/state.js';
-import { consent, hours, addItem, setReminder } from '../src/model.js';
+import { consent, hours, addItem, closeItem, setReminder } from '../src/model.js';
 import { status } from '../src/engine.js';
 import { statusText } from '../src/cli.js';
 
@@ -77,7 +77,7 @@ test('12,14: fake gc records agent, notify, stable key, subjects and fixed fact 
   }
   assert.equal(h.calls()[0][7], 'follow-through: follow-up due');
   assert.equal(h.calls()[1][7], 'follow-through: reminder due');
-  assert.match(h.calls()[0][9], /^Follow-up due in slack\/example\.\nitem-/);
+  assert.match(h.calls()[0][9], /^Follow-up due in slack\/example\.\nWake wake-/);
   if (process.env.FOLLOW_THROUGH_TEST_EVIDENCE_DIR) {
     const evidence = process.env.FOLLOW_THROUGH_TEST_EVIDENCE_DIR;
     fs.mkdirSync(evidence, { recursive: true });
@@ -127,4 +127,55 @@ test('17: two ticks started together serialize and deliver once', async t => {
   for (const r of results) assert.equal(r.code, 0, r.stderr);
   assert.equal(h.calls().length, 1);
   assert.equal(h.sent().length, 1);
+});
+
+test('9 ruling 2: large wakes send one bounded mail and list exactly every raised item', async t => {
+  for (const count of [26, 100, 500]) {
+    const h = fixture(t);
+    await withState(h.dir, async (s, save) => {
+      consent(s, conversation, true, now - 86400000);
+      hours(s, conversation, { clear: true, tz: 'UTC' });
+      for (let i = 0; i < count; i++) addItem(s, conversation, String(i).padStart(4, '0') + 'x'.repeat(196), now - 86400000 + i);
+      // A different conversation/wake must not leak into the filter.
+      addItem(s, 'slack/other', 'Invented separate item', now - 86400000);
+      save();
+    });
+    assert.equal((await h.run()).code, 0);
+    assert.equal((await h.run(now + 60000)).code, 0);
+    assert.equal(h.calls().length, 1);
+    const body = h.calls()[0][9];
+    assert.ok(Buffer.byteLength(body) <= 65536);
+    assert.equal(body.split('\n').filter(line => line.startsWith('item-')).length, 25);
+    assert.match(body, new RegExp(`${count - 25} more are due\\. See them all: gc follow-through list --wake (wake-[a-f0-9-]+)`));
+    const state = readState(h.dir);
+    assert.equal(state.items.filter(i => i.state === 'raised').length, count);
+    const wake = state.items[0].wake_id;
+    assert.ok(wake);
+    assert.ok(state.items.slice(0, count).every(i => i.wake_id === wake));
+    assert.ok(body.indexOf('0000') < body.indexOf('0024'));
+    await withState(h.dir, async (s, save) => {
+      closeItem(s, s.items[0].id, 'done', now + 1000);
+      closeItem(s, s.items[1].id, 'dropped', now + 1000);
+      save();
+    });
+    const cli = new URL('../src/cli.js', import.meta.url);
+    const result = spawnSync(process.execPath, [cli.pathname, 'list', '--wake', wake, '--json'], {
+      env: { ...h.env, GC_PACK_STATE_DIR: h.dir }, encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).length, count);
+    assert.ok(JSON.parse(result.stdout).every(i => i.wake_id === wake));
+  }
+});
+
+test('9 ruling 2: maximum UTF-8 reminder reaches gc below the body bound', async t => {
+  const h = fixture(t);
+  await withState(h.dir, async (s, save) => {
+    setReminder(s, 'slack/' + '🧪'.repeat(126) + 'xx', '🧪'.repeat(500), now, now - 86400000);
+    save();
+  });
+  assert.equal((await h.run()).code, 0);
+  assert.equal(h.calls().length, 1);
+  assert.ok(Buffer.byteLength(h.calls()[0][9]) <= 65536);
+  assert.ok(h.calls()[0][9].includes('🧪'.repeat(500)));
 });

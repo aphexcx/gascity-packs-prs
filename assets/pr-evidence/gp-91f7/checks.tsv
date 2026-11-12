@@ -12,3 +12,6 @@ cd follow-through/test && FOLLOW_THROUGH_TEST_EVIDENCE_DIR=<evidence> pnpm exec 
 cd follow-through/test && pnpm exec node --test [RFC3339 precision red]	1
 cd follow-through/test && pnpm exec node --test [self-review regression red]	1
 cd follow-through/test && pnpm exec node --test [self-review fixes]	0
+cd follow-through && pnpm exec uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q [native review red]	1
+cd follow-through/test && pnpm exec node --test [bounded mail ruling red]	1
+cd follow-through/test && FOLLOW_THROUGH_TEST_EVIDENCE_DIR="$PWD/../../assets/pr-evidence/gp-91f7" pnpm exec node --test	0

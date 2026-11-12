@@ -1,3 +1,4 @@
 Follow-up due in slack/example.
-item-70b66734-350e-4719-8638-acfd172632ac: Invented follow-up (opened 2026-11-09T09:00:00.000Z)
+Wake wake-88384d2c-c010-4897-b881-acfd22d0348f.
+item-c0862d17-cbb2-4e93-b6bf-4ae1946de959: Invented follow-up (opened 2026-11-09T09:00:00.000Z)
 Read the follow-through skill before you write to the owner. Each item gets one follow-up, or none.

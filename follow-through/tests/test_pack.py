@@ -49,3 +49,22 @@ def test_readme_explains_delivery_and_privacy():
     text = (PACK / "README.md").read_text()
     for fact in ["minute and a half", "turn ends", "GC_PACK_STATE_DIR", "nothing leaves the box", "120 seconds"]:
         assert fact in text
+
+
+def test_command_order_and_doctor_work_through_a_directory_symlink(tmp_path):
+    link = tmp_path / "linked-pack"
+    link.symlink_to(PACK, target_is_directory=True)
+    env = {**os.environ, "GC_PACK_STATE_DIR": str(tmp_path / "state"), "GC_BIN": "/no-real-gc-allowed"}
+    for manifest in (link / "commands").glob("*/command.toml"):
+        script = manifest.parent / tomllib.loads(manifest.read_text())["run"]
+        result = subprocess.run([str(script), "--help"], env=env, capture_output=True, text=True)
+        assert result.returncode == 0
+        assert result.stdout.strip(), f"{script} silently skipped its entrypoint"
+    result = subprocess.run([str(link / "commands/add.sh"), "--conversation", "slack/example", "--summary", "Invented symlink item"], env=env, capture_output=True, text=True)
+    assert result.returncode == 0
+    assert result.stdout.startswith("item-")
+    subprocess.run([str(link / "orders/scripts/follow-through-tick.sh")], env=env, check=True, capture_output=True)
+    assert json.loads((tmp_path / "state/state.json").read_text())["last_tick_at"] is not None
+    result = subprocess.run([str(link / "doctor/check.sh")], env=env, capture_output=True, text=True)
+    assert result.returncode == 0
+    assert result.stdout.strip() == "follow-through: healthy"

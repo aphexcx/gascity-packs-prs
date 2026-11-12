@@ -73,6 +73,9 @@ prevents follow-ups and is named by status and, when consent is on, doctor.
 
 `add` prints an ID. Summaries have one line and at most 200 Unicode characters.
 `list` shows open and raised items; `--all` adds done and dropped ones.
+`list --wake WAKE_ID --json` returns exactly the items raised in that wake,
+including items subsequently done or dropped. Conversation references are
+limited to 512 UTF-8 bytes at every mutation verb.
 `remind` prints the ID and due time in the recorded zone, or UTC without one.
 Reminder text has at most 500 Unicode characters; file inputs accept a trailing
 newline. `--in` accepts positive minutes, hours or days (`30m`, `2 hours`, `1d`).
@@ -83,6 +86,14 @@ newline. `--in` accepts positive minutes, hours or days (`30m`, `2 hours`, `1d`)
 Each item becomes due 12 hours after opening. At the first eligible wake at or
 after that point, all due items for one conversation enter one follow-up mail.
 An item is raised only once in its life. A wake with nothing due sends nothing.
+The mail prints a durable wake ID and at most 25 due items in full, oldest
+first. Overflow says `N more are due. See them all: gc follow-through list
+--wake WAKE_ID`. Every due item, including overflow, stores the wake ID and
+becomes raised. Mail bodies are capped at 64 KiB: fewer lines are shown if
+needed, and a single oversized line is shortened without losing its ID.
+Reminder bodies obey the same byte bound. The item cap (`MAX_WAKE_ITEMS`),
+body cap (`MAX_MAIL_BODY_BYTES`) and conversation cap
+(`MAX_CONVERSATION_BYTES`) are proposal constants from dispatch ruling 2.
 
 With hours, wakes are the start of the day's first span and 60 minutes before
 the end of its last span. Spans belong to the local day on which they open,
@@ -131,7 +142,12 @@ read the follow-through skill; they do not draft a message to the owner.
 
 Failed or interrupted attempts retry on the next eligible tick, no more than
 once a minute, with the same durable key. After 24 hours from the raise they
-become failed. Follow-up retries still obey consent, the original wake's
+become failed. Ticks prioritize unattempted raises, then the least recently
+attempted, so slow failures cannot starve later mail. The 90-second tick
+budget (`TICK_BUDGET_MS`) includes lock waiting and reserves a full 15-second
+send timeout plus one second to save and release before starting another send.
+This leaves room below the order's two-minute deadline. Raises remain durable
+for later ticks when the budget is spent. Follow-up retries still obey consent, the original wake's
 grace, hours and 20:00 cutoff; reminders remain eligible at any hour. The file
 keeps the pending record if a process dies before the send. If it dies after
 delivery but before recording success, gc dedup suppresses the repeated key

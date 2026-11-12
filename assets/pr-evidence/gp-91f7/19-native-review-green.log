@@ -1,0 +1,46 @@
+✔ 1,5,7,15,18,19: command lifecycle, file input, private status and doctor exit (6555.583083ms)
+✔ 9 ruling 2: byte fitting reduces lines then truncates UTF-8 without losing IDs (1.286583ms)
+✔ 8,9: every due item in one wake; never raised twice across thirty days (8604.20675ms)
+✔ 9,10,11: empty wakes, no zone, off between wakes, outage grace and 20:00 cutoff (958.615291ms)
+✔ 9,10 ruling: default afternoon wake arrives within 120s or waits for morning (1417.173458ms)
+✔ 3,14,15,16: reminders are durable, independent of hours/consent, cancelled ones never fire (327.982667ms)
+✔ 3,13: failed mail retries once a minute with the same key; expires at 24h (1387.148667ms)
+✔ 11,13: revoking consent also blocks a pending follow-up retry (479.567084ms)
+✔ 10: recheck the wall clock before each mail when earlier delivery takes time (257.211792ms)
+✔ 13,17: bounded ticks fairly attempt both raise kinds despite slow earlier failures (2502.749667ms)
+✔ 18,19: status has exact safe fields, doctor reports stale tick, missing zone and failed raises (272.007583ms)
+✔ 5,6,11: consent defaults off; hours set, clear, retain/set zone; invalid changes are atomic (10.304834ms)
+✔ 7: item IDs, length, single lines, conversation form and retained terminal records (0.691334ms)
+✔ 15: RFC3339 offset and minutes/hours/days; cancellation retains the record (0.437584ms)
+✔ 12,14: fake gc records agent, notify, stable key, subjects and fixed fact bodies (3603.563625ms)
+▶ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail
+  ✔ follow-up: killed planned (792.672167ms)
+  ✔ follow-up: killed attempt (823.184583ms)
+  ✔ follow-up: killed sent (846.22525ms)
+  ✔ follow-up: killed during (878.836917ms)
+  ✔ reminder: killed planned (709.175667ms)
+  ✔ reminder: killed attempt (768.560417ms)
+  ✔ reminder: killed sent (785.160667ms)
+  ✔ reminder: killed during (754.579ms)
+✔ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail (6359.700541ms)
+✔ 13: three real gc failures then success make one delivered mail with one key (1027.301ms)
+✔ 17: two ticks started together serialize and deliver once (506.340917ms)
+✔ 9 ruling 2: large wakes send one bounded mail and list exactly every raised item (2383.596ms)
+✔ 9 ruling 2: maximum UTF-8 reminder reaches gc below the body bound (438.48825ms)
+✔ 5,9: two wake instants across split hours, midnight, east/west zones and DST (162.440042ms)
+✔ 5: keeper hours grammar and zone validation copied with their edge cases (0.69225ms)
+✔ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.345334ms)
+✔ 9,10 ruling: on time for <120s, then late policy; 20:00 always wins (0.8305ms)
+✔ 18: next wake is the earliest instant across overlapping opening days (0.330542ms)
+✔ 2: tick and command use the same explicit gc pack state directory (0.499042ms)
+✔ 2,4: private atomic file survives another process with every record intact (2840.137792ms)
+✔ 2: interrupted replacement leaves the previous valid state (257.643291ms)
+✔ 4,17: a stale ticket cannot lock a restarted writer out when its PID was reused (202.599167ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16259.743834

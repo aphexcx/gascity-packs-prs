@@ -35,6 +35,8 @@ test('7: item IDs, length, single lines, conversation form and retained terminal
   assert.throws(() => addItem(s, conversation, 'a'.repeat(201), now), /200/);
   assert.throws(() => addItem(s, conversation, 'two\nlines', now), /line/);
   assert.throws(() => addItem(s, 'invalid', 'text', now), /provider\/conversation/);
+  assert.throws(() => addItem(s, 'slack/' + 'x'.repeat(507), 'text', now), /512 bytes/);
+  assert.throws(() => consent(s, 'slack/' + '🧪'.repeat(127), true, now), /512 bytes/);
   closeItem(s, one.id, 'done', now + 1);
   closeItem(s, two.id, 'dropped', now + 2);
   assert.equal(s.items.length, 2);

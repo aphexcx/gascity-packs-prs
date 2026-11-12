@@ -15,6 +15,17 @@ test('1,5,7,15,18,19: command lifecycle, file input, private status and doctor e
     env: { ...process.env, GC_PACK_STATE_DIR: path.join(dir, 'state') }, encoding: 'utf8',
   });
   const ok = (...args) => { const r = run(...args); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  const oversized = 'slack/' + 'x'.repeat(507);
+  for (const args of [
+    ['consent', oversized, '--on'], ['hours', oversized, '--tz', 'UTC'],
+    ['add', '--conversation', oversized, '--summary', 'Invented'],
+    ['remind', '--conversation', oversized, '--in', '1h', '--text', 'Invented'],
+  ]) {
+    const refused = run(...args);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /512 bytes/);
+    assert.equal(refused.stderr.trim().split('\n').length, 1);
+  }
   assert.match(ok('--help'), /follow-through/);
   ok('consent', 'slack/one', '--on');
   assert.equal(run('doctor').status, 1);

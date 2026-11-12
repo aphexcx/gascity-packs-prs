@@ -1,0 +1,101 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+F...F                                                                    [100%]
+=================================== FAILURES ===================================
+___________________________ test_node_behavior_suite ___________________________
+
+    def test_node_behavior_suite():
+        node = shutil.which("node")
+        assert node, "follow-through requires Node.js 20 or newer"
+        result = subprocess.run([node, "--test"], cwd=PACK / "test", capture_output=True, text=True, timeout=120)
+>       assert result.returncode == 0, result.stdout + result.stderr
+E       AssertionError: ✔ 1,5,7,15,18,19: command lifecycle, file input, private status and doctor exit (3025.87825ms)
+E         ✔ 8,9: every due item in one wake; never raised twice across thirty days (4381.361125ms)
+E         ✔ 9,10,11: empty wakes, no zone, off between wakes, outage grace and 20:00 cutoff (632.284542ms)
+E         ✔ 9,10 ruling: default afternoon wake arrives within 120s or waits for morning (1286.998791ms)
+E         ✔ 3,14,15,16: reminders are durable, independent of hours/consent, cancelled ones never fire (184.788541ms)
+E         ✔ 3,13: failed mail retries once a minute with the same key; expires at 24h (917.698541ms)
+E         ✔ 11,13: revoking consent also blocks a pending follow-up retry (204.466792ms)
+E         ✔ 10: recheck the wall clock before each mail when earlier delivery takes time (106.704625ms)
+E         ✖ 13,17: bounded ticks fairly attempt both raise kinds despite slow earlier failures (721.93175ms)
+E         ✔ 18,19: status has exact safe fields, doctor reports stale tick, missing zone and failed raises (169.679ms)
+E         ✔ 5,6,11: consent defaults off; hours set, clear, retain/set zone; invalid changes are atomic (11.064208ms)
+E         ✔ 7: item IDs, length, single lines, conversation form and retained terminal records (0.614083ms)
+E         ✔ 15: RFC3339 offset and minutes/hours/days; cancellation retains the record (0.456709ms)
+E         ✔ 12,14: fake gc records agent, notify, stable key, subjects and fixed fact bodies (693.661084ms)
+E         ▶ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail
+E           ✔ follow-up: killed planned (672.384333ms)
+E           ✔ follow-up: killed attempt (737.868041ms)
+E           ✔ follow-up: killed sent (724.257167ms)
+E           ✔ follow-up: killed during (634.38175ms)
+E           ✔ reminder: killed planned (545.777125ms)
+E           ✔ reminder: killed attempt (692.2235ms)
+E           ✔ reminder: killed sent (709.421292ms)
+E           ✔ reminder: killed during (648.279458ms)
+E         ✔ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail (5365.766541ms)
+E         ✔ 13: three real gc failures then success make one delivered mail with one key (919.065083ms)
+E         ✔ 17: two ticks started together serialize and deliver once (406.1745ms)
+E         ✔ 5,9: two wake instants across split hours, midnight, east/west zones and DST (11.620167ms)
+E         ✔ 5: keeper hours grammar and zone validation copied with their edge cases (0.444417ms)
+E         ✔ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.28325ms)
+E         ✔ 9,10 ruling: on time for <120s, then late policy; 20:00 always wins (0.712917ms)
+E         ✔ 18: next wake is the earliest instant across overlapping opening days (0.321ms)
+E         ✔ 2: tick and command use the same explicit gc pack state directory (0.50075ms)
+E         ✔ 2,4: private atomic file survives another process with every record intact (164.691291ms)
+E         ✔ 2: interrupted replacement leaves the previous valid state (229.567625ms)
+E         ✔ 4,17: a stale ticket cannot lock a restarted writer out when its PID was reused (163.34975ms)
+E         ℹ tests 34
+E         ℹ suites 0
+E         ℹ pass 33
+E         ℹ fail 1
+E         ℹ cancelled 0
+E         ℹ skipped 0
+E         ℹ todo 0
+E         ℹ duration_ms 8655.932
+E
+E         ✖ failing tests:
+E
+E         test at engine.test.js:148:1
+E         ✖ 13,17: bounded ticks fairly attempt both raise kinds despite slow earlier failures (721.93175ms)
+E           AssertionError [ERR_ASSERTION]: reminder: ninth raise must not starve
+E
+E           0 !== 1
+E
+E               at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/engine.test.js:178:12)
+E               at async Test.run (node:internal/test_runner/test:1409:7)
+E               at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+E             generatedMessage: false,
+E             code: 'ERR_ASSERTION',
+E             actual: 0,
+E             expected: 1,
+E             operator: 'strictEqual',
+E             diff: 'simple'
+E           }
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Users/tailor512/city/.gc/shims/toolchain/node', '--test'], returncode=1, stdout="✔ 1,5,7,15,1...ERR_ASSERTION',\n    actual: 0,\n    expected: 1,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n", stderr='').returncode
+
+tests/test_pack.py:17: AssertionError
+________ test_command_order_and_doctor_work_through_a_directory_symlink ________
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-193/test_command_order_and_doctor_0')
+
+    def test_command_order_and_doctor_work_through_a_directory_symlink(tmp_path):
+        link = tmp_path / "linked-pack"
+        link.symlink_to(PACK, target_is_directory=True)
+        env = {**os.environ, "GC_PACK_STATE_DIR": str(tmp_path / "state"), "GC_BIN": "/no-real-gc-allowed"}
+        for manifest in (link / "commands").glob("*/command.toml"):
+            script = manifest.parent / tomllib.loads(manifest.read_text())["run"]
+            result = subprocess.run([str(script), "--help"], env=env, capture_output=True, text=True)
+            assert result.returncode == 0
+>           assert result.stdout.strip(), f"{script} silently skipped its entrypoint"
+E           AssertionError: /private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-193/test_command_order_and_doctor_0/linked-pack/commands/status/../status.sh silently skipped its entrypoint
+E           assert ''
+E            +  where '' = <built-in method strip of str object at 0x1046328b0>()
+E            +    where <built-in method strip of str object at 0x1046328b0> = ''.strip
+E            +      where '' = CompletedProcess(args=['/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-193/test_command_order_and_doctor_0/linked-pack/commands/status/../status.sh', '--help'], returncode=0, stdout='', stderr='').stdout
+
+tests/test_pack.py:62: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_pack.py::test_node_behavior_suite - AssertionError: ✔ 1,5,7...
+FAILED tests/test_pack.py::test_command_order_and_doctor_work_through_a_directory_symlink
+2 failed, 3 passed in 9.49s

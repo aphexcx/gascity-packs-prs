@@ -1,1 +1,1 @@
-GC_TEST_BIN=<installed gc> pnpm exec uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k follow-through-or-canary	0
+GC_TEST_BIN="$(command -v gc)" pnpm exec uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k 'follow-through or the_doctor_delta_can_surface_a_finding'	0

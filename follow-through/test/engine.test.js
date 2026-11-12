@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { withState, readState } from '../src/state.js';
 import { consent, hours, addItem, setReminder, cancelReminder } from '../src/model.js';
-import { tick, status, doctor } from '../src/engine.js';
+import { tick, status, doctor, followUpBody } from '../src/engine.js';
 import { statusText } from '../src/cli.js';
 
 const at = text => Date.parse(text);
@@ -19,6 +19,19 @@ function harness(t) {
   return { dir, mails, send: async raise => { mails.push(structuredClone(raise)); return { ok: true }; },
     edit: fn => withState(dir, async (s, save) => { fn(s); save(); }) };
 }
+
+test('9 ruling 2: byte fitting reduces lines then truncates UTF-8 without losing IDs', () => {
+  const items = Array.from({ length: 3 }, (_, i) => ({ id: `item-${i}`, summary: '🧪'.repeat(200), opened_at: start }));
+  const reduced = followUpBody(conversation, 'wake-example', items, 1200);
+  assert.equal(reduced.split('\n').filter(l => l.startsWith('item-')).length, 1);
+  assert.match(reduced, /2 more are due/);
+  assert.ok(Buffer.byteLength(reduced) <= 1200);
+  const truncated = followUpBody(conversation, 'wake-example', items, 350);
+  assert.ok(Buffer.byteLength(truncated) <= 350);
+  assert.match(truncated, /\nitem-0: 🧪/);
+  assert.match(truncated, /…\n2 more are due/);
+  assert.doesNotMatch(truncated, /\uFFFD/);
+});
 
 test('8,9: every due item in one wake; never raised twice across thirty days', async t => {
   const h = harness(t);
@@ -143,6 +156,42 @@ test('10: recheck the wall clock before each mail when earlier delivery takes ti
     return { ok: true };
   } });
   assert.equal(h.mails.length, 1);
+});
+
+test('13,17: bounded ticks fairly attempt both raise kinds despite slow earlier failures', async t => {
+  for (const kind of ['reminder', 'follow-up']) {
+    const h = harness(t);
+    await h.edit(s => {
+      for (let i = 0; i < 9; i++) {
+        const c = `slack/owner-${i}`;
+        if (kind === 'reminder') setReminder(s, c, 'Invented queue item', at('2026-11-10T09:00Z'), start);
+        else {
+          consent(s, c, true, start);
+          hours(s, c, { clear: true, tz: 'UTC' });
+          addItem(s, c, 'Invented queue item', start);
+        }
+      }
+    });
+    let killed = 0;
+    for (let round = 0; round < 6; round++) {
+      let elapsed = 0;
+      await tick({ dir: h.dir, now: at('2026-11-10T09:00Z') + round * 180000,
+        monotonic: () => elapsed, budgetMs: 31000,
+        send: async r => {
+          if (r.conversation === 'slack/owner-8') return h.send(r);
+          elapsed += 15000;
+          return { ok: false, error: 'mail SIGKILL' };
+        }, afterPersist(phase) {
+          // Simulate the orchestrator killing an over-budget process. The
+          // next invocation reloads exactly its persisted attempt records.
+          if (phase === 'sent' && elapsed >= 40000) throw new Error('order deadline');
+        },
+      }).catch(e => { assert.equal(e.message, 'order deadline'); killed++; });
+    }
+    assert.equal(h.mails.length, 1, `${kind}: ninth raise must not starve`);
+    assert.equal(killed, 0, 'tick should stop before its external deadline');
+    assert.ok(readState(h.dir).raises.every(r => r.attempts > 0));
+  }
 });
 
 test('18,19: status has exact safe fields, doctor reports stale tick, missing zone and failed raises', async t => {

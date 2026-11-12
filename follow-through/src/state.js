@@ -95,7 +95,7 @@ function tickets(dir) {
 // choosing ticket is published before reading any other ticket. Every
 // contender then waits for earlier tickets, and for choosing to finish.
 // Unlike unlinking a shared stale lock, dead-PID cleanup has no ABA race.
-async function lock(dir) {
+async function lock(dir, timeoutMs) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);
   const name = `lock-${process.pid}-${randomUUID()}.json`;
@@ -108,7 +108,7 @@ async function lock(dir) {
     replace(file, { pid: process.pid, birth, number: 0 });
     const number = Math.max(0, ...tickets(dir).map(t => t.number)) + 1;
     replace(file, { pid: process.pid, birth, number });
-    const deadline = performance.now() + 120_000;
+    const deadline = performance.now() + timeoutMs;
     while (tickets(dir).some(t => t.name !== name &&
       (t.number === 0 || t.number < number || (t.number === number && t.name < name)))) {
       if (performance.now() >= deadline) throw new Error('state is busy: another follow-through process holds its lock');
@@ -118,8 +118,8 @@ async function lock(dir) {
   } catch (e) { release(); throw e; }
 }
 
-export async function withState(dir, action) {
-  const release = await lock(dir);
+export async function withState(dir, action, { lockTimeoutMs = 120_000 } = {}) {
+  const release = await lock(dir, lockTimeoutMs);
   try {
     const state = readState(dir);
     return await action(state, () => replace(path.join(dir, 'state.json'), state));
