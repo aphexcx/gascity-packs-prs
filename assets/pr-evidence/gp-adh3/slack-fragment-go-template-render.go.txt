@@ -1,0 +1,31 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"text/template"
+)
+
+func main() {
+	src, err := os.ReadFile(os.Args[1])
+	if err != nil {
+		panic(err)
+	}
+	t, err := template.New("root").Parse(string(src))
+	if err != nil {
+		fmt.Println("PARSE ERROR:", err)
+		os.Exit(1)
+	}
+	var b strings.Builder
+	if err := t.ExecuteTemplate(&b, "slack-v0", map[string]string{"TemplateName": "mayor"}); err != nil {
+		fmt.Println("EXEC ERROR:", err)
+		os.Exit(1)
+	}
+	out := b.String()
+	fmt.Printf("parsed and rendered: %d bytes; defined: %s\n", len(out), t.DefinedTemplates())
+	i := strings.Index(out, "## Reactions")
+	j := strings.Index(out, "## How to reply")
+	fmt.Printf("Reactions section at %d, How to reply at %d\n", i, j)
+	fmt.Print(out[i:j])
+}
