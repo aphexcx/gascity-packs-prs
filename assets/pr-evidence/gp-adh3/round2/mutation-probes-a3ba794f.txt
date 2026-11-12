@@ -1,0 +1,100 @@
+head a3ba794f98cf95eed613bedf479e888e4ea75a76; base a59a65c33c966b1db77074b4fbd7e8dedddc26fd
+each probe: a fresh git archive, one change, then pytest tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py
+M1 Slack: the bare form back in the code block
+    CAUGHT: rc=1; 2 failed, 52 passed in 0.06s
+      slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+      tests/test_texting_rules.py::test_every_react_command_names_its_message[slack]
+M2 Slack: a prose line with the bare form
+    CAUGHT: rc=1; 1 failed, 53 passed in 0.06s
+      tests/test_texting_rules.py::test_every_react_command_names_its_message[slack]
+M3 Slack: the take-both sentence removed
+    CAUGHT: rc=1; 1 failed, 53 passed in 0.06s
+      slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+M4 Slack: 'never its thread root' dropped
+    CAUGHT: rc=1; 1 failed, 53 passed in 0.06s
+      slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+M5 Slack: --message-id dropped from the example
+    CAUGHT: rc=1; 2 failed, 52 passed in 0.06s
+      slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+      tests/test_texting_rules.py::test_every_react_command_names_its_message[slack]
+M6 Google Chat: --message dropped from the example
+    CAUGHT: rc=1; 1 failed, 53 passed in 0.06s
+      tests/test_texting_rules.py::test_every_react_command_names_its_message[gchat]
+M7 WhatsApp: the thanks sentence removed
+    CAUGHT: rc=1; 1 failed, 53 passed in 0.06s
+      tests/test_texting_rules.py::test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react
+M8 WhatsApp: the thanks sentence moved below the rules
+    CAUGHT: rc=1; 1 failed, 53 passed in 0.06s
+      tests/test_texting_rules.py::test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react
+M9 Slack: a fifth rule after a blank line (the read's X3)
+    CAUGHT: rc=1; 9 failed, 45 passed in 0.09s
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-at the end of the section]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-before the first rule]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a numbered bullet after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a paragraph between rules 2 and 3]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a starred bullet at the end of the section]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-an unindented line straight after rule 2]
+      tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[slack]
+      tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+M10 WhatsApp: a fifth rule after a blank line (the read's X4)
+    CAUGHT: rc=1; 9 failed, 45 passed in 0.09s
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-at the end of the section]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-before the first rule]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a numbered bullet after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a paragraph between rules 2 and 3]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a starred bullet at the end of the section]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-an unindented line straight after rule 2]
+      tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[whatsapp]
+      tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+M11 Google Chat: a fifth rule, tight (the read's P3)
+    CAUGHT: rc=1; 9 failed, 45 passed in 0.08s
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-at the end of the section]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-before the first rule]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a numbered bullet after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a paragraph between rules 2 and 3]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a starred bullet at the end of the section]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-an unindented line straight after rule 2]
+      tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[gchat]
+      tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+M12 Google Chat: a fifth rule after the not-placed paragraph
+    CAUGHT: rc=1; 9 failed, 45 passed in 0.09s
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-at the end of the section]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-before the first rule]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a numbered bullet after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a paragraph between rules 2 and 3]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a starred bullet at the end of the section]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-an unindented line straight after rule 2]
+      tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[gchat]
+      tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+M13 Slack: rules 3 and 4 swapped
+    CAUGHT: rc=1; 9 failed, 45 passed in 0.09s
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-at the end of the section]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-before the first rule]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a numbered bullet after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a paragraph between rules 2 and 3]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a starred bullet at the end of the section]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-an unindented line straight after rule 2]
+      tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[slack]
+      tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+M14 WhatsApp: one word in rule 2 (thanks -> praises)
+    CAUGHT: rc=1; 1 failed, 53 passed in 0.06s
+      tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+M15 Google Chat: 'Reply once per message' bullet removed
+    CAUGHT: rc=1; 8 failed, 46 passed in 0.08s
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-at the end of the section]
+      tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-before the first rule]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a numbered bullet after a blank line at the end of the list]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a paragraph between rules 2 and 3]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a starred bullet at the end of the section]
+      tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-an unindented line straight after rule 2]
+      tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[gchat]
+B1 at a59a65c3 with its own tests: a fifth rule after a blank line in Slack (X3)
+    NOT CAUGHT: rc=0; 15 passed in 0.02s
+B2 at a59a65c3 with its own tests: a fifth rule after a blank line in WhatsApp (X4)
+    NOT CAUGHT: rc=0; 15 passed in 0.02s

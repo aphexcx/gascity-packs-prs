@@ -1,0 +1,77 @@
+The self-review fold, red: first run with the new tests and the new WhatsApp sentence in the test only; second run after the Slack contract test took the batch sentence; texts still at 3d9fc865. In the lane, under env -i HOME PATH
+uv run --offline --with pytest python -m pytest -p no:cacheprovider tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -q -rf
+..............................................F.......                   [100%]
+=================================== FAILURES ===================================
+_______ test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react ________
+
+    def test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react() -> None:
+        """Rules 1 and 2 hold only where the mayor can react (gp-1v3u, the round-1 read's story 2)."""
+        flat = normalized(read("whatsapp"))
+        cannot = flat.index("You cannot place a reaction on WhatsApp yet.")
+>       assert WHATSAPP_THANKS in flat
+E       AssertionError: assert 'Until you can, a message that only thanks, confirms, agrees or closes a topic still gets an answer from you in words (a reaction from them still rarely needs one).' in '--- name: whatsapp description: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor m...ber that has not written to you. A bound phone wrote at least its invite code; any other number is not yours to reach.'
+
+tests/test_texting_rules.py:424: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_texting_rules.py::test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react
+1 failed, 53 passed in 0.09s
+..............................................F......F                   [100%]
+=================================== FAILURES ===================================
+_______ test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react ________
+
+    def test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react() -> None:
+        """Rules 1 and 2 hold only where the mayor can react (gp-1v3u, the round-1 read's story 2)."""
+        flat = normalized(read("whatsapp"))
+        cannot = flat.index("You cannot place a reaction on WhatsApp yet.")
+>       assert WHATSAPP_THANKS in flat
+E       AssertionError: assert 'Until you can, a message that only thanks, confirms, agrees or closes a topic still gets an answer from you in words (a reaction from them still rarely needs one).' in '--- name: whatsapp description: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor m...ber that has not written to you. A bound phone wrote at least its invite code; any other number is not yours to reach.'
+
+tests/test_texting_rules.py:424: AssertionError
+______________________ test_reaction_vocabulary_contract _______________________
+
+    def test_reaction_vocabulary_contract() -> None:
+        prompt = FRAGMENT.read_text(encoding="utf-8")
+        normalized = " ".join(prompt.split())
+
+        assert prompt.startswith('{{ define "slack-v0" -}}\n')
+        assert prompt.endswith("{{- end }}\n")
+
+        respond = prompt.index("## When to respond")
+        reactions = prompt.index("## Reactions")
+        reply = prompt.index("## How to reply")
+        assert respond < reactions < reply
+
+        section = prompt[reactions:reply]
+        for name in ("eyes", "mag", "+1", "white_check_mark", "alarm_clock"):
+            assert f"| `{name}` |" in section, name
+        assert (
+            "gc slack react --conversation-id Cxxx --message-id 1234.5678 --emoji NAME"
+            in section
+        )
+        assert "--session SID" not in section
+        assert "latest message routed to your session" not in section
+>       assert (
+            "Take both values from the reminder of the message you are answering: "
+            "the channel id, and that message's own timestamp (`origin_ts`, "
+            "`Slack ts`, `Message id` or `ts=`), never its thread root. In a batch "
+            "of several messages, a message's own timestamp is the one in brackets "
+            "at the start of its line; `Message id` names only the newest. Never "
+            "react without both values, even where a reminder prints a react "
+            "command that leaves them out: the command then reacts to the latest "
+            "message it can find for your session, which may be another one, and "
+            "it never finds a "
+            "company turn (a company room, DM or group DM). Its receipt can still "
+            "say delivered. When the reminder does not show both values, do not "
+            "react: say the same thing in words."
+        ) in " ".join(section.split())
+E       assert "Take both values from the reminder of the message you are answering: the channel id, and that message's own timestamp...ceipt can still say delivered. When the reminder does not show both values, do not react: say the same thing in words." in '## Reactions Five reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp: | Reaction | Slack name...and prints a receipt. When it shows `"delivered": false`, the reaction was not placed, so say the same thing in words.'
+E        +  where '## Reactions Five reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp: | Reaction | Slack name...and prints a receipt. When it shows `"delivered": false`, the reaction was not placed, so say the same thing in words.' = <built-in method join of str object at 0x1044ac5a0>(['##', 'Reactions', 'Five', 'reactions', 'have', 'fixed', ...])
+E        +    where <built-in method join of str object at 0x1044ac5a0> = ' '.join
+E        +    and   ['##', 'Reactions', 'Five', 'reactions', 'have', 'fixed', ...] = <built-in method split of str object at 0x78d5c42000>()
+E        +      where <built-in method split of str object at 0x78d5c42000> = '## Reactions\n\nFive reactions have fixed meanings, the same on Slack, Google Chat and\nWhatsApp:\n\n| Reaction | Sla...rints a receipt. When it shows `"delivered": false`, the\nreaction was not placed, so say the same thing in words.\n\n'.split
+
+slack-full/tests/test_slack_prompt_contract.py:50: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_texting_rules.py::test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react
+FAILED slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+2 failed, 52 passed in 0.08s
