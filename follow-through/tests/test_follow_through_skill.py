@@ -27,9 +27,11 @@ MAJOR_FEATURE = "A note about a new ability goes out only when you were given on
 COMMAND = re.compile(r"gc\s+follow-through\s+([^\s`]+)([^`\n]*)")
 FLAG = re.compile(r"--[a-z][a-z-]*")
 
-# Each kind of mail the pack sends is a subject literal in its source.
-SUBJECT_FIELD = re.compile(r"\bsubject\s*:")
-SUBJECT = re.compile(r"\bsubject\s*:\s*'([^'\n]+)'")
+# Each mail the pack sends is a raise, made with a subject written as a plain
+# string in the pack's source.
+SUBJECT_FIELD = re.compile(r"\bsubject\s*[:=](?!=)")
+SUBJECT = re.compile(r"\bsubject\s*[:=](?!=)\s*'([^'\n]+)'")
+MAKE_RAISE = re.compile(r"(?<!function )\bmakeRaise\(")
 # A mail can arrive twice. The skill's rule for that names the second arrival
 # and ends in sending nothing, as the follow-up section's rule does.
 ARRIVING_TWICE = re.compile(r"the same [a-z]+ arriving a second time\b[^.]*\.\s+Send nothing\b")
@@ -129,20 +131,24 @@ def test_the_sentences_the_founders_rule_on_are_there():
 
 
 def test_every_mail_subject_in_the_pack_is_read():
-    fields = sum(len(SUBJECT_FIELD.findall(path.read_text(encoding="utf-8"))) for path in SOURCES)
-    found = sum(len(SUBJECT.findall(path.read_text(encoding="utf-8"))) for path in SOURCES)
+    source = "\n".join(path.read_text(encoding="utf-8") for path in SOURCES)
+    found = len(SUBJECT.findall(source))
     assert found, "the pack's source names no mail subject"
-    assert found == fields, "a mail subject in the pack's source is not a plain quoted string"
+    assert found == len(SUBJECT_FIELD.findall(source)), "a mail subject in the pack's source is not a plain quoted string"
+    assert found == len(MAKE_RAISE.findall(source)), "a raise is made without a subject this test can read"
 
 
 @pytest.mark.parametrize("subject", mail_subjects())
 def test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice(subject):
     """The pack can send one mail twice: gc drops the repeat only while the
     first is unarchived. The section for each kind of mail must say that a
-    repeat gets nothing, so an owner is never told the same thing twice."""
+    repeat gets nothing, so an owner is never told the same thing twice. A
+    section that names two kinds of mail needs a rule for each."""
+    subjects = mail_subjects()
     own = [section for section in sections(skill_text()) if f'"{subject}"' in section]
     assert own, f'no section of the skill names the mail "{subject}"'
-    assert any(ARRIVING_TWICE.search(section) for section in own), \
+    assert any(len(ARRIVING_TWICE.findall(section)) >= sum(f'"{s}"' in section for s in subjects)
+               for section in own), \
         f'the skill\'s section for "{subject}" has no rule for the same mail arriving a second time'
 
 
