@@ -89,7 +89,12 @@ export function cancelReminder(state, id, now) {
   const reminder = state.reminders.find(r => r.id === id);
   if (!reminder) throw new Error(`unknown reminder: ${id}`);
   if (reminder.state === 'cancelled') return;
-  if (reminder.state !== 'set') throw new Error(`reminder has already been raised: ${id}`);
+  // The attempt is saved before sending. After a crash the delivery may
+  // have completed even while this reminder still says set; it cannot be
+  // recalled or truthfully reported cancelled. Keep the existing refusal.
+  if (reminder.state !== 'set' || state.raises.some(r => r.reminder_id === id && r.attempts > 0)) {
+    throw new Error(`reminder has already been raised: ${id}`);
+  }
   reminder.state = 'cancelled';
   reminder.cancelled_at = now;
 }

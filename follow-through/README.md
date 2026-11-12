@@ -122,8 +122,11 @@ including pending retries. Open items remain open while consent is off.
 A reminder fires at the first tick at or after its chosen time, at any hour,
 without requiring consent or a zone. One missed during an outage fires once
 after recovery. Its fixed body includes how many minutes late it is when
-delivered, if more than five minutes late; that line is refreshed at every attempt. Cancelling a set reminder prevents
-its raise; an already-raised reminder cannot be recalled.
+delivered, if more than five minutes late; that line is refreshed at every
+attempt. A set reminder can be cancelled before its first mail attempt.
+After an attempt, delivery may already have occurred even if success was
+not saved; cancellation retains the existing already-raised refusal, and
+recovery keeps the same dedup key. A delivered reminder cannot be recalled.
 
 The cooldown order runs once a minute, while gc's orchestrator checks orders
 about every 30 seconds. A reminder or wake is therefore normally raised

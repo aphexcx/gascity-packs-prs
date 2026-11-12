@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { withState, readState } from '../src/state.js';
 import { consent, hours, addItem, closeItem, setReminder } from '../src/model.js';
 import { status } from '../src/engine.js';
@@ -118,6 +119,23 @@ test('13: three real gc failures then success make one delivered mail with one k
   assert.equal(h.calls().length, 4);
   assert.equal(h.sent().length, 1);
   assert.equal(new Set(h.calls().map(args => args[5])).size, 1);
+});
+
+test('round2 cancellation class: a crash cannot report an uncertain delivery cancelled', async t => {
+  for (const phase of ['planned', 'attempt', 'sent', 'during']) await t.test(phase, async t => {
+    const h = fixture(t, { FT_TEST_KILL_DURING: phase === 'during' ? 'yes' : '' });
+    await seed(h, 'reminder');
+    assert.equal((await h.run(now, phase === 'during' ? '' : phase)).signal, 'SIGKILL');
+    const id = readState(h.dir).reminders[0].id;
+    const cancelled = spawnSync(process.execPath, [fileURLToPath(new URL('../src/cli.js', import.meta.url)), 'remind', '--cancel', id], {
+      env: { ...h.env, GC_PACK_STATE_DIR: h.dir }, encoding: 'utf8',
+    });
+    assert.equal(cancelled.status, phase === 'planned' ? 0 : 1, cancelled.stdout + cancelled.stderr);
+    if (phase !== 'planned') assert.match(cancelled.stderr, /reminder has already been raised/);
+    assert.equal((await h.run(now + 60000)).code, 0);
+    assert.equal(h.sent().length, phase === 'planned' ? 0 : 1);
+    assert.equal(new Set(h.calls().map(args => args[5])).size, phase === 'planned' ? 0 : 1);
+  });
 });
 
 test('17: two ticks started together serialize and deliver once', async t => {
