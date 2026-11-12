@@ -126,6 +126,17 @@ func decode[T any](t *testing.T, data []byte) T {
 	}
 	return v
 }
+
+func operationLogLines(t *testing.T, logs string, operation string) []string {
+	t.Helper()
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+		if decode[map[string]any](t, []byte(line))["operation"] == operation {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
 func (f *fixture) count() int {
 	n := 0
 	f.g.Configure(func(g *fakegoogle.Server) { n = len(g.Messages) })
@@ -523,7 +534,7 @@ func TestRegistrarContractRetriesAndReconnectDoesNotBlock(t *testing.T) {
 	reg := registration
 	n := attempts
 	mu.Unlock()
-	if n != 2 || reg.CallbackURL != h.URL+"/svc/gchat" || reg.AccountID != "example" || !reg.Capabilities.SupportsAttachments || reg.Capabilities.MaxMessageLength != 32000 || reg.ReplyInstructions != "gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>" {
+	if n != 2 || reg.CallbackURL != h.URL+"/svc/gchat" || reg.AccountID != "example" || !reg.Capabilities.SupportsAttachments || reg.Capabilities.MaxMessageLength != 32000 || reg.ReplyInstructions != "gc gchat reply-current --to {message_ts} --body-file <path>" {
 		t.Fatalf("attempts=%d %+v", n, reg)
 	}
 	// A refused connection schedules one service-lifetime registration without
@@ -2163,7 +2174,7 @@ func TestCommandGCLogsSanitizedFailureAndRecovery(t *testing.T) {
 			for range 2 {
 				_, _, _ = f.call(t, "/commands/publish", cmd)
 			}
-			lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+			lines := operationLogLines(t, logs.String(), "gc_outbound")
 			if len(lines) != 2 {
 				t.Fatalf("want one warning and one recovery: %s", logs.String())
 			}
@@ -2401,7 +2412,7 @@ func testGCRestartRecovers(t *testing.T, cityNotRunning bool) {
 			if mode == "interrupted" && v.Receipt != nil {
 				t.Errorf("interrupted send settled: %+v", v.Receipt)
 			}
-			lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+			lines := operationLogLines(t, logs.String(), "gc_outbound")
 			if len(lines) != 1 {
 				t.Errorf("want one WARN: %s", logs.String())
 			} else if line := decode[map[string]any](t, []byte(lines[0])); line["level"] != "WARN" || line["operation"] != "gc_outbound" || line["cause_kind"] != "transient" || line["http_status"] != float64(status) {

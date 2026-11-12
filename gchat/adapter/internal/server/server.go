@@ -410,6 +410,9 @@ func (s *Server) normalize(p *wire.PublishRequest) error {
 	if p.Conversation.Kind != "room" && p.Conversation.Kind != "dm" && p.Conversation.Kind != "thread" {
 		return errors.New("invalid conversation kind")
 	}
+	if err := validateThread(p.Conversation.ConversationID, p.ReplyToMessageID); err != nil {
+		return err
+	}
 	p.IdempotencyKey = keyFor(*p)
 	return nil
 }
@@ -524,7 +527,7 @@ func (s *Server) publishHTTP(w http.ResponseWriter, r *http.Request) {
 
 // prepare runs under the send lock. A receipt is durable only after update
 // succeeds; failed saves never make in-memory progress look committed.
-func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, record bool) error {
+func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, record bool, reference ...string) error {
 	return s.update(ctx, func(l *ledger.Ledger) error {
 		if old := l.Sends[p.IdempotencyKey]; old != nil {
 			if old.Space != p.Conversation.ConversationID {
@@ -553,6 +556,12 @@ func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *led
 			parts = []string{""}
 		}
 		send := &ledger.SendState{Key: p.IdempotencyKey, Space: p.Conversation.ConversationID, Thread: p.ReplyToMessageID, Created: time.Now().UTC(), Request: &p, Upload: upload, RecordPending: record}
+		if len(reference) != 0 {
+			send.InReplyTo = reference[0]
+		}
+		if space := l.Spaces[send.Space]; space != nil {
+			send.SpaceName = space.DisplayName
+		}
 		for i, text := range parts {
 			send.Parts = append(send.Parts, ledger.SendPart{RequestID: fmt.Sprintf("%s-%d", p.IdempotencyKey, i+1), Text: text})
 		}
@@ -562,7 +571,16 @@ func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *led
 }
 
 func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload) (receipt wire.PublishReceipt, err error) {
-	defer func() { s.logPublish(p, receipt, err) }()
+	newDelivery := false
+	defer func() {
+		if !newDelivery {
+			s.logPublish(p, receipt, err)
+			return
+		}
+		s.logMu.Lock()
+		delete(s.publishFailures, "publish:"+p.IdempotencyKey)
+		s.logMu.Unlock()
+	}()
 	unlock, err := s.lock(ctx, "send:"+p.IdempotencyKey)
 	if err != nil {
 		return s.failure(p, err), err
@@ -575,6 +593,9 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 	if old := l.Sends[p.IdempotencyKey]; old != nil {
 		if old.Space != p.Conversation.ConversationID || (old.Request != nil && old.Request.SessionID != p.SessionID) {
 			return permanent(p), errors.New("idempotency key belongs to another conversation or session")
+		}
+		if err := validateSendAddress(old); err != nil {
+			return permanent(p), err
 		}
 		if old.Receipt != nil && old.Receipt.Delivered && s.Health().State != "recovery-required" {
 			return *old.Receipt, nil
@@ -591,6 +612,9 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		return s.failure(p, err), err
 	}
 	send := l.Sends[p.IdempotencyKey]
+	if err := validateSendAddress(send); err != nil {
+		return permanent(p), err
+	}
 	if send.Request != nil {
 		p = *send.Request
 	}
@@ -660,6 +684,13 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 	}); err != nil {
 		return s.failure(p, err), err
 	}
+	operation := "publish"
+	newDelivery = true
+	if send.Upload != nil {
+		operation = "upload"
+	}
+	s.opts.Logger.Info("send delivered", "operation", operation, "space", send.Space, "thread", send.Thread,
+		"in_reply_to", send.InReplyTo, "key", send.Key, "message_id", receipt.MessageID, "session", p.SessionID)
 	return receipt, nil
 }
 
@@ -678,6 +709,7 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 	}
 	for _, v := range spaces {
 		if v.Name == space {
+			displayName := v.DisplayName
 			kind := v.SpaceType
 			if kind == "" {
 				return false, errors.New("space type unavailable")
@@ -689,6 +721,7 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 					l.Spaces[space] = v
 				}
 				v.ChatType = kind
+				v.DisplayName = displayName
 				v.Kind = "room"
 				if kind == "DIRECT_MESSAGE" {
 					v.Kind = "dm"
@@ -702,6 +735,8 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 }
 
 type commandRequest struct {
+	To             string `json:"to"`
+	TopLevel       bool   `json:"top_level"`
 	SessionID      string `json:"session_id"`
 	ConversationID string `json:"conversation_id"`
 	Thread         string `json:"thread"`
@@ -710,19 +745,40 @@ type commandRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 type CommandResult struct {
-	Delivered   bool   `json:"delivered"`
-	Recorded    bool   `json:"recorded"`
-	MessageID   string `json:"message_id"`
-	Key         string `json:"key"`
-	Reason      string `json:"reason,omitempty"`
-	FailureKind string `json:"failure_kind,omitempty"`
-	RetryAfter  int64  `json:"retry_after,omitempty"`
+	ConversationID string `json:"conversation_id"`
+	SpaceName      string `json:"space_name"`
+	Thread         string `json:"thread"`
+	InReplyTo      string `json:"in_reply_to"`
+	Delivered      bool   `json:"delivered"`
+	Recorded       bool   `json:"recorded"`
+	MessageID      string `json:"message_id"`
+	Key            string `json:"key"`
+	Reason         string `json:"reason,omitempty"`
+	FailureKind    string `json:"failure_kind,omitempty"`
+	RetryAfter     int64  `json:"retry_after,omitempty"`
 }
 
 func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 	var cmd commandRequest
 	if err := body(w, r, &cmd); err != nil {
 		problem(w, 400, err)
+		return
+	}
+	reference, err := s.resolveReference(r.Context(), &cmd)
+	if err != nil {
+		var apiErr *googleapi.Error
+		var lookupErr referenceLookupError
+		if errors.As(err, &lookupErr) {
+			_ = errors.As(err, &apiErr)
+			receipt := s.failure(wire.PublishRequest{}, err)
+			reason := "could not read the --to message"
+			if apiErr != nil && (apiErr.Code == http.StatusNotFound || apiErr.Code == http.StatusForbidden) {
+				reason = "--to message does not exist or cannot be read"
+			}
+			respond(w, 200, CommandResult{Key: cmd.IdempotencyKey, Reason: reason, FailureKind: receipt.FailureKind, RetryAfter: receipt.RetryAfter})
+		} else {
+			problem(w, 400, err)
+		}
 		return
 	}
 	p := wire.PublishRequest{SessionID: cmd.SessionID, Conversation: wire.Conversation{ConversationID: cmd.ConversationID}, Text: cmd.Text, ReplyToMessageID: cmd.Thread, IdempotencyKey: cmd.IdempotencyKey}
@@ -749,7 +805,7 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 	found := false
 	for _, kind := range []string{"room", "dm"} {
 		p.Conversation.Kind = kind
-		p.IdempotencyKey = commandKey(p, cmd.IdempotencyKey, upload)
+		p.IdempotencyKey = commandKey(p, cmd.IdempotencyKey, upload, reference)
 		if l.Sends[p.IdempotencyKey] != nil {
 			found = true
 			break
@@ -777,18 +833,22 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.Conversation.Kind = space.Kind
-		p.IdempotencyKey = commandKey(p, cmd.IdempotencyKey, upload)
+		p.IdempotencyKey = commandKey(p, cmd.IdempotencyKey, upload, reference)
 	}
-	result, _ := s.command(r.Context(), p, upload)
+	result, _ := s.command(r.Context(), p, upload, reference)
 	respond(w, 200, result)
 }
 
-func commandKey(p wire.PublishRequest, explicit string, upload *ledger.SendUpload) string {
+func commandKey(p wire.PublishRequest, explicit string, upload *ledger.SendUpload, reference string) string {
 	if explicit != "" {
 		return explicit
 	}
 	p.IdempotencyKey = ""
 	key := keyFor(p)
+	if reference != "" {
+		sum := sha256.Sum256([]byte(key + "\x00" + reference))
+		key = "derived-" + hex.EncodeToString(sum[:])
+	}
 	if upload != nil {
 		sum := sha256.Sum256([]byte(key + "\x00" + upload.Path))
 		key = "derived-" + hex.EncodeToString(sum[:])
@@ -798,9 +858,11 @@ func commandKey(p wire.PublishRequest, explicit string, upload *ledger.SendUploa
 
 func commandOutcome(send *ledger.SendState) CommandResult {
 	result := CommandResult{Key: send.Key, Recorded: send.Recorded, Reason: send.RecordingReason}
+	addressResult(&result, send)
 	if r := send.Receipt; r != nil {
 		result.Delivered, result.MessageID = r.Delivered, r.MessageID
 		result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
+		receiptAddress(&result, r.Metadata)
 	}
 	if send.RecordingFailureKind != "" {
 		result.FailureKind = send.RecordingFailureKind
@@ -808,12 +870,12 @@ func commandOutcome(send *ledger.SendState) CommandResult {
 	return result
 }
 
-func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload) (CommandResult, error) {
-	return s.runCommand(ctx, p, upload, false)
+func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, reference ...string) (CommandResult, error) {
+	return s.runCommand(ctx, p, upload, false, reference...)
 }
 
-func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, automatic bool) (CommandResult, error) {
-	result := CommandResult{Key: p.IdempotencyKey}
+func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, automatic bool, reference ...string) (result CommandResult, resultErr error) {
+	result = CommandResult{Key: p.IdempotencyKey}
 	unlock, err := s.lock(ctx, "command:"+p.IdempotencyKey)
 	if err != nil {
 		result.Reason = err.Error()
@@ -833,6 +895,9 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			return result, err
 		}
 		result = commandOutcome(send)
+		if err := validateSendAddress(send); err != nil {
+			return s.failPreparedCommand(ctx, p, err, automatic)
+		}
 		// Repair receipts written by older versions between their receipt
 		// commit and the separate pending-flag clear.
 		if send.RecordPending && (send.Recorded || (result.Delivered && send.NotRecordable)) {
@@ -862,7 +927,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		// Only hold the send lock for preparation; gc recursively calls /publish.
 		sendUnlock, err := s.lock(ctx, "send:"+p.IdempotencyKey)
 		if err == nil {
-			err = s.prepare(ctx, p, upload, true)
+			err = s.prepare(ctx, p, upload, true, reference...)
 			sendUnlock()
 		}
 		if err != nil {
@@ -891,6 +956,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 	}
 	if send.Upload != nil && !result.Delivered {
 		r, e := s.publish(ctx, p, send.Upload)
+		receiptAddress(&result, r.Metadata)
 		result.Delivered = r.Delivered
 		result.MessageID = r.MessageID
 		result.FailureKind = r.FailureKind
@@ -915,6 +981,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			// Direct uploads are already delivered, even when gc's recording
 			// callback cannot retrieve their receipt. Keep the durable outcome.
 			if !result.Delivered {
+				receiptAddress(&result, out.Receipt.Metadata)
 				result.Delivered = out.Receipt.Delivered
 				result.MessageID = out.Receipt.MessageID
 				result.FailureKind = out.Receipt.FailureKind
@@ -945,6 +1012,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			v := l.Sends[p.IdempotencyKey]
 			// Read the callback outcome and settle under the same ledger lock.
 			if r := v.Receipt; r != nil && r.Delivered {
+				receiptAddress(&result, r.Metadata)
 				result.Delivered = true
 				result.MessageID = r.MessageID
 				result.FailureKind, result.RetryAfter = "", 0
@@ -978,6 +1046,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		// callback response. Reconcile under the ledger lock so that answer
 		// can never overwrite a success committed by the callback.
 		if r := v.Receipt; r != nil && r.Delivered {
+			receiptAddress(&result, r.Metadata)
 			result.Delivered, result.MessageID = true, r.MessageID
 			result.FailureKind, result.RetryAfter = "", 0
 		}
@@ -1080,6 +1149,7 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 		return result, nil
 	}
 	r, err := s.publish(ctx, p, upload)
+	receiptAddress(&result, r.Metadata)
 	result.Delivered = r.Delivered
 	result.MessageID = r.MessageID
 	result.FailureKind = r.FailureKind
@@ -1139,7 +1209,7 @@ func Registration(cfg *config.Config, base string) (wire.Registration, error) {
 	if cfg == nil || err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return wire.Registration{}, errors.New("registrar: absolute gc callback URL required")
 	}
-	return wire.Registration{Provider: "gchat", AccountID: cfg.Identity().Name, CallbackURL: base, Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}, ReplyInstructions: "gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>"}, nil
+	return wire.Registration{Provider: "gchat", AccountID: cfg.Identity().Name, CallbackURL: base, Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}, ReplyInstructions: "gc gchat reply-current --to {message_ts} --body-file <path>"}, nil
 }
 
 // Register retries with bounded backoff until successful or canceled. The base

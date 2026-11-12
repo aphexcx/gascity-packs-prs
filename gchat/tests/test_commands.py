@@ -208,7 +208,7 @@ class ProxyCommandsTest(ProxyFixture):
 
     def test_missing_body_file_fails_before_reply_lookup(self):
         self.env["GC_SESSION_NAME"] = "example"
-        result = self.run_command("reply-current", "--body-file", str(self.root / "missing"))
+        result = self.run_command("reply-current", "--to", "spaces/AAAA/messages/QUESTION", "--body-file", str(self.root / "missing"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("body file", result.stderr)
         self.assertEqual(self.requests, [])
@@ -245,37 +245,27 @@ class ProxyCommandsTest(ProxyFixture):
         self.assertIn("not recorded", result.stderr)
         self.assertIn("no active binding", result.stdout)
 
-    def test_reply_uses_latest_matching_inbound_before_binding(self):
+    def test_reply_requires_reference_before_any_gc_request(self):
         self.env["GC_SESSION_NAME"] = "example-session"
-        self.responses[self.prefix + "/sessions"] = (200, {"items": [{"alias": "example-session", "id": "s1"}]})
-        self.responses[self.prefix + "/events"] = (200, {"items": [
-            {"payload": {"target_session": "s1", "provider": "gchat", "conversation_id": "spaces/old"}},
-            {"payload": {"target_session": "s1", "provider": "gchat", "conversation_id": "spaces/latest"}},
-            {"payload": {"target_session": "s2", "provider": "gchat", "conversation_id": "spaces/other"}},
-            {"payload": {"target_session": "s1", "provider": "other", "conversation_id": "wrong-provider"}},
-        ]})
-        self.respond("/commands/publish", {"delivered": True, "recorded": True})
-        result = self.run_command("reply-current", "--body", "hello", "--thread", "spaces/latest/threads/1")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.requests[-1][3]["conversation_id"], "spaces/latest")
-        self.assertEqual(self.requests[1][2], {"type": ["extmsg.inbound"], "since": ["2h"], "limit": ["500"]})
+        for flags in ([], ["--conversation-id", "spaces/AAAA"]):
+            with self.subTest(flags=flags):
+                result = self.run_command("reply-current", "--body", "hello", *flags)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("--to", result.stderr)
+                self.assertIn("Message id", result.stderr)
+                self.assertEqual(len(result.stderr.splitlines()), 1)
+                self.assertEqual(self.requests, [])
 
-    def test_reply_falls_back_to_latest_active_binding(self):
-        self.env["GC_SESSION_ID"] = "session & one"
-        self.responses[self.prefix + "/events"] = (200, {"items": []})
-        self.responses[self.prefix + "/extmsg/bindings"] = (200, {"items": [
-            {"Status": "active", "Conversation": {"provider": "gchat", "conversation_id": "spaces/AAAA"}},
-            {"Status": "inactive", "Conversation": {"provider": "gchat", "conversation_id": "spaces/old"}},
-        ]})
-        self.respond("/commands/publish", {"delivered": True, "recorded": True})
-        result = self.run_command("reply-current", "--body", "hello")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.requests[-1][3]["conversation_id"], "spaces/AAAA")
-        self.assertEqual(self.requests[1][2]["session_id"], ["session & one"])
+    def test_sending_scripts_have_no_destination_lookup(self):
+        for path in (PACK / "commands").glob("*.sh"):
+            text = path.read_text()
+            self.assertNotIn("extmsg.inbound", text)
+            self.assertNotIn("extmsg/bindings", text)
+            self.assertNotIn("gchat_reply_target", text)
 
     def test_reply_explicit_target_needs_no_lookup(self):
         self.respond("/commands/publish", {"delivered": True, "recorded": False})
-        result = self.run_command("reply-current", "--conversation-id", "spaces/AAAA", "--body", "hello")
+        result = self.run_command("reply-current", "--to", "spaces/AAAA/messages/QUESTION", "--body", "hello")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.requests), 1)
 
