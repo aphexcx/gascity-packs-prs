@@ -1026,6 +1026,8 @@ export function createGateway(deps: Deps) {
     const to = parseTo(body.to);
     const key = boundedString(body.idempotency_key, 1, 200);
     if (!key) throw new HttpError(400, "bad_request");
+    const requestedAttempt = boundedString(request.headers.get("x-gc-send-attempt"), 1, 100);
+    const activityAttempt = requestedAttempt && /^[A-Za-z0-9_-]+$/.test(requestedAttempt) ? requestedAttempt : null;
     let req = parseSend(body);
     const now = deps.now();
     // `to` names THIS city's owners by their conversation_id (the id the box files one under), by
@@ -1046,9 +1048,9 @@ export function createGateway(deps: Deps) {
     // The key first: a repeat answers the first answer, whatever the window says now. A key whose
     // first call may have reached Meta without an answer saying so never makes a second call.
     const prior = await db
-      .prepare("SELECT wamid, state, created_at FROM sends WHERE city_id = ? AND idempotency_key = ?")
+      .prepare("SELECT wamid, state, created_at, activity_attempt_id FROM sends WHERE city_id = ? AND idempotency_key = ?")
       .bind(cityId, key)
-      .first<{ wamid: string | null; state: string; created_at: number }>();
+      .first<{ wamid: string | null; state: string; created_at: number; activity_attempt_id: string | null }>();
     if (prior) return repeatAnswer(prior, now);
     // A `to` naming two owners (one's conversation_id, kept from a phone number it no longer
     // holds, and the number another shows now: a recycled number) is refused, and nothing is
@@ -1090,17 +1092,17 @@ export function createGateway(deps: Deps) {
     const client = graph();
     const claim = await db
       .prepare(
-        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at, conversation_id)
-         VALUES (?1, ?2, NULL, 'claimed', ?3, ?4, ?5)
+        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at, conversation_id, activity_attempt_id)
+         VALUES (?1, ?2, NULL, 'claimed', ?3, ?4, ?5, ?6)
          ON CONFLICT (city_id, idempotency_key) DO NOTHING`,
       )
-      .bind(cityId, key, req.type, now, owner.conversation_id)
+      .bind(cityId, key, req.type, now, owner.conversation_id, activityAttempt)
       .run();
     if (changes(claim) !== 1) {
       const raced = await db
-        .prepare("SELECT wamid, state, created_at FROM sends WHERE city_id = ? AND idempotency_key = ?")
+        .prepare("SELECT wamid, state, created_at, activity_attempt_id FROM sends WHERE city_id = ? AND idempotency_key = ?")
         .bind(cityId, key)
-        .first<{ wamid: string | null; state: string; created_at: number }>();
+        .first<{ wamid: string | null; state: string; created_at: number; activity_attempt_id: string | null }>();
       if (raced) return repeatAnswer(raced, now);
       throw new HttpError(409, "in_flight");
     }
@@ -1148,12 +1150,21 @@ export function createGateway(deps: Deps) {
       log({ event: "send_record_failed", type: req.type, error: errorName(e) });
     }
     log({ event: "send", type: req.type });
-    return json({ message_id: wamid });
+    return sendAnswer(wamid, false, activityAttempt);
+  }
+
+  function sendAnswer(messageId: string, replayed: boolean, activityAttempt: string | null): Response {
+    const answer = json({ message_id: messageId });
+    // Keep the frozen response body identical on replay. This optional header
+    // distinguishes old words from a fresh send after send-key retention ends.
+    answer.headers.set("x-gc-replayed", String(replayed));
+    if (activityAttempt) answer.headers.set("x-gc-send-attempt", activityAttempt);
+    return answer;
   }
 
   /** What a repeated idempotency key answers: the first message_id, or why there is none. */
-  function repeatAnswer(prior: { wamid: string | null; state: string; created_at: number }, now: number): Response {
-    if (prior.wamid) return json({ message_id: prior.wamid });
+  function repeatAnswer(prior: { wamid: string | null; state: string; created_at: number; activity_attempt_id: string | null }, now: number): Response {
+    if (prior.wamid) return sendAnswer(prior.wamid, true, prior.activity_attempt_id);
     if (prior.state === "claimed" && prior.created_at > now - SEND_CLAIM_STALE_SECONDS) {
       throw new HttpError(409, "in_flight");
     }

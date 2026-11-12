@@ -190,6 +190,96 @@ test('never-silent lost-answer replay class', async (t) => {
   }
 });
 
+test('never-silent activity journal failures remain retryable for every send kind', async (t) => {
+  for (const kind of ['text', 'captioned-file', 'update-template']) {
+    for (const phase of ['before-dispatch', 'after-acceptance']) await t.test(`${kind}: ${phase}`, async (t) => {
+      const proofs = new Map();
+      const f = outboundCase(t, kind, async (request) => {
+        const replayed = proofs.has(request.idempotency_key);
+        if (!replayed) proofs.set(request.idempotency_key, `example-proof-${proofs.size}`);
+        return { message_id: proofs.get(request.idempotency_key), replayed };
+      });
+      const rename = fs.renameSync;
+      let writes = 0;
+      t.mock.method(fs, 'renameSync', (from, to) => {
+        if (to === path.join(f.opts.stateDir, 'never-silent-outbound.json') && ++writes === (phase === 'before-dispatch' ? 1 : 2)) {
+          throw Object.assign(new Error('fake activity storage full'), { code: 'ENOSPC' });
+        }
+        return rename(from, to);
+      });
+      const failed = await f.call(f.make());
+      assert.equal(failed.json.delivered, false);
+      assert.equal(failed.json.failure_kind, 'transient', 'local storage can recover without changing the send key');
+      assert.equal(proofs.size, phase === 'before-dispatch' ? 0 : 1);
+      f.restart();
+      f.now += 1000;
+      assert.equal((await f.call(f.make())).json.delivered, true);
+      assert.equal(proofs.size, 1, 'recovery makes exactly one provider send');
+    });
+  }
+});
+
+test('never-silent expired gateway keys still recognize fresh words', async (t) => {
+  for (const kind of ['text', 'captioned-file', 'update-template']) {
+    for (const loseFreshAnswer of [false, true]) await t.test(`${kind}: fresh answer ${loseFreshAnswer ? 'lost' : 'received'}`, async (t) => {
+      const proofs = new Map();
+      let sends = 0;
+      let loseAnswer = true;
+      const f = outboundCase(t, kind, async (request) => {
+        const replayed = proofs.has(request.idempotency_key);
+        if (!replayed) proofs.set(request.idempotency_key, { message_id: `example-proof-${++sends}`, activity_attempt_id: request.activity_attempt_id });
+        if (loseAnswer) { loseAnswer = false; throw Object.assign(new Error('accepted but answer lost'), { noAnswer: true }); }
+        return { ...proofs.get(request.idempotency_key), replayed };
+      });
+      assert.equal((await f.call(f.make())).json.delivered, false);
+      f.now += 31 * 86400000;
+      proofs.clear(); // The gateway has removed its 30-day idempotency records.
+      f.restart();
+      const publisher = f.make();
+      // An unrelated publish prunes the expired file progress/handle too.
+      assert.equal((await publisher.handlePublish(JSON.stringify({ session_id: 'original-session',
+        conversation: f.body.conversation, text: 'example unrelated words', idempotency_key: 'example-pruning-key' }))).json.delivered, true);
+      f.now += 1000;
+      f.e.track({ id: 'example-new-inbound', conversation: 'example-owner', targets: ['retry-session'] });
+      f.e.result('example-new-inbound', 'delivered', ['retry-session']);
+      f.now += 1000;
+      loseAnswer = loseFreshAnswer;
+      assert.equal((await f.call(publisher, { ...f.body, session_id: 'retry-session' })).json.delivered, !loseFreshAnswer);
+      if (loseFreshAnswer) {
+        f.restart();
+        f.now += 1000;
+        assert.equal((await f.call(f.make(), { ...f.body, session_id: 'other-retry-session' })).json.delivered, true);
+      }
+      assert.equal(sends, 3, 'old send, unrelated pruning send, and fresh retry');
+      f.now += 180000;
+      fs.writeFileSync(f.opts.healthFile, JSON.stringify({ state: 'session_down', since: new Date(f.now).toISOString(), checked_at: new Date(f.now).toISOString() }));
+      await f.e.poll();
+      assert.deepEqual([f.posts.length, f.mails.length], [0, 0], 'fresh retry words answer the newer message after key expiry');
+    });
+  }
+});
+
+function outboundCase(t, kind, send) {
+  const f = fixture(t);
+  const gateway = {
+    window: async () => ({ windows: [{ conversation_id: 'example-owner', window_closes_at: f.now / 1000 + 3600 }] }),
+    upload: async () => ({ media_id: 'example-upload', expires_at: f.now / 1000 + 3600 }), send,
+  };
+  f.make = () => createPublisher({ stateDir: f.opts.stateDir, cityDir: f.opts.stateDir, gateway, clock: () => f.now, notices: f.e,
+    gc: { recordOutbound: async () => ({ TranscriptEntry: { id: 'example-transcript' } }) }, ledger: { windowOpen: () => false } });
+  f.body = { session_id: 'original-session', conversation: { conversation_id: 'example-owner' }, to: 'example-owner',
+    text: 'example reply', idempotency_key: 'example-original-key' };
+  if (kind === 'captioned-file') {
+    f.body.file = path.join(f.opts.stateDir, 'example.jpg');
+    fs.writeFileSync(f.body.file, Buffer.from('ffd8ffe000104a46494600010100000100010000ffd9', 'hex'));
+    f.body.caption = f.body.text;
+    delete f.body.text;
+  }
+  f.call = (publisher, body = f.body) => kind === 'update-template'
+    ? publisher.handlePublishUpdate(JSON.stringify(body)) : publisher.handlePublish(JSON.stringify(body));
+  return f;
+}
+
 function fixture(t, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'never-silent-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

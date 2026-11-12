@@ -258,12 +258,14 @@ export function createPublisher({
         if (validActivity(a)) activityByProof.set(`${a.conversation}\0${a.proof}`, a);
       }
       for (const a of saved.attempts ?? []) {
-        if (typeof a.key === 'string' && validActivity({ ...a, proof: a.key })) activityAttempts.set(a.key, a);
+        if (typeof a?.key === 'string' && validActivity({ ...a, proof: a.key })) activityAttempts.set(a.key, a);
       }
     } catch (err) { if (err.code !== 'ENOENT') throw err; }
   }
   function saveActivity(activities = [...activityByProof.values()], attempts = [...activityAttempts.values()]) {
-    if (recoverActivity) writeFileAtomic(activityFile, `${JSON.stringify({ activities, attempts })}\n`);
+    if (!recoverActivity) return;
+    try { writeFileAtomic(activityFile, `${JSON.stringify({ activities, attempts })}\n`); }
+    catch (err) { throw Object.assign(err, { activitySave: true }); }
   }
   function rememberActivity(activity, attemptKey) {
     const key = `${activity.conversation}\0${activity.proof}`;
@@ -284,16 +286,19 @@ export function createPublisher({
   async function sendWithActivity(request, conversation, session) {
     const key = request.idempotency_key;
     const previous = activityAttempts.get(key);
-    if (recoverActivity && !previous) {
-      const attempt = { key, conversation, session, at: clock() };
+    const current = { key, conversation, session, at: clock(), id: crypto.randomUUID() };
+    if (recoverActivity) {
       // A crash or a lost answer after dispatch must retain the first possible
-      // send's attribution, even if primary progress was never saved.
-      saveActivity([...activityByProof.values()], [...activityAttempts.values(), attempt]);
-      activityAttempts.set(key, attempt);
+      // send's attribution, even if primary progress was never saved. Keep each
+      // uncertain attempt so the gateway can identify the one it accepted after
+      // its earlier send-key record expired, even if that new answer is lost too.
+      const pending = previous ? { ...previous, retries: [...(previous.retries ?? []), current] } : current;
+      saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key).concat(pending));
+      activityAttempts.set(key, pending);
     }
     let answer;
     try {
-      answer = await gateway.send(request);
+      answer = await gateway.send(recoverActivity ? { ...request, activity_attempt_id: current.id } : request);
       if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
     } catch (err) {
       // A later refusal cannot disprove an earlier ambiguous attempt. In-flight,
@@ -302,13 +307,19 @@ export function createPublisher({
         || (!err?.noAnswer && !err?.malformed && err?.status >= 400 && err.status < 500 && err.status !== 408
           && !['in_flight', 'outcome_unknown'].includes(err.json?.error))
         || (err?.json?.error === 'meta_error' && err.json.meta_status >= 400 && err.json.meta_status < 500);
-      if (recoverActivity && !previous && refused) {
-        saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key));
-        activityAttempts.delete(key);
+      if (recoverActivity && refused) {
+        saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key).concat(previous ? [previous] : []));
+        if (previous) activityAttempts.set(key, previous);
+        else activityAttempts.delete(key);
       }
       throw err;
     }
-    const attempt = activityAttempts.get(key);
+    // Only the gateway can distinguish replay from a fresh send after its
+    // idempotency record expired. Legacy gateways omit this optional signal;
+    // retain their earliest uncertain attribution rather than invent new words.
+    const pending = activityAttempts.get(key);
+    const accepted = answer.activity_attempt_id && [pending, ...(pending?.retries ?? [])].find((a) => a?.id === answer.activity_attempt_id);
+    const attempt = accepted || (recoverActivity && answer.replayed === false ? current : pending);
     const activity = rememberActivity({ conversation, session: attempt?.session ?? session,
       proof: str(answer.message_id), at: attempt?.at ?? clock() }, key);
     return { answer, activity };
@@ -412,6 +423,10 @@ export function createPublisher({
       kind = 'transient';
       reason = 'in_flight';
       hint = 'The gateway is still sending this key to WhatsApp: retry shortly with the same idempotency key.';
+    } else if (err?.activitySave) {
+      kind = 'transient';
+      reason = 'outbound_activity_unavailable';
+      hint = 'The send is paused because its activity journal could not be saved. Restore state-directory writes, then retry with the same idempotency key.';
     } else if (err?.progressSave) {
       kind = 'transient';
       reason = 'outbound_progress_unavailable';

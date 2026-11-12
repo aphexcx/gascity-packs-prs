@@ -1,0 +1,110 @@
+✔ contract.test.js (45.823083ms)
+✔ conversation.test.js (43.758209ms)
+✔ deadack.test.js (43.030417ms)
+✔ evidence.test.js (44.267167ms)
+✔ files-out.test.js (45.577291ms)
+✔ gate.test.js (46.254042ms)
+✔ journal.test.js (44.218667ms)
+✔ keeper.test.js (47.5705ms)
+✔ media.test.js (44.380833ms)
+✔ never-silent-integration.test.js (43.685084ms)
+▶ never-silent expired gateway keys still recognize fresh words
+  ✔ text: fresh answer received (192.747791ms)
+  ✖ text: fresh answer lost (240.825333ms)
+  ✔ captioned-file: fresh answer received (451.356125ms)
+  ✖ captioned-file: fresh answer lost (571.180209ms)
+  ✔ update-template: fresh answer received (210.421667ms)
+  ✖ update-template: fresh answer lost (275.691667ms)
+✖ never-silent expired gateway keys still recognize fresh words (1943.179958ms)
+✔ outbound.test.js (53.086125ms)
+✔ pipeline.test.js (44.938417ms)
+✔ readings.test.js (46.373625ms)
+✔ recovery.test.js (46.30775ms)
+✔ render.test.js (33.381166ms)
+✔ restore.test.js (43.709459ms)
+✔ review.test.js (42.703958ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 20
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2754.595875
+
+✖ failing tests:
+
+test at never-silent.test.js:224:58
+✖ text: fresh answer lost (240.825333ms)
+  AssertionError [ERR_ASSERTION]: fresh retry words answer the newer message after key expiry
+  + actual - expected
+
+    [
+  +   1,
+  +   1
+  -   0,
+  -   0
+    ]
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:257:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:224:50)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 1, 1 ],
+    expected: [ 0, 0 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:224:58
+✖ captioned-file: fresh answer lost (571.180209ms)
+  AssertionError [ERR_ASSERTION]: fresh retry words answer the newer message after key expiry
+  + actual - expected
+
+    [
+  +   1,
+  +   1
+  -   0,
+  -   0
+    ]
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:257:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:224:50)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 1, 1 ],
+    expected: [ 0, 0 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:224:58
+✖ update-template: fresh answer lost (275.691667ms)
+  AssertionError [ERR_ASSERTION]: fresh retry words answer the newer message after key expiry
+  + actual - expected
+
+    [
+  +   1,
+  +   1
+  -   0,
+  -   0
+    ]
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:257:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:224:50)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 1, 1 ],
+    expected: [ 0, 0 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

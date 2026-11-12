@@ -31,6 +31,7 @@ A city box never holds a Meta secret. It holds one gateway credential, minted at
 | `migrations/0001_init.sql` | The schema: cities, credentials, enroll_codes, invite_codes, phones, deliveries, media, sends, orphan_statuses, unknown_senders, stats. |
 | `migrations/0002_bsuid.sql` | Business-scoped user ids (gp-ac0u): phones keyed by `conversation_id` with `wa_id`, `user_id` and `username`; the ids on deliveries, sends and orphan statuses; strangers keyed by `sender_key`. |
 | `migrations/0003_retries.sql` | Meta's retries (gp-0g2s; re-cut in place by gp-lv49 to the design of record): the deliveries dedup key without the city; `phones.bound_stamp`; `links` (each number change, old user id to new), `unbinds` (the user ids an unbind recorded) and `marks` (each number's newest pairing with a user id); `code_attempt_wamids` (every counted wrong-code text, seeded from `unknown_senders.last_code_wamid`, gp-w376). |
+| `migrations/0005_send_attempt.sql` | Nullable opaque attempt identity on sends, for original activity attribution after a lost answer. |
 | `src/index.ts` | The Worker entry: env to gateway, the cron to `maintain()`. |
 | `src/gateway.ts` | The routes, the webhook plan and its one D1 transaction, enrollment, the inbox and ack, send, read, window, media, the operator routes, the cron. |
 | `src/meta.ts` | The Cloud API wire: the signature, the payload parse, the send bodies, the Graph calls. |
@@ -100,6 +101,15 @@ changes a route or a field.
    Meta call" is read strictly: once a call may have reached Meta, that key never calls again, and
    the box decides what an `outcome_unknown` reply means (a new key resends, at the risk of the
    owner reading it twice).
+   Successful sends additionally carry `X-GC-Replayed: false` for a fresh Meta send and
+   `X-GC-Replayed: true` for a stored answer. The JSON body remains identical on replay.
+   This lets a box distinguish a replay from new words after the 30-day send-key retention
+   ends. Older gateways omit the header; boxes must treat that absence as unknown.
+   An optional request header `X-GC-Send-Attempt` supplies an opaque attempt ID. The gateway
+   stores it with the claimed send and returns the accepted attempt's ID in that same response
+   header, including on replay. It contains no session or conversation data. This disambiguates
+   a fresh send after key cleanup whose own answer is also lost. Existing records and callers
+   without an attempt ID retain their existing behavior and omit that response header.
 5. **Read.** `POST /v1/read {message_id}` answers `200 {ok: true}`. It answers `404 not_found`
    when that wamid was never delivered to this city, and `502 meta_error` when Meta refuses it.
 6. **Media.** `GET /v1/media/<id>` answers `404 not_found` for a media id not delivered to this
@@ -470,6 +480,12 @@ No dependency runs an install script (`pnpm-workspace.yaml`, `allowBuilds`). esb
 ship their binaries as optional dependencies.
 
 ## Deploy (the mayor's hand)
+
+**Replay attribution update:** apply `0005_send_attempt.sql` after the earlier migrations
+and before deploying this gateway. It adds one nullable column; existing send records and
+older gateway code remain valid. Deploy the gateway before the updated adapter to enable
+accepted-attempt recovery at the retention boundary. Rollback may leave the nullable column
+in place. The deployment commands below are operator steps, not actions taken by tests.
 
 **Files-out upgrade (gp-755k), after merge, on the already-live gateway:**
 

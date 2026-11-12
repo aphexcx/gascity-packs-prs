@@ -41,14 +41,14 @@ test at never-silent.test.js:131:15
 ✖ text: definite-failure across restart (123.964333ms)
   AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
   + actual - expected
-  
+
     [
   +   0,
   +   0
   -   1,
   -   1
     ]
-  
+
       at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
       at async Test.run (node:internal/test_runner/test:1409:7)
       at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
@@ -66,14 +66,14 @@ test at never-silent.test.js:131:15
 ✖ text: health across restart (100.9205ms)
   AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
   + actual - expected
-  
+
     [
   +   0,
   +   0
   -   1,
   -   1
     ]
-  
+
       at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
       at async Test.run (node:internal/test_runner/test:1409:7)
       at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
@@ -91,14 +91,14 @@ test at never-silent.test.js:131:15
 ✖ captioned-file: definite-failure across restart (327.112917ms)
   AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
   + actual - expected
-  
+
     [
   +   0,
   +   0
   -   1,
   -   1
     ]
-  
+
       at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
       at async Test.run (node:internal/test_runner/test:1409:7)
       at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
@@ -116,14 +116,14 @@ test at never-silent.test.js:131:15
 ✖ captioned-file: health across restart (322.30675ms)
   AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
   + actual - expected
-  
+
     [
   +   0,
   +   0
   -   1,
   -   1
     ]
-  
+
       at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
       at async Test.run (node:internal/test_runner/test:1409:7)
       at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
@@ -141,14 +141,14 @@ test at never-silent.test.js:131:15
 ✖ update-template: definite-failure across restart (146.226166ms)
   AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
   + actual - expected
-  
+
     [
   +   0,
   +   0
   -   1,
   -   1
     ]
-  
+
       at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
       at async Test.run (node:internal/test_runner/test:1409:7)
       at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
@@ -166,14 +166,14 @@ test at never-silent.test.js:131:15
 ✖ update-template: health across restart (146.035291ms)
   AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
   + actual - expected
-  
+
     [
   +   0,
   +   0
   -   1,
   -   1
     ]
-  
+
       at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
       at async Test.run (node:internal/test_runner/test:1409:7)
       at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)

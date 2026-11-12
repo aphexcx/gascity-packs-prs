@@ -29,6 +29,23 @@ const CONTRACT_V1_BOX_ROUTES = [
 ];
 const FILES_OUT_ROUTES = ['POST /v1/uploads'];
 
+test('gateway send replay header distinguishes fresh, replayed and legacy answers', async () => {
+  for (const flag of ['false', 'true', undefined]) {
+    const client = createGatewayClient({ url: 'https://example.invalid', credential: 'example-credential',
+      fetchImpl: async (_url, init) => {
+        assert.equal(init.headers['X-GC-Send-Attempt'], 'example-current-attempt');
+        assert.equal(Object.hasOwn(JSON.parse(init.body), 'activity_attempt_id'), false);
+        return new Response(JSON.stringify({ message_id: 'example-proof' }),
+          { headers: flag === undefined ? {} : { 'x-gc-replayed': flag, 'x-gc-send-attempt': 'example-accepted-attempt' } });
+      },
+    });
+    const answer = await client.send({ to: 'example-owner', idempotency_key: 'example-key', type: 'text', text: 'example words', activity_attempt_id: 'example-current-attempt' });
+    assert.equal(answer.message_id, 'example-proof');
+    assert.equal(answer.replayed, flag === undefined ? undefined : flag === 'true');
+    assert.equal(answer.activity_attempt_id, flag === undefined ? undefined : 'example-accepted-attempt');
+  }
+});
+
 test('the fake gateway serves v1 plus the additive files-out route', () => {
   assert.deepEqual([...FAKE_GATEWAY_ROUTES].sort(), [...CONTRACT_V1_BOX_ROUTES, ...FILES_OUT_ROUTES].sort());
 });

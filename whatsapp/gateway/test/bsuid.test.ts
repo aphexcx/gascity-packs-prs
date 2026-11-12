@@ -1864,7 +1864,7 @@ describe("BSUID: migrations 0002 and 0003 over schema v1 rows", () => {
   it("a v1 phone keeps its wa_id as its key, a held delivery gains its conversation_id, a stranger's row keeps its key, user_id is unique where present, and a wamid is one row whichever city", async () => {
     const db = env.MIGRATION_DB;
     const all = env.TEST_MIGRATIONS;
-    expect(all.map((m) => m.name)).toEqual(["0001_init.sql", "0002_bsuid.sql", "0003_retries.sql", "0004_uploads.sql"]);
+    expect(all.map((m) => m.name)).toEqual(["0001_init.sql", "0002_bsuid.sql", "0003_retries.sql", "0004_uploads.sql", "0005_send_attempt.sql"]);
     await applyD1Migrations(db, all.slice(0, 1));
     const wa = phone();
     await db.batch([
@@ -1905,7 +1905,9 @@ describe("BSUID: migrations 0002 and 0003 over schema v1 rows", () => {
     expect((await db.prepare("SELECT sender_key, last_replied_at FROM unknown_senders").all()).results).toEqual([
       { sender_key: "5511000000000", last_replied_at: 40 },
     ]);
-    expect((await db.prepare("SELECT idempotency_key, conversation_id FROM sends").all()).results).toEqual([{ idempotency_key: "k1", conversation_id: null }]);
+    expect((await db.prepare("SELECT idempotency_key, conversation_id, activity_attempt_id FROM sends").all()).results).toEqual([
+      { idempotency_key: "k1", conversation_id: null, activity_attempt_id: null },
+    ]);
     expect((await db.prepare("SELECT wamid, recipient_id, recipient_user_id FROM orphan_statuses").all()).results).toEqual([
       { wamid: "wamid.O", recipient_id: wa, recipient_user_id: null },
     ]);
