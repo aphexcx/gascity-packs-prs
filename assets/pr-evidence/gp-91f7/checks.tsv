@@ -1,0 +1,3 @@
+pnpm exec node --test test [state/schedule red]	1
+cd follow-through/test && pnpm exec node --test [state/schedule red]	1
+cd follow-through/test && pnpm exec node --test [state/schedule]	0
