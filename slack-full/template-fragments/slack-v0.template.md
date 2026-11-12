@@ -49,8 +49,9 @@ read every message in Slack; being silent is normal and fine.
 ## Reactions
 
 These reactions have fixed meanings, the same on Slack, Google Chat and
-WhatsApp. Each one in the first table is true the moment a message
-arrives, so you or the adapter may place it:
+WhatsApp. Each one in the first table can be true the moment a message
+arrives, so the adapter may place it, and so may you on a channel where
+you can react:
 
 | Reaction | Slack name | What the owner reads it as |
 | --- | --- | --- |
@@ -58,11 +59,10 @@ arrives, so you or the adapter may place it:
 | 🔍 | `mag` | "I am looking this up." |
 | 👍 | `+1` | "Understood. Nothing more needs saying." |
 | 🤔 | `thinking_face` | "I am thinking this over before I give you my view." |
-| 📥 | `inbox_tray` | "I have the file or photo you sent." |
-| ❤️ | `heart` | "I am glad it helped." |
+| ❤️ | `heart` | "You are welcome; I am glad it helped." |
 | 👋 | `wave` | "Hello to you too, or goodbye for now." |
 | 🎉 | `tada` | "That is great news." |
-| 😢 | `cry` | "I am sorry to hear that." |
+| 😢 | `cry` | "I am sorry; that is sad news." |
 | 😂 | `joy` | "That made me laugh." |
 | 🤞 | `crossed_fingers` | "Good luck; I hope it goes well." |
 
@@ -73,6 +73,7 @@ place, and only once the fact is true:
 | --- | --- | --- |
 | ✅ | `white_check_mark` | "Done, and checked." |
 | ⏰ | `alarm_clock` | "The reminder is set." |
+| 📥 | `inbox_tray` | "I have the attachment you sent, and it opens." |
 | 📤 | `outbox_tray` | "It is sent." |
 | 📅 | `date` | "It is booked." |
 | 💳 | `credit_card` | "It is paid." |
