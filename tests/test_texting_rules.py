@@ -5,6 +5,7 @@ carry the same table of five reactions and the same four rules about them
 (gp-adh3). A change to one text that is not made in the other two fails here.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -73,13 +74,19 @@ OTHER_BULLETS = {
 }
 
 
-def section_items(text: str) -> list[list[str]]:
-    """Each bullet of the section the rules sit in, with its wrapped lines.
+BULLET = re.compile(r"([-*+]|\d+[.)]) ")
+
+
+def section_blocks(text: str) -> list[tuple[str, list[str]]]:
+    """The section the rules sit in, as bullets with their lines, and other lines.
 
     The section runs from the heading above the first rule to the next
     heading, outside code blocks, so a bullet after a blank line or after a
-    paragraph is still in it. A bullet's wrapped lines are the indented
-    lines after it, across blank lines, up to a line that is neither.
+    paragraph is still in it. Any list marker counts as a bullet (-, *, +,
+    1.). A bullet's lines are the indented lines after it, across blank
+    lines, and an unindented line straight after one of its lines, which
+    Markdown reads as part of the same item. Every other non-blank line is
+    its own ("other", [line]) block.
     """
     lines = text.splitlines()
     starts = [i for i, line in enumerate(lines) if line.startswith(RULE_LEADS[0])]
@@ -93,31 +100,50 @@ def section_items(text: str) -> list[list[str]]:
             headings.append(i)
     top = max((i for i in headings if i < first), default=-1)
     bottom = min((i for i in headings if i > first), default=len(lines))
-    items: list[list[str]] = []
-    fence, inside_item = False, False
+    blocks: list[tuple[str, list[str]]] = []
+    fence, inside_item, after_blank = False, False, False
     for line in lines[top + 1 : bottom]:
         if line.startswith("```"):
             fence, inside_item = not fence, False
+            blocks.append(("other", [line]))
         elif fence:
+            blocks[-1][1].append(line)
+        elif not line.strip():
+            after_blank = True
             continue
-        elif line.startswith("- "):
-            items.append([line])
+        elif BULLET.match(line):
+            blocks.append(("bullet", [line]))
             inside_item = True
-        elif line.startswith("  ") and inside_item:
-            items[-1].append(line)
-        elif line.strip():
+        elif inside_item and (line.startswith("  ") or not after_blank):
+            blocks[-1][1].append(line)
+        else:
+            blocks.append(("other", [line]))
             inside_item = False
-    return items
+        after_blank = False
+    return blocks
+
+
+def section_items(text: str) -> list[list[str]]:
+    """Each bullet of the section the rules sit in, with its lines."""
+    return [lines for kind, lines in section_blocks(text) if kind == "bullet"]
+
+
+def is_other_bullet(name: str, item: list[str]) -> bool:
+    before, after = OTHER_BULLETS[name]
+    return item[0].startswith(before + after)
 
 
 def rules(name: str, text: str) -> list[list[str]]:
     """The rules of one text: every bullet of their section but the text's other bullets."""
-    before, after = OTHER_BULLETS[name]
-    return [item for item in section_items(text) if not item[0].startswith(before + after)]
+    return [item for item in section_items(text) if not is_other_bullet(name, item)]
 
 
 def bullet_problems(name: str, text: str) -> list[str]:
-    """The section's bullets, against the text's other bullets around the four leads."""
+    """The section's bullets, against the text's other bullets around the four leads.
+
+    The rules are also one list: nothing but rule bullets stands between the
+    first rule and the last.
+    """
     before, after = OTHER_BULLETS[name]
     expected = [*before, *RULE_LEADS, *after]
     found = [item[0] for item in section_items(text)]
@@ -125,6 +151,12 @@ def bullet_problems(name: str, text: str) -> list[str]:
         line.startswith(lead) for line, lead in zip(found, expected)
     ):
         return [f"{name}: the section's bullets are {found}"]
+    blocks = section_blocks(text)
+    is_rule = [kind == "bullet" and not is_other_bullet(name, lines) for kind, lines in blocks]
+    first, last = is_rule.index(True), len(is_rule) - 1 - is_rule[::-1].index(True)
+    between = [blocks[i][1] for i in range(first, last + 1) if not is_rule[i]]
+    if between:
+        return [f"{name}: lines among the rules: {between}"]
     return []
 
 
@@ -180,31 +212,56 @@ REACT_COMMANDS = {
     "gc gchat react": ("--message",),
 }
 
-# Sentences that name a react command without running it.
-REACT_REFERENCES = ("When `gc gchat react` fails,",)
+# The one sentence form that names a react command without running it.
+REACT_REFERENCES = tuple(f"When `{command}` fails," for command in REACT_COMMANDS)
+
+
+def react_units(text: str) -> list[tuple[bool, str]]:
+    """The text as (in_code, unit) pairs: each command of a code block, its
+    backslash-continued lines joined, and each prose paragraph on one line."""
+    units: list[tuple[bool, str]] = []
+    fence, paragraph, command = False, [], ""
+    for line in text.splitlines() + [""]:
+        if line.startswith("```"):
+            if paragraph:
+                units.append((False, " ".join(paragraph)))
+                paragraph = []
+            fence = not fence
+        elif fence:
+            command += line.rstrip("\\").strip() + " "
+            if not line.endswith("\\"):
+                units.append((True, command.strip()))
+                command = ""
+        elif line.strip():
+            paragraph.append(line.strip())
+        elif paragraph:
+            units.append((False, " ".join(paragraph)))
+            paragraph = []
+    return units
 
 
 def react_uses(text: str) -> list[str]:
     """Every place a text writes a react command, with what follows it.
 
-    In a code block that is the rest of its line; in prose, the rest of the
-    code span or, outside one, the rest of the line.
+    In a code block that is the rest of its command; in prose, the rest of
+    the code span or, outside one, the rest of the paragraph. The command
+    named inside one of REACT_REFERENCES is a reference, not a use.
     """
     uses = []
-    fence = False
-    for line in text.splitlines():
-        if line.startswith("```"):
-            fence = not fence
-            continue
+    for in_code, unit in react_units(text):
+        references = [
+            (m.start(), m.end())
+            for ref in REACT_REFERENCES
+            for m in re.finditer(re.escape(ref), unit)
+        ]
         for command in REACT_COMMANDS:
-            start = line.find(command)
-            while start != -1:
-                rest = line[start:]
-                if not fence and line[:start].count("`") % 2 == 1:
+            for m in re.finditer(re.escape(command), unit):
+                if any(a <= m.start() < b for a, b in references):
+                    continue
+                rest = unit[m.start() :]
+                if not in_code and unit[: m.start()].count("`") % 2 == 1:
                     rest = rest.split("`", 1)[0]
-                if not any(ref in line for ref in REACT_REFERENCES) or rest != command:
-                    uses.append(rest)
-                start = line.find(command, start + 1)
+                uses.append(rest)
     return uses
 
 
@@ -249,7 +306,7 @@ def test_a_fifth_rule_anywhere_in_the_section_fails(name: str, place: str) -> No
     The round-1 read added a fifth rule after a blank line, and every test
     passed: Markdown reads that bullet as one more item of the same list.
     """
-    assert rule_problems(name, read(name)) == []
+    assert bullet_problems(name, read(name)) == []
     probe = with_a_fifth_rule(read(name), place)
     assert FIFTH_RULE in probe.splitlines()
     assert rule_problems(name, probe), f"a fifth rule {place} in {name} passes"
@@ -257,7 +314,9 @@ def test_a_fifth_rule_anywhere_in_the_section_fails(name: str, place: str) -> No
 
 def names_its_message(use: str) -> bool:
     command = next(c for c in REACT_COMMANDS if use.startswith(c))
-    return all(f"{flag} " in use for flag in REACT_COMMANDS[command])
+    return all(
+        f"{flag} " in use or f"{flag}=" in use for flag in REACT_COMMANDS[command]
+    )
 
 
 @pytest.mark.parametrize("name", sorted(TEXTS))
@@ -285,6 +344,9 @@ def test_every_react_command_names_its_message(name: str) -> None:
         "React with gc slack react --emoji mag before you start.\n",
         "```\ngc slack react --conversation-id Cxxx --emoji eyes\n```\n",
         "React with `gc gchat react --emoji 👀`.\n",
+        "React first with `gc slack\nreact --emoji eyes`.\n",
+        "React first with gc slack\nreact --emoji eyes.\n",
+        "Run `gc gchat react` first. When `gc gchat react` fails, say it in words.\n",
     ],
 )
 def test_the_react_check_catches_a_form_that_names_no_message(probe: str) -> None:
@@ -293,9 +355,65 @@ def test_the_react_check_catches_a_form_that_names_no_message(probe: str) -> Non
     assert not all(names_its_message(use) for use in uses), probe
 
 
+@pytest.mark.parametrize(
+    "fine",
+    [
+        "When `gc slack react` fails, the reaction was not placed.\n",
+        "When `gc gchat\nreact` fails, the reaction was not placed.\n",
+        "```\ngc slack react --conversation-id Cxxx \\\n  --message-id 1234.5678 --emoji eyes\n```\n",
+        "Run `gc slack react --conversation-id=Cxxx --message-id=1234.5678 --emoji eyes`.\n",
+        "React with `gc gchat react --message spaces/A/messages/B --emoji 👀`.\n",
+    ],
+)
+def test_the_react_check_passes_a_form_that_names_its_message(fine: str) -> None:
+    assert all(names_its_message(use) for use in react_uses(fine)), fine
+
+
+LINES_AMONG_THE_RULES = (
+    "an unindented line straight after rule 2",
+    "a paragraph between rules 2 and 3",
+    "a starred bullet at the end of the section",
+    "a numbered bullet after a blank line at the end of the list",
+)
+
+
+def with_a_line_among_the_rules(text: str, place: str) -> str:
+    lines = text.splitlines()
+    second = next(i for i, line in enumerate(lines) if line.startswith(RULE_LEADS[1]))
+    third = next(i for i, line in enumerate(lines) if line.startswith(RULE_LEADS[2]))
+    end = next(i for i, line in enumerate(lines) if line.startswith(RULE_LEADS[-1]))
+    while end + 1 < len(lines) and lines[end + 1].startswith("  "):
+        end += 1
+    section_end = next(
+        (i for i in range(end + 1, len(lines)) if lines[i].startswith("## ")), len(lines)
+    )
+    if place == "an unindented line straight after rule 2":
+        lines[third:third] = ["Except in a DM, where a line of text follows."]
+    elif place == "a paragraph between rules 2 and 3":
+        lines[third:third] = ["", "Except in a DM, where a line of text follows.", ""]
+    elif place == "a starred bullet at the end of the section":
+        lines[section_end:section_end] = ["* **A fifth rule.** Nobody agreed to this one.", ""]
+    elif place == "a numbered bullet after a blank line at the end of the list":
+        lines[end + 1 : end + 1] = ["", "1. **A fifth rule.** Nobody agreed to this one."]
+    else:
+        raise ValueError(place)
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("place", LINES_AMONG_THE_RULES)
+@pytest.mark.parametrize("name", sorted(TEXTS))
+def test_a_line_slipped_among_the_rules_fails(name: str, place: str) -> None:
+    """Lines Markdown reads into the rules, or that split them, fail (gp-1v3u self-review)."""
+    assert bullet_problems(name, read(name)) == []
+    probe = with_a_line_among_the_rules(read(name), place)
+    assert probe != read(name)
+    assert rule_problems(name, probe), f"{place} in {name} passes"
+
+
 WHATSAPP_THANKS = (
     "Until you can, a message that only thanks, confirms, agrees or closes a "
-    "topic still gets an answer from you in words."
+    "topic still gets an answer from you in words (a reaction from them still "
+    "rarely needs one)."
 )
 
 

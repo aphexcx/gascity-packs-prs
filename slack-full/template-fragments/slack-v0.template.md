@@ -85,7 +85,10 @@ gc slack react --conversation-id Cxxx --message-id 1234.5678 --emoji NAME
 
 Take both values from the reminder of the message you are answering: the
 channel id, and that message's own timestamp (`origin_ts`, `Slack ts`,
-`Message id` or `ts=`), never its thread root. Never react without them:
+`Message id` or `ts=`), never its thread root. In a batch of several
+messages, a message's own timestamp is the one in brackets at the start of
+its line; `Message id` names only the newest. Never react without both
+values, even where a reminder prints a react command that leaves them out:
 the command then reacts to the latest message it can find for your session,
 which may be another one, and it never finds a company turn (a company
 room, DM or group DM). Its receipt can still say delivered. When the

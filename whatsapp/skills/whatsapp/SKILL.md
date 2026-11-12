@@ -54,7 +54,7 @@ WhatsApp:
 You cannot place a reaction on WhatsApp yet. The adapter may place one of
 the first three when a message arrives. Until you can, a message that only
 thanks, confirms, agrees or closes a topic still gets an answer from you in
-words.
+words (a reaction from them still rarely needs one).
 
 - **A reaction comes first.** On a channel where you can react, your first
   answer to a message addressed to you is 👀, 🔍 or 👍, placed before the
