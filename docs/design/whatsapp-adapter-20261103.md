@@ -216,9 +216,9 @@ window once a minute and after each new delivery. For an owner whose business co
 raises keeper events into the mayor's session as the actor "Dynasty window-keeper"
 (`is_bot: true`): a daily update prompt once per business day (two hours before the close of
 business, or, with no hours set, at `WHATSAPP_KEEPER_UPDATE_HOUR` in the owner's recorded zone, else
-`WHATSAPP_CITY_TZ`), and a
-close ladder at 60, 30, 15 and 5 minutes before the window closes, kept inside the business's hours
-(`gc whatsapp hours`). Nothing fires after the close. Its state lives in
+`WHATSAPP_CITY_TZ`), and a close ladder at 60, 30, 15 and 5 minutes before the window closes, kept
+inside the business's hours (`gc whatsapp hours`). No nudge fires after the close; the daily update
+still does, and says since when the window has been closed. Its state lives in
 `<city>/.gc/whatsapp/keeper.json`, written before each event, and an owner the last good window read
 did not list raises nothing. It is off for every owner until consent is given. The mayor never
 replies to a keeper event; it publishes a real update, or nothing.
