@@ -1,0 +1,2 @@
+description = "Record hours and time zone for follow-ups"
+run = "../hours.sh"

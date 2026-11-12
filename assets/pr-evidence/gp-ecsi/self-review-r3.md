@@ -20,7 +20,7 @@ replacement timeout also occurred with the base classifier, whose extracted
 blob matches the original; the baseline overlay did not alter the worktree.
 No assertion, timeout, production code, or dependency was changed for run four.
 
-History checks preserve all 351 Syndi commit IDs, retain the required base as
+History checks preserve all 351 commit IDs of the customer city's mayor, retain the required base as
 an ancestor, and exclude the removed snapshot from ancestry. The PR remains
 draft for the mayor's gate and read; this record makes no claim about those
 future reviews. No finding remains in this evidence delta.

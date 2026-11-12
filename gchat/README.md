@@ -129,7 +129,7 @@ GCHAT_OAUTH_CLIENT_FILE=/absolute/path/client.json
 GCHAT_TOKEN_FILE=token.json
 GC_CITY_NAME=examplecity
 GC_API_BASE_URL=http://127.0.0.1:8372
-GCHAT_OWNERS=robert@example.com,cfo@example.com
+GCHAT_OWNERS=dana@example.com,cfo@example.com
 GCHAT_ORGANIZATION_DOMAIN=example.com
 ```
 

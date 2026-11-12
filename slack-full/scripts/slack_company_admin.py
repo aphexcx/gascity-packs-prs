@@ -403,6 +403,32 @@ def cmd_company_redact(argv: list[str]) -> int:
 
 # --- CLI entry point -------------------------------------------------------
 
+def cmd_inbound_redrive(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="slack inbound-redrive")
+    parser.add_argument("--conversation-id", required=True)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--acknowledge", metavar="MESSAGE_TS")
+    mode.add_argument("--include-older", action="store_true")
+    args = parser.parse_args(argv)
+    payload = {"conversation_id": args.conversation_id}
+    if args.acknowledge:
+        payload["acknowledge"] = args.acknowledge
+    else:
+        if args.include_older:
+            payload["include_older"] = True
+        status, data = _internal_request("POST", "/internal/inbound/redrive",
+                                         {**payload, "preview": True})
+        if status != 200:
+            raise AdminError(f"inbound-redrive preview: HTTP {status}: {data}")
+        print(json.dumps(data, sort_keys=True), flush=True)
+    status, data = _internal_request("POST", "/internal/inbound/redrive",
+                                     payload)
+    if status != (200 if args.acknowledge else 202):
+        raise AdminError(f"inbound-redrive: HTTP {status}: {data}")
+    print(json.dumps(data, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print("error: expected a subcommand "
@@ -411,6 +437,8 @@ def main(argv: list[str]) -> int:
         return 2
     sub, rest = argv[0], argv[1:]
     try:
+        if sub == "inbound-redrive":
+            return cmd_inbound_redrive(rest)
         if sub == "company-status":
             return cmd_company_status(rest)
         if sub == "company-redrive":

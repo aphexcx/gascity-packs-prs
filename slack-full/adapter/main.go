@@ -840,6 +840,9 @@ type config struct {
 	injectionMode     string
 	injectionParents  *injectionParents
 	inboundJournal    *inboundJournal
+	inboundRecovery   *inboundRecovery
+	recoveryReplay    bool
+	receiptObserver   func(deliveryReceipt)
 	// deliveryReceiptGate arms the same-ts claim's delivery-receipt gate
 	// (gp-32q): a claim concludes only on a receipt that vouches the
 	// complete payload reached the session. SLACK_DELIVERY_RECEIPT_GATE
@@ -1364,6 +1367,7 @@ type externalAttachment struct {
 }
 
 type externalInboundMessage struct {
+	originalReceiptID    string
 	injectionPrepared    bool
 	injectionDirect      bool
 	injectionStartedAt   time.Time
@@ -1930,6 +1934,9 @@ func main() {
 	cfg.postFailures = newRepeatedFailureLog()
 	cfg.bindingCheck = newBindingCheckCache()
 	cfg.coalescer = newInboundCoalescer(cfg.coalesceWindow, deliveryPolicy)
+	if err := installInboundRecovery(&cfg); err != nil {
+		log.Fatalf("inbound recovery: %v", err)
+	}
 	// Shutdown must await in-flight event goroutines before draining the
 	// coalescer (gp-9e7 fix round 1a) — wired before the handlers below
 	// close over the cfg value.
@@ -1994,6 +2001,9 @@ func main() {
 			return false
 		}
 		deliverCfg.postFailures.clear("dead-letter:" + channel)
+		if err := deliverCfg.inboundRecovery.importDeadLetters(); err != nil {
+			log.Printf("inbound dead-letter index refresh: %v", err)
+		}
 		for _, member := range batch {
 			deliverCfg.stopNeverSilent(member.inbound, permanentDeliveryFailure(cause))
 		}
@@ -2059,6 +2069,7 @@ func main() {
 		internalMux.HandleFunc("/internal/company/redact", cfg.companyGateway.handleCompanyRedact)
 	}
 	internalMux.HandleFunc("/healthz", handleHealthz)
+	internalMux.HandleFunc("POST /internal/inbound/redrive", cfg.inboundRecovery.handleRedrive)
 
 	startup := &startupGate{}
 	// A saved outage must be reported even while gc refuses registration.
@@ -2153,6 +2164,7 @@ func main() {
 	go runInboundFileJanitor(janitorCtx, cfg)
 	go runDispatchDropSummary(janitorCtx, dispatchDropSummaryInterval, cfg.dispatchConcurrency)
 	go cfg.inboundLiveness.runWatchdog(janitorCtx)
+	go cfg.inboundRecovery.run(janitorCtx, cfg)
 
 	// Socket Mode inbound transport (gp-3og). Runs alongside the public
 	// listener; Slack routes each app's events to exactly one of the two
@@ -3369,12 +3381,7 @@ func clearBusyReactionBefore(cfg config, conversationID, threadKey, cutoffTS str
 	if cfg.busyReaction == "" || conversationID == "" {
 		return
 	}
-	var taken []busyTaken
-	if threadKey == "" {
-		taken = cfg.busyMarks.takeConversationBefore(conversationID, cutoffTS)
-	} else {
-		taken = cfg.busyMarks.takeBefore(conversationID, threadKey, cutoffTS)
-	}
+	taken := cfg.inboundRecovery.takeBusyBefore(cfg.busyMarks, conversationID, threadKey, cutoffTS)
 	for _, tk := range taken {
 		go removeBusyReaction(cfg, conversationID, tk)
 	}
@@ -4561,7 +4568,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// the preamble's fetch when it ran; fetches once
 				// otherwise (skipChannelPost twins, nil cache).
 				if botUID := env.botUserID(); botUID != "" {
-					moIn.botPostedInThread = threadRepliesFetched && threadHasOwnBotPost(threadReplies, botUID, msg.TS)
+					ignoreNotice := func(ts string) bool { return cfg.inboundRecovery.isNotice(msg.Channel, ts) }
+					moIn.botPostedInThread = threadRepliesFetched && threadHasOwnBotPost(threadReplies, botUID, msg.TS, ignoreNotice)
 					// The preamble's fetch is capped at the context limit
 					// (20 by default) and conversations.replies pages
 					// oldest-first, so a bot reply past that window is
@@ -4571,7 +4579,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					// truncated.
 					if !moIn.botPostedInThread && (!threadRepliesFetched || len(threadReplies) >= mentionOnlyScanMinRefetch(cfg.slackThreadContextLimit)) {
 						fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
-						found, err := fetchThreadHasOwnBotPost(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, botUID, msg.TS)
+						found, err := fetchThreadHasOwnBotPost(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, botUID, msg.TS, ignoreNotice)
 						cancel()
 						if err != nil {
 							log.Printf("mention-only: own-thread scan fetch failed chan=%s thread=%s: %v", msg.Channel, msg.ThreadTS, err)
@@ -4754,10 +4762,17 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// remove the reaction does not survive the restart — so marking here
 	// leaves a permanent hourglass on a message the next startup will
 	// replay and answer normally.
+	busyAliasSession := aliasedSessionID
+	if aliasSuppressed {
+		busyAliasSession = ""
+	}
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != "" &&
-		!ladderSkip && !(skipChannelPost && cfg.draining != nil && cfg.draining.Load())
+		!ladderSkip && !(skipChannelPost && cfg.draining != nil && cfg.draining.Load()) &&
+		!(skipChannelPost && cfg.inboundRecovery.busyDeferred(msg.Channel, msg.TS, busyAliasSession))
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
+	busyHeld := false
+	finishBusyRemoval := func() {}
 	if busyEligible {
 		busyAddDone, busyDisplacedMarks = cfg.busyMarks.markBoth(msg.Channel, msg.ThreadTS, msg.TS)
 	}
@@ -4816,18 +4831,34 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		inboundForChannel := inbound
 		inboundForChannel.Text = textForChannel
 		inboundForChannel.injectionWindows = selectedInjectionWindows(inbound, preamble, "", textForChannel)
+		// Peer riders have independent recovery owners. The channel retry
+		// must not resend them inside this rendered envelope as well.
+		replayInbound := inboundForChannel
 		inboundForChannel, peerItems, receipt, postErr := postWithPeerRecovery(cfg, inboundForChannel, peerItems)
 		verdict := receipt.verdict(cfg.deliveryReceiptGate)
 		// Settle riders while holding the channel: a successor must not
 		// overtake a failed FIFO prefix or resend a recovered timestamp.
-		if postErr != nil || verdict == receiptUnconfirmed {
+		if postErr == nil && (verdict == receiptHeld || verdict == receiptUnconfirmed) && cfg.inboundRecovery != nil {
+			cfg.peerContext.restore(msg.Channel, cfg.inboundRecovery.holdPendingPeers(peerItems, receipt), peerDropped)
+		} else if postErr != nil || verdict == receiptUnconfirmed {
 			cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
 		} else {
 			recordRecoveredPeers(cfg, peerItems)
 		}
 		peerItems, peerDropped = nil, 0
+		channelHeld := false
+		if postErr == nil && (verdict == receiptUnconfirmed || verdict == receiptHeld) && cfg.inboundRecovery != nil {
+			if busyEligible && busyAliasSession == "" {
+				finishBusyRemoval = cfg.inboundRecovery.deferBusyRestore(msg.Channel, msg.TS)
+			}
+			if err := cfg.inboundRecovery.hold(pendingChannelInbound{inbound: replayInbound}, receipt, true, busyEligible && busyAliasSession == ""); err != nil {
+				log.Printf("inbound HOLD retained with receipt in memory; persistence retry needed: %v", err)
+			}
+			channelHeld = true
+			busyHeld = true
+		}
 		releaseChannel()
-		if postErr == nil && verdict == receiptHeld {
+		if postErr == nil && verdict == receiptHeld && cfg.inboundRecovery == nil {
 			// gc took the payload and is still waiting for the session
 			// to reach an idle boundary (mayor ruling, 2026-08-28). The
 			// claim concludes and NOTHING is re-posted; this line exists
@@ -4852,7 +4883,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				},
 			})
 		}
-		if postErr == nil && verdict == receiptUnconfirmed {
+		if postErr == nil && !channelHeld && (verdict == receiptUnconfirmed || (verdict == receiptHeld && cfg.inboundRecovery != nil)) {
 			// The payload reached gc's transcript but nothing vouches
 			// that it reached the SESSION. Treated exactly like a failed
 			// POST: that path already releases the claim (so a parked
@@ -5018,8 +5049,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// lands here on the unsupported verdict, which is that same old
 		// behavior, named in the log line above rather than assumed.
 		cfg.channelClaims.commit(claimKey)
-		cfg.deliveredIDs.record("", msg.Channel, msg.TS)
-		if aliasSuppressed {
+		// Recovery owns the channel copy (retaining its receipt even during
+		// a persistence failure), but the alias audience
+		// below is still owed its independent dispatch.
+		if !channelHeld {
+			cfg.deliveredIDs.record("", msg.Channel, msg.TS)
+		}
+		if aliasSuppressed && !channelHeld {
 			// The channel copy IS the handle audience's delivery when the
 			// direct dispatch is suppressed; record it under the handle key
 			// so sticky thread replies dedup their preambles too.
@@ -5029,7 +5065,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// delivery's wake (gp-9e7 fix round 1b): drained only AFTER the
 		// real POST succeeded, so a failed or skipped delivery leaves
 		// them in the side-buffer for the channel's next real moment.
-		cfg.coalescer.deliverBufferedReactions(msg.Channel)
+		if !channelHeld {
+			cfg.coalescer.deliverBufferedReactions(msg.Channel)
+		}
 	}
 
 	// Busy-reaction lifecycle, add side: fires once per inbound (the
@@ -5058,6 +5096,38 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				log.Printf("react busy %s failed: chan=%s ts=%s: %v", emoji, channel, ts, err)
 			}
 		}(msg.Channel, msg.TS, cfg.busyReaction, busyAddDone)
+	}
+
+	busyCancelled := false
+	cancelHeldBusy := func() {
+		if busyEligible && !busyCancelled {
+			busyCancelled = true
+			blocked, cancelled := cfg.busyMarks.cancelBothTaken(msg.Channel, msg.ThreadTS, msg.TS, nil, busyDisplacedMarks)
+			for _, tk := range blocked {
+				go removeBusyReaction(cfg, msg.Channel, tk)
+			}
+			// Preserve every completion channel before cancellation removes
+			// the registry entry. A twin's add may still be in flight.
+			allAddsDone := make(chan struct{})
+			go func() {
+				defer close(allAddsDone)
+				if busyAddDone != nil {
+					<-busyAddDone
+				}
+				for _, tk := range cancelled {
+					if tk.addDone != nil {
+						<-tk.addDone
+					}
+				}
+			}()
+			go func(finish func()) {
+				defer finish()
+				removeBusyReaction(cfg, msg.Channel, busyTaken{messageTS: msg.TS, addDone: allAddsDone})
+			}(finishBusyRemoval)
+		}
+	}
+	if busyHeld && busyAliasSession == "" {
+		cancelHeldBusy()
 	}
 
 	// Cross-channel address-by-handle: if the parsed target matches a
@@ -5180,25 +5250,42 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// the session's react/reply can resolve it as soon as the
 				// reminder lands (codex r1 P2 + r3 P2); rolled back below
 				// when gc rejects the injection.
-				recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
+				if cfg.inboundRecovery.knownAlias(inbound, aliasedSessionID) {
+					cfg.channelClaims.commit(aliasKey)
+					concludeEvent()
+					return
+				}
+				recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound, true)
 				// Rendered ONCE: the in-place re-dispatch and the
 				// follow-up's recovery copy re-send these exact bytes.
 				aliasBody := renderAliasDispatch(cfg, inbound, target)
 				aliasReceipt, aliasOK := sendAliasDispatch(cfg, aliasedSessionID, target, aliasBody, inbound)
 				aliasVerdict := aliasReceipt.verdict(cfg.deliveryReceiptGate)
-				for attempt := 0; aliasOK && aliasVerdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
+				for attempt := 0; aliasOK && aliasVerdict == receiptUnconfirmed && cfg.inboundRecovery == nil && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
 					log.Printf("alias dispatch: handle=%s ts=%s gc did not vouch for the injection (%s) — re-dispatching in place (attempt %d/%d)",
 						target, inbound.ProviderMessageID, aliasReceipt.logField(aliasVerdict), attempt+1, deliveryReceiptRepostAttempts)
 					aliasReceipt, aliasOK = sendAliasDispatch(cfg, aliasedSessionID, target, aliasBody, inbound)
 					aliasVerdict = aliasReceipt.verdict(cfg.deliveryReceiptGate)
 				}
-				if aliasOK && aliasVerdict == receiptHeld {
+				aliasHeld := false
+				if aliasOK && cfg.inboundRecovery != nil && (aliasVerdict == receiptHeld || aliasVerdict == receiptUnconfirmed) {
+					if busyEligible {
+						finishBusyRemoval = cfg.inboundRecovery.deferBusyRestore(msg.Channel, msg.TS)
+					}
+					if err := cfg.inboundRecovery.holdAlias(inbound, aliasedSessionID, target, aliasBody, aliasReceipt, busyEligible); err != nil {
+						log.Printf("alias HOLD retained with receipt in memory; persistence retry needed: %v", err)
+					}
+					aliasHeld = true
+					cancelHeldBusy()
+				}
+				if aliasOK && aliasVerdict == receiptHeld && cfg.inboundRecovery == nil {
 					log.Printf("alias dispatch: HELD handle=%s ts=%s gc accepted the injection and has not finished delivering it — not re-dispatching — %s",
 						target, inbound.ProviderMessageID, aliasReceipt.logField(aliasVerdict))
 					// Follow the held injection up (gp-3yg): a lost one
 					// is re-dispatched once, identically, into the same
 					// aliased session.
 					heldCfg, heldEnv, heldSession, heldTarget, heldBody := cfg, inbound, aliasedSessionID, target, aliasBody
+					heldEnv.originalReceiptID = aliasReceipt.id
 					cfg.receiptFollowUps.note(heldDelivery{
 						receiptID: aliasReceipt.id,
 						observeReceipt: func(r deliveryReceipt) {
@@ -5219,18 +5306,26 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						},
 					})
 				}
-				if aliasOK && aliasVerdict == receiptUnconfirmed {
+				if aliasOK && aliasVerdict == receiptUnconfirmed && !aliasHeld {
 					log.Printf("alias dispatch: UNDELIVERED handle=%s ts=%s gc accepted the injection but did not vouch that it reached the session after %d re-dispatch(es) — %s",
 						target, inbound.ProviderMessageID, deliveryReceiptRepostAttempts, aliasReceipt.logField(aliasVerdict))
 					aliasOK = false
 				}
 				if aliasOK {
 					cfg.channelClaims.commit(aliasKey)
-					cfg.deliveredIDs.record(target, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
-					// Final delivery landed: NOW retire the marks
-					// this re-target displaced (codex r7).
-					for _, d := range displaced {
-						go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
+					if !aliasHeld {
+						for _, binding := range mentionOnlyBindings {
+							if binding.matchesSession(aliasedSessionID) {
+								cfg.mentionOnlyDeliveries.confirm(binding, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
+							}
+						}
+						cfg.deliveredIDs.record(target, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
+					}
+					// HOLD restored these marks: their owners remain unanswered.
+					if !aliasHeld {
+						for _, d := range displaced {
+							go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
+						}
 					}
 					concludeEvent()
 					return
@@ -5329,7 +5424,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// (codex r7 — when an alias dispatch fires, ITS success branch
 	// does this instead, because the alias POST is the delivery that
 	// decides the event).
-	if busyEligible && !displacedOwned {
+	if busyEligible && !displacedOwned && !busyCancelled {
 		for _, d := range busyDisplacedMarks {
 			go removeBusyReaction(cfg, msg.Channel, d.mark)
 		}
@@ -6730,6 +6825,13 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 		msg := journalMessages[0]
 		msg.injectionStartedAt = started
 		cfg.inboundJournal.recordDirect(cfg, msg, result, sessionID, body)
+		if cfg.inboundRecovery != nil && result.landedUnconfirmed() {
+			cfg.inboundJournal.recordDirect(cfg, msg, result, sessionID, body, "concluded")
+		}
+		msg.Text, msg.injectionDirect = body, true
+		result.submission = captureRecoverySubmission(msg)
+		result.targetSessionID = sessionID
+		cfg.inboundRecovery.observe(result)
 	}()
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	// PathEscape cityName and sessionID so URL-significant characters
@@ -6747,6 +6849,9 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-GC-Request", "gc-slack-adapter-alias")
+	if len(journalMessages) > 0 && journalMessages[0].originalReceiptID != "" {
+		req.Header.Set("X-GC-Original-Receipt-ID", journalMessages[0].originalReceiptID)
+	}
 	// Same ask as the channel forward (gp-32q). The session-message
 	// endpoint is async today — it answers with a request id and emits
 	// the real outcome as an event — so this leg is dishonest in exactly
@@ -6766,7 +6871,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 		// sanitized like every other gc string that reaches a log line.
 		observationError = &inboundPostError{Status: resp.StatusCode, Body: string(respBody)}
 		log.Printf("alias dispatch: %s -> %s: %s", target, resp.Status, sanitizeReceiptLogValue(string(respBody), receiptFollowUpLogLimit))
-		return deliveryReceipt{}, false
+		return deliveryReceipt{postStatus: resp.StatusCode}, false
 	}
 	if readErr != nil {
 		log.Printf("alias dispatch: handle=%s -> session=%s accepted; receipt unreadable: %v", handle, sessionID, readErr)
@@ -6914,7 +7019,15 @@ func postInbound(cfg config, msg externalInboundMessage) error {
 func postInboundWithReceipt(cfg config, msg externalInboundMessage) (receipt deliveryReceipt, postErr error) {
 	defer func() {
 		if postErr == nil {
+			receipt.submission = captureRecoverySubmission(msg)
 			cfg.inboundJournal.record(cfg, msg, receipt)
+			if cfg.inboundRecovery != nil && receipt.landedUnconfirmed() {
+				cfg.inboundJournal.record(cfg, msg, receipt, "concluded")
+			}
+			if cfg.receiptObserver != nil {
+				cfg.receiptObserver(receipt)
+			}
+			cfg.inboundRecovery.observe(receipt)
 		} else {
 			cfg.observeNeverSilent(msg, receipt, postErr)
 		}
@@ -6935,6 +7048,9 @@ func postInboundWithReceipt(cfg config, msg externalInboundMessage) (receipt del
 	// answers. Ignored by every gc that predates gp-2rq, which is
 	// exactly the "unsupported" arm.
 	req.Header.Set("X-GC-Delivery-Receipt", "require")
+	if msg.originalReceiptID != "" {
+		req.Header.Set("X-GC-Original-Receipt-ID", msg.originalReceiptID)
+	}
 	resp, err := gcForwardClient.Do(req)
 	if err != nil {
 		return deliveryReceipt{}, err

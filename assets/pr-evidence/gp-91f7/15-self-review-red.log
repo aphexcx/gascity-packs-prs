@@ -1,0 +1,102 @@
+✔ 1,5,7,15,18,19: command lifecycle, file input, private status and doctor exit (3020.853875ms)
+✔ 8,9: every due item in one wake; never raised twice across thirty days (4445.288708ms)
+✔ 9,10,11: empty wakes, no zone, off between wakes, outage grace and 20:00 cutoff (640.081292ms)
+✔ 9,10 ruling: default afternoon wake arrives within 120s or waits for morning (1219.076333ms)
+✔ 3,14,15,16: reminders are durable, independent of hours/consent, cancelled ones never fire (205.097292ms)
+✔ 3,13: failed mail retries once a minute with the same key; expires at 24h (807.060125ms)
+✔ 11,13: revoking consent also blocks a pending follow-up retry (196.029583ms)
+✔ 10: recheck the wall clock before each mail when earlier delivery takes time (115.933292ms)
+✔ 18,19: status has exact safe fields, doctor reports stale tick, missing zone and failed raises (175.983166ms)
+✔ 5,6,11: consent defaults off; hours set, clear, retain/set zone; invalid changes are atomic (10.901041ms)
+✔ 7: item IDs, length, single lines, conversation form and retained terminal records (0.245542ms)
+✖ 15: RFC3339 offset and minutes/hours/days; cancellation retains the record (0.3675ms)
+✔ 12,14: fake gc records agent, notify, stable key, subjects and fixed fact bodies (766.07375ms)
+▶ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail
+  ✔ follow-up: killed planned (653.240709ms)
+  ✔ follow-up: killed attempt (703.827792ms)
+  ✔ follow-up: killed sent (701.303209ms)
+  ✔ follow-up: killed during (638.085333ms)
+  ✔ reminder: killed planned (544.151959ms)
+  ✔ reminder: killed attempt (572.99675ms)
+  ✔ reminder: killed sent (603.922334ms)
+  ✔ reminder: killed during (587.991709ms)
+✔ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail (5006.722667ms)
+✔ 13: three real gc failures then success make one delivered mail with one key (909.5645ms)
+✔ 17: two ticks started together serialize and deliver once (405.626083ms)
+✔ 5,9: two wake instants across split hours, midnight, east/west zones and DST (12.164291ms)
+✔ 5: keeper hours grammar and zone validation copied with their edge cases (0.478291ms)
+✔ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.282666ms)
+✔ 9,10 ruling: on time for <120s, then late policy; 20:00 always wins (0.838042ms)
+✖ 18: next wake is the earliest instant across overlapping opening days (0.588833ms)
+✔ 2: tick and command use the same explicit gc pack state directory (0.517917ms)
+✔ 2,4: private atomic file survives another process with every record intact (179.124708ms)
+✔ 2: interrupted replacement leaves the previous valid state (197.97625ms)
+✖ 4,17: a stale ticket cannot lock a restarted writer out when its PID was reused (2012.66125ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 30
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7858.395167
+
+✖ failing tests:
+
+test at model.test.js:46:1
+✖ 15: RFC3339 offset and minutes/hours/days; cancellation retains the record (0.3675ms)
+  Error: time must be valid RFC 3339 with an offset (for example 2026-11-12T09:00:00-06:00)
+      at fail (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/src/model.js:57:30)
+      at parseAt (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/src/model.js:58:46)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/model.test.js:49:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at schedule.test.js:71:1
+✖ 18: next wake is the earliest instant across overlapping opening days (0.588833ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + '2026-11-10T02:00:00.000Z'
+  - '2026-11-10T00:00:00.000Z'
+                 ^
+
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/schedule.test.js:73:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '2026-11-10T02:00:00.000Z',
+    expected: '2026-11-10T00:00:00.000Z',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at state.test.js:49:1
+✖ 4,17: a stale ticket cannot lock a restarted writer out when its PID was reused (2012.66125ms)
+  AssertionError [ERR_ASSERTION]: spawnSync /Users/tailor512/city/.gc/toolchain/node/v24.21.0/bin/node ETIMEDOUT
+
+  null !== 0
+
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/state.test.js:58:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,6 @@
+HEAD 7a7faffd366950000fe7ea2286b94bd4dca71757
+CAUGHT: continuation paragraph inside one text's last rule (WhatsApp): 1 failed, 14 passed in 0.02s
+CAUGHT: a fifth bullet among the rules in one text (Slack): 2 failed, 13 passed in 0.02s
+CAUGHT: the shared intro sentence changed in one text (Google Chat): 1 failed, 14 passed in 0.02s
+CAUGHT: one character of one row changed (WhatsApp): 1 failed, 14 passed in 0.02s
+clean after probes: []

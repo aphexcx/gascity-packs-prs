@@ -121,6 +121,9 @@ const deliveryReceiptRepostAttempts = 1
 // goroutine — this bead adds at most one more round-trip to the window,
 // and only when the check loses its race with the flip.
 func receiptRepostAllowed(cfg config) bool {
+	if cfg.recoveryReplay {
+		return false
+	}
 	return cfg.draining == nil || !cfg.draining.Load()
 }
 
@@ -130,6 +133,7 @@ func receiptRepostAllowed(cfg config) bool {
 type deliveryReceiptMember struct {
 	SessionID string
 	Status    string
+	Held      *deliveryComposerHold
 	// Delivered/Expected and their OK+unit companions carry the same
 	// completeness evidence as the summary counts, per member. The
 	// summary is a SUM across the notify fan-out, so a member that got
@@ -154,14 +158,26 @@ type deliveryReceiptMember struct {
 	Digest string
 }
 
+// gf-52ym: held explicitly means no new payload landed; pending remains
+// possibly landed and must never authorize a retry.
+type deliveryComposerHold struct {
+	State string `json:"state"`
+	Since string `json:"since"`
+	AgeMS int64  `json:"age_ms"`
+}
+
 // deliveryReceipt is gc's answer to "did the complete payload reach the
 // session?", parsed leniently out of an inbound/session-message
 // response. present=false means no receipt block at all (a gc that
 // predates gp-2rq).
 type deliveryReceipt struct {
-	present bool
-	id      string
-	status  string
+	postStatus      int // transport refusal, retained for alias recovery classification
+	present         bool
+	id              string
+	status          string
+	targetSessionID string
+	followUpLanded  bool // concluded receipt proved a whole paste, submit unconfirmed
+	submission      *recoverySubmission
 	// delivered/expected carry gc's counts, and deliveredOK/expectedOK
 	// say whether each actually PARSED as a number. The pair matters:
 	// a missing, null, or renamed count must never read as a delivered
@@ -222,7 +238,7 @@ const (
 //
 //	"delivery": {
 //	  "receipt_id": "rcpt_…",
-//	  "status": "delivered" | "no_route" | "partial" | "failed" | "pending",
+//	  "status": "delivered" | "no_route" | "partial" | "failed" | "pending" | "held",
 //	  "delivered_bytes": 867,     // summed over the fan-out
 //	  "expected_bytes":  867,     // ditto — both measured by gc
 //	  "digest": "d6d50cab6a19385b",
@@ -279,6 +295,9 @@ func parseDeliveryReceipt(body []byte) deliveryReceipt {
 	}
 	block := normalizeReceiptMap(decoded)
 	r := deliveryReceipt{present: true}
+	if target, ok := lookupNormalized(top, "targetsessionid"); ok {
+		_ = json.Unmarshal(target, &r.targetSessionID)
+	}
 	r.id = receiptString(block, "receiptid", "id")
 	r.status = strings.ToLower(strings.TrimSpace(receiptString(block, "status", "state")))
 	r.digest = receiptString(block, "digest", "payloaddigest")
@@ -412,7 +431,7 @@ func normalizeReceiptStatus(s string) string {
 
 // The three functions below are the ONLY places a status value carries
 // meaning, and between them they recognize exactly the confirmed enum —
-// delivered | no_route | partial | failed | pending — and nothing else
+// delivered | no_route | partial | failed | pending | held — and nothing else
 // (codex r3 P2 #6). Words that merely sound like failures ("timeout",
 // "error", "rejected") are NOT statements this gc makes, and admitting
 // them would let a producer's schema drift trigger re-posts and
@@ -435,9 +454,11 @@ func receiptStatusPositive(status string) bool {
 // and partial mean gc KNOWS something did not land, which makes a
 // re-post clean; pending means gc does not know yet and is still
 // trying, which makes a re-post a duplicate.
+// "held" (gf-52ym) explicitly means no new payload landed and permits a later
+// ladder retry; it is distinct from the internal receiptHeld pending verdict.
 func receiptStatusNegative(status string) bool {
 	switch normalizeReceiptStatus(status) {
-	case "partial", "failed":
+	case "partial", "failed", "held":
 		return true
 	}
 	return false
@@ -739,11 +760,20 @@ func receiptMembers(block map[string]any) []deliveryReceiptMember {
 			continue
 		}
 		mm := normalizeReceiptMap(decoded)
+		var hold *deliveryComposerHold
+		if raw, ok := mm["held"].(map[string]any); ok {
+			hm := normalizeReceiptMap(raw)
+			hold = &deliveryComposerHold{State: receiptString(hm, "state"), Since: receiptString(hm, "since")}
+			if age, ok := hm["agems"].(float64); ok {
+				hold.AgeMS = int64(age)
+			}
+		}
 		delivered, deliveredUnit, deliveredOK := receiptCount(mm, "delivered")
 		expected, expectedUnit, expectedOK := receiptCount(mm, "expected")
 		out = append(out, deliveryReceiptMember{
 			SessionID:     receiptString(mm, "sessionid", "session", "id"),
 			Status:        receiptString(mm, "status", "state"),
+			Held:          hold,
 			Delivered:     delivered,
 			DeliveredOK:   deliveredOK,
 			DeliveredUnit: deliveredUnit,

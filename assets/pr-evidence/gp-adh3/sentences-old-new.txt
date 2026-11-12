@@ -1,0 +1,195 @@
+gp-adh3: every sentence this bead adds, removes or changes, old above new.
+Base: aphexcx/gascity-packs-prs main 28918336555abbeb4f52af3c05029e801c59cb6f.
+"(none)" means the sentence is new or gone. The table and the four rules are
+the same, character for character, in all three texts; they are written out
+in full under each text all the same.
+
+========================================================================
+1. GOOGLE CHAT: gchat/skills/google-chat/SKILL.md, section "When to speak"
+========================================================================
+
+OLD: - **Acknowledge with a reaction, not a message.**   (a bullet)
+NEW: **Acknowledge with a reaction, not a message.**   (the same words, now a
+     paragraph that opens the reaction block)
+
+OLD: Thanks, praise, good news, "got it": react with whatever emoji fits the
+     feeling or the topic (any emoji: a train for trains, a heart for
+     heartfelt thanks).
+NEW: (none; the table and the four rules below take its place)
+
+OLD: Never send a message only to acknowledge, agree, or repeat.
+NEW: Never send a message only to acknowledge, agree, or repeat.   (unchanged,
+     kept by the self-review: nothing else in the skill forbids a message
+     that only repeats)
+
+OLD: (none)
+NEW: Five reactions have fixed meanings, the same on Slack, Google Chat and
+     WhatsApp:
+
+OLD: (none)
+NEW: | Reaction | Slack name | What the owner reads it as |
+     | --- | --- | --- |
+     | 👀 | `eyes` | "I have your message and I am on it." |
+     | 🔍 | `mag` | "I am looking this up." |
+     | 👍 | `+1` | "Understood. Nothing more needs saying." |
+     | ✅ | `white_check_mark` | "Done, and checked." |
+     | ⏰ | `alarm_clock` | "The reminder is set." |
+
+OLD: (none)
+NEW: - **A reaction comes first.** On a channel where you can react, your
+       first answer to a message addressed to you is 👀, 🔍 or 👍, placed
+       before the work starts, and never a sentence that only says the
+       message arrived. The adapter may already have placed one of these
+       three when the message came in. A second one from you does no harm.
+     - **A reaction alone.** On a channel where you can react, a message to
+       you that only confirms, thanks, agrees or closes a topic gets 👍 as
+       the whole answer. No text follows it.
+     - **✅ and ⏰ are yours, and never a promise.** ✅ goes on a request only
+       after the work is done and checked. ⏰ goes on a request for a
+       reminder only after the reminder is really stored.
+     - **Fixed means fixed.** Use the five only for their meanings. Other
+       emoji are still fine for warmth or for a topic, but never in place of
+       one of the five.
+
+OLD: (none)
+NEW: When `gc gchat react` fails, the reaction was not placed, so say the
+     same thing in words.   (added on codex round 1's MAJOR)
+
+(Layout only: a blank line now ends the four rules before the bullet
+"Reply once per message", which is unchanged.)
+
+Section "How to reply", the react example (the sentence above it, "React
+with the message id and the emoji character:", is unchanged):
+
+OLD: gc gchat react --message spaces/<id>/messages/<id> --emoji 👍
+NEW: gc gchat react --message spaces/<id>/messages/<id> --emoji 👀
+
+Unchanged on purpose (item 6): "Keep replies short and plain; Chat is
+conversation, not a report."
+
+========================================================================
+2. SLACK: slack-full/template-fragments/slack-v0.template.md
+   a new section "## Reactions" between "When to respond" and "How to reply"
+========================================================================
+
+OLD: (none)
+NEW: ## Reactions
+
+OLD: (none)
+NEW: Five reactions have fixed meanings, the same on Slack, Google Chat and
+     WhatsApp:
+
+OLD: (none)
+NEW: | Reaction | Slack name | What the owner reads it as |
+     | --- | --- | --- |
+     | 👀 | `eyes` | "I have your message and I am on it." |
+     | 🔍 | `mag` | "I am looking this up." |
+     | 👍 | `+1` | "Understood. Nothing more needs saying." |
+     | ✅ | `white_check_mark` | "Done, and checked." |
+     | ⏰ | `alarm_clock` | "The reminder is set." |
+
+OLD: (none)
+NEW: - **A reaction comes first.** On a channel where you can react, your
+       first answer to a message addressed to you is 👀, 🔍 or 👍, placed
+       before the work starts, and never a sentence that only says the
+       message arrived. The adapter may already have placed one of these
+       three when the message came in. A second one from you does no harm.
+     - **A reaction alone.** On a channel where you can react, a message to
+       you that only confirms, thanks, agrees or closes a topic gets 👍 as
+       the whole answer. No text follows it.
+     - **✅ and ⏰ are yours, and never a promise.** ✅ goes on a request only
+       after the work is done and checked. ⏰ goes on a request for a
+       reminder only after the reminder is really stored.
+     - **Fixed means fixed.** Use the five only for their meanings. Other
+       emoji are still fine for warmth or for a topic, but never in place of
+       one of the five.
+
+OLD: (none)
+NEW: On an `ambient` or `thread_ambient` turn, the rules under When to
+     respond still decide whether you answer at all, with a reaction or in
+     words.
+
+OLD: (none)
+NEW: Place a reaction by its Slack name:
+
+     gc slack react [--emoji NAME] [--session SID]
+     gc slack react --conversation-id Cxxx --message-id 1234.5678 [--emoji NAME]
+
+OLD: (none)
+NEW: The first form reacts to the latest message routed to your session, with
+     `eyes` when you give no name. The second names one message by its
+     channel id and its timestamp. Use the second when another message may
+     have reached you since.
+
+OLD: (none)
+NEW: The command prints a receipt. When it shows `"delivered": false`, the
+     reaction was not placed, so say the same thing in words.   (added on
+     codex round 1's MAJOR)
+
+Unchanged on purpose: every sentence slack-full/tests/test_slack_prompt_contract.py
+pinned before this bead, and the define block with its closing end.
+
+========================================================================
+3. WHATSAPP: whatsapp/skills/whatsapp/SKILL.md
+   a new section "## Reactions" between "How to reply" and "Write for a phone"
+========================================================================
+
+OLD: (none)
+NEW: ## Reactions
+
+OLD: (none)
+NEW: Five reactions have fixed meanings, the same on Slack, Google Chat and
+     WhatsApp:
+
+OLD: (none)
+NEW: | Reaction | Slack name | What the owner reads it as |
+     | --- | --- | --- |
+     | 👀 | `eyes` | "I have your message and I am on it." |
+     | 🔍 | `mag` | "I am looking this up." |
+     | 👍 | `+1` | "Understood. Nothing more needs saying." |
+     | ✅ | `white_check_mark` | "Done, and checked." |
+     | ⏰ | `alarm_clock` | "The reminder is set." |
+
+OLD: (none)
+NEW: You cannot place a reaction on WhatsApp yet. The adapter may place one
+     of the first three when a message arrives.
+
+OLD: (none)
+NEW: - **A reaction comes first.** On a channel where you can react, your
+       first answer to a message addressed to you is 👀, 🔍 or 👍, placed
+       before the work starts, and never a sentence that only says the
+       message arrived. The adapter may already have placed one of these
+       three when the message came in. A second one from you does no harm.
+     - **A reaction alone.** On a channel where you can react, a message to
+       you that only confirms, thanks, agrees or closes a topic gets 👍 as
+       the whole answer. No text follows it.
+     - **✅ and ⏰ are yours, and never a promise.** ✅ goes on a request only
+       after the work is done and checked. ⏰ goes on a request for a
+       reminder only after the reminder is really stored.
+     - **Fixed means fixed.** Use the five only for their meanings. Other
+       emoji are still fine for warmth or for a topic, but never in place of
+       one of the five.
+
+Unchanged on purpose (items 6 and 9): "Answer promptly, even if it is only
+"on it". The owner sees the blue ticks and "typing…" as soon as the message
+reaches you, so silence after that reads as being ignored." and the whole
+section "Write for a phone".
+
+========================================================================
+4. THE CHANGELOGS (one line each, under the top section)
+========================================================================
+
+gchat/CHANGELOG.md, "## Unreleased":
+NEW: - The skill gives five reactions fixed meanings, with the same table and
+       rules as the Slack fragment and the WhatsApp skill, in place of any
+       emoji that fits (gp-adh3).
+
+slack-full/CHANGELOG.md, "## [Unreleased]" / "### Changed":
+NEW: - **Five reactions with fixed meanings** (gp-adh3): the `slack-v0` prompt
+       fragment gains a Reactions section, with the same table and rules as
+       the Google Chat and WhatsApp skills and both forms of `gc slack react`.
+
+whatsapp/CHANGELOG.md, "## Unreleased (gp-g02t, PR 76 round 2)":
+NEW: - The skill carries the five reactions with fixed meanings, with the same
+       table and rules as the Slack fragment and the Google Chat skill, and
+       says the mayor cannot place a reaction on WhatsApp yet (gp-adh3).

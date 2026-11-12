@@ -133,6 +133,10 @@ type pendingChannelInbound struct {
 	// take time, and returned to the reaction side-buffer — never
 	// re-arming a timer — when a failed delivery restores the batch.
 	reaction bool
+	// reactionNoWake marks a reaction returned after gc proved nothing
+	// landed. It can ride real traffic or a fresh reaction overflow, but
+	// cannot itself earn another solo wake from the overflow threshold.
+	reactionNoWake bool
 	// attempts counts deliveries gc REJECTED (permanentDeliveryFailure)
 	// with this entry charged as the suspect (see failed); at
 	// maxCoalesceDeliveryAttempts it is dead-lettered instead of
@@ -228,8 +232,9 @@ func (p pendingChannelInbound) reminderParts(channel string) (channelReminderPar
 // Nil-safe throughout: a nil coalescer disables coalescing and every
 // inbound takes the immediate path, byte-for-byte pre-gp-729 behavior.
 type inboundCoalescer struct {
-	mu      sync.Mutex
-	pending map[string][]pendingChannelInbound
+	recovery *inboundRecovery
+	mu       sync.Mutex
+	pending  map[string][]pendingChannelInbound
 	// reactions is the no-wake side-buffer (gp-9e7 item 1): entries
 	// here arm no timer and deliver only by merging into a batch taken
 	// for the channel — a timer flush armed by real messages, the
@@ -984,6 +989,9 @@ func (c *inboundCoalescer) onLadder(channel, ts string) bool {
 	if c == nil || ts == "" {
 		return false
 	}
+	if c.recovery.known(channel, ts) {
+		return true
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	_, ok := c.verdictLocked(channel, ts, time.Now())
@@ -1252,12 +1260,27 @@ func (c *inboundCoalescer) hasRealPendingLocked(channel string) bool {
 // lane has overflowed (the one sanctioned solo reaction wake, gp-9e7
 // item 1). Reactions below the cap never earn a timer — not by
 // admission, not by a restore, not by a withheld twin emptying the
-// buffer beside them (codex r8 finding 3) — and an overflowed lane
-// always does, even during a backoff (codex r8 finding 2: the deadline
+// buffer beside them (codex r8 finding 3). Reactions returned after a
+// conclusive loss do not count toward overflow; only fresh admissions
+// earn another solo wake. An eligible overflow does, even during a
+// backoff (codex r8 finding 2: the deadline
 // decides WHEN, never WHETHER). Both the arming side (scheduleLocked)
 // and the firing side (flushTimer) consult it. Caller holds c.mu.
 func (c *inboundCoalescer) timerWorthyLocked(channel string) bool {
-	return c.hasRealPendingLocked(channel) || len(c.reactions[channel]) >= maxBufferedReactionsPerChannel
+	return c.hasRealPendingLocked(channel) || c.reactionOverflowLocked(channel)
+}
+
+func (c *inboundCoalescer) reactionOverflowLocked(channel string) bool {
+	n := 0
+	for _, p := range c.reactions[channel] {
+		if !p.reactionNoWake {
+			n++
+			if n >= maxBufferedReactionsPerChannel {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // disarmLocked stops and forgets the channel's timer, bumping the
@@ -1413,6 +1436,9 @@ func (c *inboundCoalescer) spillLateLocked(channel string, batch []pendingChanne
 // dispatch goroutine, like flushAheadOf.
 func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	if c == nil {
+		return
+	}
+	if c.recovery.known(channel, p.inbound.ProviderMessageID) {
 		return
 	}
 	c.mu.Lock()
@@ -1627,6 +1653,10 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 	}
 	p.reaction = true
 	c.mu.Lock()
+	if c.recovery.known(channel, p.inbound.ProviderMessageID) {
+		c.mu.Unlock()
+		return true
+	}
 	// A copy of a reaction the ladder RETIRED (dead-lettered, by its own
 	// event identity) is a duplicate of a handled event, exactly like a
 	// retired message's copy at enqueue (codex r14 finding 2): the
@@ -1671,7 +1701,8 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 	}
 	c.reactions[channel] = append(c.reactions[channel], p)
 	n := len(c.reactions[channel])
-	if n >= maxBufferedReactionsPerChannel && c.inBackoffLocked(channel) {
+	overflow := c.reactionOverflowLocked(channel)
+	if overflow && c.inBackoffLocked(channel) {
 		// A channel in transient-failure backoff keeps its overflow too
 		// (gp-sgu7): the overflow flush would POST at an unreachable gc.
 		// But the overflow is now timer-worthy, and a reactions-only
@@ -1686,7 +1717,7 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 		c.mu.Unlock()
 		return true
 	}
-	if n >= maxBufferedReactionsPerChannel {
+	if overflow {
 		// Overflow: deliver rather than evict — reactions never drop.
 		// The solo wake this costs takes a pathological reaction volume
 		// with zero real traffic; the cap bounds memory, not content.
@@ -2378,6 +2409,20 @@ func (c *inboundCoalescer) isolate(channel string, msgs, rest []pendingChannelIn
 // to "never the same bytes again". With no hook wired (bare test
 // configs) the entry is dropped, loudly.
 func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause error) {
+	if c.recovery != nil && errors.Is(cause, errDeliveryUnvouched) {
+		var unvouched *unvouchedDeliveryError
+		var receipt deliveryReceipt
+		if errors.As(cause, &unvouched) {
+			receipt = unvouched.receipt
+		}
+		batch := []pendingChannelInbound{p}
+		c.applyDeletionTombstones(channel, batch)
+		p = batch[0]
+		if err := c.recovery.hold(p, receipt, false); err != nil {
+			log.Printf("coalesce: HOLD retained with receipt in memory; persistence retry needed: %v", err)
+		}
+		return
+	}
 	ts := p.inbound.ProviderMessageID
 	now := time.Now()
 	// ONE critical section reconciles the deletion tombstone and records
@@ -2445,6 +2490,9 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 	}
 	if dropped > 0 {
 		log.Printf("coalesce: chan=%s ts=%s %d buffered duplicate copy(ies) of the retired message dropped — never re-posted", channel, ts, dropped)
+	}
+	if err := c.recovery.refuseBufferedReaction(p, cause); err != nil {
+		log.Printf("coalesce: reaction refusal recovery persistence: %v", err)
 	}
 	if c.deadLetter == nil {
 		log.Printf("coalesce: LOSS chan=%s ts=%s rejected %d times and no dead-letter sink is wired — dropped: %v",
@@ -2839,6 +2887,7 @@ func (c *inboundCoalescer) markDeleted(channel, ts string) int {
 	}
 	c.mu.Lock()
 	c.tombstoneLocked(channel, ts, time.Now())
+	c.recovery.redact(channel, ts)
 	n := 0
 	for i := range c.pending[channel] {
 		if c.pending[channel][i].inbound.ProviderMessageID == ts {
@@ -2944,7 +2993,7 @@ func (c *inboundCoalescer) reconcileTimers() {
 			// than waiting a whole window again.
 			at = now.Add(c.capRetryDelay())
 		case len(c.pending[channel]) >= maxCoalescePerChannel ||
-			len(c.reactions[channel]) >= maxBufferedReactionsPerChannel:
+			c.reactionOverflowLocked(channel):
 			at = now.Add(c.capRetryDelay())
 		}
 		// A deadline still ahead binds inside the scheduler (gp-sgu7,
@@ -3197,6 +3246,9 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	var ownedClaims []string
 	for _, p := range batch {
 		ts := p.inbound.ProviderMessageID
+		if !cfg.recoveryReplay && cfg.inboundRecovery.deliveryBlocked(channel, ts) {
+			continue
+		}
 		if cfg.deliveredIDs.seen("", channel, ts) {
 			log.Printf("coalesce: chan=%s ts=%s already delivered to channel audience — dropped from batch", channel, ts)
 			continue
@@ -3328,7 +3380,10 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	env.Text = text
 	env, peerItems, receipt, err := postWithPeerRecovery(cfg, env, peerItems)
 	verdict := receipt.verdict(cfg.deliveryReceiptGate)
-	if err == nil && verdict == receiptHeld {
+	if err == nil {
+		cfg.inboundRecovery.completeBufferedReactions(batch, receipt)
+	}
+	if err == nil && verdict == receiptHeld && !cfg.recoveryReplay && cfg.inboundRecovery == nil {
 		log.Printf("coalesce: HELD chan=%s batch=%d newest_ts=%s gc accepted the batch and has not finished delivering it — not re-posting — %s",
 			channel, len(batch), env.ProviderMessageID, receipt.logField(verdict))
 		// Follow the hold up (gp-3yg). The batch envelope is re-posted
@@ -3353,7 +3408,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 			},
 		})
 	}
-	if err == nil && verdict == receiptUnconfirmed {
+	if err == nil && (verdict == receiptUnconfirmed || (verdict == receiptHeld && (cfg.recoveryReplay || cfg.inboundRecovery != nil))) {
 		// gc took the batch but would not vouch that it reached the
 		// session. Routed into the SAME failure path as a rejected POST
 		// (codex r1 P2/P3): that path is what releases the member claims
@@ -3372,7 +3427,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		// failed()), which bounds the retry without discarding anything.
 		log.Printf("coalesce: UNDELIVERED chan=%s batch=%d newest_ts=%s gc accepted the batch but did not vouch that it reached the session after %d re-post(s) — %s",
 			channel, len(batch), env.ProviderMessageID, deliveryReceiptRepostAttempts, receipt.logField(verdict))
-		err = errDeliveryUnvouched
+		err = &unvouchedDeliveryError{receipt: receipt}
 	}
 	if err != nil {
 		// One line per DISTINCT failure per channel, not one per attempt
@@ -3387,6 +3442,9 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		// take over the delivery (gp-ios).
 		for _, key := range ownedClaims {
 			cfg.channelClaims.forget(key)
+		}
+		if cfg.inboundRecovery != nil && (verdict == receiptHeld || errors.Is(err, errDeliveryUnvouched)) {
+			peerItems = cfg.inboundRecovery.holdPendingPeers(peerItems, receipt)
 		}
 		cfg.peerContext.restore(channel, peerItems, peerDropped)
 		if firstHelp {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The skill gives reactions fixed meanings, with the same tables and rules
+  as the Slack fragment and the WhatsApp skill, in place of any emoji that
+  fits (gp-adh3). The rows are a catalog, `reactions.json` at the pack's
+  root and the same file in all three packs: the reactions an adapter may
+  place when a message arrives, and those that claim a finished fact,
+  which only the mayor places (gp-bis1).
 - Add opt-in never-silent owner notices, durable outage mail and health/status reporting for newly addressed human messages.
 
 - Answer a message with `--to` on reply-current, publish or upload. The adapter
@@ -63,6 +69,8 @@
   turns a waiting message with four or more POSTs unresolved without a mail
   and posts a message that waited behind another at once: resolve waiting
   rows first.
+- Docs only: the README's sample owners line uses an invented given name. No
+  code change.
 
 ## 0.5.0 — 2026-11-09
 

@@ -1,0 +1,2 @@
+description = "Show follow-through health without message text"
+run = "../status.sh"

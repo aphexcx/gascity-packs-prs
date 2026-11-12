@@ -58,15 +58,7 @@ wa_error_of() {
   printf '%s' "$1" | jq -r '.error // empty' 2>/dev/null || true
 }
 
-# The env file the adapter sources (run.sh's resolution order), for enroll.
+# Use the same resolver as startup and diagnostics; never source the env here.
 wa_env_file() {
-  if [ -n "${GC_WHATSAPP_ADAPTER_ENV:-}" ]; then
-    printf '%s' "$GC_WHATSAPP_ADAPTER_ENV"
-  elif [ -n "${GC_SERVICE_SECRETS_DIR:-}" ]; then
-    printf '%s' "$GC_SERVICE_SECRETS_DIR/env"
-  elif [ -n "${GC_CITY_PATH:-}" ]; then
-    printf '%s' "$GC_CITY_PATH/.gc/services/whatsapp/secrets/env"
-  else
-    printf '%s' "$HOME/.config/gc-whatsapp-adapter/env"
-  fi
+  sh "$(dirname "$0")/../adapter/env-file.sh"
 }

@@ -1,0 +1,43 @@
+--- slack-v0.template.md (a) as built
++++ slack-v0.template.md (b) core and path
+@@ -61,7 +60,0 @@
+-| 🤔 | `thinking_face` | "I am thinking this over before I give you my view." |
+-| ❤️ | `heart` | "You are welcome; I am glad it helped." |
+-| 👋 | `wave` | "Hello to you too, or goodbye for now." |
+-| 🎉 | `tada` | "That is great news." |
+-| 😢 | `cry` | "I am sorry; that is sad news." |
+-| 😂 | `joy` | "That made me laugh." |
+-| 🤞 | `crossed_fingers` | "Good luck; I hope it goes well." |
+@@ -76,6 +69,4 @@
+-| 📥 | `inbox_tray` | "I have the attachment you sent, and it opens." |
+-| 📤 | `outbox_tray` | "It is sent." |
+-| 📅 | `date` | "It is booked." |
+-| 💳 | `credit_card` | "It is paid." |
+-| 📝 | `memo` | "Noted, and saved where I will find it again." |
+-| ⚠️ | `warning` | "It did not work; my reply says why." |
++
++More reactions have fixed meanings too, each marked as true on arrival
++or as a finished fact, in `reactions.json` at the root of the slack-full
++pack. Read it before you place a reaction that is not in these tables.
+--- google-chat SKILL.md (a) as built
++++ google-chat SKILL.md (b) core and path
+@@ -54,7 +53,0 @@
+-| 🤔 | `thinking_face` | "I am thinking this over before I give you my view." |
+-| ❤️ | `heart` | "You are welcome; I am glad it helped." |
+-| 👋 | `wave` | "Hello to you too, or goodbye for now." |
+-| 🎉 | `tada` | "That is great news." |
+-| 😢 | `cry` | "I am sorry; that is sad news." |
+-| 😂 | `joy` | "That made me laugh." |
+-| 🤞 | `crossed_fingers` | "Good luck; I hope it goes well." |
+@@ -69,6 +62,5 @@
+-| 📥 | `inbox_tray` | "I have the attachment you sent, and it opens." |
+-| 📤 | `outbox_tray` | "It is sent." |
+-| 📅 | `date` | "It is booked." |
+-| 💳 | `credit_card` | "It is paid." |
+-| 📝 | `memo` | "Noted, and saved where I will find it again." |
+-| ⚠️ | `warning` | "It did not work; my reply says why." |
++
++More reactions have fixed meanings too, each marked as true on arrival
++or as a finished fact, in `reactions.json` at the root of this skill's
++pack (`../../reactions.json` from this file). Read it before you place a
++reaction that is not in these tables.

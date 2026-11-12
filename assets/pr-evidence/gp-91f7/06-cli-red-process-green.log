@@ -1,0 +1,78 @@
+✖ 1,5,7,15,18,19: command lifecycle, file input, private status and doctor exit (33.577708ms)
+✔ 8,9: every due item in one wake; never raised twice across thirty days (3636.392917ms)
+✔ 9,10,11: empty wakes, no zone, off between wakes, outage grace and 20:00 cutoff (784.4515ms)
+✔ 3,14,15,16: reminders are durable, independent of hours/consent, cancelled ones never fire (198.105917ms)
+✔ 3,13: failed mail retries once a minute with the same key; expires at 24h (951.310167ms)
+✔ 11,13: revoking consent also blocks a pending follow-up retry (229.751625ms)
+✔ 18,19: status has exact safe fields, doctor reports stale tick, missing zone and failed raises (271.129833ms)
+✔ 5,6,11: consent defaults off; hours set, clear, retain/set zone; invalid changes are atomic (11.270833ms)
+✔ 7: item IDs, length, single lines, conversation form and retained terminal records (0.24625ms)
+✔ 15: RFC3339 offset and minutes/hours/days; cancellation retains the record (0.519792ms)
+✔ 12,14: fake gc records agent, notify, stable key, subjects and fixed fact bodies (621.086792ms)
+▶ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail
+  ✔ follow-up: killed planned (581.773666ms)
+  ✔ follow-up: killed attempt (608.80875ms)
+  ✔ follow-up: killed sent (620.465709ms)
+  ✔ follow-up: killed during (618.927791ms)
+  ✔ reminder: killed planned (547.30625ms)
+  ✔ reminder: killed attempt (599.262291ms)
+  ✔ reminder: killed sent (594.300833ms)
+  ✔ reminder: killed during (626.179917ms)
+✔ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail (4798.180459ms)
+✔ 13: three real gc failures then success make one delivered mail with one key (863.809209ms)
+✔ 17: two ticks started together serialize and deliver once (270.938291ms)
+✔ 5,9: two wake instants across split hours, midnight, east/west zones and DST (12.351042ms)
+✔ 5: keeper hours grammar and zone validation copied with their edge cases (0.508792ms)
+✔ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.297916ms)
+✔ 9,10 ruling: on time for <120s, then late policy; 20:00 always wins (0.363125ms)
+✔ 2: tick and command use the same explicit gc pack state directory (0.507292ms)
+✔ 2,4: private atomic file survives another process with every record intact (133.689417ms)
+✔ 2: interrupted replacement leaves the previous valid state (179.198375ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 28
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6602.975583
+
+✖ failing tests:
+
+test at cli.test.js:11:1
+✖ 1,5,7,15,18,19: command lifecycle, file input, private status and doctor exit (33.577708ms)
+  AssertionError [ERR_ASSERTION]: node:internal/modules/cjs/loader:1568
+    throw err;
+    ^
+
+  Error: Cannot find module '/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/src/cli.js'
+      at Module._resolveFilename (node:internal/modules/cjs/loader:1564:15)
+      at wrapResolveFilename (node:internal/modules/cjs/loader:1118:27)
+      at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1142:10)
+      at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1169:12)
+      at Module._load (node:internal/modules/cjs/loader:1341:5)
+      at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+      at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+      at node:internal/main/run_main_module:33:47 {
+    code: 'MODULE_NOT_FOUND',
+    requireStack: []
+  }
+
+  Node.js v24.21.0
+
+
+  1 !== 0
+
+      at ok (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/cli.test.js:17:60)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/cli.test.js:18:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

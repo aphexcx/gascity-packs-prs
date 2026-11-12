@@ -120,10 +120,14 @@ def env_file(tmp_path):
     return file
 
 
-def test_env_missing_file_fails_closed():
-    result = doctor('env')
+def test_env_missing_file_fails_closed(tmp_path):
+    result = doctor('env', HOME=str(tmp_path), GC_CITY_PATH=str(tmp_path / 'city'))
     assert result.returncode == 2
     assert 'env file missing' in result.stdout
+    assert 'GC_SERVICE_SECRETS_DIR' in result.stdout
+    assert 'GC_CITY_PATH' in result.stdout
+    assert 'HOME default' in result.stdout
+    assert 'create the per-city' not in result.stdout
 
 
 def test_env_reports_names_only(env_file):
@@ -150,12 +154,13 @@ def test_env_shell_expansion_is_not_executed(env_file, tmp_path):
     assert not target.exists()
 
 
-def test_env_city_scopes_the_file(env_file, tmp_path):
-    assert doctor('env', GC_CITY_PATH=str(tmp_path)).returncode == 2
+def test_env_service_scopes_the_file(env_file, tmp_path):
     secrets = tmp_path / '.gc/services/whatsapp/secrets'
+    env = {'HOME': str(tmp_path), 'GC_CITY_PATH': str(tmp_path), 'GC_SERVICE_SECRETS_DIR': str(secrets)}
+    assert doctor('env', **env).returncode == 2
     secrets.mkdir(parents=True)
     shutil.copy(env_file, secrets / 'env')
-    assert doctor('env', GC_CITY_PATH=str(tmp_path)).returncode == 0
+    assert doctor('env', **env).returncode == 0
 
 
 def test_dependencies_green_and_missing_node(tmp_path):
@@ -629,6 +634,154 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     assert encoded.returncode == 0, encoded.stderr
     assert '5511900001234' not in encoded.stdout
     assert json.loads(encoded.stdout)['keeper']['conversations'][0]['conversation_last4'] == '1234'
+
+
+@pytest.mark.parametrize('city_set', [False, True])
+@pytest.mark.parametrize('override_set', [False, True])
+@pytest.mark.parametrize('secrets_set', [False, True])
+@pytest.mark.parametrize('relative_paths', [False, True])
+def test_env_file_agrees_across_enroll_run_and_doctor(tmp_path, fake, city_set, override_set, secrets_set, relative_paths):
+    gateway = fake({'POST /v1/enroll': (200, {'city_id': 'fixture-city', 'credential': 'fixture-credential'})})
+    # A copied pack keeps relative-path writes inside the temporary directory.
+    pack = tmp_path / 'fixture pack'
+    for directory in ('adapter', 'commands', 'doctor'):
+        shutil.copytree(PACK / directory, pack / directory,
+                        ignore=shutil.ignore_patterns('node_modules', 'test', '__pycache__'))
+    fixtures = pack / 'adapter' / 'fixtures'
+    home = fixtures / 'fixture home'
+    city = fixtures / 'fixture city'
+    files = {
+        'override': fixtures / 'explicit file',
+        'service': fixtures / 'service secrets' / 'env',
+        'city': city / '.gc/services/whatsapp/secrets/env',
+        'home': home / '.config/gc-whatsapp-adapter/env',
+    }
+    originals = {}
+    for label, file in files.items():
+        file.parent.mkdir(parents=True, exist_ok=True)
+        originals[label] = (f'WHATSAPP_GATEWAY_URL={gateway.url}\nGC_CITY_NAME=fixture-city\n'
+                            f'GC_API_BASE_URL=http://127.0.0.1:9443\nFIXTURE_ENV_LABEL={label}\n')
+        file.write_text(originals[label])
+    def env_path(file):
+        return os.path.relpath(file, pack / 'adapter') if relative_paths else str(file)
+
+    env = {'HOME': env_path(home), 'WHATSAPP_GATEWAY_URL': gateway.url}
+    if city_set:
+        env['GC_CITY_PATH'] = env_path(city)
+    if override_set:
+        env['GC_WHATSAPP_ADAPTER_ENV'] = env_path(files['override'])
+    if secrets_set:
+        env['GC_SERVICE_SECRETS_DIR'] = env_path(files['service'].parent)
+
+    def invoke(script, *args, **overrides):
+        return subprocess.run([str(pack / script), *args], cwd=pack,
+                              env=clean_env(**dict(env, **overrides)),
+                              text=True, capture_output=True, timeout=20)
+
+    enrolled = invoke('commands/enroll.sh', '--code', 'fixture-code', '--name', 'Fixture City')
+    assert enrolled.returncode == 0, enrolled.stderr
+    written = [label for label, file in files.items() if 'WHATSAPP_GATEWAY_CREDENTIAL=' in file.read_text()]
+    assert len(written) == 1
+    assert files[written[0]].stat().st_mode & 0o777 == 0o600
+
+    # The real startup shell loads the file; fake only Node so no adapter starts.
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    node = bin_dir / 'node'
+    node.write_text('#!/bin/sh\n[ "$1" = "-e" ] && exit 0\n'
+                    'printf "%s\\n" "$FIXTURE_ENV_LABEL" "${WHATSAPP_GATEWAY_CREDENTIAL:-missing}"\n')
+    node.chmod(0o755)
+    started = invoke('adapter/run.sh', PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
+    assert started.returncode == 0, started.stderr
+    loaded, credential = started.stdout.splitlines()
+
+    # Give each candidate the only complete env file in turn to observe the
+    # doctor's selection without exposing a resolver-only test API.
+    checked = []
+    for label in files:
+        for candidate, file in files.items():
+            file.write_text(originals[candidate] + (
+                "WHATSAPP_GATEWAY_CREDENTIAL='fixture-credential'\n" if candidate == label else ''))
+        result = invoke('doctor/check-env.sh')
+        assert result.returncode in (0, 2), result.stdout + result.stderr
+        if result.returncode == 0:
+            checked.append(label)
+    assert len(checked) == 1
+    print('ENV_FILE_MATRIX ' + json.dumps({
+        'city': city_set, 'override': override_set, 'secrets': secrets_set,
+        'relative': relative_paths,
+        'enroll': written[0], 'run': loaded, 'doctor': checked[0],
+    }, sort_keys=True))
+
+    # Commands and startup share the city fallback when neither override is set.
+    expected = 'override' if override_set else 'service' if secrets_set else 'city' if city_set else 'home'
+    assert loaded == expected
+    assert written == checked == [expected]
+    assert credential == 'fixture-credential'
+    assert gateway.requests == [('POST', '/v1/enroll', {'code': 'fixture-code', 'name': 'Fixture City'})]
+
+
+def test_enroll_and_doctor_match_supervised_startup(tmp_path, fake):
+    gateway = fake({
+        'POST /v1/enroll': (200, {'city_id': 'fixture-city', 'credential': 'fixture-credential'}),
+        'GET /healthz': (200, {'ok': True}),
+        'GET /v1/inbox?limit=1': (200, {'messages': []}),
+    })
+    home = tmp_path / 'fresh home'
+    home.mkdir()
+    city = tmp_path / 'fixture city'
+    secrets = city / '.gc/services/whatsapp/secrets'
+    secrets.mkdir(parents=True)
+    selected = secrets / 'env'
+    selected.write_text(f'WHATSAPP_GATEWAY_URL={gateway.url}\nGC_CITY_NAME=fixture-city\n'
+                        'GC_API_BASE_URL=http://127.0.0.1:9443\n')
+    command_env = {'HOME': str(home), 'GC_CITY_PATH': str(city), 'WHATSAPP_GATEWAY_URL': gateway.url}
+    enrolled = verb('enroll.sh', '--code', 'fixture-code', '--name', 'Fixture City', **command_env)
+    assert enrolled.returncode == 0, enrolled.stderr
+
+    # Only the supervisor supplies the service directory; observe the real
+    # startup shell loading the credential without starting a live adapter.
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    node = bin_dir / 'node'
+    node.write_text('#!/bin/sh\n[ "$1" = "-e" ] && exit 0\n'
+                    'printf "%s\\n" "${WHATSAPP_GATEWAY_CREDENTIAL:-missing}"\n')
+    node.chmod(0o755)
+    supervisor_env = dict(command_env, GC_SERVICE_SECRETS_DIR=str(secrets),
+                          PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
+    started = subprocess.run([str(PACK / 'adapter/run.sh')], env=clean_env(**supervisor_env),
+                             text=True, capture_output=True, timeout=20)
+    assert started.returncode == 0, started.stderr
+    assert started.stdout.strip() == 'fixture-credential'
+    assert "WHATSAPP_GATEWAY_CREDENTIAL='fixture-credential'" in selected.read_text()
+    assert selected.stat().st_mode & 0o777 == 0o600
+    assert not (home / '.config/gc-whatsapp-adapter/env').exists()
+    for check in ('env', 'gateway'):
+        result = doctor(check, **command_env)
+        assert result.returncode == 0, result.stdout + result.stderr
+    assert gateway.requests == [
+        ('POST', '/v1/enroll', {'code': 'fixture-code', 'name': 'Fixture City'}),
+        ('GET', '/healthz', None), ('GET', '/v1/inbox?limit=1', None),
+    ]
+
+
+@pytest.mark.parametrize('check', ['env', 'gateway'])
+def test_doctor_finds_existing_city_file_without_service_env(tmp_path, fake, check):
+    gateway = fake({'GET /healthz': (200, {'ok': True}),
+                    'GET /v1/inbox?limit=1': (200, {'messages': []})})
+    home = tmp_path / 'fresh home'
+    home.mkdir()
+    city = tmp_path / 'fixture city'
+    selected = city / '.gc/services/whatsapp/secrets/env'
+    selected.parent.mkdir(parents=True)
+    selected.write_text(f'WHATSAPP_GATEWAY_URL={gateway.url}\nGC_CITY_NAME=fixture-city\n'
+                        "WHATSAPP_GATEWAY_CREDENTIAL='fixture-credential'\n"
+                        'GC_API_BASE_URL=http://127.0.0.1:9443\n')
+    result = doctor(check, HOME=str(home), GC_CITY_PATH=str(city))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (home / '.config/gc-whatsapp-adapter/env').exists()
+    if check == 'gateway':
+        assert gateway.requests == [('GET', '/healthz', None), ('GET', '/v1/inbox?limit=1', None)]
 
 
 def test_enroll_writes_the_credential_0600_and_prints_nothing_secret(tmp_path):

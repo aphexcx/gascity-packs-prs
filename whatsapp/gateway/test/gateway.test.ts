@@ -1120,11 +1120,11 @@ describe("City side: read, media", () => {
 describe("Credentials and enrollment", () => {
   it("enroll mints a city and one credential for a live code, once; a used code is 403", async () => {
     const t = setup();
-    const code = await t.enrollCode("Creekview Roofing");
-    const first = await t.call("POST", "/v1/enroll", { body: { code, name: "creekview-box" } });
+    const code = await t.enrollCode("Example Enrollment City One");
+    const first = await t.call("POST", "/v1/enroll", { body: { code, name: "example-enrollment-one-box" } });
     expect(first.status).toBe(200);
     expect(Object.keys(first.body).sort()).toEqual(["city_id", "credential"]);
-    const again = await t.call("POST", "/v1/enroll", { body: { code, name: "creekview-box" } });
+    const again = await t.call("POST", "/v1/enroll", { body: { code, name: "example-enrollment-one-box" } });
     expect(again.status).toBe(403);
     const stored = await env.DB.prepare("SELECT token_sha256 FROM credentials WHERE city_id = ?").bind(first.body.city_id).all<{ token_sha256: string }>();
     expect(stored.results).toHaveLength(1);
@@ -1164,7 +1164,7 @@ describe("Credentials and enrollment", () => {
     expect((await unset.call("GET", "/v1/admin/cities", { token: "" })).status).toBe(401);
     expect((await unset.call("GET", "/v1/admin/cities", { headers: { authorization: "Bearer " } })).status).toBe(401);
     expect((await unset.call("POST", "/v1/admin/unbind", { headers: { authorization: "Bearer " }, body: { id: "x" } })).status).toBe(401);
-    const minted = await t.admin("POST", "/v1/admin/enroll-codes", { city_name: "Nationwide EMS" });
+    const minted = await t.admin("POST", "/v1/admin/enroll-codes", { city_name: "Example Enrollment City Two" });
     expect(minted.status).toBe(200);
     expect(minted.body.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$/);
     expect(minted.body.expires_at).toBe(t.clock.now + 3 * DAY);
