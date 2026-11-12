@@ -105,7 +105,7 @@ file entries passed. No mutation survived.
 
 ## Merge checks
 
-At implementation commit `5a014a703465b05c9de02a2d264270d85cbfe577`:
+After refetching both heads, at code commit `b13d86f8bb33ae2c0a38216248bfe33b6a1ece3c`:
 
 | Other head | Result | Output |
 | --- | --- | --- |
@@ -125,7 +125,8 @@ The conflicts are recorded and left untouched as item 21 requires.
 Fresh self-review at `5a014a703465b05c9de02a2d264270d85cbfe577` inspected
 all 25 changed files: 0 BLOCKER, 1 MAJOR, 1 MINOR, 0 NIT.
 
-- MAJOR, failure accounting outside the wake deadline: FIXED. The class is
+- MAJOR, failure accounting outside the wake deadline: FIXED in
+  `b13d86f8bb33ae2c0a38216248bfe33b6a1ece3c`. The class is
   unbounded work after a bounded best-effort operation. A parameterized test
   stalled only the failure-counter write and reproduced pending responses
   for webhook, adopted-status send, and rollback inbox. The shared helper
@@ -138,10 +139,21 @@ all 25 changed files: 0 BLOCKER, 1 MAJOR, 1 MINOR, 0 NIT.
   assertions across reconnect and safety reads, then allowed acknowledgement
   and verified the post count remained one. The proof passes.
 
-The required Codex DEEP round follows on the committed fix.
+Codex DEEP round 1 reviewed `b13d86f8bb33ae2c0a38216248bfe33b6a1ece3c`
+against the recorded base with model `gpt-6-astra`: **VERDICT: CLEAN**,
+0 actionable findings. The installed helper validated the anchored verdict
+and returned 0. The reviewer read all 28 changed files and traced callers,
+storage and error paths; it ran no tests/builds in its read-only sandbox.
+The lane's recorded runs are the validation of record. The final evidence
+commit changes only this report and merge-output records. The mayor's gate
+and Fable read remain pending.
 
 ## Public repository check
 
 New fixtures use invented identities and message text. Raw test transcripts
 and private coordination records remain outside the PR; this file records
 the relevant commands, results and limits without copying them.
+The entire added diff was checked for customer data, real phone/account/database
+identifiers, credentials, private paths, service URLs and prices. Only invented
+test identities, reserved test URLs and the required public documentation link
+appear. Public-repo check: done, 0 things changed for redaction.
