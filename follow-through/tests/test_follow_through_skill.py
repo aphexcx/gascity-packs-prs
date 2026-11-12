@@ -12,10 +12,12 @@ import shutil
 import subprocess
 import tomllib
 
+import pytest
 import yaml
 
 PACK = Path(__file__).resolve().parents[1]
 SKILL = PACK / "skills/follow-through/SKILL.md"
+SOURCES = sorted((PACK / "src").glob("*.js"))
 
 # A change to either sentence is a founder's decision, not an edit.
 NO_SECOND_FOLLOW_UP = "There is no second follow-up, ever."
@@ -24,6 +26,13 @@ MAJOR_FEATURE = "A note about a new ability goes out only when you were given on
 # A command runs from "gc follow-through" to the end of its code span or line.
 COMMAND = re.compile(r"gc\s+follow-through\s+([^\s`]+)([^`\n]*)")
 FLAG = re.compile(r"--[a-z][a-z-]*")
+
+# Each kind of mail the pack sends is a subject literal in its source.
+SUBJECT_FIELD = re.compile(r"\bsubject\s*:")
+SUBJECT = re.compile(r"\bsubject\s*:\s*'([^'\n]+)'")
+# A mail can arrive twice. The skill's rule for that names the second arrival
+# and ends in sending nothing, as the follow-up section's rule does.
+ARRIVING_TWICE = re.compile(r"the same [a-z]+ arriving a second time\b[^.]*\.\s+Send nothing\b")
 
 
 def skill_text() -> str:
@@ -42,6 +51,16 @@ def shipped_verbs() -> dict[str, str]:
     """Each command the pack ships, with the description gc shows as its help."""
     return {path.parent.name: tomllib.loads(path.read_text())["description"]
             for path in (PACK / "commands").glob("*/command.toml")}
+
+
+def mail_subjects() -> list[str]:
+    """The subject of every kind of mail the pack sends."""
+    return sorted({subject for path in SOURCES for subject in SUBJECT.findall(path.read_text(encoding="utf-8"))})
+
+
+def sections(text: str) -> list[str]:
+    """Each section of the skill under a ## heading, with its lines joined."""
+    return [" ".join(part.split()) for part in re.split(r"^## ", text, flags=re.MULTILINE)[1:]]
 
 
 def verb_flags() -> dict[str, set[str]]:
@@ -107,6 +126,24 @@ def test_the_sentences_the_founders_rule_on_are_there():
     prose = " ".join(skill_text().split())
     assert NO_SECOND_FOLLOW_UP in prose
     assert MAJOR_FEATURE in prose
+
+
+def test_every_mail_subject_in_the_pack_is_read():
+    fields = sum(len(SUBJECT_FIELD.findall(path.read_text(encoding="utf-8"))) for path in SOURCES)
+    found = sum(len(SUBJECT.findall(path.read_text(encoding="utf-8"))) for path in SOURCES)
+    assert found, "the pack's source names no mail subject"
+    assert found == fields, "a mail subject in the pack's source is not a plain quoted string"
+
+
+@pytest.mark.parametrize("subject", mail_subjects())
+def test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice(subject):
+    """The pack can send one mail twice: gc drops the repeat only while the
+    first is unarchived. The section for each kind of mail must say that a
+    repeat gets nothing, so an owner is never told the same thing twice."""
+    own = [section for section in sections(skill_text()) if f'"{subject}"' in section]
+    assert own, f'no section of the skill names the mail "{subject}"'
+    assert any(ARRIVING_TWICE.search(section) for section in own), \
+        f'the skill\'s section for "{subject}" has no rule for the same mail arriving a second time'
 
 
 def test_skill_has_no_em_dash():
