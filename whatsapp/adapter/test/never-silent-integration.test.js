@@ -133,7 +133,7 @@ test('never-silent integration: whole-paste pending uses health; attributed word
   r.start(r.options);
   r.gw.addText('example-unanswered', 'example-pending', 'fixture words');
   r.gw.addText('example-answered', 'example-replied', 'fixture words');
-  await waitFor(() => r.gc.pastes.length === 2);
+  await r.pumpUntil(() => r.gc.pastes.length === 2, { what: 'both initial pastes' });
   const sidecar = path.join(r.dir, '.gc', 'whatsapp', 'never-silent.json');
   await r.pumpUntil(() => {
     if (!fs.existsSync(sidecar)) return false;
