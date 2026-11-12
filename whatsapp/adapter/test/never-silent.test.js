@@ -278,7 +278,7 @@ test('never-silent committed proof replay repairs the template activity after a 
       if (cause === 'health') fs.writeFileSync(f.opts.healthFile, JSON.stringify({ state: 'session_down', since: new Date(f.now).toISOString(), checked_at: new Date(f.now).toISOString() }));
       await f.e.poll();
       await f.e.poll();
-      const suppressed = kind === 'update-template' && cause !== 'definite-failure';
+      const suppressed = kind === 'update-template';
       assert.equal(f.posts.length, suppressed ? 0 : 1);
       if (cause === 'uncertain-stop' && suppressed) {
         assert.equal(f.mails.filter((m) => m.subject.endsWith(' cleared')).length, 1);
