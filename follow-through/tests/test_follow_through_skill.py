@@ -7,6 +7,7 @@ rules the founders rule on word for word.
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import tomllib
@@ -20,12 +21,21 @@ SKILL = PACK / "skills/follow-through/SKILL.md"
 NO_SECOND_FOLLOW_UP = "There is no second follow-up, ever."
 MAJOR_FEATURE = "A note about a new ability goes out only when you were given one for a major feature."
 
-VERB = re.compile(r"gc follow-through ([a-z][a-z-]*)([^`\n]*)")
+# A command runs from "gc follow-through" to the end of its code span or line.
+COMMAND = re.compile(r"gc\s+follow-through\s+([^\s`]+)([^`\n]*)")
 FLAG = re.compile(r"--[a-z][a-z-]*")
 
 
 def skill_text() -> str:
     return SKILL.read_text(encoding="utf-8")
+
+
+def commands(text: str) -> list[tuple[str, list[str]]]:
+    """Each gc follow-through command in text: its whole verb word, and the
+    options it passes, split the way a shell splits them, so a quoted value
+    is one argument and never an option."""
+    return [(verb, [arg.split("=", 1)[0] for arg in shlex.split(rest) if arg.startswith("--")])
+            for verb, rest in COMMAND.findall(text)]
 
 
 def shipped_verbs() -> dict[str, str]:
@@ -57,8 +67,16 @@ def test_skill_front_matter_names_it_follow_through():
     assert description.strip() and "\n" not in description, "the description is one line"
 
 
+def test_the_command_reader_takes_whole_words_and_quoted_values():
+    assert commands("`gc follow-through add_item --summary x`") == [("add_item", ["--summary"])]
+    assert commands("gc follow-through status2") == [("status2", [])]
+    assert commands("run `gc follow-through  reopen ID` now") == [("reopen", [])]
+    assert commands('gc follow-through remind --in 2h --text "Run git status --short"') == [("remind", ["--in", "--text"])]
+    assert commands('`gc follow-through hours C --hours "Mon-Fri 09:00-18:00" --tz=Asia/Tokyo`') == [("hours", ["--hours", "--tz"])]
+
+
 def test_skill_names_every_shipped_verb_and_no_other():
-    named = {verb for verb, _ in VERB.findall(skill_text())}
+    named = {verb for verb, _ in commands(skill_text())}
     shipped = set(shipped_verbs())
     assert not shipped - named, f"verbs the pack ships that the skill never names: {sorted(shipped - named)}"
     assert not named - shipped, f"verbs the skill names that the pack does not ship: {sorted(named - shipped)}"
@@ -74,13 +92,15 @@ def test_verbs_list_gives_each_verb_its_help_line():
 
 def test_every_flag_in_the_skill_is_one_its_verb_takes():
     flags = verb_flags()
-    for verb, rest in VERB.findall(skill_text()):
+    for verb, options in commands(skill_text()):
         if verb not in flags:
             continue  # an unshipped verb is test_skill_names_every_shipped_verb_and_no_other's to report
-        for flag in FLAG.findall(rest):
+        for flag in options:
             assert flag in flags[verb], f"gc follow-through {verb} takes no {flag}"
+    # A flag named on its own in the prose, as `--off`, belongs to some verb.
+    alone = set(re.findall(r"`(--[a-z][a-z-]*)`", skill_text()))
     every = set().union(*flags.values())
-    assert set(FLAG.findall(skill_text())) <= every, sorted(set(FLAG.findall(skill_text())) - every)
+    assert alone <= every, sorted(alone - every)
 
 
 def test_the_sentences_the_founders_rule_on_are_there():

@@ -80,13 +80,14 @@ item before you write.
 
 ## What a follow-up sounds like
 
-One or two plain sentences that name the thing and offer the next step.
+Write one or two plain sentences that name the thing and offer the next
+step.
 
-- Nothing that blames: no "you forgot", no "still waiting on you".
-- Never "just checking in".
-- No offer, greeting or news added to it.
+- Write nothing that blames, such as "you forgot" or "still waiting on you".
+- Never write "just checking in".
+- Add no offer, greeting or news to it.
 
-Two examples, for their shape only:
+These two examples show the shape only:
 
 > Example: The two logo drafts are ready whenever you want to choose. Tell
 > me which one, and I will send it to the printer.
@@ -165,13 +166,13 @@ when one is recorded. Only then tell the owner it is set: react with ⏰ where
 the channel lets you react, and otherwise answer with one short line that
 says when.
 
-A reminder comes at the time the owner chose, at any hour, and needs no
-consent and no zone. When a mail with the subject "follow-through: reminder
-due" arrives, look at the conversation it names. If the owner cancelled that
-reminder there, send nothing. Otherwise tell the owner now, in your own
-words, in that conversation. If the mail says the reminder is late, say so
-plainly with the time they asked for, then give the reminder. Do not explain
-why it is late unless they ask.
+A reminder comes soon after the time the owner chose, at any hour, and
+needs no consent and no zone. When a mail with the subject "follow-through:
+reminder due" arrives, look at the conversation it names. If the owner
+cancelled that reminder there, send nothing. Otherwise tell the owner now,
+in your own words, in that conversation. If the mail says the reminder is
+late, say so plainly with the time they asked for, then give the reminder.
+Do not explain why it is late unless they ask.
 
 When the owner cancels a reminder, cancel it:
 
