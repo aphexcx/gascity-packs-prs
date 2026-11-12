@@ -29,6 +29,10 @@ new tests are fixtures. No session, channel, live event log or network is used.
 the preceding red and green commands and their exit codes. The repository
 summary is in `make-test-summary.txt`.
 
+Codex DEEP round 4 returned CLEAN on
+`4446315d877f25c88e86398d35c46d2acc97e56e`, with no actionable findings.
+The final evidence commit changes no implementation or test code.
+
 Public-repository check: complete. Seven host-path occurrences found in the
 final scan were replaced with fixture paths. Earlier transcript path
 normalization is retained. The final scan has zero host, account or real

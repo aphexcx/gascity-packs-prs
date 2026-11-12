@@ -37,3 +37,4 @@ cd reachable/test && node --test --test-reporter=tap (Codex 2 complete fixes): 0
 DEEP Codex round 3: 1
 Codex 3 cold identity and archive progress reproductions: 1
 cd reachable/test && node --test --test-reporter=tap (Codex 3 fixes): 0
+DEEP Codex round 4: 0
