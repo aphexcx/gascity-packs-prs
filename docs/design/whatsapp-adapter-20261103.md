@@ -163,8 +163,11 @@ The rules for each answer:
 
 A `no_route` answer to the marked copy is probed once more, then dead-lettered
 (`redelivery_no_route`), since gc answers a suppressed duplicate and an empty route with the same
-bytes. So a crash loses nothing the gateway still holds, and a message reaches the mayor twice only
-as the marked copy.
+bytes. So a crash loses nothing the gateway still holds, and the adapter marks only the in-doubt copy
+and that copy's own reposts: a repost after a `failed` or `partial` verdict, and a repost on the
+ladder after a refused connection or an HTTP 5xx, 404, 408 or 429, otherwise go out unmarked under
+the first post's request id, and whether the mayor's session then shows the text once is gc's rule
+for a repeated request id, which lives in gc, outside this repository.
 
 **The restore rule.** The journal keeps each conversation's watermark, the highest accepted
 transcript sequence and its message id, through every compaction. The journal's record that gc took
@@ -217,7 +220,13 @@ raises keeper events into the mayor's session as the actor "Dynasty window-keepe
 (`is_bot: true`): a daily update prompt once per business day (two hours before the close of
 business, or, with no hours set, at `WHATSAPP_KEEPER_UPDATE_HOUR` in the owner's recorded zone, else
 `WHATSAPP_CITY_TZ`), and a close ladder at 60, 30, 15 and 5 minutes before the window closes, kept
-inside the business's hours (`gc whatsapp hours`). No nudge fires after the close; the daily update
+inside the business's hours (`gc whatsapp hours`). With no hours set the marks run before the window
+closes, at any hour; with hours set a mark that falls outside every span is dropped, and the marks
+run before the window closes when the close falls inside a span or a span reaches into its last 60
+minutes, else before the close of business, the end of the last span that ends before the window
+closes (a close at 02:00 under Mon-Fri 09:00-18:00 fires at 17:00, 17:30, 17:45 and 17:55 the day
+before), and not at all when no span is left before the close.
+No nudge fires after the close; the daily update
 still does, and says since when the window has been closed. Its state lives in
 `<city>/.gc/whatsapp/keeper.json`, written before each event, and an owner the last good window read
 did not list raises nothing. It is off for every owner until consent is given. The mayor never
@@ -228,9 +237,15 @@ replies to a keeper event; it publishes a real update, or nothing.
 **A city enrolls once.** The gateway's operator mints an enrollment code for the city
 (`POST /v1/admin/enroll-codes`, which takes the city's name; 16 characters, valid 72 hours). On the
 box, `gc whatsapp enroll --code <code> --name <name>` calls `POST /v1/enroll`, which creates the city
-(recording the name as the box's) and returns its one credential, once. The verb writes it to the
-adapter's env file (0600) as `WHATSAPP_GATEWAY_CREDENTIAL` and tells the operator to restart the
-service. The adapter sends it as a bearer token on every call; the gateway stores only its sha256.
+(recording the name as the box's) and returns its one credential, once. The verb writes it (0600) as
+`WHATSAPP_GATEWAY_CREDENTIAL` to `$GC_WHATSAPP_ADAPTER_ENV`, else `$GC_SERVICE_SECRETS_DIR/env`, else
+`$GC_CITY_PATH/.gc/services/whatsapp/secrets/env` when `GC_CITY_PATH` is set, else
+`~/.config/gc-whatsapp-adapter/env`, and tells the operator to restart the service; the adapter's
+own order (under "What a city configures") has no third place, so with neither of the first two set
+and `GC_CITY_PATH` set the verb writes a file the adapter reads only when its own environment points
+it there (a supervised adapter whose `$GC_SERVICE_SECRETS_DIR` is that directory), and an
+unsupervised adapter, reading `~/.config/gc-whatsapp-adapter/env`, does not see the credential. The
+adapter sends it as a bearer token on every call; the gateway stores only its sha256.
 The gateway depends on no vault, and every city, a test city included, enrolls the same way.
 
 **An owner binds by invite.** `gc whatsapp invite` asks the gateway (`POST /v1/invites`) for a
@@ -254,7 +269,8 @@ removes an owner with `POST /v1/admin/unbind`; there is no `gc` verb for it.
    dead-letters every message as `no_route`.
 2. Write the adapter's env file: `$GC_WHATSAPP_ADAPTER_ENV`, else `$GC_SERVICE_SECRETS_DIR/env` when
    supervised, else `~/.config/gc-whatsapp-adapter/env`. It needs `WHATSAPP_GATEWAY_URL`,
-   `GC_CITY_NAME` and `GC_API_BASE_URL`; `gc whatsapp enroll` adds `WHATSAPP_GATEWAY_CREDENTIAL`.
+   `GC_CITY_NAME` and `GC_API_BASE_URL`; `gc whatsapp enroll` adds `WHATSAPP_GATEWAY_CREDENTIAL`
+   (to which file: see "Enrollment and the invite binding").
    Every other name has a default, the optional `ELEVENLABS_API_KEY` for audio included.
 3. Enroll with the code the operator gives the city, start the `whatsapp` service, and invite the
    first owner. The doctor rows and `gc whatsapp status` show the door.
