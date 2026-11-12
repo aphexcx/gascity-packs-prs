@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { readState, resolveStateDir, withState } from './state.js';
 import { consent, hours, addItem, closeItem, setReminder, cancelReminder, parseAt, parseDuration } from './model.js';
-import { tick, status, doctor, iso } from './engine.js';
+import { tick, status, doctor, hoursNotices, iso } from './engine.js';
 import { hasDaytimeHours } from './schedule.js';
 
 const string = { type: 'string' };
@@ -52,6 +52,8 @@ export function statusText(snapshot, owners = {}) {
       owners[row.conversation] && !hasDaytimeHours(owners[row.conversation]) ? ' (no recorded hours between 08:00 and 20:00)' : ''}`),
     `Last tick: ${snapshot.last_tick_at || 'never'}`,
     `Failing raises: ${snapshot.failing_raises.length}`,
+    ...(snapshot.failing_raises.some(r => r.state === 'stopped')
+      ? [`Mail delivery stopped: ${snapshot.failing_raises.filter(r => r.state === 'stopped').length}; operator action required`] : []),
     ...snapshot.failing_raises.map(r => `${r.id}: ${r.kind} ${r.conversation} ${r.state}; attempts ${r.attempts}; ${r.error || 'unconfirmed send'}`),
   ].join('\n');
 }
@@ -77,8 +79,9 @@ async function main(args) {
     return;
   }
   if (verb === 'doctor') {
-    const problems = doctor(readState(dir), now);
-    console.log(problems.length ? problems.join('\n') : 'follow-through: healthy');
+    const state = readState(dir);
+    const problems = doctor(state, now);
+    console.log([...(problems.length ? problems : ['follow-through: healthy']), ...hoursNotices(state)].join('\n'));
     process.exitCode = problems.length ? 1 : 0;
     return;
   }
