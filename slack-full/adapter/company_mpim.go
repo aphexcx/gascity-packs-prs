@@ -147,6 +147,7 @@ func (g *companyGateway) tryHandleMpimEvent(w http.ResponseWriter, r *http.Reque
 		return true
 	}
 	w.WriteHeader(http.StatusOK)
+	g.observeArrival(env, ev, receipt)
 	g.triggerDelivery(origin)
 	return true
 }

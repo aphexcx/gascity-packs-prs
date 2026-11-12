@@ -1,5 +1,53 @@
 # gchat
 
+## Arrival reactions and stopwatch
+
+`ACK_REACTION` is empty (off) by default. Set it to `jev` to send only the
+message's text to TypeSafe, cut to 1,000 Unicode characters,
+using `JEV_API_KEY`; no sender, room, IDs or attachment bytes are sent. Jev
+chooses from the arrival rows of `reactions.json`; absent credentials, unusable
+catalogs, timeouts and unusable answers use the fixed eyes reaction.
+
+A fixed arrival row's `slack_name` also works in every adapter. Claim rows,
+`auto`, `model`, and unknown names are rejected at startup. With an unusable
+catalog, only `jev` and `eyes` are available. `ACK_SCOPE=addressed` is the
+default; `all` includes delivered room messages. Own messages, bots, mutations,
+reactions, keeper events, replays, duplicates, and messages over 60 seconds old
+are excluded. A durable attempt marker prevents a second acknowledgement after
+a restart, even if a channel response was lost. Acknowledgements are never removed.
+
+The adapter env file overrides inherited values; otherwise `JEV_API_KEY` comes
+from the process environment. Key changes require an adapter restart. Status
+reveals only whether a key is set. `JEV_API_BASE_URL` defaults to
+`https://api.typesafe.ai` and requires HTTPS (local HTTP is allowed for tests);
+`JEV_MODEL` defaults to `jev-latest`. There are at most four concurrent choices,
+each with a budget of 1,500 milliseconds from first sight. Delivery to gc runs
+independently of choices and channel requests. The reaction request target is
+two seconds from first sight; channel confirmation can take longer.
+
+Google Chat keeps one shared reaction pace of five requests per second, without bursts. At twelve simultaneous messages, that pace cannot fit every request inside two seconds; overflow uses eyes, stays queued, and records the actual confirmation time.
+
+While choices are pending, the scheduler counts backward from each message's two-second deadline. It abandons a choice only at the latest safe slot; a lone message retains its full 1,500 milliseconds. Ready choices use available slots immediately.
+
+Google words times use the message's create time. State defaults to the directory containing the effective `GCHAT_STATE_FILE`; supply `--state-dir` when the adapter env file overrides that path.
+
+The stopwatch runs even with acknowledgement off. It writes monthly UTC
+`stopwatch-YYYY-MM.jsonl` files with mode 0600, containing coordinates and
+timestamps only. Inbound lines include the first 12 SHA-256 hex characters of
+the running binary.
+Reaction lines record the first confirmation, actor and adapter choice method;
+words lines record posts. An unwritable journal warns once and delivery continues.
+The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
+timing directory for every adapter.
+
+Run `gc gchat stopwatch` with the pack's installed alias. It needs no running adapter.
+`--state-dir DIRECTORY` selects a custom directory; `--since TIME` and
+`--until TIME` filter inbound channel timestamps inclusively; `--json` prints
+the same numbers as JSON. Each release reports count, nearest-rank median and
+p90 seconds to the first reaction and first words, plus messages older than an
+hour without words. A reply answers all waiting messages in its conversation
+and thread; torn journal lines are skipped.
+
 ## What it is
 
 A reusable Google Chat provider pack for Gas City. One Workspace user identity

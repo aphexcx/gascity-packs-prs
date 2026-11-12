@@ -34,6 +34,8 @@ import { createKeeper } from './keeper.js';
 import { createLedger, lastFour } from './ledger.js';
 import { createMedia, describeAttachments } from './media.js';
 import { createPublisher, outboundChunkChars } from './outbound.js';
+import { createChoice, createArrival } from './arrival.js';
+import { createStopwatch } from './stopwatch.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -232,9 +234,13 @@ async function registerUntilDone(gc, cfg, isStopping) {
 export async function main() {
   const cfg = loadConfig();
   const clock = createClock(process.env);
+  const choice = createChoice({ log, now: clock });
+  const timingDir = process.env.GC_SERVICE_STATE_ROOT || cfg.stateDir;
+  const stopwatch = createStopwatch({ stateDir: timingDir, clock, log });
   const journal = openJournal({ stateDir: cfg.stateDir, clock });
   const deadLetters = createDeadLetters({ stateDir: cfg.stateDir });
   const gateway = createGatewayClient({ url: cfg.gatewayURL, credential: cfg.credential, timeoutMs: cfg.gatewayTimeoutMs });
+  const arrival = createArrival({ choice, stateDir: timingDir, gateway, stopwatch, clock, log });
   const gc = createGcClient({ base: cfg.gcAPIBase, city: cfg.cityName, postTimeoutMs: cfg.gcPostTimeoutMs });
   const ledger = createLedger({ stateDir: cfg.stateDir, clock, log });
   const keeper = createKeeper({
@@ -264,6 +270,7 @@ export async function main() {
   });
   const media = { hydrate: (args) => mediaStore.hydrate(args), describe: (results) => describeAttachments(results) };
   const publisher = createPublisher({
+    stopwatch,
     stateDir: cfg.stateDir,
     gateway,
     gc,
@@ -281,6 +288,7 @@ export async function main() {
 
   let authState = cfg.credential ? 'unverified' : 'not enrolled';
   const inbound = createInbound({
+    arrival,
     journal,
     deadLetters,
     gateway,
@@ -300,6 +308,7 @@ export async function main() {
   });
 
   const health = () => ({
+    jev_api_key: choice.keyStatus,
     ok: true,
     gateway_auth: inbound.authFailed ? authState : 'ok',
     city: cfg.cityName,

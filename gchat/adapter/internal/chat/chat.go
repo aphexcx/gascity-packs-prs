@@ -28,6 +28,9 @@ type Space = googlechat.Space
 // Client belongs to one authenticated identity. Do not reuse it after switching
 // credentials: its reaction ownership and rate limits belong to that identity.
 type Client struct {
+	// MessageCreated is installed before sharing the client. It receives only
+	// coordinates and Google's original timestamp, including idempotent replays.
+	MessageCreated         func(space, message, thread, stamp string)
 	api                    *googlechat.Service
 	limits                 Limiter
 	timing                 timing
@@ -185,6 +188,9 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 	if result.Sender != nil && result.Sender.Name != "" {
 		c.learnIdentityUserID(result.Sender.Name)
 	}
+	if c.MessageCreated != nil {
+		c.MessageCreated(space, result.Name, threadName, result.CreateTime)
+	}
 	return result.Name, threadName, nil
 }
 
@@ -334,6 +340,37 @@ func (c *Client) CreateReaction(ctx context.Context, message, emoji string) (str
 		c.learnIdentityUserID(result.User.Name)
 	}
 	return result.Name, nil
+}
+
+// CreateArrivalReaction overlaps the choice with the identity's existing pace.
+// Unlike explicit agent actions, an acknowledgement is attempted only once.
+func (c *Client) CreateArrivalReaction(ctx context.Context, message string, deadline time.Time, fallback string, choose func(context.Context) (string, string)) (string, error) {
+	choiceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ready := make(chan struct{})
+	var emoji, how string
+	go func() { emoji, how = choose(choiceCtx); close(ready) }()
+	chosen, err := c.limits.waitReactionChoice(ctx, deadline, ready)
+	if err != nil {
+		return "", err
+	}
+	selected, method := fallback, "default"
+	if chosen {
+		selected, method = emoji, how
+	}
+	cancel()
+	result, err := c.api.Spaces.Messages.Reactions.Create(message, &googlechat.Reaction{Emoji: &googlechat.Emoji{Unicode: selected}}).Context(ctx).Do()
+	var apiError *googleapi.Error
+	if errors.As(err, &apiError) && apiError.Code == http.StatusConflict {
+		return method, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if result.User != nil && result.User.Name != "" {
+		c.learnIdentityUserID(result.User.Name)
+	}
+	return method, nil
 }
 
 func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) error {
@@ -687,10 +724,11 @@ func (t timing) Sleep(ctx context.Context, d time.Duration) error {
 // distinct spaces are independent; reactions share an identity-wide 5/s gate.
 // No burst is allowed. Canceled waiters do not consume future capacity.
 type Limiter struct {
-	mu        sync.Mutex
-	timing    timing
-	spaces    map[string]*pace
-	reactions *pace
+	mu              sync.Mutex
+	timing          timing
+	spaces          map[string]*pace
+	reactions       *pace
+	reactionChoices *reactionQueue
 }
 type pace struct {
 	gate chan struct{}
@@ -700,7 +738,12 @@ type pace struct {
 func (l *Limiter) WaitWrite(ctx context.Context, space string) error {
 	return l.acquire(ctx, space, false)
 }
-func (l *Limiter) WaitReaction(ctx context.Context) error { return l.acquire(ctx, "", true) }
+func (l *Limiter) WaitReaction(ctx context.Context) error {
+	ready := make(chan struct{})
+	close(ready)
+	_, err := l.waitReactionChoice(ctx, time.Time{}, ready)
+	return err
+}
 
 func (l *Limiter) acquire(ctx context.Context, space string, reaction bool) error {
 	l.mu.Lock()

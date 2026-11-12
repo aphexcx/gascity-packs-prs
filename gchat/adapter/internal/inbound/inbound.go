@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"gchat-adapter/internal/ack"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/gcclient"
@@ -33,6 +34,7 @@ import (
 )
 
 type Options struct {
+	Ack    *ack.Service
 	Config *config.Config
 	Ledger *ledger.Ledger
 	// LedgerMu must be the same mutex used by every other ledger consumer.
@@ -190,7 +192,60 @@ func New(opts Options) (*Processor, error) {
 // Network requests never hold LedgerMu. Handle and Poll serialize their work,
 // including live and catch-up callers, and waiting callers honor cancellation.
 func (p *Processor) Handle(ctx context.Context, ev *puller.Event) (puller.Outcome, error) {
+	p.observeArrivals(ev)
 	return p.handle(ctx, ev, false)
+}
+
+// Observe before the serialized delivery gate, principal lookup and attachment
+// downloads. Only this live entry point participates; catch-up never does.
+func (p *Processor) observeArrivals(ev *puller.Event) {
+	if p.opts.Ack == nil || ev == nil {
+		return
+	}
+	seen := p.opts.Now()
+	for _, c := range ev.Changes {
+		if validate(c) != nil {
+			return
+		}
+	}
+	id := p.identity()
+	if id == "" {
+		return
+	}
+	for _, c := range ev.Changes {
+		m := c.Message
+		if c.Kind != "message.created" || m == nil || m.Sender == nil || m.Sender.Type == "BOT" || m.Sender.Name == id {
+			continue
+		}
+		p.opts.LedgerMu.Lock()
+		known := p.opts.Ledger.Changes[m.Name] != nil
+		p.opts.LedgerMu.Unlock()
+		if known {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, m.CreateTime)
+		if err != nil || seen.Sub(at) > ack.MaxAge {
+			continue
+		}
+		in := ack.Input{Conversation: c.Space, Message: m.Name, Text: m.Text, Time: at, Seen: seen, Human: true}
+		if m.Thread != nil {
+			in.Thread = m.Thread.Name
+		}
+		// Space lookup may need HTTP; it belongs to the independent arrival path.
+		go func(c puller.Change, in ack.Input) {
+			ctx, cancel := context.WithTimeout(context.Background(), ack.ReactionBudget)
+			defer cancel()
+			s, err := p.space(ctx, c.Space, c.Message.Space)
+			if err != nil {
+				return
+			}
+			in.Addressed = s.Kind == "dm" || mentions(c.Message, id)
+			if !in.Addressed && s.Wake == "mentions" {
+				return
+			}
+			p.opts.Ack.Observe(in)
+		}(c, in)
+	}
 }
 
 // HandleChange feeds one catch-up change through the same validation, wake
@@ -905,7 +960,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		}
 	}
 	local := ""
-	if !state.Mine {
+	if !state.Mine || (r.User != nil && r.User.Name == p.identity()) {
 		local = "local"
 	}
 	if err := p.record(c, id, w, state, s, local, catchUp, ""); err != nil {

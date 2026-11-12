@@ -300,6 +300,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/sjarmak/gc-slack-adapter/internal/ack"
+	"github.com/sjarmak/gc-slack-adapter/internal/stopwatch"
 	"io"
 	"log"
 	"maps"
@@ -397,6 +399,9 @@ func (c config) tryAcquireDispatchSlot() (release func(), capacity int, ok bool)
 }
 
 type config struct {
+	arrival             *ack.Service
+	arrivalChoice       *ack.Choice
+	arrivalState        string
 	publicListen        string
 	internalListen      string // unused when serviceSocket is set
 	serviceSocket       string // when set, bind a UDS here for /publish instead of internalListen
@@ -1284,6 +1289,9 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	if strings.ContainsAny(cfg.cityName, "/?#%") {
 		return cfg, fmt.Errorf("GC_CITY_NAME must not contain '/', '?', '#', or '%%': %q", cfg.cityName)
 	}
+	if err := configureArrival(&cfg, getenv); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -1467,11 +1475,9 @@ type slackCompleteUploadReq struct {
 }
 
 type slackCompleteUploadResp struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-	Files []struct {
-		ID string `json:"id"`
-	} `json:"files,omitempty"`
+	OK    bool                 `json:"ok"`
+	Error string               `json:"error,omitempty"`
+	Files []stopwatchSlackFile `json:"files,omitempty"`
 }
 
 // publishFileRequest is the body of POST /publish-file. Mirrors
@@ -1596,10 +1602,12 @@ type gcSessionMessageRequest struct {
 }
 
 type slackEventEnvelope struct {
-	Type      string `json:"type"`
-	Challenge string `json:"challenge,omitempty"`
-	TeamID    string `json:"team_id,omitempty"`
-	APIAppID  string `json:"api_app_id,omitempty"`
+	receivedAt time.Time
+	replayed   bool
+	Type       string `json:"type"`
+	Challenge  string `json:"challenge,omitempty"`
+	TeamID     string `json:"team_id,omitempty"`
+	APIAppID   string `json:"api_app_id,omitempty"`
 	// EventID is Slack's unique id for one event (Ev…). Retried
 	// deliveries of the same event carry the same event_id, which is
 	// what the redelivery seen-set keys on (hw-94w5k finding #4).
@@ -1686,6 +1694,9 @@ func main() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+	if err := startArrival(&cfg); err != nil {
+		log.Fatalf("stopwatch initialization failed: %v", err)
 	}
 	// Initialize the shared dispatch semaphore on the cfg value before
 	// any handler closes over it. cap is a fixed positive int —
@@ -2956,6 +2967,9 @@ func handlePublishFile(cfg config, reg *identityRegistry) http.HandlerFunc {
 
 		receipt.Delivered = true
 		receipt.FileID = urlResp.FileID
+		if cfg.inboundJournal != nil && cfg.inboundJournal.watch != nil {
+			go recordUploadedFile(cfg, req.Conversation.ConversationID, urlResp.FileID, completeResp.Files)
+		}
 		// Busy-reaction lifecycle, remove side: a threaded file upload
 		// may be the agent's entire reply — it must clear the pending
 		// busy mark exactly like a text publish (hw-94w5k codex r1).
@@ -3305,7 +3319,7 @@ func handleReact(cfg config) http.HandlerFunc {
 // own ts (messageTS). Either way, replies in that thread now reach the
 // posting session even when it is bound mention-only.
 func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sessionID string) {
-	if at, ok := ingestionPublishTime(messageTS); ok && replyTo != "" && sessionID != "" {
+	if at, ok := ingestionPublishTime(messageTS); ok && sessionID != "" {
 		cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 			Kind: "reply", Source: "session_publish", Channel: conversationID,
 			MessageTS: messageTS, ThreadTS: replyTo, SessionID: sessionID, Timestamp: at,
@@ -3411,11 +3425,15 @@ func callSlackReactions(token, method string, req slackReactionsAddReq) (*slackR
 // visible-ack path (add/remove over the gateway's timeout-bounded client) all
 // route through here, so there is no second reactions POST implementation.
 func postReactionMethod(client *http.Client, token, method string, req slackReactionsAddReq) (*slackReactionsAddResp, error) {
+	return postReactionMethodContext(context.Background(), client, token, method, req)
+}
+
+func postReactionMethodContext(ctx context.Context, client *http.Client, token, method string, req slackReactionsAddReq) (*slackReactionsAddResp, error) {
 	if client == nil {
 		client = slackAPIClient
 	}
 	body, _ := json.Marshal(req)
-	httpReq, err := http.NewRequest(http.MethodPost, slackAPIBase+"/"+method, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, slackAPIBase+"/"+method, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -3549,6 +3567,8 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			http.Error(w, fmt.Sprintf("decode: %v", err), http.StatusBadRequest)
 			return
 		}
+		env.receivedAt = time.Now()
+		env.replayed = trustedTransportName(r) == "backfill"
 
 		// URL verification challenge.
 		if env.Type == "url_verification" && env.Challenge != "" {
@@ -4013,6 +4033,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		return
 	}
 	msg.Text = redactInboundText(msg.Text)
+	// Acknowledgement classification precedes the delivery path's lookups and
+	// hydration. The normal route remains unchanged and never waits on it.
+	arrivalKind := slackKindFromChannelType(msg.ChannelType, msg.Channel)
+	arrivalTarget, _ := resolveAddressTarget(cfg, aliasReg, subteamMap, msg.Text)
+	observeSlackArrival(cfg, env, msg, arrivalKind == "dm" || msg.ChannelType == "mpim" || arrivalTarget != "" || msg.Type == "app_mention" || slackTextMentionsUser(msg.Text, env.botUserID()), nil)
 	// Human emoji reactions forward to the bound session as tagged
 	// notifications (gp-by3); the branch terminates here — a reaction
 	// is never an ask. Requires the reaction_added/reaction_removed
@@ -5057,13 +5082,16 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// after this add (clearBusyReaction orders remove-after-
 			// add so a fast reply cannot leave a stale busy emoji).
 			defer close(addDone)
-			_, err := postReactionToSlack(cfg.slackBotToken, slackReactionsAddReq{
+			response, err := postReactionToSlack(cfg.slackBotToken, slackReactionsAddReq{
 				Channel:   channel,
 				Name:      emoji,
 				Timestamp: ts,
 			})
 			if err != nil {
 				log.Printf("react busy %s failed: chan=%s ts=%s: %v", emoji, channel, ts, err)
+			}
+			if err == nil && response != nil && (response.OK || response.Error == "already_reacted") && cfg.inboundJournal != nil {
+				cfg.inboundJournal.watch.Record(stopwatch.Event{Event: "reaction", Conversation: channel, Message: ts, At: time.Now(), Actor: "adapter", Choice: "fixed"})
 			}
 		}(msg.Channel, msg.TS, cfg.busyReaction, busyAddDone)
 	}

@@ -673,6 +673,7 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	// no dispatch slot is free the receipt stays pending and the sweep
 	// recovers it — backpressure, never a silent drop.
 	w.WriteHeader(http.StatusOK)
+	g.observeArrival(env, ev, receipt)
 	g.triggerDelivery(origin)
 	// Mention-only sessions outside company membership get their copy
 	// from the gateway too (jg-vobf70 round 5): the legacy dispatcher

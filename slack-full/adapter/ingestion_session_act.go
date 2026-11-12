@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/sjarmak/gc-slack-adapter/internal/stopwatch"
 	"log"
 	"os"
 	"path/filepath"
@@ -28,7 +29,7 @@ type ingestionSessionAct struct {
 const ingestionActCacheLimit = 4096
 
 func (j *inboundJournal) recordSessionAct(act ingestionSessionAct) {
-	if j == nil || ingestionObserverDisabled() {
+	if j == nil {
 		return
 	}
 	if act.Timestamp.IsZero() {
@@ -36,6 +37,15 @@ func (j *inboundJournal) recordSessionAct(act ingestionSessionAct) {
 		if j.now != nil {
 			act.Timestamp = j.now().UTC()
 		}
+	}
+	if act.Kind == "reaction" {
+		j.watch.Record(stopwatch.Event{Event: "reaction", Conversation: act.Channel, Message: act.MessageTS, At: act.Timestamp, Actor: "agent"})
+	}
+	if act.Kind == "reply" {
+		j.watch.Record(stopwatch.Event{Event: "words", Conversation: act.Channel, Message: act.MessageTS, Thread: act.ThreadTS, At: act.Timestamp})
+	}
+	if ingestionObserverDisabled() {
+		return
 	}
 	if err := j.append(inboundJournalRecord{Phase: act.Kind, Channel: act.Channel, MessageTS: act.MessageTS, ThreadTS: act.ThreadTS, SessionAct: &act}); err != nil {
 		log.Printf("ingestion observer: persist %s act: %v", act.Kind, err)

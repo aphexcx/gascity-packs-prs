@@ -133,6 +133,7 @@ export function createInbound({
   media,
   ledger,
   keeper,
+  arrival,
   pollMs = 2000,
   gcPostTimeoutMs = 30000,
   watermarkCheckMs = 60000,
@@ -289,6 +290,7 @@ export function createInbound({
   }
 
   async function takeDelivery(delivery) {
+    const firstSeen = clock();
     const pmid = providerMessageId(delivery);
     // THE OWNER'S KEY (render.js conversationOf): PR 76's conversation_id, or
     // the contract v1's wa_id. A delivery with a number and no owner is
@@ -329,6 +331,7 @@ export function createInbound({
         ...verdict,
       });
       killPoint('after-received', rid);
+      if (!verdict.recovery) arrival?.observe(delivery, { seen: firstSeen });
       if (verdict.recovery === 'dead') {
         // Dead-lettered by a journal that is gone (its ack never confirmed):
         // the file line is the record. Dead again, ack owed, never posted.

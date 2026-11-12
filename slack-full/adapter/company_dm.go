@@ -103,6 +103,7 @@ func (g *companyGateway) tryHandleDMEvent(w http.ResponseWriter, r *http.Request
 		return true
 	}
 	w.WriteHeader(http.StatusOK)
+	g.observeArrival(env, ev, receipt)
 	g.triggerDelivery(origin)
 	return true
 }

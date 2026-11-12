@@ -18,12 +18,14 @@ import (
 	"syscall"
 	"time"
 
+	"gchat-adapter/internal/ack"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/events"
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/server"
+	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/token"
 )
 
@@ -42,6 +44,8 @@ type Options struct {
 var errIdentityChanged = errors.New("app: observed identity changed; rebuilding client")
 
 type application struct {
+	arrival            *ack.Service
+	watch              *stopwatch.Writer
 	cfg                *config.Config
 	opts               Options
 	log                *slog.Logger
@@ -82,6 +86,12 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	arrivalOptions := cfg.Acknowledgement
+	arrivalOptions.Log = func(message string) { opts.Logger.Warn(message) }
+	choice, err := ack.New(arrivalOptions)
+	if err != nil {
+		return err
+	}
 	lock, err := LockState(cfg.Endpoints.StateFile)
 	if err != nil {
 		return err
@@ -91,9 +101,37 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 		return err
 	}
 	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), spaceJoined: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
+	stateDir := os.Getenv("GC_SERVICE_STATE_ROOT")
+	if stateDir == "" {
+		stateDir = filepath.Dir(cfg.Endpoints.StateFile)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return errors.New("stopwatch: executable unavailable")
+	}
+	release, err := stopwatch.Release(executable)
+	if err != nil {
+		return errors.New("stopwatch: executable digest unavailable")
+	}
+	a.watch = stopwatch.New(stateDir, "gchat", release, arrivalOptions.Log)
+	a.arrival = &ack.Service{Choice: choice, Dir: stateDir, Log: arrivalOptions.Log,
+		Inbound: func(in ack.Input) {
+			a.watch.Record(stopwatch.Event{Event: "inbound", Conversation: in.Conversation, Message: in.Message, Thread: in.Thread, MessageAt: in.Time, At: in.Seen})
+		},
+		Reaction: func(in ack.Input, how string, at time.Time) {
+			a.watch.Record(stopwatch.Event{Event: "reaction", Conversation: in.Conversation, Message: in.Message, At: at, Actor: "adapter", Choice: how})
+		},
+		SendChoice: func(ctx context.Context, in ack.Input, choose func(context.Context) (ack.Row, string)) (string, error) {
+			c := a.chatClient.Load()
+			if c == nil {
+				return "", errors.New("chat unavailable")
+			}
+			return c.CreateArrivalReaction(ctx, in.Message, in.Seen.Add(ack.ReactionBudget), ack.Default.Emoji, func(choiceCtx context.Context) (string, string) { row, how := choose(choiceCtx); return row.Emoji, how })
+		},
+	}
 	a.stateLock = lock
 	a.l.SetSaveGuard(a.checkStateLock)
-	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
+	s, err := server.New(server.Options{Stopwatch: a.watch, Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
 		if n := a.lastEvent.Load(); n != 0 {
 			return time.Unix(0, n)
 		}

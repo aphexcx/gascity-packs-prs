@@ -1,5 +1,51 @@
 # slack-full (v0.0.1 preview — scaffold)
 
+## Arrival reactions and stopwatch
+
+`ACK_REACTION` is empty (off) by default. Set it to `jev` to send only the
+message's text to TypeSafe, cut to 1,000 Unicode characters after Slack's secret redaction,
+using `JEV_API_KEY`; no sender, room, IDs or attachment bytes are sent. Jev
+chooses from the arrival rows of `reactions.json`; absent credentials, unusable
+catalogs, timeouts and unusable answers use the fixed eyes reaction.
+
+A fixed arrival row's `slack_name` also works in every adapter. Claim rows,
+`auto`, `model`, and unknown names are rejected at startup. With an unusable
+catalog, only `jev` and `eyes` are available. `ACK_SCOPE=addressed` is the
+default; `all` includes delivered room messages. Own messages, bots, mutations,
+reactions, keeper events, replays, duplicates, and messages over 60 seconds old
+are excluded. A durable attempt marker prevents a second acknowledgement after
+a restart, even if a channel response was lost. Acknowledgements are never removed.
+
+The adapter env file overrides inherited values; otherwise `JEV_API_KEY` comes
+from the process environment. Key changes require an adapter restart. Status
+reveals only whether a key is set. `JEV_API_BASE_URL` defaults to
+`https://api.typesafe.ai` and requires HTTPS (local HTTP is allowed for tests);
+`JEV_MODEL` defaults to `jev-latest`. There are at most four concurrent choices,
+each with a budget of 1,500 milliseconds from first sight. Delivery to gc runs
+independently of choices and channel requests. The reaction request target is
+two seconds from first sight; channel confirmation can take longer.
+
+Slack rejects an acknowledgement that overlaps `BUSY_REACTION`, and rejects enabling both `ACK_REACTION` and `SLACK_COMPANY_VISIBLE_ACKS`. The busy reaction retains its existing add/remove lifecycle. There is no local reaction pace; a channel refusal is not retried by the arrival path.
+
+Slack words times use Slack post timestamps, including file-share timestamps. Session acts feed the stopwatch directly; no second session observer is added. State defaults to the city's `.gc/slack` directory, or `/tmp/gc-slack-adapter` without a city.
+
+The stopwatch runs even with acknowledgement off. It writes monthly UTC
+`stopwatch-YYYY-MM.jsonl` files with mode 0600, containing coordinates and
+timestamps only. Inbound lines include the first 12 SHA-256 hex characters of
+the running binary.
+Reaction lines record the first confirmation, actor and adapter choice method;
+words lines record posts. An unwritable journal warns once and delivery continues.
+The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
+timing directory for every adapter.
+
+Run `gc slack stopwatch` with the pack's installed alias. It needs no running adapter.
+`--state-dir DIRECTORY` selects a custom directory; `--since TIME` and
+`--until TIME` filter inbound channel timestamps inclusively; `--json` prints
+the same numbers as JSON. Each release reports count, nearest-rank median and
+p90 seconds to the first reaction and first words, plus messages older than an
+hour without words. A reply answers all waiting messages in its conversation
+and thread; torn journal lines are skipped.
+
 A Slack provider extension for Gas City. Modeled directly on the
 upstream `discord` pack
 (https://github.com/gastownhall/gascity-packs/tree/main/discord) so
