@@ -169,7 +169,14 @@ says when.
 A reminder comes soon after the time the owner chose, at any hour, and
 needs no consent and no zone. When a mail with the subject "follow-through:
 reminder due" arrives, look at the conversation it names. If the owner
-cancelled that reminder there, send nothing. Otherwise tell the owner now,
+cancelled that reminder there, send nothing. The same mail can also reach
+you twice for one reminder. It gives the reminder's words and the time it
+was due. Two reminders can have the same words, and you give both: the time
+each was due tells them apart. Look in the conversation, not in what you
+remember, because a session ends. If it shows that you already gave the
+owner this reminder after the time it was due, it is the same reminder
+arriving a second time, even if this mail says it is late. Send nothing for
+it. Otherwise tell the owner now,
 in your own words, in that conversation. If the mail says the reminder is
 late, say so plainly with the time they asked for, then give the reminder.
 Do not explain why it is late unless they ask.
