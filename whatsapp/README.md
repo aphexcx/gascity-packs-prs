@@ -45,7 +45,10 @@ spec's SCOPE item 3) is pinned route by route by the adapter's fake gateway
 
 `adapter/run.sh` sources `$GC_WHATSAPP_ADAPTER_ENV`, else
 `$GC_SERVICE_SECRETS_DIR/env` (supervised; required there), else
-`~/.config/gc-whatsapp-adapter/env`.
+`$GC_CITY_PATH/.gc/services/whatsapp/secrets/env`, else
+`~/.config/gc-whatsapp-adapter/env`. Each variable is used only when non-empty.
+Enrollment and diagnostics use the same selection. Relative paths are based
+at the adapter directory; a missing selected file never falls back to another.
 
 | Name | Meaning |
 | --- | --- |

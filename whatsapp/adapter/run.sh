@@ -2,10 +2,8 @@
 #
 # run.sh — start the gc-whatsapp-adapter in the foreground.
 #
-# Reads its env from a sourced file, resolved in this order:
-#   1. $GC_WHATSAPP_ADAPTER_ENV (explicit override)
-#   2. $GC_SERVICE_SECRETS_DIR/env (per-city; supervised mode)
-#   3. ~/.config/gc-whatsapp-adapter/env (global; standalone/dev)
+# Reads its env from the file selected by env-file.sh, also used by
+# enrollment and diagnostics.
 #
 # Required env keys (in the file; never a value in the pack):
 #   WHATSAPP_GATEWAY_URL         # https://whatsapp.dynasty.computer
@@ -39,18 +37,8 @@ if [[ "${1:-}" == "--deps-only" ]]; then
   deps_only=true
 fi
 
-if [[ -n "${GC_WHATSAPP_ADAPTER_ENV:-}" ]]; then
-  env_file="$GC_WHATSAPP_ADAPTER_ENV"
-elif [[ -n "${GC_SERVICE_SECRETS_DIR:-}" ]]; then
-  # Supervised: the per-city file is REQUIRED. Falling through to the global
-  # file would let a second city on the host start on the first city's
-  # gateway credential.
-  env_file="$GC_SERVICE_SECRETS_DIR/env"
-else
-  env_file="$HOME/.config/gc-whatsapp-adapter/env"
-fi
-
 adapter_dir="$(cd "$(dirname "$0")" && pwd)"
+env_file="$(sh "$adapter_dir/env-file.sh")"
 cd "$adapter_dir"
 
 if ! command -v node >/dev/null 2>&1; then

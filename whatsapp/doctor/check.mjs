@@ -6,10 +6,12 @@
 // adapter's own code (../adapter/src/journal.js), so the row and the adapter
 // can never disagree about what a line means.
 
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { entryState, foldLines, readLines, JOURNAL_FILE, PROBE_RETENTION_MS } from '../adapter/src/journal.js';
 
@@ -33,10 +35,8 @@ function stateDir() {
 }
 
 function envFile() {
-  const e = process.env;
-  if (e.GC_WHATSAPP_ADAPTER_ENV) return e.GC_WHATSAPP_ADAPTER_ENV;
-  const secrets = e.GC_SERVICE_SECRETS_DIR || (e.GC_CITY_PATH && path.join(e.GC_CITY_PATH, '.gc/services/whatsapp/secrets'));
-  return secrets ? path.join(secrets, 'env') : path.join(e.HOME || '', '.config/gc-whatsapp-adapter/env');
+  // Execute only the pack's resolver, never the selected env file.
+  return execFileSync('sh', [fileURLToPath(new URL('../adapter/env-file.sh', import.meta.url))], { encoding: 'utf8' });
 }
 
 // Literal assignments only: an expansion or a command is reported, never run.
@@ -61,7 +61,9 @@ function readEnvFile(names) {
 function env() {
   const names = ['WHATSAPP_GATEWAY_URL', 'WHATSAPP_GATEWAY_CREDENTIAL', 'GC_CITY_NAME', 'GC_API_BASE_URL'];
   const read = readEnvFile(names);
-  if (read.missingFile) return finish(2, 'adapter env file missing or unreadable; set GC_WHATSAPP_ADAPTER_ENV or create the per-city whatsapp secrets/env file (gc whatsapp enroll writes the credential into it)');
+  if (read.missingFile) return finish(2,
+    'adapter env file missing or unreadable; use the same GC_WHATSAPP_ADAPTER_ENV or GC_SERVICE_SECRETS_DIR as the whatsapp service '
+    + '(otherwise the GC_CITY_PATH per-city file, then the HOME default); gc whatsapp enroll writes the credential into that file');
   const missing = names.filter((name) => !read.values[name] && !read.dynamic.has(name));
   if (missing.length) return finish(2, `missing adapter env vars: ${missing.join(' ')}${missing.includes('WHATSAPP_GATEWAY_CREDENTIAL') ? ' (not enrolled: run gc whatsapp enroll)' : ''}`);
   if (read.dynamic.size) return finish(1, `cannot verify shell expressions without executing them: ${[...read.dynamic].join(' ')}`);
