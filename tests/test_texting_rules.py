@@ -59,39 +59,79 @@ def table_rows(text: str) -> list[str]:
     return rows
 
 
-def rules_block(text: str) -> list[str]:
-    """The list of rules, from the first lead to the end of the list.
+# The other bullets of the section the rules sit in, before the rules and
+# after them. Google Chat keeps its rules inside "When to speak"; Slack and
+# WhatsApp give them a "Reactions" section of their own. A bullet that is
+# not named here is a rule, wherever in the section it is put.
+OTHER_BULLETS = {
+    "gchat": (
+        ("- **DM or @mention:**", "- **Anything else in a space**"),
+        ("- Reply once per message.", "- **Nobody reads your terminal.**"),
+    ),
+    "slack": ((), ()),
+    "whatsapp": ((), ()),
+}
 
-    The list runs on through bullets, their wrapped lines, and any indented
-    paragraph inside a bullet. It ends at a line that is neither, or at a
-    blank line that is not followed by an indented line.
+
+def section_items(text: str) -> list[list[str]]:
+    """Each bullet of the section the rules sit in, with its wrapped lines.
+
+    The section runs from the heading above the first rule to the next
+    heading, outside code blocks, so a bullet after a blank line or after a
+    paragraph is still in it. A bullet's wrapped lines are the indented
+    lines after it, across blank lines, up to a line that is neither.
     """
     lines = text.splitlines()
     starts = [i for i, line in enumerate(lines) if line.startswith(RULE_LEADS[0])]
     assert len(starts) == 1, f"expected the first rule once, found {len(starts)}"
-    block = []
-    rest = lines[starts[0] :]
-    for i, line in enumerate(rest):
-        if not line.strip():
-            following = rest[i + 1] if i + 1 < len(rest) else ""
-            if not following.startswith("  "):
-                break
-        elif not line.startswith(("- ", "  ")):
-            break
-        block.append(line)
-    return block
+    first = starts[0]
+    headings, fence = [], False
+    for i, line in enumerate(lines):
+        if line.startswith("```"):
+            fence = not fence
+        elif not fence and line.startswith("#"):
+            headings.append(i)
+    top = max((i for i in headings if i < first), default=-1)
+    bottom = min((i for i in headings if i > first), default=len(lines))
+    items: list[list[str]] = []
+    fence, inside_item = False, False
+    for line in lines[top + 1 : bottom]:
+        if line.startswith("```"):
+            fence, inside_item = not fence, False
+        elif fence:
+            continue
+        elif line.startswith("- "):
+            items.append([line])
+            inside_item = True
+        elif line.startswith("  ") and inside_item:
+            items[-1].append(line)
+        elif line.strip():
+            inside_item = False
+    return items
+
+
+def rules(name: str, text: str) -> list[list[str]]:
+    """The rules of one text: every bullet of their section but the text's other bullets."""
+    before, after = OTHER_BULLETS[name]
+    return [item for item in section_items(text) if not item[0].startswith(before + after)]
+
+
+def bullet_problems(name: str, text: str) -> list[str]:
+    """The section's bullets, against the text's other bullets around the four leads."""
+    before, after = OTHER_BULLETS[name]
+    expected = [*before, *RULE_LEADS, *after]
+    found = [item[0] for item in section_items(text)]
+    if len(found) != len(expected) or not all(
+        line.startswith(lead) for line, lead in zip(found, expected)
+    ):
+        return [f"{name}: the section's bullets are {found}"]
+    return []
 
 
 def rule_problems(name: str, text: str) -> list[str]:
-    """What is wrong with the rules of one text: the four leads, and Google Chat's rules."""
-    problems = []
-    found = rules_block(text)
-    bullets = [line for line in found if line.startswith("- ")]
-    if len(bullets) != len(RULE_LEADS) or not all(
-        bullet.startswith(lead) for bullet, lead in zip(bullets, RULE_LEADS)
-    ):
-        problems.append(f"{name}: the rules are {bullets}")
-    if found != rules_block(read("gchat")):
+    """What is wrong with the rules of one text: its bullets, and Google Chat's rules."""
+    problems = bullet_problems(name, text)
+    if rules(name, text) != rules("gchat", read("gchat")):
         problems.append(f"{name}: the rules differ from gchat")
     return problems
 
@@ -190,16 +230,15 @@ def test_the_five_rows_are_the_same_in_every_text() -> None:
 def test_each_text_carries_the_four_rules_and_no_other(name: str) -> None:
     text = read(name)
     assert INTRO in normalized(text)
-    bullets = [line for line in rules_block(text) if line.startswith("- ")]
-    assert len(bullets) == len(RULE_LEADS), bullets
-    for bullet, lead in zip(bullets, RULE_LEADS):
-        assert bullet.startswith(lead), bullet
+    assert bullet_problems(name, text) == []
+    assert [item[0][: len(lead)] for item, lead in zip(rules(name, text), RULE_LEADS)] == RULE_LEADS
 
 
 def test_the_rules_are_the_same_in_every_text() -> None:
-    gchat = rules_block(read("gchat"))
+    gchat = rules("gchat", read("gchat"))
+    assert len(gchat) == len(RULE_LEADS)
     for name in ("slack", "whatsapp"):
-        assert rules_block(read(name)) == gchat, f"{name} differs from gchat"
+        assert rules(name, read(name)) == gchat, f"{name} differs from gchat"
 
 
 @pytest.mark.parametrize("place", FIFTH_RULE_PLACES)
