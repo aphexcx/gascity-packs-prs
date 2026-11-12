@@ -1,0 +1,77 @@
+{
+  "callers": {
+    "eslint": {
+      "completed": 5.3235992080008145,
+      "launched": 0.005670957994880155,
+      "requested": 0.0056707499898038805,
+      "returncode": 0,
+      "waited": false
+    },
+    "tsc": {
+      "completed": 3.8376739580126014,
+      "launched": 0.00988262501778081,
+      "requested": 0.009880875004455447,
+      "returncode": 0,
+      "waited": false
+    },
+    "vitest": {
+      "completed": 6.500594999990426,
+      "launched": 0.005448290990898386,
+      "requested": 0.005447791016194969,
+      "returncode": 0,
+      "waited": true
+    }
+  },
+  "commands": [
+    "install --frozen-lockfile",
+    "exec tsc",
+    "exec eslint",
+    "exec vitest"
+  ],
+  "error_type": "AssertionError",
+  "events": [
+    {
+      "caller": "vitest",
+      "event": "process_start",
+      "time": 0.116349
+    },
+    {
+      "caller": "tsc",
+      "event": "process_start",
+      "time": 0.117363
+    },
+    {
+      "caller": "eslint",
+      "event": "process_start",
+      "time": 0.122768
+    },
+    {
+      "caller": "vitest",
+      "event": "lock_attempt",
+      "time": 0.174473
+    },
+    {
+      "caller": "tsc",
+      "event": "lock_attempt",
+      "time": 0.179375
+    },
+    {
+      "caller": "eslint",
+      "event": "lock_attempt",
+      "time": 0.186911
+    },
+    {
+      "caller": "tsc",
+      "event": "install_start",
+      "time": 0.36595
+    },
+    {
+      "caller": "tsc",
+      "event": "install_end",
+      "time": 2.938629
+    }
+  ],
+  "installs": 1,
+  "passed": false,
+  "run": 25
+}

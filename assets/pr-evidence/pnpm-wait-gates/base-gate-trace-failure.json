@@ -1,0 +1,167 @@
+{
+  "callers": {
+    "eslint": {
+      "completed": 5.152784832986072,
+      "launched": 0.023369833012111485,
+      "requested": 0.023369375005131587,
+      "returncode": 0,
+      "waited": true
+    },
+    "tsc": {
+      "completed": 2.8118602909962647,
+      "launched": 0.03148366601089947,
+      "requested": 0.03147608300787397,
+      "returncode": 0,
+      "waited": false
+    },
+    "vitest": {
+      "completed": 3.934405665990198,
+      "launched": 0.01409283300745301,
+      "requested": 0.014086000010138378,
+      "returncode": 0,
+      "waited": false
+    }
+  },
+  "commands": [
+    "install --frozen-lockfile",
+    "exec tsc",
+    "exec vitest",
+    "exec eslint"
+  ],
+  "error_type": "AssertionError",
+  "events": [
+    {
+      "caller": "tsc",
+      "event": "process_start",
+      "time": 0.164183
+    },
+    {
+      "caller": "eslint",
+      "event": "process_start",
+      "time": 0.177122
+    },
+    {
+      "caller": "vitest",
+      "event": "process_start",
+      "time": 0.17752
+    },
+    {
+      "caller": "tsc",
+      "event": "lock_attempt",
+      "time": 0.255505
+    },
+    {
+      "caller": "vitest",
+      "event": "lock_attempt",
+      "time": 0.269338
+    },
+    {
+      "caller": "eslint",
+      "event": "lock_attempt",
+      "time": 0.282445
+    },
+    {
+      "caller": "tsc",
+      "event": "gate_acquired",
+      "time": 0.338533
+    },
+    {
+      "caller": "tsc",
+      "event": "lane_claim_0",
+      "time": 0.376894
+    },
+    {
+      "caller": "tsc",
+      "event": "install_start",
+      "time": 0.593246
+    },
+    {
+      "caller": "eslint",
+      "event": "gate_waited",
+      "time": 1.399103
+    },
+    {
+      "caller": "eslint",
+      "event": "gate_acquired",
+      "time": 1.434616
+    },
+    {
+      "caller": "vitest",
+      "event": "gate_waited",
+      "time": 1.43562
+    },
+    {
+      "caller": "eslint",
+      "event": "lane_claim_1",
+      "time": 1.471876
+    },
+    {
+      "caller": "vitest",
+      "event": "gate_waited",
+      "time": 2.631939
+    },
+    {
+      "caller": "eslint",
+      "event": "gate_acquired",
+      "time": 2.637809
+    },
+    {
+      "caller": "eslint",
+      "event": "lane_claim_1",
+      "time": 2.684563
+    },
+    {
+      "caller": "tsc",
+      "event": "install_end",
+      "time": 2.722927
+    },
+    {
+      "caller": "tsc",
+      "event": "command_start",
+      "time": 2.807296
+    },
+    {
+      "caller": "vitest",
+      "event": "gate_waited",
+      "time": 3.69555
+    },
+    {
+      "caller": "vitest",
+      "event": "gate_acquired",
+      "time": 3.730254
+    },
+    {
+      "caller": "vitest",
+      "event": "lane_claim_0",
+      "time": 3.7696
+    },
+    {
+      "caller": "vitest",
+      "event": "command_start",
+      "time": 3.92823
+    },
+    {
+      "caller": "eslint",
+      "event": "gate_waited",
+      "time": 4.917614
+    },
+    {
+      "caller": "eslint",
+      "event": "gate_acquired",
+      "time": 4.954228
+    },
+    {
+      "caller": "eslint",
+      "event": "lane_claim_0",
+      "time": 4.994623
+    },
+    {
+      "caller": "eslint",
+      "event": "command_start",
+      "time": 5.1498
+    }
+  ],
+  "installs": 1,
+  "passed": false,
+  "run": 7
+}
