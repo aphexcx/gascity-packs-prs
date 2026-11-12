@@ -1,0 +1,247 @@
+HEAD df86b614b67a650c74dbe1b4283a810d79fbc31f
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -q -rA
+FFFFFFFFFF..F                                                            [100%]
+=================================== FAILURES ===================================
+_______________ test_each_text_carries_the_five_in_order[gchat] ________________
+
+name = 'gchat'
+
+    @pytest.mark.parametrize("name", sorted(TEXTS))
+    def test_each_text_carries_the_five_in_order(name: str) -> None:
+>       rows = table_rows(read(name))
+               ^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_texting_rules.py:75:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
+
+    def table_rows(text: str) -> list[str]:
+        """The table's lines, header first, exactly as the file has them."""
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line == TABLE_HEADER]
+>       assert len(starts) == 1, f"expected the table header once, found {len(starts)}"
+E       AssertionError: expected the table header once, found 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_texting_rules.py:51: AssertionError
+_______________ test_each_text_carries_the_five_in_order[slack] ________________
+
+name = 'slack'
+
+    @pytest.mark.parametrize("name", sorted(TEXTS))
+    def test_each_text_carries_the_five_in_order(name: str) -> None:
+>       rows = table_rows(read(name))
+               ^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_texting_rules.py:75:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+text = '{{ define "slack-v0" -}}\nYou are bound to a Slack conversation shared with humans and other agents.\n{{- if .Templat...e human see it. Company delegation never happens in DMs; requests and\nresults stay visible in the room.\n{{- end }}\n'
+
+    def table_rows(text: str) -> list[str]:
+        """The table's lines, header first, exactly as the file has them."""
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line == TABLE_HEADER]
+>       assert len(starts) == 1, f"expected the table header once, found {len(starts)}"
+E       AssertionError: expected the table header once, found 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_texting_rules.py:51: AssertionError
+______________ test_each_text_carries_the_five_in_order[whatsapp] ______________
+
+name = 'whatsapp'
+
+    @pytest.mark.parametrize("name", sorted(TEXTS))
+    def test_each_text_carries_the_five_in_order(name: str) -> None:
+>       rows = table_rows(read(name))
+               ^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_texting_rules.py:75:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+text = '---\nname: whatsapp\ndescription: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor...hat has not written to you. A bound phone wrote\n  at least its invite code; any other number is not yours to reach.\n'
+
+    def table_rows(text: str) -> list[str]:
+        """The table's lines, header first, exactly as the file has them."""
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line == TABLE_HEADER]
+>       assert len(starts) == 1, f"expected the table header once, found {len(starts)}"
+E       AssertionError: expected the table header once, found 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_texting_rules.py:51: AssertionError
+________________ test_the_five_rows_are_the_same_in_every_text _________________
+
+    def test_the_five_rows_are_the_same_in_every_text() -> None:
+>       gchat = table_rows(read("gchat"))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_texting_rules.py:86:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
+
+    def table_rows(text: str) -> list[str]:
+        """The table's lines, header first, exactly as the file has them."""
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line == TABLE_HEADER]
+>       assert len(starts) == 1, f"expected the table header once, found {len(starts)}"
+E       AssertionError: expected the table header once, found 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_texting_rules.py:51: AssertionError
+___ test_each_rule_is_the_same_in_every_text[- **A reaction comes first.**] ____
+
+lead = '- **A reaction comes first.**'
+
+    @pytest.mark.parametrize("lead", RULE_LEADS)
+    def test_each_rule_is_the_same_in_every_text(lead: str) -> None:
+>       gchat = rule(read("gchat"), lead)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_texting_rules.py:93:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
+lead = '- **A reaction comes first.**'
+
+    def rule(text: str, lead: str) -> str:
+        """One rule bullet with its wrapped lines, exactly as the file has them."""
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line.startswith(lead)]
+>       assert len(starts) == 1, f"expected {lead!r} once, found {len(starts)}"
+E       AssertionError: expected '- **A reaction comes first.**' once, found 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_texting_rules.py:64: AssertionError
+______ test_each_rule_is_the_same_in_every_text[- **A reaction alone.**] _______
+
+lead = '- **A reaction alone.**'
+
+    @pytest.mark.parametrize("lead", RULE_LEADS)
+    def test_each_rule_is_the_same_in_every_text(lead: str) -> None:
+>       gchat = rule(read("gchat"), lead)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_texting_rules.py:93:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
+lead = '- **A reaction alone.**'
+
+    def rule(text: str, lead: str) -> str:
+        """One rule bullet with its wrapped lines, exactly as the file has them."""
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line.startswith(lead)]
+>       assert len(starts) == 1, f"expected {lead!r} once, found {len(starts)}"
+E       AssertionError: expected '- **A reaction alone.**' once, found 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_texting_rules.py:64: AssertionError
+_ test_each_rule_is_the_same_in_every_text[- **\u2705 and \u23f0 are yours, and never a promise.**] _
+
+lead = '- **✅ and ⏰ are yours, and never a promise.**'
+
+    @pytest.mark.parametrize("lead", RULE_LEADS)
+    def test_each_rule_is_the_same_in_every_text(lead: str) -> None:
+>       gchat = rule(read("gchat"), lead)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_texting_rules.py:93:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
+lead = '- **✅ and ⏰ are yours, and never a promise.**'
+
+    def rule(text: str, lead: str) -> str:
+        """One rule bullet with its wrapped lines, exactly as the file has them."""
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line.startswith(lead)]
+>       assert len(starts) == 1, f"expected {lead!r} once, found {len(starts)}"
+E       AssertionError: expected '- **✅ and ⏰ are yours, and never a promise.**' once, found 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_texting_rules.py:64: AssertionError
+______ test_each_rule_is_the_same_in_every_text[- **Fixed means fixed.**] ______
+
+lead = '- **Fixed means fixed.**'
+
+    @pytest.mark.parametrize("lead", RULE_LEADS)
+    def test_each_rule_is_the_same_in_every_text(lead: str) -> None:
+>       gchat = rule(read("gchat"), lead)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_texting_rules.py:93:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+text = "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
+lead = '- **Fixed means fixed.**'
+
+    def rule(text: str, lead: str) -> str:
+        """One rule bullet with its wrapped lines, exactly as the file has them."""
+        lines = text.splitlines()
+        starts = [i for i, line in enumerate(lines) if line.startswith(lead)]
+>       assert len(starts) == 1, f"expected {lead!r} once, found {len(starts)}"
+E       AssertionError: expected '- **Fixed means fixed.**' once, found 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/test_texting_rules.py:64: AssertionError
+___________ test_google_chat_skill_has_the_table_and_no_free_choice ____________
+
+    def test_google_chat_skill_has_the_table_and_no_free_choice() -> None:
+        text = read("gchat")
+        flat = normalized(text)
+>       assert TABLE_HEADER in text
+E       assert '| Reaction | Slack name | What the owner reads it as |' in "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n"
+
+tests/test_texting_rules.py:101: AssertionError
+__________ test_whatsapp_skill_says_the_mayor_cannot_react_there_yet ___________
+
+    def test_whatsapp_skill_says_the_mayor_cannot_react_there_yet() -> None:
+        flat = normalized(read("whatsapp"))
+>       assert "You cannot place a reaction on WhatsApp yet." in flat
+E       AssertionError: assert 'You cannot place a reaction on WhatsApp yet.' in '--- name: whatsapp description: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor m...ber that has not written to you. A bound phone wrote at least its invite code; any other number is not yours to reach.'
+
+tests/test_texting_rules.py:108: AssertionError
+______________________ test_reaction_vocabulary_contract _______________________
+
+    def test_reaction_vocabulary_contract() -> None:
+        prompt = FRAGMENT.read_text(encoding="utf-8")
+        normalized = " ".join(prompt.split())
+
+        assert prompt.startswith('{{ define "slack-v0" -}}\n')
+        assert prompt.endswith("{{- end }}\n")
+
+        respond = prompt.index("## When to respond")
+>       reactions = prompt.index("## Reactions")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ValueError: substring not found
+
+slack-full/tests/test_slack_prompt_contract.py:37: ValueError
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_texting_rules.py::test_the_older_short_reply_lines_stay
+PASSED slack-full/tests/test_slack_prompt_contract.py::test_thread_ambient_response_gate_and_native_identity_contract
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[gchat]
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[slack]
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[whatsapp]
+FAILED tests/test_texting_rules.py::test_the_five_rows_are_the_same_in_every_text
+FAILED tests/test_texting_rules.py::test_each_rule_is_the_same_in_every_text[- **A reaction comes first.**]
+FAILED tests/test_texting_rules.py::test_each_rule_is_the_same_in_every_text[- **A reaction alone.**]
+FAILED tests/test_texting_rules.py::test_each_rule_is_the_same_in_every_text[- **\u2705 and \u23f0 are yours, and never a promise.**]
+FAILED tests/test_texting_rules.py::test_each_rule_is_the_same_in_every_text[- **Fixed means fixed.**]
+FAILED tests/test_texting_rules.py::test_google_chat_skill_has_the_table_and_no_free_choice
+FAILED tests/test_texting_rules.py::test_whatsapp_skill_says_the_mayor_cannot_react_there_yet
+FAILED slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+11 failed, 2 passed in 0.04s
+make: *** [test] Error 1
+rc=2

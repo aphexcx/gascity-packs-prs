@@ -1,0 +1,89 @@
+HEAD e385cffb2dad3a13df062d95e3e6a89a774e257b
+make test
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) tests contributing-to-gascity/tests gascity/tests discord/tests github/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests gchat/tests -q
+.................. [  0%]
+....................................... [  1%]
+........................................................................ [  4%]
+..............ssssssssssssssssssssssssssssssssssssssssssssssssssssssss [  6%]
+ssssssssssssssssssssssssssssssssssssss.................................s [  9%]
+ssssssssssssssssssss....ssssssss........................................ [ 11%]
+........................................................................ [ 14%]
+........................................................................ [ 16%]
+......................................... [ 18%]
+........................................................................ [ 20%]
+....................................................................................... [ 23%]
+................................................. [ 25%]
+...................................... [ 26%]
+................................... [ 28%]
+..............F......................................................... [ 30%]
+................................... [ 31%]
+........................................................................ [ 34%]
+............................................................. [ 36%]
+........................................................................ [ 39%]
+........................................................................ [ 41%]
+........................................................................ [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 49%]
+...................................................................... [ 51%]
+...................................................................... [ 53%]
+................................................................ss...... [ 56%]
+........................................................................ [ 58%]
+.s............................................................ [ 61%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 71%]
+........................................................................ [ 73%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 81%]
+........................................................................ [ 83%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+.................................................................... [ 90%]
+.................................................................................................................................... [ 95%]
+........................................................................ [ 98%]
+....................................................... [100%]
+=================================== FAILURES ===================================
+_ PnpmShimTests.test_concurrent_callers_wait_for_one_install_instead_of_racing_it _
+
+self = <test_toolchain_shims.PnpmShimTests testMethod=test_concurrent_callers_wait_for_one_install_instead_of_racing_it>
+
+    def test_concurrent_callers_wait_for_one_install_instead_of_racing_it(self) -> None:
+        proj = self.fx.project()
+        results: list[subprocess.CompletedProcess[str]] = []
+        lock = threading.Lock()
+
+        def call(name: str) -> None:
+            r = self.fx.run("pnpm", "exec", name, cwd=proj, FAKE_PNPM_SLEEP="2")
+            with lock:
+                results.append(r)
+
+        threads = [threading.Thread(target=call, args=(n,)) for n in ("vitest", "eslint", "tsc")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        self.assertEqual(len(results), 3)
+        for r in results:
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fx.installs()), 1, self.fx.calls())
+        ran = sorted(a for a in self.fx.argv() if a != "install --frozen-lockfile")
+        self.assertEqual(ran, ["exec eslint", "exec tsc", "exec vitest"])
+        waited = [r for r in results if "waiting for another caller's lane install" in r.stderr]
+>       self.assertEqual(len(waited), 2, [r.stderr for r in results])
+E       AssertionError: 1 != 2 : ['gc-toolchain pnpm: installing lane dependencies once for <tmp>/proj (pnpm says node_modules is out of sync)\nfake pnpm: installed\n', '', "gc-toolchain pnpm: waiting for another caller's lane install (pid 59868)\n"]
+
+gascity/tests/test_toolchain_shims.py:566: AssertionError
+=============================== warnings summary ===============================
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+  <clone>/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=36836) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED gascity/tests/test_toolchain_shims.py::PnpmShimTests::test_concurrent_callers_wait_for_one_install_instead_of_racing_it
+1 failed, 2747 passed, 126 skipped, 2 warnings, 10734 subtests passed in 435.78s (0:07:15)
+make: *** [test] Error 1
+rc=2

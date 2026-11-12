@@ -1,0 +1,5 @@
+HEAD a3ba794f98cf95eed613bedf479e888e4ea75a76
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) whatsapp/tests -q
+.........................................................                [100%]
+57 passed in 17.56s
+rc=0

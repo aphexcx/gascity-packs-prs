@@ -5,7 +5,7 @@ thread root, message, existing attachments/context, and one reply command. The
 standing guidance lives in `slack-full/template-fragments/slack-v0.template.md`,
 under **Mention-only rooms**. No live adapter or Slack workspace was used.
 
-Base: `52d25900455a8c734ba4b899224b4b39d6a50247`. All message text, names,
+Measurement base: `52d25900455a8c734ba4b899224b4b39d6a50247`. All message text, names,
 channel/user ids and timestamps in these captures are invented.
 
 ## Measurement boundary and baseline
@@ -58,7 +58,8 @@ thread root with forty distinct synthetic message timestamps, joining
 deliveries with a newline. It models a session already participating in the
 thread, with no new context or attachments. The saved 8,920 tokens exclude the
 one-time startup-fragment cost. The single-mention reduction is 205 tokens.
-The raw startup fragment adds 1,482 bytes / 320 tokens relative to the base,
+The raw startup fragment adds 1,482 bytes / 320 tokens relative to the base
+(also unchanged relative to the integrated main at `a453efab`),
 so the forty-reply example saves 8,600 tokens after that one-time cost. This
 counts the fragment source; template interpolation can change the full prompt.
 
@@ -165,7 +166,15 @@ Outcome: **FIXED** in `51078dfd` (including the text updates in `015182f7`).
 Self-review round 2 (STANDARD, `51078dfdb19fd7f209dca43471e946bbd6823e7c`):
 **CLEAN**, 0 critical / 0 major / 0 minor / 0 nit. The reviewer read the full
 delta against the base in a separate read-only checkout and did not run tests
-in its sandbox. Only this validation record changes after the reviewed commit.
+in its sandbox.
+
+Before handoff, main advanced to `a453efabfd87e25f2cccde2707bebebae0b06d92`.
+The merge retained both independently added prompt-contract tests and the
+upstream reaction catalog unchanged. The adapter implementation did not change.
+From `slack-full`, `python -m pytest tests -q -k 'prompt_contract or reply_template_contract'`
+then passed 7 cases (973 deselected), including both the new reaction-catalog
+contract and this bead's mention-only contract. The shared reaction section was
+also compared byte-for-byte with main. This bead does not edit that catalog.
 
 Public-repo check: all added fixtures and captures contain invented values;
 no live messages, credentials or host-specific paths are included.

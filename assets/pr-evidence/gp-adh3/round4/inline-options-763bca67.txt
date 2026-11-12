@@ -1,0 +1,11 @@
+tokenizer: tiktoken 0.14.0 o200k_base
+text      what          chars  bytes tokens   +chars +tokens
+gchat     base           9138   9177   2281
+gchat     (a) inline    10287  10351   2632    +1149    +351
+gchat     (b) core+path   9856   9879   2446     +718    +165
+slack     base           8559   8622   2052
+slack     (a) inline     9708   9796   2404    +1149    +352
+slack     (b) core+path   9239   9286   2208     +680    +156
+whatsapp  base          13160  13197   3202
+whatsapp  (a) inline    14311  14373   3554    +1151    +352
+whatsapp  (b) core+path  13880  13901   3368     +720    +166

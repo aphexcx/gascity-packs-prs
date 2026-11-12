@@ -1,0 +1,241 @@
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests/test_reaction_catalog.py tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -p no:cacheprovider -rfE --tb=line -q
+# at d6ff03e49ac663a55f01508940ebcbd3c2f400fa
+FFFFFFFF.........FFF.FFFFFFFFFFFFFFFF.FFFFFFFFF.................FFFFFFFF [ 85%]
+FFFF....F..F                                                             [100%]
+=================================== FAILURES ===================================
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   AssertionError: gchat: expected two tables, found 1
+    assert 1 == 2
+     +  where 1 = len([['| Reaction | Slack name | What the owner reads it as |', '| --- | --- | --- |', '| 👀 | `eyes` | "I have your messag..., '| 👍 | `+1` | "Understood. Nothing more needs saying." |', '| ✅ | `white_check_mark` | "Done, and checked." |', ...]])
+<repo>/tests/test_texting_rules.py:306: AssertionError: gchat: expected two tables, found 1
+E   AssertionError: slack: expected two tables, found 1
+    assert 1 == 2
+     +  where 1 = len([['| Reaction | Slack name | What the owner reads it as |', '| --- | --- | --- |', '| 👀 | `eyes` | "I have your messag..., '| 👍 | `+1` | "Understood. Nothing more needs saying." |', '| ✅ | `white_check_mark` | "Done, and checked." |', ...]])
+<repo>/tests/test_texting_rules.py:306: AssertionError: slack: expected two tables, found 1
+E   AssertionError: whatsapp: expected two tables, found 1
+    assert 1 == 2
+     +  where 1 = len([['| Reaction | Slack name | What the owner reads it as |', '| --- | --- | --- |', '| 👀 | `eyes` | "I have your messag..., '| 👍 | `+1` | "Understood. Nothing more needs saying." |', '| ✅ | `white_check_mark` | "Done, and checked." |', ...]])
+<repo>/tests/test_texting_rules.py:306: AssertionError: whatsapp: expected two tables, found 1
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   ValueError: substring not found
+<repo>/tests/test_texting_rules.py:332: ValueError: substring not found
+E   ValueError: substring not found
+<repo>/tests/test_texting_rules.py:332: ValueError: substring not found
+E   ValueError: substring not found
+<repo>/tests/test_texting_rules.py:332: ValueError: substring not found
+E   assert not <re.Match object; span=(2292, 2296), match='Five'>
+     +  where <re.Match object; span=(2292, 2296), match='Five'> = <function search at 0x102748220>('\\b(five|the first three)\\b', "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n", re.IGNORECASE)
+     +    where <function search at 0x102748220> = re.search
+     +    and   "---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n" = read('gchat')
+     +    and   re.IGNORECASE = re.IGNORECASE
+<repo>/tests/test_texting_rules.py:351: assert not <re.Match object; span=(2292, 2296), match='Five'>
+E   assert not <re.Match object; span=(2249, 2253), match='Five'>
+     +  where <re.Match object; span=(2249, 2253), match='Five'> = <function search at 0x102748220>('\\b(five|the first three)\\b', '{{ define "slack-v0" -}}\nYou are bound to a Slack conversation shared with humans and other agents.\n{{- if .Templat...e human see it. Company delegation never happens in DMs; requests and\nresults stay visible in the room.\n{{- end }}\n', re.IGNORECASE)
+     +    where <function search at 0x102748220> = re.search
+     +    and   '{{ define "slack-v0" -}}\nYou are bound to a Slack conversation shared with humans and other agents.\n{{- if .Templat...e human see it. Company delegation never happens in DMs; requests and\nresults stay visible in the room.\n{{- end }}\n' = read('slack')
+     +    and   re.IGNORECASE = re.IGNORECASE
+<repo>/tests/test_texting_rules.py:351: assert not <re.Match object; span=(2249, 2253), match='Five'>
+E   AssertionError: assert not <re.Match object; span=(1583, 1587), match='Five'>
+     +  where <re.Match object; span=(1583, 1587), match='Five'> = <function search at 0x102748220>('\\b(five|the first three)\\b', '---\nname: whatsapp\ndescription: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor...hat has not written to you. A bound phone wrote\n  at least its invite code; any other number is not yours to reach.\n', re.IGNORECASE)
+     +    where <function search at 0x102748220> = re.search
+     +    and   '---\nname: whatsapp\ndescription: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor...hat has not written to you. A bound phone wrote\n  at least its invite code; any other number is not yours to reach.\n' = read('whatsapp')
+     +    and   re.IGNORECASE = re.IGNORECASE
+<repo>/tests/test_texting_rules.py:351: AssertionError: assert not <re.Match object; span=(1583, 1587), match='Five'>
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+<home>/.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError: [Errno 2] No such file or directory: '<repo>/gchat/reactions.json'
+E   assert 'These reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp.' in "--- name: google-chat description: How to take part in Google Chat as this city's Workspace user. Use whenever a remi...pter recovers up to 28 days of history after an outage; older gaps are reported in `gc gchat status` as unrecoverable."
+     +  where "--- name: google-chat description: How to take part in Google Chat as this city's Workspace user. Use whenever a remi...pter recovers up to 28 days of history after an outage; older gaps are reported in `gc gchat status` as unrecoverable." = normalized("---\nname: google-chat\ndescription: How to take part in Google Chat as this city's Workspace user. Use whenever a re...recovers up to 28 days of history after an outage; older gaps\n  are reported in `gc gchat status` as unrecoverable.\n")
+<repo>/tests/test_texting_rules.py:371: assert 'These reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp.' in "--- name: google-chat description: How to take part in Google Chat as this city's Workspace user. Use whenever a remi...pter recovers up to 28 days of history after an outage; older gaps are reported in `gc gchat status` as unrecoverable."
+E   assert 'These reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp.' in '{{ define "slack-v0" -}} You are bound to a Slack conversation shared with humans and other agents. {{- if .TemplateN...d the human see it. Company delegation never happens in DMs; requests and results stay visible in the room. {{- end }}'
+     +  where '{{ define "slack-v0" -}} You are bound to a Slack conversation shared with humans and other agents. {{- if .TemplateN...d the human see it. Company delegation never happens in DMs; requests and results stay visible in the room. {{- end }}' = normalized('{{ define "slack-v0" -}}\nYou are bound to a Slack conversation shared with humans and other agents.\n{{- if .Templat...e human see it. Company delegation never happens in DMs; requests and\nresults stay visible in the room.\n{{- end }}\n')
+<repo>/tests/test_texting_rules.py:371: assert 'These reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp.' in '{{ define "slack-v0" -}} You are bound to a Slack conversation shared with humans and other agents. {{- if .TemplateN...d the human see it. Company delegation never happens in DMs; requests and results stay visible in the room. {{- end }}'
+E   AssertionError: assert 'These reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp.' in '--- name: whatsapp description: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor m...ber that has not written to you. A bound phone wrote at least its invite code; any other number is not yours to reach.'
+     +  where '--- name: whatsapp description: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor m...ber that has not written to you. A bound phone wrote at least its invite code; any other number is not yours to reach.' = normalized('---\nname: whatsapp\ndescription: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor...hat has not written to you. A bound phone wrote\n  at least its invite code; any other number is not yours to reach.\n')
+<repo>/tests/test_texting_rules.py:371: AssertionError: assert 'These reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp.' in '--- name: whatsapp description: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor m...ber that has not written to you. A bound phone wrote at least its invite code; any other number is not yours to reach.'
+E   assert ["gchat: the ...gh Chat. A']"] == []
+
+      Left contains one more item: "gchat: the section's bullets are ['- **DM or @mention:** it is addressed to you. Always answer.', '- **Anything else ...t follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["gchat: the ...gh Chat. A']"] == []
+E   assert ["gchat: the ...gh Chat. A']"] == []
+
+      Left contains one more item: "gchat: the section's bullets are ['- **DM or @mention:** it is addressed to you. Always answer.', '- **Anything else ...t follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["gchat: the ...gh Chat. A']"] == []
+E   assert ["gchat: the ...gh Chat. A']"] == []
+
+      Left contains one more item: "gchat: the section's bullets are ['- **DM or @mention:** it is addressed to you. Always answer.', '- **Anything else ...t follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["gchat: the ...gh Chat. A']"] == []
+E   assert ["slack: the ...ther emoji']"] == []
+
+      Left contains one more item: "slack: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '- **... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["slack: the ...ther emoji']"] == []
+E   assert ["slack: the ...ther emoji']"] == []
+
+      Left contains one more item: "slack: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '- **... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["slack: the ...ther emoji']"] == []
+E   assert ["slack: the ...ther emoji']"] == []
+
+      Left contains one more item: "slack: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '- **... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["slack: the ...ther emoji']"] == []
+E   assert ["whatsapp: t...ther emoji']"] == []
+
+      Left contains one more item: "whatsapp: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '-... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["whatsapp: t...ther emoji']"] == []
+E   assert ["whatsapp: t...ther emoji']"] == []
+
+      Left contains one more item: "whatsapp: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '-... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["whatsapp: t...ther emoji']"] == []
+E   assert ["whatsapp: t...ther emoji']"] == []
+
+      Left contains one more item: "whatsapp: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '-... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:391: assert ["whatsapp: t...ther emoji']"] == []
+E   assert ["gchat: the ...gh Chat. A']"] == []
+
+      Left contains one more item: "gchat: the section's bullets are ['- **DM or @mention:** it is addressed to you. Always answer.', '- **Anything else ...t follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["gchat: the ...gh Chat. A']"] == []
+E   assert ["gchat: the ...gh Chat. A']"] == []
+
+      Left contains one more item: "gchat: the section's bullets are ['- **DM or @mention:** it is addressed to you. Always answer.', '- **Anything else ...t follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["gchat: the ...gh Chat. A']"] == []
+E   assert ["gchat: the ...gh Chat. A']"] == []
+
+      Left contains one more item: "gchat: the section's bullets are ['- **DM or @mention:** it is addressed to you. Always answer.', '- **Anything else ...t follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["gchat: the ...gh Chat. A']"] == []
+E   assert ["gchat: the ...gh Chat. A']"] == []
+
+      Left contains one more item: "gchat: the section's bullets are ['- **DM or @mention:** it is addressed to you. Always answer.', '- **Anything else ...t follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["gchat: the ...gh Chat. A']"] == []
+E   assert ["slack: the ...ther emoji']"] == []
+
+      Left contains one more item: "slack: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '- **... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["slack: the ...ther emoji']"] == []
+E   assert ["slack: the ...ther emoji']"] == []
+
+      Left contains one more item: "slack: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '- **... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["slack: the ...ther emoji']"] == []
+E   assert ["slack: the ...ther emoji']"] == []
+
+      Left contains one more item: "slack: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '- **... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["slack: the ...ther emoji']"] == []
+E   assert ["slack: the ...ther emoji']"] == []
+
+      Left contains one more item: "slack: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '- **... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["slack: the ...ther emoji']"] == []
+E   assert ["whatsapp: t...ther emoji']"] == []
+
+      Left contains one more item: "whatsapp: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '-... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["whatsapp: t...ther emoji']"] == []
+E   assert ["whatsapp: t...ther emoji']"] == []
+
+      Left contains one more item: "whatsapp: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '-... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["whatsapp: t...ther emoji']"] == []
+E   assert ["whatsapp: t...ther emoji']"] == []
+
+      Left contains one more item: "whatsapp: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '-... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["whatsapp: t...ther emoji']"] == []
+E   assert ["whatsapp: t...ther emoji']"] == []
+
+      Left contains one more item: "whatsapp: the section's bullets are ['- **A reaction comes first.** On a channel where you can react, your first', '-... a promise.** ✅ goes on a request only', '- **Fixed means fixed.** Use the five only for their meanings. Other emoji']"
+      Use -v to get more diff
+<repo>/tests/test_texting_rules.py:489: assert ["whatsapp: t...ther emoji']"] == []
+E   AssertionError: assert 'The adapter may place one from the first table when a message arrives.' in '--- name: whatsapp description: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor m...ber that has not written to you. A bound phone wrote at least its invite code; any other number is not yours to reach.'
+<repo>/tests/test_texting_rules.py:539: AssertionError: assert 'The adapter may place one from the first table when a message arrives.' in '--- name: whatsapp description: Replying to a city owner on WhatsApp through the Dynasty number, and when the mayor m...ber that has not written to you. A bound phone wrote at least its invite code; any other number is not yours to reach.'
+E   assert 'a message to you that only confirms, thanks, agrees or closes a topic gets the reaction from the first table that fits it as the whole answer. No text follows it.' in '{{ define "slack-v0" -}} You are bound to a Slack conversation shared with humans and other agents. {{- if .TemplateN...d the human see it. Company delegation never happens in DMs; requests and results stay visible in the room. {{- end }}'
+<repo>/slack-full/tests/test_slack_prompt_contract.py:65: assert 'a message to you that only confirms, thanks, agrees or closes a topic gets the reaction from the first table that fits it as the whole answer. No text follows it.' in '{{ define "slack-v0" -}} You are bound to a Slack conversation shared with humans and other agents. {{- if .TemplateN...d the human see it. Company delegation never happens in DMs; requests and results stay visible in the room. {{- end }}'
+=========================== short test summary info ============================
+FAILED tests/test_reaction_catalog.py::test_the_copies_are_the_source_byte_for_byte
+FAILED tests/test_reaction_catalog.py::test_every_row_has_the_four_fields - F...
+FAILED tests/test_reaction_catalog.py::test_emoji_slack_names_and_meanings_are_unique
+FAILED tests/test_reaction_catalog.py::test_every_slack_name_is_one_the_slack_adapter_knows
+FAILED tests/test_reaction_catalog.py::test_the_count_is_above_five_and_within_the_jev_choice_limit
+FAILED tests/test_reaction_catalog.py::test_the_five_stay_with_their_meanings
+FAILED tests/test_reaction_catalog.py::test_no_claim_is_placeable_by_an_adapter
+FAILED tests/test_reaction_catalog.py::test_every_row_has_its_kind_named_here_and_in_the_file
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+FAILED tests/test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[gchat]
+FAILED tests/test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[slack]
+FAILED tests/test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[whatsapp]
+FAILED tests/test_texting_rules.py::test_the_intro_and_the_two_table_leads_come_in_order[gchat]
+FAILED tests/test_texting_rules.py::test_the_intro_and_the_two_table_leads_come_in_order[slack]
+FAILED tests/test_texting_rules.py::test_the_intro_and_the_two_table_leads_come_in_order[whatsapp]
+FAILED tests/test_texting_rules.py::test_no_text_counts_the_reactions[gchat]
+FAILED tests/test_texting_rules.py::test_no_text_counts_the_reactions[slack]
+FAILED tests/test_texting_rules.py::test_no_text_counts_the_reactions[whatsapp]
+FAILED tests/test_texting_rules.py::test_the_scan_finds_a_reaction_outside_the_catalog[React with \U0001f64f when they thank you.\n-stray0]
+FAILED tests/test_texting_rules.py::test_the_scan_finds_a_reaction_outside_the_catalog[React with \u2764 when they thank you.\n-stray1]
+FAILED tests/test_texting_rules.py::test_the_scan_finds_a_reaction_outside_the_catalog[React with \u2764\ufe0f when they thank you.\n-stray2]
+FAILED tests/test_texting_rules.py::test_the_scan_finds_a_reaction_outside_the_catalog[Copyright \u2122 and \xa9 are not reactions.\n-stray3]
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[gchat]
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[slack]
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[whatsapp]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-after a blank line at the end of the list]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-at the end of the section]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-before the first rule]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-after a blank line at the end of the list]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-at the end of the section]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-before the first rule]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-after a blank line at the end of the list]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-at the end of the section]
+FAILED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-before the first rule]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-an unindented line straight after rule 2]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a paragraph between rules 2 and 3]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a starred bullet at the end of the section]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a numbered bullet after a blank line at the end of the list]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-an unindented line straight after rule 2]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a paragraph between rules 2 and 3]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a starred bullet at the end of the section]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a numbered bullet after a blank line at the end of the list]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-an unindented line straight after rule 2]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a paragraph between rules 2 and 3]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a starred bullet at the end of the section]
+FAILED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a numbered bullet after a blank line at the end of the list]
+FAILED tests/test_texting_rules.py::test_whatsapp_skill_says_the_mayor_cannot_react_there_yet
+FAILED slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+50 failed, 34 passed in 0.06s

@@ -157,21 +157,36 @@ in the recorded zone with its name and UTC beside it, or labelled UTC alone
 when no zone is recorded. Both end by leaving whether and how to write to the
 mayor, under the channel's rules.
 
-Failed or interrupted attempts retry on the next eligible tick, no more than
-once a minute, with the same durable key. Undelivered work does not expire;
-old failed raises are also recovered using their original keys. Ticks prioritize unattempted raises, then the least recently
+Failed or interrupted attempts retry with the same durable key after waits
+of 1, 2, 4 and 8 minutes, subject to the next eligible wake for follow-ups.
+There are at most five delivery/recovery attempts per raise. A failed history
+lookup also consumes an attempt, so an unavailable history service cannot
+cause an endless retry loop. If a follow-up's wake closes before sending,
+that tick leaves its attempt count and backoff timestamp unchanged, including
+after a successful empty history lookup. The empty lookup stays reconciled
+and is not repeated on the next eligible tick.
+Old failed raises retain their keys and attempt counts. Ticks prioritize
+unattempted raises, then the least recently
 attempted, so slow failures cannot starve later mail. The 90-second tick
 budget (`TICK_BUDGET_MS`) includes lock waiting and reserves a full 15-second
-send timeout plus one second to save and release before starting another send.
+send timeout plus one second to save and release before starting another send
+(two timeouts when a history lookup is also needed).
 This leaves room below the order's two-minute deadline. Raises remain durable
 for later ticks when the budget is spent. An undelivered follow-up is eligible
 at the owner's next allowed wake, with consent, zone, current hours, grace
 and the night cap checked anew; reminders remain eligible at any hour. Closed
 items and cancelled reminders are omitted from pending sends. The file
-keeps the pending record if a process dies before the send. If it dies after
-delivery but before recording success, gc dedup suppresses the repeated key
-while the earlier mail is unarchived. This is gc's bounded dedup guarantee,
-not a guarantee against a second mail after the earlier mail is archived.
+keeps an explicit unknown-delivery marker before invoking gc. If it dies after
+delivery but before recording success, or gc exits unsuccessfully after
+storing the mail, recovery checks the city message history for that key,
+including archived and ephemeral messages. A match records delivery without
+another send, even when the inbox is empty. Only a successful empty lookup
+permits a retry. A failed or malformed lookup never permits a send. This
+requires the built-in message store's retained history and the pack runtime's
+`GC_CITY_PATH` (or `GC_CITY`); it does not infer delivery from an inbox search.
+History is queried through `gc bd --city CITY list --all --include-infra
+--include-ephemeral --type message --metadata-field mail.dedup_key=KEY
+--limit 1 --brief --json`. No message body is read or copied into diagnostics.
 The pack guarantees one logical raise per item/reminder. The mayor's skill
 governs whether an owner receives one follow-up or none.
 
@@ -179,9 +194,23 @@ governs whether an owner receives one follow-up or none.
 eligible scheduled wakes (whether or not an item is due), last tick, and
 pending or failed mail attempts. Doctor is red if an active owner or set
 reminder has no tick in five minutes, a consenting owner has no zone, or a
-raise is still undelivered. Resolved or closed work clears that finding.
-Status and doctor name owners whose recorded hours never overlap 08:00–20:00;
-those owners get no follow-up. The status JSON keys stay unchanged, with
+raise is still undelivered. At the retry bound, the durable raise becomes
+`stopped`; later ticks do not send it again or plan a replacement. Doctor
+reports that delivery stopped and operator action is required. Text status
+adds one `Mail delivery stopped: N; operator action required` line, and the
+existing `failing_raises` JSON includes the stopped records. The operator
+must inspect local mayor mail and delivery history and repair the mail path;
+an unconfirmed send must not be blindly reset. This escalation uses doctor
+and status because mail itself may be broken. It does not send to a person.
+Resolved or closed work clears the finding.
+
+Status and doctor name owners whose recorded hours never overlap 08:00–20:00
+as information, without failing health just for those hours. Those owners
+get no follow-up; explicit reminders are unaffected. The tick plans one
+durable notice to the local mayor per such owner, regardless of consent or
+zone. It uses the same reconciliation and bounded retries as other mail;
+restarts and later hours edits do not create another notice for that owner.
+The status JSON keys stay unchanged, with
 `expires_at: null` for undelivered raises, which have no expiry.
 Mail subprocesses have a 15-second timeout;
 their output is never included in status or doctor.

@@ -1,0 +1,4 @@
+CAUGHT: continuation paragraph inside one text's last rule (WhatsApp): 1 failed, 12 passed in 0.03s
+CAUGHT: a fifth bullet among the rules in one text (Slack): 2 failed, 11 passed in 0.04s
+CAUGHT: the shared intro sentence changed in one text (Google Chat): 1 failed, 12 passed in 0.03s
+CAUGHT: one character of one row changed (WhatsApp): 1 failed, 12 passed in 0.03s

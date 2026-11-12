@@ -1,0 +1,41 @@
+# at 763bca67b1debea6d53fee712fd3b5e48c9a1ef3
+# Each catalog row against Slack's own table: emoji.json of iamcal/emoji-data at
+# 13ee711e222ea17fe537bfea953c687866f16411, the commit slack-full/adapter/slack_emoji_names.go
+# names (fetched from raw.githubusercontent.com). The script is check_chars.py below.
+$ python3 -I check_chars.py emoji.json gchat/reactions.json   (rc 0)
+ok   eyes              👀  U+1F440         Slack table: 1F440      EYES
+ok   mag               🔍  U+1F50D         Slack table: 1F50D      LEFT-POINTING MAGNIFYING GLASS
+ok   +1                👍  U+1F44D         Slack table: 1F44D      THUMBS UP SIGN
+ok   thinking_face     🤔  U+1F914         Slack table: 1F914      THINKING FACE
+ok   heart             ❤️  U+2764 U+FE0F   Slack table: 2764-FE0F  HEAVY BLACK HEART
+ok   wave              👋  U+1F44B         Slack table: 1F44B      WAVING HAND SIGN
+ok   tada              🎉  U+1F389         Slack table: 1F389      PARTY POPPER
+ok   cry               😢  U+1F622         Slack table: 1F622      CRYING FACE
+ok   joy               😂  U+1F602         Slack table: 1F602      FACE WITH TEARS OF JOY
+ok   crossed_fingers   🤞  U+1F91E         Slack table: 1F91E      HAND WITH INDEX AND MIDDLE FINGERS CROSSED
+ok   white_check_mark  ✅  U+2705          Slack table: 2705       WHITE HEAVY CHECK MARK
+ok   alarm_clock       ⏰  U+23F0          Slack table: 23F0       ALARM CLOCK
+ok   inbox_tray        📥  U+1F4E5         Slack table: 1F4E5      INBOX TRAY
+ok   outbox_tray       📤  U+1F4E4         Slack table: 1F4E4      OUTBOX TRAY
+ok   date              📅  U+1F4C5         Slack table: 1F4C5      CALENDAR
+ok   credit_card       💳  U+1F4B3         Slack table: 1F4B3      CREDIT CARD
+ok   memo              📝  U+1F4DD         Slack table: 1F4DD      MEMO
+ok   warning           ⚠️  U+26A0 U+FE0F   Slack table: 26A0-FE0F  WARNING SIGN
+18 rows, 0 differ
+
+# check_chars.py
+"""Each catalog row's emoji, against Slack's own table at the commit the adapter's name list pins."""
+import json, sys
+table = json.load(open(sys.argv[1], encoding="utf-8"))
+by = {n: e for e in table for n in e.get("short_names", [])}
+rows = json.load(open(sys.argv[2], encoding="utf-8"))["reactions"]
+bad = 0
+for r in rows:
+    e = by[r["slack_name"]]
+    ch = "".join(chr(int(h, 16)) for h in e["unified"].split("-"))
+    ok = ch == r["emoji"]
+    bad += not ok
+    cps = " ".join(f"U+{ord(c):04X}" for c in r["emoji"])
+    print(f'{"ok  " if ok else "BAD "} {r["slack_name"]:17} {r["emoji"]}  {cps:15} Slack table: {e["unified"]:10} {e["name"]}')
+print(f"{len(rows)} rows, {bad} differ")
+sys.exit(1 if bad else 0)
