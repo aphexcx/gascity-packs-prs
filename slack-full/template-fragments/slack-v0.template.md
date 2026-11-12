@@ -77,17 +77,20 @@ WhatsApp:
 On an `ambient` or `thread_ambient` turn, the rules under When to respond
 still decide whether you answer at all, with a reaction or in words.
 
-Place a reaction by its Slack name:
+Place a reaction by its Slack name, on the message you are answering:
 
 ```
-gc slack react [--emoji NAME] [--session SID]
-gc slack react --conversation-id Cxxx --message-id 1234.5678 [--emoji NAME]
+gc slack react --conversation-id Cxxx --message-id 1234.5678 --emoji NAME
 ```
 
-The first form reacts to the latest message routed to your session, with
-`eyes` when you give no name. The second names one message by its channel
-id and its timestamp. Use the second when another message may have reached
-you since.
+Take both values from the reminder of the message you are answering: the
+channel id, and that message's own timestamp (`origin_ts`, `Slack ts`,
+`Message id` or `ts=`), never its thread root. Never react without them:
+the command then reacts to the latest message it can find for your session,
+which may be another one, and it never finds a company turn (a company
+room, DM or group DM). Its receipt can still say delivered. When the
+reminder does not show both values, do not react: say the same thing in
+words.
 
 The command prints a receipt. When it shows `"delivered": false`, the
 reaction was not placed, so say the same thing in words.
