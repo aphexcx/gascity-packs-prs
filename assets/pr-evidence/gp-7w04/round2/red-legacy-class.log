@@ -1,0 +1,374 @@
+TAP version 13
+1..0
+# Subtest: bounds.test.cjs
+ok 1 - bounds.test.cjs
+  ---
+  duration_ms: 41.953375
+  type: 'test'
+  ...
+1..0
+# Subtest: decision.test.cjs
+ok 2 - decision.test.cjs
+  ---
+  duration_ms: 40.462833
+  type: 'test'
+  ...
+# Subtest: empty active log: every published rotation shape finishes replay without a sentinel
+    # Subtest: warm
+    ok 1 - warm
+      ---
+      duration_ms: 47.602541
+      type: 'test'
+      ...
+    # Subtest: cold multiple archives
+    ok 2 - cold multiple archives
+      ---
+      duration_ms: 99.054417
+      type: 'test'
+      ...
+    # Subtest: chunked archive
+    ok 3 - chunked archive
+      ---
+      duration_ms: 119.8535
+      type: 'test'
+      ...
+    # Subtest: pending publication
+    ok 4 - pending publication
+      ---
+      duration_ms: 36.870542
+      type: 'test'
+      ...
+    # Subtest: legacy pending publication
+    ok 5 - legacy pending publication
+      ---
+      duration_ms: 36.995041
+      type: 'test'
+      ...
+    # Subtest: legacy publication with an older same-second archive
+    not ok 6 - legacy publication with an older same-second archive
+      ---
+      duration_ms: 34.702958
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:50:13'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+
+        true !== false
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: false
+      actual: true
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:73:16)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:50:13)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    1..6
+not ok 3 - empty active log: every published rotation shape finishes replay without a sentinel
+  ---
+  duration_ms: 375.957917
+  type: 'test'
+  location: '<clone>/reachable/test/empty-replay.test.cjs:48:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: empty active log: legacy publication identity survives checkpoints and timestamp collisions
+    # Subtest: warm, pending inbound
+    not ok 1 - warm, pending inbound
+      ---
+      duration_ms: 34.9175
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:92:15'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+
+        true !== false
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: false
+      actual: true
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:112:16)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:92:15)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+        Test.postRun (node:internal/test_runner/test:1542:19)
+      ...
+    # Subtest: warm, pending outbound
+    not ok 2 - warm, pending outbound
+      ---
+      duration_ms: 32.832834
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:92:15'
+      failureType: 'testCodeFailure'
+      error: |-
+        pending replies must not cause false refusals
+        + actual - expected
+
+        + {
+        +   hookSpecificOutput: {
+        +     hookEventName: 'PreToolUse',
+        +     permissionDecision: 'deny',
+        +     permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+        +   }
+        + }
+        - {}
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+      actual:
+        hookSpecificOutput:
+          hookEventName: 'PreToolUse'
+          permissionDecision: 'deny'
+          permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:111:16)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:92:15)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+      ...
+    # Subtest: multiple archives, pending inbound
+    not ok 3 - multiple archives, pending inbound
+      ---
+      duration_ms: 66.142833
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:92:15'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+
+        true !== false
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: false
+      actual: true
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:112:16)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:92:15)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+      ...
+    # Subtest: multiple archives, pending outbound
+    not ok 4 - multiple archives, pending outbound
+      ---
+      duration_ms: 66.1945
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:92:15'
+      failureType: 'testCodeFailure'
+      error: |-
+        pending replies must not cause false refusals
+        + actual - expected
+
+        + {
+        +   hookSpecificOutput: {
+        +     hookEventName: 'PreToolUse',
+        +     permissionDecision: 'deny',
+        +     permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+        +   }
+        + }
+        - {}
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+      actual:
+        hookSpecificOutput:
+          hookEventName: 'PreToolUse'
+          permissionDecision: 'deny'
+          permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:111:16)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:92:15)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+      ...
+    # Subtest: chunked archive, pending inbound
+    not ok 5 - chunked archive, pending inbound
+      ---
+      duration_ms: 113.683208
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:92:15'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+
+        true !== false
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: false
+      actual: true
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:112:16)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:92:15)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+      ...
+    # Subtest: chunked archive, pending outbound
+    not ok 6 - chunked archive, pending outbound
+      ---
+      duration_ms: 130.4925
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:92:15'
+      failureType: 'testCodeFailure'
+      error: |-
+        pending replies must not cause false refusals
+        + actual - expected
+
+        + {
+        +   hookSpecificOutput: {
+        +     hookEventName: 'PreToolUse',
+        +     permissionDecision: 'deny',
+        +     permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+        +   }
+        + }
+        - {}
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+      actual:
+        hookSpecificOutput:
+          hookEventName: 'PreToolUse'
+          permissionDecision: 'deny'
+          permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:111:16)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:92:15)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+      ...
+    1..6
+not ok 4 - empty active log: legacy publication identity survives checkpoints and timestamp collisions
+  ---
+  duration_ms: 444.802208
+  type: 'test'
+  location: '<clone>/reachable/test/empty-replay.test.cjs:89:1'
+  failureType: 'subtestsFailed'
+  error: '6 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: empty active log: Stop still marks the waiting message seen after replay
+ok 5 - empty active log: Stop still marks the waiting message seen after replay
+  ---
+  duration_ms: 45.243459
+  type: 'test'
+  ...
+# Subtest: empty active log: pass succeeds after publication but still rejects pending publication
+ok 6 - empty active log: pass succeeds after publication but still rejects pending publication
+  ---
+  duration_ms: 44.6175
+  type: 'test'
+  ...
+# Subtest: empty active log: missing archive sequences fail open without adopting the active file
+    # Subtest: missing middle
+    ok 1 - missing middle
+      ---
+      duration_ms: 67.568167
+      type: 'test'
+      ...
+    # Subtest: missing tail
+    ok 2 - missing tail
+      ---
+      duration_ms: 62.750167
+      type: 'test'
+      ...
+    # Subtest: missing archive
+    ok 3 - missing archive
+      ---
+      duration_ms: 3.662083
+      type: 'test'
+      ...
+    1..3
+ok 7 - empty active log: missing archive sequences fail open without adopting the active file
+  ---
+  duration_ms: 134.282625
+  type: 'test'
+  ...
+# Subtest: empty active log: warm decisions do not reopen the published archive
+ok 8 - empty active log: warm decisions do not reopen the published archive
+  ---
+  duration_ms: 34.469834
+  type: 'test'
+  ...
+1..0
+# Subtest: events.test.cjs
+ok 4 - events.test.cjs
+  ---
+  duration_ms: 39.482542
+  type: 'test'
+  ...
+1..0
+# Subtest: pack.test.cjs
+ok 5 - pack.test.cjs
+  ---
+  duration_ms: 37.442834
+  type: 'test'
+  ...
+1..0
+# Subtest: review.test.cjs
+ok 6 - review.test.cjs
+  ---
+  duration_ms: 38.825375
+  type: 'test'
+  ...
+1..0
+# Subtest: runtime.test.cjs
+ok 7 - runtime.test.cjs
+  ---
+  duration_ms: 38.062625
+  type: 'test'
+  ...
+1..12
+# tests 27
+# suites 0
+# pass 18
+# fail 9
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1133.524375

@@ -1,0 +1,352 @@
+TAP version 13
+1..0
+# Subtest: bounds.test.cjs
+ok 1 - bounds.test.cjs
+  ---
+  duration_ms: 40.696167
+  type: 'test'
+  ...
+1..0
+# Subtest: decision.test.cjs
+ok 2 - decision.test.cjs
+  ---
+  duration_ms: 38.120208
+  type: 'test'
+  ...
+# Subtest: empty active log: every published rotation shape finishes replay without a sentinel
+    # Subtest: warm
+    not ok 1 - warm
+      ---
+      duration_ms: 108.580292
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:50:13'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+
+        + undefined
+        - 'deny'
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'deny'
+      operator: 'strictEqual'
+      stack: |-
+        assertEnforced (<clone>/reachable/test/empty-replay.test.cjs:38:10)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:75:7)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:50:13)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+      ...
+    # Subtest: cold multiple archives
+    not ok 2 - cold multiple archives
+      ---
+      duration_ms: 176.996375
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:50:13'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+
+        + undefined
+        - 'deny'
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'deny'
+      operator: 'strictEqual'
+      stack: |-
+        assertEnforced (<clone>/reachable/test/empty-replay.test.cjs:38:10)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:75:7)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:50:13)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: chunked archive
+    not ok 3 - chunked archive
+      ---
+      duration_ms: 163.915584
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:50:13'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+
+        + undefined
+        - 'deny'
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'deny'
+      operator: 'strictEqual'
+      stack: |-
+        assertEnforced (<clone>/reachable/test/empty-replay.test.cjs:38:10)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:75:7)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:50:13)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: pending publication
+    not ok 4 - pending publication
+      ---
+      duration_ms: 49.40125
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:50:13'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+
+        + undefined
+        - 'deny'
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'deny'
+      operator: 'strictEqual'
+      stack: |-
+        assertEnforced (<clone>/reachable/test/empty-replay.test.cjs:38:10)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:75:7)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:50:13)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: legacy pending publication
+    not ok 5 - legacy pending publication
+      ---
+      duration_ms: 41.308042
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:50:13'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+
+        + undefined
+        - 'deny'
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'deny'
+      operator: 'strictEqual'
+      stack: |-
+        assertEnforced (<clone>/reachable/test/empty-replay.test.cjs:38:10)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:75:7)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:50:13)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    1..5
+not ok 3 - empty active log: every published rotation shape finishes replay without a sentinel
+  ---
+  duration_ms: 541.085375
+  type: 'test'
+  location: '<clone>/reachable/test/empty-replay.test.cjs:48:1'
+  failureType: 'subtestsFailed'
+  error: '5 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: empty active log: Stop still marks the waiting message seen after replay
+not ok 4 - empty active log: Stop still marks the waiting message seen after replay
+  ---
+  duration_ms: 38.786583
+  type: 'test'
+  location: '<clone>/reachable/test/empty-replay.test.cjs:80:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + undefined
+    - 'deny'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'deny'
+  operator: 'strictEqual'
+  stack: |-
+    assertEnforced (<clone>/reachable/test/empty-replay.test.cjs:38:10)
+    TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:82:3)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+# Subtest: empty active log: pass succeeds after publication but still rejects pending publication
+not ok 5 - empty active log: pass succeeds after publication but still rejects pending publication
+  ---
+  duration_ms: 39.85475
+  type: 'test'
+  location: '<clone>/reachable/test/empty-replay.test.cjs:89:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + undefined
+    - 'deny'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'deny'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:93:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: empty active log: missing archive sequences fail open without adopting the active file
+    # Subtest: missing middle
+    ok 1 - missing middle
+      ---
+      duration_ms: 71.303958
+      type: 'test'
+      ...
+    # Subtest: missing tail
+    not ok 2 - missing tail
+      ---
+      duration_ms: 36.153875
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:101:13'
+      failureType: 'testCodeFailure'
+      error: 'Missing expected exception.'
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+      operator: 'throws'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:109:14)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:101:13)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+      ...
+    # Subtest: missing archive
+    not ok 3 - missing archive
+      ---
+      duration_ms: 3.700833
+      type: 'test'
+      location: '<clone>/reachable/test/empty-replay.test.cjs:101:13'
+      failureType: 'testCodeFailure'
+      error: 'Missing expected exception.'
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+      operator: 'throws'
+      stack: |-
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:109:14)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1402:25)
+        Test.start (node:internal/test_runner/test:1262:17)
+        TestContext.test (node:internal/test_runner/test:400:20)
+        TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:101:13)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+      ...
+    1..3
+not ok 6 - empty active log: missing archive sequences fail open without adopting the active file
+  ---
+  duration_ms: 111.603
+  type: 'test'
+  location: '<clone>/reachable/test/empty-replay.test.cjs:99:1'
+  failureType: 'subtestsFailed'
+  error: '2 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: empty active log: warm decisions do not reopen the published archive
+not ok 7 - empty active log: warm decisions do not reopen the published archive
+  ---
+  duration_ms: 40.429792
+  type: 'test'
+  location: '<clone>/reachable/test/empty-replay.test.cjs:116:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + undefined
+    - 'deny'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'deny'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<clone>/reachable/test/empty-replay.test.cjs:128:16)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+1..0
+# Subtest: events.test.cjs
+ok 4 - events.test.cjs
+  ---
+  duration_ms: 42.348625
+  type: 'test'
+  ...
+1..0
+# Subtest: pack.test.cjs
+ok 5 - pack.test.cjs
+  ---
+  duration_ms: 35.676417
+  type: 'test'
+  ...
+1..0
+# Subtest: review.test.cjs
+ok 6 - review.test.cjs
+  ---
+  duration_ms: 41.4735
+  type: 'test'
+  ...
+1..0
+# Subtest: runtime.test.cjs
+ok 7 - runtime.test.cjs
+  ---
+  duration_ms: 40.94125
+  type: 'test'
+  ...
+1..11
+# tests 19
+# suites 0
+# pass 7
+# fail 12
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 823.389709
