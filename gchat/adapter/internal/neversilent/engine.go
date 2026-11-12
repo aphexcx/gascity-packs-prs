@@ -101,6 +101,9 @@ type Options struct {
 	Send                                                                func(context.Context, Mail) error
 	SendLocal                                                           func(context.Context, Message, string) error
 	Log                                                                 func(string)
+	// OwnerReady defers owner reservations during provider initialization,
+	// without deferring outage tracking or operator mail. Nil means ready.
+	OwnerReady func() bool
 }
 
 type Engine struct {
@@ -428,11 +431,12 @@ func (e *Engine) Poll(ctx context.Context) error {
 	health := ReadHealth(e.opts.HealthFile, now, HealthMaxAge)
 	groups := map[string][]Message{}
 	ready := map[string]bool{}
+	ownerReady := e.opts.OwnerReady == nil || e.opts.OwnerReady()
 	for _, m := range e.state.Messages {
 		cause, post := e.cause(m, health, now)
 		if cause != "" {
 			groups[cause] = append(groups[cause], m)
-			ready[m.ID] = post
+			ready[m.ID] = post && ownerReady
 		}
 	}
 	for cause := range groups {

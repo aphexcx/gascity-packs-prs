@@ -102,3 +102,57 @@ func TestNeverSilentStartsBeforeRegistration(t *testing.T) {
 		})
 	}
 }
+
+func TestNeverSilentCredentialsArriveAfterFirstPoll(t *testing.T) {
+	f := newFixture(t, false)
+	f.cfg.NeverSilent.Enabled = true
+	f.cfg.NeverSilent.OperatorContext = "example-operator"
+	f.google.Configure(func(g *fakegoogle.Server) {
+		g.Spaces["spaces/example"] = &api.Space{Name: "spaces/example", SpaceType: "DIRECT_MESSAGE"}
+	})
+	gc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer gc.Close()
+	f.cfg.Secrets.GCAPIBase = gc.URL
+	mail := filepath.Join(t.TempDir(), "mail")
+	writeFile(t, os.Getenv("GC_BIN"), "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+mail+"'\n")
+	old := time.Now().Add(-4 * time.Minute)
+	e, err := neversilent.New(neversilent.Options{Enabled: true, Path: f.cfg.Endpoints.StateFile + ".never-silent.json",
+		Now: func() time.Time { return old }, Post: func(context.Context, neversilent.Message, string) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Track(neversilent.Message{ID: "example-message", Conversation: "spaces/example", Created: old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Result("example-message", "unreachable", nil); err != nil {
+		t.Fatal(err)
+	}
+	counts := func() (int, int) {
+		posts := 0
+		f.google.Configure(func(g *fakegoogle.Server) {
+			for _, m := range g.Messages {
+				if m.Text == neversilent.DownLine {
+					posts++
+				}
+			}
+		})
+		b, _ := os.ReadFile(mail)
+		return posts, strings.Count(string(b), "--context example-operator")
+	}
+	f.start(t)
+	waitFor(t, 12*time.Second, func() bool { _, mails := counts(); return mails == 1 })
+	posts, mails := counts()
+	if posts != 0 {
+		t.Fatalf("posted before credentials: %d", posts)
+	}
+	t.Logf("without credentials: owner lines=%d operator mails=%d", posts, mails)
+	f.replaceToken(t)
+	waitFor(t, 12*time.Second, func() bool { posts, _ := counts(); return posts == 1 })
+	posts, mails = counts()
+	t.Logf("credentials ready, registration still 503: owner lines=%d operator mails=%d", posts, mails)
+	if posts != 1 || mails != 1 {
+		t.Fatalf("got %d, %d; want 1, 1", posts, mails)
+	}
+}

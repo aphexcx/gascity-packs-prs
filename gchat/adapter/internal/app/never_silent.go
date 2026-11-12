@@ -15,7 +15,8 @@ func (a *application) newNeverSilent() (*neversilent.Engine, error) {
 		Enabled: a.cfg.NeverSilent.Enabled, Path: a.cfg.Endpoints.StateFile + ".never-silent.json",
 		HealthFile: a.cfg.NeverSilent.HealthFile, City: a.cfg.Secrets.CityName, Channel: "gchat",
 		OperatorContext: a.cfg.NeverSilent.OperatorContext, OperatorAgent: a.cfg.NeverSilent.OperatorAgent, GC: os.Getenv("GC_BIN"),
-		Log: func(s string) { a.log.Warn(s) },
+		Log:        func(s string) { a.log.Warn(s) },
+		OwnerReady: func() bool { return a.chatClient.Load() != nil },
 		SendLocal: func(ctx context.Context, m neversilent.Message, line string) error {
 			return a.raiseDelivery(ctx, inbound.Raise{ID: "never-silent:" + m.ID, Space: m.Conversation, Thread: m.Thread, Message: m.ID, Recorded: m.Created,
 				Body: fmt.Sprintf("The adapter told the owner: %q\nSpace: %s\nThread: %s\nMessage: %s\nRead: gc gchat read --space %s\nStatus: gc gchat status\n", line, m.Conversation, m.Thread, m.ID, m.Conversation)})
