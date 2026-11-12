@@ -351,3 +351,30 @@ that changed a file has its test first, in `93f56ba6`, red before the fix.
 - n3, the count check caught only "five": FIXED (`93f56ba6`); probe 22.
 - n4, some new tests are not red at the base for their own reason: said
   above under Runs; DOES NOT MATTER beyond that.
+
+**Codex round** (STANDARD, on `ce018700..3a1144b3`, the whole round with
+this directory): CLEAN, no finding. Record:
+`codex-round1-3a1144b3.md`.
+
+## For the adapter bead
+
+What an adapter's Jev choice needs from the file, when a later bead has it
+read the catalog:
+
+1. Path: `reactions.json` at the root of each pack (`gchat/`, `slack-full/`,
+   `whatsapp/`); the source is `gchat/reactions.json`, and every copy is
+   listed in `COPIES` in `tests/test_reaction_catalog.py`.
+2. Format: a JSON object; `reactions` is an array of rows, each with
+   `emoji`, `slack_name`, `meaning` and `adapter_may_place`; `about` is
+   prose.
+3. The choice offers only the rows with `adapter_may_place` true, with
+   `meaning` as each option's description. The option's name is the
+   adapter's to choose: the model reads names too, and some Slack names
+   mislead (`joy`, `cry`, `date`). The instructions should say how to pick
+   between two rows that both fit a mixed message.
+4. Placing: Slack by `slack_name`; Google Chat and WhatsApp by `emoji`
+   (❤️ and ⚠️ carry U+FE0F).
+5. Reading it: `go:embed` cannot reach above a Go module (`gchat/adapter`,
+   `slack-full/adapter`), so a Go adapter reads the pack's file at runtime
+   or keeps a copy inside its module, added to `COPIES`; the WhatsApp
+   adapter can read `../../reactions.json` as it reads `media-types.json`.
