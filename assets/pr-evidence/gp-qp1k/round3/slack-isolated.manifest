@@ -1,0 +1,1 @@
+go test . -run ^TestRegistrationStartupRetriesCityNotRunning$ -count=1 -v	exit=0

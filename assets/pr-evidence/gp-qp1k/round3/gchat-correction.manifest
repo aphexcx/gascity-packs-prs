@@ -1,0 +1,1 @@
+env -u GC_BIN go test ./internal/app ./internal/inbound ./internal/server -run 'TestNeverSilentStartsBeforeRegistration|TestGenerationRegistersBeforeInstallingChat|TestNeverSilentNewAddressedMessagesOnly|TestShutdownCheckpointsBeforeDrainingStalledRequestBody|TestSubscriptionRefusalRetriesWithoutSignIn' -count=1 -p=1 -json	exit=0
