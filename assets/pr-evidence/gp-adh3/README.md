@@ -1,6 +1,6 @@
 # gp-adh3: five reactions with fixed meanings in the three channel texts
 
-Instinct change 1, spec 1b: the words. On 11/12, a founder said "we can move
+The texting rules, the words. On 11/12, a founder said "we can move
 forward with reactions" and "i dont want to limit reply length". The Google
 Chat skill, the Slack prompt fragment and the WhatsApp skill now carry the
 same table of five reactions and the same four rules. The rules: a reaction
