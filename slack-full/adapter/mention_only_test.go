@@ -388,6 +388,9 @@ func TestMentionOnly_HandleRoutingHonoured(t *testing.T) {
 	if !strings.Contains(injections[0].body, "ts=100.000800; thread=100.000800") {
 		t.Errorf("injection timestamps missing:\n%s", injections[0].body)
 	}
+	if deliveries := cfg.mentionOnlyDeliveries.forSession("mayor-session"); len(deliveries) != 1 || deliveries[0].Reason != mentionOnlyReasonHandle {
+		t.Errorf("handle routing reason missing from delivery metadata: %+v", deliveries)
+	}
 
 	// Alias registered to the same session: the alias leg delivers and
 	// the mention-only lane must stay out of the way.

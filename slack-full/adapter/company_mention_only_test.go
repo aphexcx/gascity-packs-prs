@@ -980,6 +980,9 @@ func TestCompanyRoomMentionOnlyOutsiderReceivesMappedUserGroupMention(t *testing
 			if !strings.Contains(got[0], "ts=1700000000.000900; thread=1700000000.000900") {
 				t.Errorf("reminder must carry the message and thread timestamps:\n%s", got[0])
 			}
+			if deliveries := h.gw.cfg.mentionOnlyDeliveries.forSession("outsider-session"); len(deliveries) != 1 || deliveries[0].Reason != mentionOnlyReasonHandle {
+				t.Errorf("handle routing reason missing from delivery metadata: %+v", deliveries)
+			}
 		})
 	}
 }

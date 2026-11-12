@@ -58,6 +58,9 @@ thread root with forty distinct synthetic message timestamps, joining
 deliveries with a newline. It models a session already participating in the
 thread, with no new context or attachments. The saved 8,920 tokens exclude the
 one-time startup-fragment cost. The single-mention reduction is 205 tokens.
+The raw startup fragment adds 1,482 bytes / 320 tokens relative to the base,
+so the forty-reply example saves 8,600 tokens after that one-time cost. This
+counts the fragment source; template interpolation can change the full prompt.
 
 Refresh the after capture from `slack-full/adapter`:
 
@@ -131,7 +134,7 @@ test failed because mention-only rules were absent. Both pass after the change.
 The new context/attachment test passes with both renderers, verifying retention.
 
 Only expected rendering strings in existing delivery assertions and fake
-interceptors changed.
+interceptors changed; routing-reason assertions now inspect delivery metadata.
 Routing selection, acknowledgments, retries, journals, redaction and attachment
 handling have no production changes. The original reminder-type header remains
 so the company-room fake dispatcher recognizes the same deliveries.
@@ -140,6 +143,15 @@ Python 3.15.0: `python -m pytest tests -q`, from `slack-full`, passed 976 tests
 and 10 subtests, with 3 existing skips and 2 existing `os.fork` deprecation
 warnings. Go 1.27.3: `go test -race -count=1 -json ./...`, from `slack-full/cli`,
 passed 237 test cases. No Node tests are involved.
+
+Self-review round 1 (STANDARD, code commit `fa50efb3`): 0 critical, 1 major,
+0 minor. Class: incomplete format migration in test assertions/fake interceptors.
+The full adapter run reproduced all four stale sites (handle, bot mention,
+mapped user-group mention, and retry timestamp). The compact contract test
+covers all three admission reasons and both root/reply cases. All stale sites
+were updated, the retry fake still rejects its selected message, and the
+former reason-text assertions retain their checks through delivery metadata.
+The focused delivery suite then passed all 61 cases under the race detector.
 
 Public-repo check: all added fixtures and captures contain invented values;
 no live messages, credentials or host-specific paths are included.
