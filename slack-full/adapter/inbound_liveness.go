@@ -1107,6 +1107,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 			// A pending thread's loss: the record names the parent and the
 			// cursor; there is no message text to carry.
 			byChannel[r.channel] = append(byChannel[r.channel], inboundDeadLetterRecord{
+				ManualRecovery: true,
 				DeadLetteredAt: now,
 				Channel:        r.channel,
 				Reason:         r.reason,
@@ -1143,6 +1144,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 			team = l.cfg.accountID
 		}
 		byChannel[r.channel] = append(byChannel[r.channel], inboundDeadLetterRecord{
+			ManualRecovery: true,
 			DeadLetteredAt: now,
 			Channel:        r.channel,
 			Attempts:       r.held.Attempts,
@@ -1182,6 +1184,9 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 			continue
 		}
 		log.Printf("inbound liveness: channel=%s %d undelivered inbound record(s) dead-lettered to %s — never delivered to gc", channel, len(records), path)
+		if err := l.cfg.inboundRecovery.importDeadLetters(); err != nil {
+			log.Printf("inbound liveness: dead-letter index refresh: %v", err)
+		}
 		if l.alert != nil {
 			go l.postAlert(fmt.Sprintf(":warning: gc-slack-adapter: %d inbound record(s) in <#%s> could not be delivered to gc within %s and went to the inbound dead letter (%s). Re-post them by hand.", len(records), channel, l.cfg.backfillMaxWindow, path))
 		}
@@ -1449,7 +1454,8 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 	}()
 	l.deadLetterRetiredHolds(retired)
 	l.probesTotal.Add(1)
-	if len(channels) == 0 {
+	recoveryCounts := l.cfg.inboundRecovery.counts()
+	if len(channels) == 0 && len(recoveryCounts) == 0 {
 		log.Printf("inbound liveness: probe (%s) skipped — no watched channels yet (pin with SLACK_LIVENESS_CHANNELS)", reason)
 		return
 	}
@@ -1472,14 +1478,41 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 	// watermark, say — is one missed message: counted once, replayed once,
 	// charged to the cap once (the lane's codex round 8).
 	missed = dedupeMissed(missed)
-	l.lastMissed.Store(int64(len(missed)))
+	// Recovery already owns these payloads. Count them as missed, but never
+	// send a second copy through history backfill around their hold deadline.
+	filtered := missed[:0]
+	for _, m := range missed {
+		if !l.cfg.inboundRecovery.known(m.channel, m.msg.TS) {
+			filtered = append(filtered, m)
+		}
+	}
+	missed = filtered
+	var outstanding int
+	for _, c := range channels {
+		if _, ok := recoveryCounts[c.id]; !ok {
+			recoveryCounts[c.id] = inboundRecoveryCounts{}
+		}
+	}
+	var recoverySummary []string
+	for channel, counts := range recoveryCounts {
+		outstanding += counts.Held + counts.Dead + counts.ByHand
+		recoverySummary = append(recoverySummary, fmt.Sprintf("%s held=%d dead-lettered=%d by-hand=%d", channel, counts.Held, counts.Dead, counts.ByHand))
+	}
+	sort.Strings(recoverySummary)
+	l.lastMissed.Store(int64(len(missed) + outstanding))
+	l.missedTotal.Add(l.cfg.inboundRecovery.newlyMissed())
+	if outstanding > 0 {
+		log.Printf("inbound liveness: probe (%s) MISSED — %d held/dead-lettered message(s) (%s)", reason, outstanding, strings.Join(recoverySummary, "; "))
+	}
 	if len(skipped) > 0 {
 		log.Printf("inbound liveness: probe (%s) skipped %d channel(s): %s", reason, len(skipped), strings.Join(skipped, "; "))
 	}
 	if len(missed) == 0 {
 		l.settlePendingThreads(reads, nil, nil)
 		l.settleStretches(settles)
-		log.Printf("inbound liveness: probe (%s) clean — %d channel(s) checked, nothing missed", reason, len(channels))
+		if outstanding == 0 {
+			log.Printf("inbound liveness: probe (%s) clean — %d channel(s) checked, nothing missed (%s)", reason, len(channels), strings.Join(recoverySummary, "; "))
+		}
 		return
 	}
 	l.missedTotal.Add(uint64(len(missed)))

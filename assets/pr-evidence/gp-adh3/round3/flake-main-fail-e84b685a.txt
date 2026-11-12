@@ -1,0 +1,39 @@
+HEAD e84b685a177b109877c4d47d36953e4ad85539ed
+env -i HOME PATH uv run --offline --with pytest --with pyyaml --with jsonschema python3 -m pytest -p no:cacheprovider -q 'gascity/tests/test_toolchain_shims.py::PnpmShimTests::test_concurrent_callers_wait_for_one_install_instead_of_racing_it'
+(run 17 of this loop; runs 1 to 16 passed)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ PnpmShimTests.test_concurrent_callers_wait_for_one_install_instead_of_racing_it _
+
+self = <test_toolchain_shims.PnpmShimTests testMethod=test_concurrent_callers_wait_for_one_install_instead_of_racing_it>
+
+    def test_concurrent_callers_wait_for_one_install_instead_of_racing_it(self) -> None:
+        proj = self.fx.project()
+        results: list[subprocess.CompletedProcess[str]] = []
+        lock = threading.Lock()
+
+        def call(name: str) -> None:
+            r = self.fx.run("pnpm", "exec", name, cwd=proj, FAKE_PNPM_SLEEP="2")
+            with lock:
+                results.append(r)
+
+        threads = [threading.Thread(target=call, args=(n,)) for n in ("vitest", "eslint", "tsc")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        self.assertEqual(len(results), 3)
+        for r in results:
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fx.installs()), 1, self.fx.calls())
+        ran = sorted(a for a in self.fx.argv() if a != "install --frozen-lockfile")
+        self.assertEqual(ran, ["exec eslint", "exec tsc", "exec vitest"])
+        waited = [r for r in results if "waiting for another caller's lane install" in r.stderr]
+>       self.assertEqual(len(waited), 2, [r.stderr for r in results])
+E       AssertionError: 1 != 2 : ['gc-toolchain pnpm: installing lane dependencies once for <tmp>/proj (pnpm says node_modules is out of sync)\nfake pnpm: installed\n', "gc-toolchain pnpm: waiting for another caller's lane install (pid 37239)\n", '']
+
+gascity/tests/test_toolchain_shims.py:566: AssertionError
+=========================== short test summary info ============================
+FAILED gascity/tests/test_toolchain_shims.py::PnpmShimTests::test_concurrent_callers_wait_for_one_install_instead_of_racing_it
+1 failed in 3.59s
+rc=1

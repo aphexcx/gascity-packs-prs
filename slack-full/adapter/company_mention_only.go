@@ -496,6 +496,12 @@ func (g *companyGateway) replayMentionOnlyLane(r *IngressReceipt, ev slackMessag
 // as shutdown begins, so the retry ladder never holds shutdown for a full
 // backoff step.
 func sleepUnlessDraining(cfg config, d time.Duration) bool {
+	return waitUnlessDraining(context.Background(), cfg, d, nil)
+}
+
+// Shared by mention-only retries and the durable inbound hold worker. Waking
+// early requests another pass; cancellation/drain never starts another send.
+func waitUnlessDraining(ctx context.Context, cfg config, d time.Duration, wake <-chan struct{}) bool {
 	const slice = 200 * time.Millisecond
 	for d > 0 {
 		if cfg.draining != nil && cfg.draining.Load() {
@@ -505,7 +511,16 @@ func sleepUnlessDraining(cfg config, d time.Duration) bool {
 		if step > slice {
 			step = slice
 		}
-		time.Sleep(step)
+		timer := time.NewTimer(step)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-wake:
+			timer.Stop()
+			return cfg.draining == nil || !cfg.draining.Load()
+		case <-timer.C:
+		}
 		d -= step
 	}
 	return cfg.draining == nil || !cfg.draining.Load()

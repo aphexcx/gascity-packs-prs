@@ -108,12 +108,12 @@ test('3,14,15,16: reminders are durable, independent of hours/consent, cancelled
   assert.match(h.mails[0].body, /The mayor decides whether and how to write, by the channel's rules\.$/);
 });
 
-test('3,13: failed mail retries once a minute with the same key, including after 24h', async t => {
+test('3,13: failed mail backs off with the same key, including after 24h', async t => {
   const h = harness(t);
   await h.edit(s => setReminder(s, conversation, 'Invented retry', start + 1, start));
   const attempts = [];
   const send = async r => { attempts.push(r.key); return { ok: attempts.length === 4, error: 'exit 1' }; };
-  for (let minute = 0; minute < 4; minute++) {
+  for (const minute of [0, 1, 3, 7]) {
     await tick({ dir: h.dir, now: start + 1 + minute * 60000, send });
     await tick({ dir: h.dir, now: start + 2 + minute * 60000, send });
   }

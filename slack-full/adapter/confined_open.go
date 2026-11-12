@@ -37,6 +37,13 @@ import (
 // real directory or file and the walk succeeds; only a mid-flight swap
 // trips it.
 func openBeneath(rootAbs, rel string) (*os.File, error) {
+	return openBeneathFlags(rootAbs, rel, 0)
+}
+
+// Recovery readers use O_NONBLOCK on the leaf so a planted FIFO cannot stall
+// startup before their regular-file check. Existing attachment reads keep their
+// original flags and the same no-symlink traversal.
+func openBeneathFlags(rootAbs, rel string, leafFlags int) (*os.File, error) {
 	if rel == "" || rel == "." || filepath.IsAbs(rel) {
 		return nil, fmt.Errorf("openBeneath: invalid relative path %q", rel)
 	}
@@ -55,6 +62,8 @@ func openBeneath(rootAbs, rel string) (*os.File, error) {
 		flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC
 		if i < len(comps)-1 {
 			flags |= unix.O_DIRECTORY
+		} else {
+			flags |= leafFlags
 		}
 		next, err := unix.Openat(fd, c, flags, 0)
 		unix.Close(fd)

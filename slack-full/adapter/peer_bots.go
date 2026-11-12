@@ -378,7 +378,7 @@ func (item peerContextItem) withholdRejectedAttachments(cause error) peerContext
 func postWithPeerRecovery(cfg config, base externalInboundMessage, items []peerContextItem) (externalInboundMessage, []peerContextItem, deliveryReceipt, error) {
 	post := func(msg externalInboundMessage) (deliveryReceipt, error) {
 		r, err := postInboundWithReceipt(cfg, msg)
-		for attempt := 0; err == nil && r.verdict(cfg.deliveryReceiptGate) == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
+		for attempt := 0; err == nil && r.verdict(cfg.deliveryReceiptGate) == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && cfg.inboundRecovery == nil && !cfg.recoveryReplay && receiptRepostAllowed(cfg); attempt++ {
 			log.Printf("inbound: chan=%s ts=%s gc did not vouch for delivery — re-posting in place (attempt %d/%d)",
 				msg.Conversation.ConversationID, msg.ProviderMessageID, attempt+1, deliveryReceiptRepostAttempts)
 			r, err = postInboundWithReceipt(cfg, msg)
@@ -666,6 +666,13 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 		cfg.injectionParents.remember(msg.Channel, msg.TS, entry.Label, body)
 	}
 	if err := deliverCoalescedBatch(cfg, msg.Channel, []pendingChannelInbound{pending}); err != nil {
+		var unvouched *unvouchedDeliveryError
+		if cfg.inboundRecovery != nil && errors.As(err, &unvouched) {
+			if holdErr := cfg.inboundRecovery.hold(pending, unvouched.receipt, false); holdErr != nil {
+				log.Printf("peer-bot: HOLD retained with receipt in memory; persistence retry needed: %v", holdErr)
+			}
+			return
+		}
 		cfg.peerContext.add(item.withholdRejectedAttachments(err))
 		log.Printf("peer-bot: immediate forward failed chan=%s ts=%s — queued for recovery", msg.Channel, msg.TS)
 		return

@@ -1,0 +1,2 @@
+description = "Replay a channel's inbound dead letters in message order, retaining their history"
+run = "../inbound-redrive.sh"

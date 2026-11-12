@@ -1,0 +1,87 @@
+texts at 03e46996eddfaee2a6c16c75a9e9dfeb1cf89308; tests from 6ca512e1c91144a60535066c1373a7befe9fb6db
+ M slack-full/tests/test_slack_prompt_contract.py
+ M tests/test_texting_rules.py
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -q -rA
+....F..F....F                                                            [100%]
+=================================== FAILURES ===================================
+__________ test_each_text_carries_the_four_rules_and_no_other[gchat] ___________
+
+name = 'gchat'
+
+    @pytest.mark.parametrize("name", sorted(TEXTS))
+    def test_each_text_carries_the_four_rules_and_no_other(name: str) -> None:
+        text = read(name)
+        assert INTRO in normalized(text)
+        bullets = [line for line in rules_block(text) if line.startswith("- ")]
+>       assert len(bullets) == len(RULE_LEADS), bullets
+E       AssertionError: ['- **A reaction comes first.** Where you can react, your first answer to a', '- **A reaction alone.** Where you can r...ot follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A']
+E       assert 6 == 4
+E        +  where 6 = len(['- **A reaction comes first.** Where you can react, your first answer to a', '- **A reaction alone.** Where you can r...ot follow up in the same thread unless you', '- **Nobody reads your terminal.** People reach you only through Chat. A'])
+E        +  and   4 = len(['- **A reaction comes first.**', '- **A reaction alone.**', '- **✅ and ⏰ are yours, and never a promise.**', '- **Fixed means fixed.**'])
+
+tests/test_texting_rules.py:108: AssertionError
+__________________ test_the_rules_are_the_same_in_every_text ___________________
+
+    def test_the_rules_are_the_same_in_every_text() -> None:
+        gchat = rules_block(read("gchat"))
+        for name in ("slack", "whatsapp"):
+>           assert rules_block(read(name)) == gchat, f"{name} differs from gchat"
+E           AssertionError: slack differs from gchat
+E           assert ['- **A react...at only', ...] == ['- **A react...at only', ...]
+E
+E             Right contains 5 more items, first extra item: '- Reply once per message. Do not follow up in the same thread unless you'
+E             Use -v to get more diff
+
+tests/test_texting_rules.py:116: AssertionError
+______________________ test_reaction_vocabulary_contract _______________________
+
+    def test_reaction_vocabulary_contract() -> None:
+        prompt = FRAGMENT.read_text(encoding="utf-8")
+        normalized = " ".join(prompt.split())
+
+        assert prompt.startswith('{{ define "slack-v0" -}}\n')
+        assert prompt.endswith("{{- end }}\n")
+
+        respond = prompt.index("## When to respond")
+        reactions = prompt.index("## Reactions")
+        reply = prompt.index("## How to reply")
+        assert respond < reactions < reply
+
+        section = prompt[reactions:reply]
+        for name in ("eyes", "mag", "+1", "white_check_mark", "alarm_clock"):
+            assert f"| `{name}` |" in section, name
+        assert "gc slack react [--emoji NAME] [--session SID]" in section
+        assert (
+            "gc slack react --conversation-id Cxxx --message-id 1234.5678 [--emoji NAME]"
+            in section
+        )
+
+        assert (
+            "a message to you that only confirms, thanks, agrees or closes a topic "
+            "gets 👍 as the whole answer. No text follows it."
+        ) in normalized
+>       assert (
+            "On an `ambient` or `thread_ambient` turn, the rules under When to respond "
+            "still decide whether you answer at all, with a reaction or in words."
+        ) in normalized
+E       assert 'On an `ambient` or `thread_ambient` turn, the rules under When to respond still decide whether you answer at all, with a reaction or in words.' in '{{ define "slack-v0" -}} You are bound to a Slack conversation shared with humans and other agents. {{- if .TemplateN...d the human see it. Company delegation never happens in DMs; requests and results stay visible in the room. {{- end }}'
+
+slack-full/tests/test_slack_prompt_contract.py:54: AssertionError
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[gchat]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[slack]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[whatsapp]
+PASSED tests/test_texting_rules.py::test_the_five_rows_are_the_same_in_every_text
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[slack]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[whatsapp]
+PASSED tests/test_texting_rules.py::test_google_chat_skill_has_the_table_and_no_free_choice
+PASSED tests/test_texting_rules.py::test_whatsapp_skill_says_the_mayor_cannot_react_there_yet
+PASSED tests/test_texting_rules.py::test_the_older_short_reply_lines_stay
+PASSED slack-full/tests/test_slack_prompt_contract.py::test_thread_ambient_response_gate_and_native_identity_contract
+FAILED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[gchat]
+FAILED tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+FAILED slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+3 failed, 10 passed in 0.04s
+make: *** [test] Error 1
+rc=2

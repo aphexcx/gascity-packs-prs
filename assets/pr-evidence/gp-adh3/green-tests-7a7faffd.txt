@@ -1,0 +1,22 @@
+HEAD 7a7faffd366950000fe7ea2286b94bd4dca71757
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -q -rA
+...............                                                          [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[gchat]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[slack]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[whatsapp]
+PASSED tests/test_texting_rules.py::test_the_five_rows_are_the_same_in_every_text
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[gchat]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[slack]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[whatsapp]
+PASSED tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+PASSED tests/test_texting_rules.py::test_a_reaction_that_is_not_placed_is_said_in_words[gchat-When `gc gchat react` fails,]
+PASSED tests/test_texting_rules.py::test_a_reaction_that_is_not_placed_is_said_in_words[slack-The command prints a receipt. When it shows `"delivered": false`,]
+PASSED tests/test_texting_rules.py::test_google_chat_skill_has_the_table_and_no_free_choice
+PASSED tests/test_texting_rules.py::test_whatsapp_skill_says_the_mayor_cannot_react_there_yet
+PASSED tests/test_texting_rules.py::test_the_older_short_reply_lines_stay
+PASSED slack-full/tests/test_slack_prompt_contract.py::test_thread_ambient_response_gate_and_native_identity_contract
+PASSED slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+15 passed in 0.02s
+rc=0

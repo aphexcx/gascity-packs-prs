@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (gp-tu0b)
+
+- Test fixtures now use invented names.
+
 ## Unreleased (gp-xt33)
 
 - Docs only: the gateway README names the relay it read as a reference by its
@@ -7,6 +11,12 @@
 
 ## Unreleased (gp-g02t, PR 76 round 2)
 
+- The skill carries the reactions with fixed meanings, with the same
+  tables and rules as the Slack fragment and the Google Chat skill, and says
+  the mayor cannot place a reaction on WhatsApp yet (gp-adh3). Until it can,
+  a message that only thanks, confirms, agrees or closes a topic gets an
+  answer in words (gp-1v3u). The rows are a catalog, `reactions.json` at the
+  pack's root and the same file in all three packs (gp-bis1).
 - The adapter keys every owner by the gateway's `conversation_id` (PR 76's
   inbox), never the number: the gc conversation and the actor, the chain, the
   watermark, the lookup and the probe, the dead letter, the window ledger, the

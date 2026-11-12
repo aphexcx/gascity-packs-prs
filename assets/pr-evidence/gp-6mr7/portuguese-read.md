@@ -48,8 +48,8 @@ funcionamento", "digitando…" correct; feminine "a Dynasty" natural;
     "optional" sentence after the list, in both halves.
 14. "O seu contato na Dynasty te passa o número" right after "nos seus
     contatos" → **"Quem te atende na Dynasty te passa o número."** Folded.
-15. A dangling "aqui" → **"Aqui no Brasil, é o Z Barros ou a Milena
-    Soares, da equipe da Dynasty."** Folded.
+15. A dangling "aqui" → clarify the location as **"Aqui no Brasil"** and
+    name a team contact (example: **Example Reader Two**). Folded.
 16. English-only title → **"# Your mayor on WhatsApp · Seu prefeito no
     WhatsApp"**. Folded.
 

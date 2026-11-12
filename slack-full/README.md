@@ -375,6 +375,182 @@ bot identity. System/bot status notifications that intentionally post as the bot
 go through `gc slack post-message` (direct to Slack `chat.postMessage`),
 which bypasses `/publish` entirely and is unaffected by this guard.
 
+### Held inbound deliveries and dead-letter replay
+
+An accepted channel, DM, peer-bot message or alias injection whose receipt does
+not vouch for delivery becomes a durable **HOLD**, outside the normal coalescing
+buffer. Fresh traffic continues. Recovery preserves Slack timestamp order per
+target session, using the channel only when no session is known. The quiet
+ladder attempts at 20s, 1m20s, 3m20s, 8m20s and 18m20s, then makes a final attempt
+at the default 30-minute bound. Longer bounds permit 15-minute intervals.
+A vouch releases held lines for that session, at most once per line per minute.
+A follower's due rung wakes its FIFO head; when that head settles, due followers
+run in order in the same tick.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SLACK_INBOUND_HOLD_CEILING` | `15m` | Maximum interval between reposts |
+| `SLACK_INBOUND_HOLD_BOUND` | `30m` | Hold bound, including a final send or receipt poll |
+| `SLACK_INBOUND_HOLD_NOTICE` | `on` | `off/0/false/no` disable; `on/1/true/yes` or empty enable; trimmed and case-insensitive; other values fail startup |
+| `SLACK_INBOUND_REPLAY_MAX_AGE` | `24h` | Positive duration limiting automatic and bare-command replay; `0` or `off` disables those paths |
+
+The queue persists in `.gc/slack/inbound-holds/state.json`, retaining original
+receipts, targets and deadlines across restart. Pending receipts use their own
+clock: every 5 seconds, widening to 30 seconds after two minutes, including
+after replay. Polls do not consume repost rungs. Nothing pending is reposted
+until gc establishes loss. The gc gf-52ym `held` status means nothing landed
+and permits a retry; per-member composer details remain recorded as evidence.
+An unpollable receipt or a concluded `pending` without landing evidence stays
+visible for verification by hand and cannot block later lines. Pending deliveries
+can hold their FIFO only within the bound.
+
+A recovery response without usable proof, or disabling
+`SLACK_DELIVERY_RECEIPT_GATE` while holds exist, records uncertainty for a hand
+check; it never labels those holds delivered or reposts a possibly active send.
+Fresh receipt-less traffic retains its existing compatibility policy. A complete
+terminal paste prevents duplicate delivery even when submission is unconfirmed;
+it is not evidence the session read the line. Only a true vouch triggers other
+dead-letter replays.
+
+The 400/413/415/422 rejection path still strips attachments once, then
+dead-letters. Trusted local attachment paths survive recovery. A refused replay
+(400/413/415/422, or permanent alias 4xx) is durably excluded from further replay,
+including explicit redrive. Alias 408/429 remain transient: HOLD retries within
+the bound, makes one final attempt, then records a dead letter and lets later
+lines flow. Transient replay failures delay followers only until
+their backoff ends. A fresh follower can advance an active HOLD, but cannot
+shorten a history replay's cooldown after a start, vouch or explicit redrive.
+A `no_route` response remains subject to the hold bound.
+Reactions whose receipt establishes loss return to their coalescer side buffer.
+They ride a real message or a new overflow of 100 fresh reactions; returned
+reactions never count toward that threshold or arm a solo retry, even with a
+zero coalescing window. Pending reactions are polled and never sent alone.
+The ownership handoff is serialized with channel delivery so a concurrent flush
+cannot discard the only reaction copy.
+After waiting for that lock, recovery rechecks ownership and receipt generation
+so it cannot restore a second copy or replace a newer pending/completed outcome.
+Recovery persists a durable mirror even for an immediately failed reaction,
+before returning it to the side buffer. Restarts and shutdown spool replay use
+that mirror to retain one no-wake owner. Recovery keeps it until the piggyback
+completes and appends completion to existing dead-letter history. A new receipt replaces the
+old one; its generation prevents a delayed history write from reviving an older
+receipt. Complete paste evidence, including mixed fanout, prevents another send.
+If a returned reaction is permanently refused, both its side-buffer ownership
+and durable mirror become non-replayable; restart also classifies legacy refusal
+history before folding it into an existing mirror.
+
+After a minute, one bot-authored thread reply per channel incident says delivery
+is held and retrying. Pending-only deliveries wait three minutes before a notice,
+which says it is checking the outstanding receipt. The closing edit states
+terminal handoff by the latest confirmed time, distinguishes an unconfirmed
+submission, and never asserts reading. Unknown or gate-off outcomes explicitly
+require verification by hand. At the bound, the notice says delivery was not
+confirmed and the recorded line may arrive late; a later incident gets a new
+notice. A failed retirement write never produces a terminal-delivery claim.
+Only held human messages open notices, never imported dead letters,
+reactions or peer riders. Failed posts and edits use persisted ladder backoff
+and log each distinct error once. Missing threads/channels/messages, removed
+bots, archived channels and permanent edit refusals end that incident's notice.
+
+These posts use `chat.postMessage`/`chat.update` outside the session act
+journal. They cannot count as session acknowledgement or own-thread evidence.
+The hourglass is removed on HOLD and restored after confirmed recovery of an
+eligible line. A reply cancels that restoration durably, including replies that
+arrive before the pending receipt settles or while a replacement POST runs.
+When a new targeted line enters HOLD, an unanswered predecessor keeps its mark.
+This also applies when a handle is delivered through its existing channel
+binding. Slack's duplicate message/app-mention events do not re-add a mark while
+that destination still has an outstanding recovery entry.
+Recovery waits for the HOLD's in-flight hourglass removal before restoring its
+mark, so delayed Slack cleanup cannot erase a newly confirmed busy indicator.
+HOLD cleanup retains the registry's merged add-completion channels, so a
+concurrent message/app-mention twin cannot add a stale hourglass after removal.
+
+Dead letters within the configured age limit replay at startup, on a vouched
+delivery to their target, or through
+`gc slack inbound-redrive --conversation-id C…`. The bare verb prints how many
+records it skips for age and the oldest skipped timestamp. To deliberately
+replay older history, use `--include-older`; the CLI previews and flushes the
+eligible count before requesting replay. The service log records the flag and
+counts. Refused, unpollable and incomplete records remain excluded even with
+this flag. History is never deleted. Trigger logs count records left unreplayed
+for age and name the oldest timestamp. The admin route's 202
+means the replay permission and deadline are durably queued, including when an
+earlier pending receipt delays the attempt. Preview and queue acceptance do not
+wait for recovery HTTP calls. A persisted request generation prevents an older
+in-flight attempt from overwriting newer age permission or its queued deadline.
+Replays preserve ordering and message-ID dedup, prepend
+`[delivered late: dead-lettered at <time>]`, and append a `replayed_at` history
+record on completion. Alias replay resolves the handle's current session,
+logging both destinations and removing the departing destination's provisional
+routing record on every change. A pending alias first polls its saved
+receipt; after proven loss, it refreshes the destination and FIFO before any
+replacement send. Its mention-only routing record remains
+provisional while held, is removed on refusal/dead-letter, and becomes confirmed
+with a fresh timestamp after recovery, including after restart.
+
+Use `gc slack inbound-redrive --conversation-id C… --acknowledge MESSAGE_TS`
+after checking an outstanding line by hand. This appends `acknowledged_at`
+records for its channel/alias copies and removes them from counts and FIFO
+without claiming delivery or deleting history; the admin route returns 200.
+Its notice closes as acknowledged by hand without claiming terminal delivery.
+A late receipt from an in-flight reaction delivery cannot undo acknowledgement.
+Acknowledgement persists without waiting for recovery network calls. An already
+in-flight outcome retains the acknowledgement, and a poll concluding loss cannot
+start a replacement send after the line has been acknowledged.
+Recovery also rechecks acknowledgement after acquiring channel delivery ownership,
+before creating alias routing records or sending a queued replacement.
+History writes release the state lock, then merge acknowledgement into the latest
+entry so concurrent history imports and newer receipt outcomes remain safe.
+Liveness reports separate `held=N dead-lettered=N by-hand=N` counts. A human
+line counts once even with multiple destinations; reactions and peer riders do
+not count. The cumulative missed counter counts each standing line once per
+process, rather than on every probe. Incomplete liveness records remain by-hand
+items and never replay clipped text or unread-thread cursors.
+
+Receipt requests still carry `X-GC-Original-Receipt-ID`. The journal row format
+is unchanged; original receipt IDs and submitted batch identity are retained.
+Torn journal lines are skipped while good target/receipt facts are recovered;
+an incomplete scan never selects an uncertain outstanding receipt. Damaged
+state starts from history with a LOSS log. Unsafe, unreadable or oversized
+history records are skipped with a LOSS log naming the path; nonblocking opens
+prevent FIFOs from hanging startup. If a history file cannot be opened safely or
+its scan stops before EOF, its unresolved entries require a hand check; an
+unreadable history directory makes all outstanding snapshot entries require one.
+An unseen completion or acknowledgement
+may follow the readable prefix, so neither automatic nor explicit redrive replays
+that prefix. Fresh lines still flow. Retirement intent resumes failed appends
+after restart. State-write failures retain in-memory ownership and retry
+persistence, which cannot survive a process loss before storage recovers.
+
+Optional additive fields use the same files and atomic writer. Base be225cc1
+decoders accept them; absent/zero values preserve the previous stored facts.
+
+| Location | Added fields | Meaning and zero default |
+| --- | --- | --- |
+| Entry and history | `replay_blocked_reason` | Empty permits existing eligibility; nonempty requires a hand check and prevents replay/FIFO blocking |
+| Entry and history | `acknowledged_at` | Zero means unacknowledged; nonzero removes outstanding counts and replay eligibility |
+| Entry and history | `busy_reaction` | False adds no recovery hourglass; true restores the cancelled eligible affordance; reply completion clears the state intent durably |
+| Entry and history | `reaction_receipt_generation` | Zero is the initial/legacy receipt; increases when a buffered reaction acquires a new receipt so older history writes cannot replace it |
+| Entry and history | `alias_original_session_id` | Empty uses the existing alias ID as identity; otherwise preserves dedup identity after retargeting |
+| Entry | `last_attempt_at` | Zero means no recorded recovery send; otherwise its latest time |
+| Entry | `replay_include_older` | False enforces the age horizon; true preserves a deliberately queued older replay through ordering and pending receipt checks, then clears on a failed concluded attempt |
+| Entry | `replay_request_generation` | Zero means no accepted redrive command; each selected command increments it so an older attempt preserves newer queue permission and scheduling |
+| Entry | `last_vouch_at` | Zero means no vouch acceleration; otherwise limits those accelerations to one per minute |
+| Entry | `pending_since`, `next_poll_at` | Zero uses held time / an immediately due receipt check; otherwise the separate pending clock |
+| Entry | `retry_step` | Zero uses the existing attempt count when loading old state, otherwise starts at the first rung; advances scheduled repost/follower wake rungs without charging receipt polls |
+| Notice | `next_attempt_at`, `failures`, `last_error` | Zero/empty means no prior notice failure; otherwise persisted backoff and distinct-error logging |
+| Notice | `logged_errors` | Empty inherits the last recorded error; otherwise suppresses repeated errors throughout the incident, including after restart |
+| Notice | `ended` | False leaves the incident eligible; true stops notice requests after a permanent Slack error |
+| Notice | `previous_ts` | Empty means no older notices recorded; otherwise excludes prior incident posts from own-thread scans |
+
+Look for `inbound HOLD attempt:`, `inbound HOLD settled:`,
+`inbound HOLD: LOSS` and `inbound replay: trigger=` in the service log.
+Completed state compacts payloads but retains dedup and timestamps. History
+retains original records. Delivery remains at least once: a crash after gc
+vouches but before durable completion can repeat a notification. This work
+changes only `slack-full`; other adapters need their own assessment.
+
 ### Socket Mode inbound transport + inbound-liveness watchdog
 
 Two hardening layers added after the 2026-08-19 Events API outage (~26
@@ -810,7 +986,7 @@ package docstring at the top of that file. Summary:
 | `SLACK_LIVENESS_ALERT_CHANNEL` | unset                                            | Channel id that receives a `chat.postMessage` alarm when a stall is confirmed (outbound is independent of the dead inbound path) and a note when a backfill replays recovered messages. Unset = log-only. |
 | `SLACK_LIVENESS_STATE_PATH`    | `<GC_CITY_PATH>/.gc/slack/inbound_liveness.json` (or `/tmp/gc-slack-adapter/inbound_liveness.json`) | Persists per-channel watermarks + last-inbound so a restart backfills the downtime gap. Set-but-empty (`SLACK_LIVENESS_STATE_PATH=`) disables persistence. |
 | `SLACK_BACKFILL_MAX_WINDOW`    | `1h`                                             | How far back a reconnect / restart / watchdog backfill reads channel history when replaying missed messages through the normal inbound pipeline. `0` disables replay (watchdog alarms only). |
-| `SLACK_DELIVERY_RECEIPT_GATE`  | `on`                                             | Same-ts delivery-receipt gate (gp-32q). A `(channel, ts)` claim concludes — letting a same-ts twin skip its copy — only when gc's response vouches that the COMPLETE payload reached the session — byte counts, per member as well as summed. A receipt that says something did NOT land (`failed`/`partial`, or counts short of what gc built) re-posts once in place and then releases the claim so the parked twin re-posts. A `pending` receipt HOLDS instead: gc waits for a busy session to reach an idle boundary before pasting, so pending is that session's normal outcome and a re-post there would duplicate the message rather than repair it — and the hold is then FOLLOWED UP (gp-3yg): the adapter polls `GET /extmsg/inbound/receipts/{receipt_id}` until gc concludes; a delivery gc then reports lost (or a receipt gc no longer knows) is re-posted once, identically, and dead-lettered if that copy is not vouched for either; a hold still pending after 10 minutes or at shutdown is recorded in the dead-letter file as "state unknown, verify by hand", never re-posted; and a fan-out gc CONCLUDED with every member either delivered or pasted whole with only the submit unconfirmed (gp-2io's `pending` with real byte counts — the busy-probe shape) resolves quietly on that per-member evidence when the summary is `pending` or `partial` (a mixed room folds delivered+pending to `partial`): the payload is in every pane, so it is never re-posted and never dead-lettered. Grep the log for `receipt follow-up:` (`RESOLVED` / `LOST` / `RECOVERED` / `LOSS` / `STUCK` / `UNVERIFIED`; a transient 404/5xx on the poll is retried until the deadline, and only a window with no usable answer at all is `UNVERIFIED`). A gc that emits no receipt is detected as `receipt=unsupported` and keeps the pre-gp-32q commit-on-2xx behavior, so the gate is a no-op until the gc side (gp-2rq) is running. `off` disarms it wholesale — the escape hatch if a gc build ever reports receipts wrongly. |
+| `SLACK_DELIVERY_RECEIPT_GATE` | `on` | Require complete delivery evidence before concluding a same-message claim. Channel, DM and alias failures use the durable hold policy above; mention-only sends retain their separate follow-up policy. Pending receipts are polled before any repost. Fresh traffic without receipts keeps legacy commit-on-2xx behavior; outstanding recovery holds without proof require a hand check. `off` disables receipt gating. |
 
 **Permissions:** `IDENTITY_STORE_PATH`, `HANDLE_ALIAS_STORE_PATH`, and
 `INBOUND_FILE_STORE` are written with `0o700` directories and `0o600`
