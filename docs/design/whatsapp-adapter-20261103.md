@@ -20,7 +20,7 @@ Two programs carry it:
 
 | Part | Where it runs | Its job |
 | --- | --- | --- |
-| The gateway, `whatsapp/gateway/` | One Cloudflare Worker with a D1 database at `https://whatsapp.dynasty.computer` | Holds the number's Meta secrets, receives Meta's webhook, routes each message to its owner's city, holds each delivery until that city acknowledges it, and makes every Graph API call for every city |
+| The gateway, `whatsapp/gateway/` | One Cloudflare Worker with a D1 database at `https://whatsapp.dynasty.computer` | Holds the number's Meta secrets, receives Meta's webhook, routes each message to its owner's city, holds each delivery until that city acknowledges it (for up to seven days), and makes every Graph API call for every city |
 | The adapter, `whatsapp/adapter/` | Every city box, as the pack's `proxy_process` service `whatsapp` (Node 20 or newer, no package dependencies) | Polls the gateway, delivers each message to the mayor through gc's external-messaging API under a write-ahead journal, publishes the mayor's replies, and runs the window-keeper |
 
 Around them sit `whatsapp/commands/` (the `gc whatsapp` verbs), `whatsapp/doctor/` (nine doctor
@@ -41,8 +41,9 @@ gateway, over HTTPS, with the one credential it was given at enrollment.
   kind `dm`) whose id is the gateway's `conversation_id` for that owner: the owner's WhatsApp
   business-scoped user id, fixed when the owner binds. It survives a change of number and is never
   shared by two owners, a recycled number included. The number (`wa_id`) is shown, never used as a
-  key. A binding made before user ids existed keeps its number as its `conversation_id` until the
-  owner is invited again.
+  key. A binding made before user ids existed holds a number and no user id, so no message routes
+  to it and no send reaches it (`not_bound`); inviting that owner again makes a new binding keyed by
+  the user id, and an operator removes the old one.
 - **Routing.** The gateway routes a message by the sender's user id, never by the number, and sends
   every reply to a user id. A message the gateway cannot place, one naming no user id included,
   reaches no city; it is counted, never held and never guessed.
@@ -60,7 +61,8 @@ gateway, over HTTPS, with the one credential it was given at enrollment.
    once per seven days, and is otherwise ignored. Statuses Meta reports for a city's own sends are
    appended to that city's deliveries too.
 3. Meta gets its 200 only after every D1 write for the payload has committed; anything lost before
-   the commit is redelivered by Meta.
+   the commit is redelivered by Meta. A body is held for up to seven days without an acknowledgement,
+   and a city with 5,000 unacknowledged deliveries makes the gateway answer 503, so Meta retries later.
 4. The adapter polls `GET /v1/inbox` (every `WHATSAPP_POLL_MS`, 2 seconds by default). The inbox
    answers with the city's unacknowledged deliveries, oldest first, and every poll reads them from the
    start, so a restarted box reads again everything it never acknowledged.
@@ -74,9 +76,8 @@ gateway, over HTTPS, with the one credential it was given at enrollment.
    never a position, because each owner's messages travel on their own chain and one owner's later
    message can land before another owner's earlier one.
 
-Statuses of the city's own sends are acknowledged without reaching gc, except a failed one, which
-reaches the mayor as `[delivery failed: <code> <title>]`. A reaction reaches the mayor as
-`[reaction <emoji> to <message_id>]`.
+A status of the city's own send is acknowledged without reaching gc unless it failed
+(`[delivery failed: <code> <title>]`); a reaction reaches the mayor as `[reaction <emoji> to <id>]`.
 
 Media and voice notes come in through the gateway, which serves the bytes at `GET /v1/media/{id}`,
 because Meta serves media only to the access token. The adapter checks each file against the
@@ -122,7 +123,8 @@ receipt id, the verdict, the terminal flag, the transcript sequence) → the ack
 
 The rules for each answer:
 
-- **Delivered.** Acknowledge the delivery to the gateway. Only a delivered verdict releases it.
+- **Delivered.** Acknowledge the delivery to the gateway. The adapter acknowledges only what gc
+  delivered (by its verdict, the probe below, or an operator's resolve) or what it dead-lettered.
 - **Pending.** Read the receipt back (`GET /extmsg/inbound/receipts/{id}`) every 5 seconds for 10
   minutes, every minute to the hour, then every 5 minutes. There is no cutoff short of a deadline 24
   hours after the first post, after which the entry is dead-lettered (`pending_deadline`) and
@@ -161,7 +163,8 @@ The rules for each answer:
 
 A `no_route` answer to the marked copy is probed once more, then dead-lettered
 (`redelivery_no_route`), since gc answers a suppressed duplicate and an empty route with the same
-bytes. So a crash loses nothing, and a message reaches the mayor twice only as the marked copy.
+bytes. So a crash loses nothing the gateway still holds, and a message reaches the mayor twice only
+as the marked copy.
 
 **The restore rule.** The journal keeps each conversation's watermark, the highest accepted
 transcript sequence and its message id, through every compaction. The journal's record that gc took
@@ -212,7 +215,8 @@ window once a minute and after each new delivery. For an owner whose business co
 (`gc whatsapp invite --proactive-consent`, or `gc whatsapp consent <conversation_id> --on`), it
 raises keeper events into the mayor's session as the actor "Dynasty window-keeper"
 (`is_bot: true`): a daily update prompt once per business day (two hours before the close of
-business, or at `WHATSAPP_KEEPER_UPDATE_HOUR` in `WHATSAPP_CITY_TZ` when no hours are set), and a
+business, or, with no hours set, at `WHATSAPP_KEEPER_UPDATE_HOUR` in the owner's recorded zone, else
+`WHATSAPP_CITY_TZ`), and a
 close ladder at 60, 30, 15 and 5 minutes before the window closes, kept inside the business's hours
 (`gc whatsapp hours`). Nothing fires after the close. Its state lives in
 `<city>/.gc/whatsapp/keeper.json`, written before each event, and an owner the last good window read
@@ -222,12 +226,12 @@ replies to a keeper event; it publishes a real update, or nothing.
 ## Enrollment and the invite binding
 
 **A city enrolls once.** The gateway's operator mints an enrollment code for the city
-(`POST /v1/admin/enroll-codes`; 16 characters, valid 72 hours). On the box,
-`gc whatsapp enroll --code <code> --name <box name>` calls `POST /v1/enroll`, which creates the city
-and returns its one credential, once. The verb writes it to the adapter's env file (0600) as
-`WHATSAPP_GATEWAY_CREDENTIAL`, and the service is restarted to pick it up. The adapter sends it as a
-bearer token on every call; the gateway stores only its sha256. The gateway depends on no vault, and
-every city, a test city included, enrolls the same way.
+(`POST /v1/admin/enroll-codes`, which takes the city's name; 16 characters, valid 72 hours). On the
+box, `gc whatsapp enroll --code <code> --name <name>` calls `POST /v1/enroll`, which creates the city
+(recording the name as the box's) and returns its one credential, once. The verb writes it to the
+adapter's env file (0600) as `WHATSAPP_GATEWAY_CREDENTIAL` and tells the operator to restart the
+service. The adapter sends it as a bearer token on every call; the gateway stores only its sha256.
+The gateway depends on no vault, and every city, a test city included, enrolls the same way.
 
 **An owner binds by invite.** `gc whatsapp invite` asks the gateway (`POST /v1/invites`) for a
 six-digit code that lives 24 hours; minting a new code deletes the city's unused one. The owner texts
@@ -272,8 +276,8 @@ adapter now carries, with tests in the adapter suite.
    intact; a lost answer on B would then find no record and no gap, and B would be posted again
    unmarked. The rule: the watermark read covers every retained watermark, never one conversation's
    alone. It runs at start when the journal holds a watermark, every `WHATSAPP_WATERMARK_CHECK_MS`
-   (60 seconds by default) while the adapter runs, after every poll that brought a new delivery, as
-   the in-doubt rule's first step, and again immediately before the in-doubt rule's one plain post,
+   (60 seconds by default) while the adapter runs, after every poll that brought a new delivery, at
+   the start of the in-doubt rule, and again immediately before the in-doubt rule's one plain post,
    which it gates.
 2. **Keep a dead entry until its acknowledgement is confirmed.** The first rules let compaction drop
    dead entries, though the dead letter comes before the acknowledgement to the gateway. If that
@@ -285,13 +289,11 @@ adapter now carries, with tests in the adapter suite.
 
 ## What gc does not give yet
 
-- gc answers a suppressed duplicate and an empty route with the same `no_route` bytes. With a field
-  naming the suppressed receipt, a `no_route` to the marked copy could be read as delivered; until
-  then it is dead-lettered.
-- gc's transcript list carries no store identity. With one, a restore would be seen directly; without
-  it the all-watermark read is the rule, and one case remains: a restore taken after every
-  conversation's watermark and before an acceptance the journal never recorded, with the paste absent
-  from the provider's log, posts plain.
+- A field naming the suppressed receipt on gc's `no_route` answer would let a `no_route` to the
+  marked copy read as delivered; until then it is dead-lettered.
+- gc's transcript list carries no store identity, so the all-watermark read is the rule, and one case
+  remains: a restore taken after every conversation's watermark and before an acceptance the journal
+  never recorded, with the paste absent from the provider's log, posts plain.
 
-Adapter comments that cite "design line 13" or "design line 114" mean the earlier text; those rules
-are under "Identity", "The path" and "The journal" above.
+Adapter comments citing "design line 13", "design line 114" or the keeper's lettered items mean the
+earlier text; those rules are in "Identity", "The path", "The journal" and "The window-keeper".
