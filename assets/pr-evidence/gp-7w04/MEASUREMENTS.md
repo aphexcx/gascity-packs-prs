@@ -82,6 +82,12 @@ city settings were touched.
 
 ## 13: large-log timing
 
+Stop identity was also checked against both native base-hook builders: each
+supplies optional `prompt_id` and `transcript_path`. Both transcript writers
+retain the user row's `uuid`. The hook prefers the prompt ID, then reads at
+most 8 MiB of transcript tail for a user UUID, retaining only its hash.
+Fixture tests distinguish repeated callbacks from separate tool-free turns.
+
 The suite constructs an exact 256 MiB event file and advances its cursor to
 the end. It then measures 100 warm decisions and 20 complete Node hook
 processes. Both p95 values must remain below 100 ms. See the green transcript

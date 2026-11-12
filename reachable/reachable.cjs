@@ -64,30 +64,54 @@ function archiveSlice(file, offset, start) {
 }
 function eventFence(city) {
   const dir = path.join(city, '.gc');
-  let seq = 0;
-  for (const name of fs.readdirSync(dir)) {
-    const archive = /^events\.jsonl\.archive-\d{8}T\d{6}Z-seq-\d+-(\d+)\.gz$/.exec(name);
-    if (archive) { seq = Math.max(seq, Number(archive[1])); continue; }
-    const rotating = /^events\.jsonl\.rotating-\d{8}T\d{6}Z(?:-seq-\d+-(\d+))?$/.exec(name);
-    if (name !== 'events.jsonl' && !rotating) continue;
-    // The seq suffix survives a concurrent rename/removal of the file.
-    if (rotating?.[1]) seq = Math.max(seq, Number(rotating[1]));
-    let fd;
-    try {
-      fd = fs.openSync(path.join(dir, name), 'r');
-      const size = fs.fstatSync(fd).size;
-      const bytes = Buffer.alloc(Math.min(size, CHUNK));
-      fs.readSync(fd, bytes, 0, bytes.length, size - bytes.length);
-      const end = bytes.lastIndexOf(10);
-      if (end < 0) continue;
-      const begin = bytes.lastIndexOf(10, end - 1) + 1;
-      const row = JSON.parse(bytes.subarray(begin, end).toString());
-      if (!Number.isSafeInteger(row.seq)) throw new Error('invalid_event_row');
-      seq = Math.max(seq, row.seq);
-    } catch (e) { if (e.code !== 'ENOENT') throw e; }
-    finally { if (fd !== undefined) fs.closeSync(fd); }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const names = fs.readdirSync(dir).sort();
+    let seq = 0;
+    for (const name of names) {
+      const archive = /^events\.jsonl\.archive-\d{8}T\d{6}Z-seq-\d+-(\d+)\.gz$/.exec(name);
+      if (archive) { seq = Math.max(seq, Number(archive[1])); continue; }
+      const rotating = /^events\.jsonl\.rotating-\d{8}T\d{6}Z(?:-seq-\d+-(\d+))?$/.exec(name);
+      if (name !== 'events.jsonl' && !rotating) continue;
+      // The seq suffix survives a concurrent rename/removal of the file.
+      if (rotating?.[1]) seq = Math.max(seq, Number(rotating[1]));
+      let fd;
+      try {
+        fd = fs.openSync(path.join(dir, name), 'r');
+        const size = fs.fstatSync(fd).size;
+        const bytes = Buffer.alloc(Math.min(size, CHUNK));
+        fs.readSync(fd, bytes, 0, bytes.length, size - bytes.length);
+        const end = bytes.lastIndexOf(10);
+        if (end < 0) continue;
+        const begin = bytes.lastIndexOf(10, end - 1) + 1;
+        const row = JSON.parse(bytes.subarray(begin, end).toString());
+        if (!Number.isSafeInteger(row.seq)) throw new Error('invalid_event_row');
+        seq = Math.max(seq, row.seq);
+      } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      finally { if (fd !== undefined) fs.closeSync(fd); }
+    }
+    if (JSON.stringify(names) === JSON.stringify(fs.readdirSync(dir).sort())) return seq;
   }
-  return seq;
+  throw new Error('rotation_during_snapshot');
+}
+
+function stopIdentity(input) {
+  if (identifier(input.prompt_id)) return input.prompt_id;
+  if (!input.transcript_path || !path.isAbsolute(input.transcript_path)) throw new Error('missing_turn_identity');
+  const fd = fs.openSync(input.transcript_path, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const bytes = Buffer.alloc(Math.min(size, CHUNK));
+    fs.readSync(fd, bytes, 0, bytes.length, size - bytes.length);
+    const lines = bytes.subarray(0, bytes.lastIndexOf(10) + 1).toString('utf8').split('\n');
+    // A user row is stable across duplicate Stop callbacks, including when
+    // the assistant row is flushed between them. Persist only its hash.
+    for (let i = lines.length - 1; i >= (size > CHUNK ? 1 : 0); i--) {
+      if (!lines[i]) continue;
+      const row = JSON.parse(lines[i]);
+      if (row.type === 'user' && !row.isSidechain && identifier(row.uuid)) return row.uuid;
+    }
+    throw new Error('missing_turn_identity');
+  } finally { fs.closeSync(fd); }
 }
 
 // The active file is read through one descriptor. A retained boundary digest
@@ -176,7 +200,8 @@ function reduceEvents(state, rows, { now, agent, session }) {
     if (at > now) throw new Error('event_in_future');
     if (row.type === 'extmsg.inbound') {
       if (typeof p.target_agent !== 'string' && p.target_agent !== undefined) throw new Error('invalid_target_agent');
-      const ours = p.target_agent ? p.target_agent === agent : p.target_session === session;
+      if (!p.target_agent && identifier(p.target_session) && !own.size && now - at < LIMITS.age) throw new Error('mayor_session_unknown');
+      const ours = p.target_agent ? p.target_agent === agent : identifier(p.target_session) && own.has(hash(p.target_session));
       if (!ours) continue;
       const conv = key(p);
       if (!state.known.includes(conv)) state.known.push(conv);
@@ -250,9 +275,10 @@ function decide(state, input, options) {
   const { now, mode, session, aliases = [], caughtUp = true, waitMs = LIMITS.wait } = options;
   if (mode === 'off' || input.agent_id) return {};
   const event = input.hook_event_name;
-  const token = event === 'Stop' ? `${input.prompt_id || ''}:${hash(input.last_assistant_message || '')}:${state.turn || ''}` : input.tool_use_id;
-  // A duplicate Stop shares the last tool boundary even when the harness
-  // omits prompt_id. Reading another event must not change that identity.
+  const token = event === 'Stop' ? input.prompt_id || options.turnId : input.tool_use_id;
+  if (event === 'Stop' && !identifier(token)) throw new Error('missing_turn_identity');
+  // Use the harness prompt ID or its persisted user-row UUID, never response
+  // content or a previous tool call shared by distinct tool-free turns.
   const id = hash(`${session}:${event}:${token}`);
   if (state.receipts[id]) return state.receipts[id].output;
   let output = {};
@@ -375,7 +401,8 @@ function normalized(options) {
   const env = options.env || process.env;
   const city = options.city || env.GC_CITY_PATH || env.GC_CITY;
   if (!city || !path.isAbsolute(city)) throw new Error('absolute_city_required');
-  return { ...options, env, city, now: options.now ?? Date.now(), agent: env.REACHABLE_AGENT || 'mayor', session: env.GC_SESSION_ID || '', start: options.start ?? performance.now() };
+  const agent = env.REACHABLE_AGENT || 'mayor';
+  return { ...options, env, city, now: options.now ?? Date.now(), agent, session: env.GC_AGENT === agent ? env.GC_SESSION_ID || '' : '', start: options.start ?? performance.now() };
 }
 function syncEvents(state, options) {
   const result = readEvents(options.city, state.cursor, options);
@@ -407,12 +434,13 @@ function runHook(input, options = {}) {
     if (mode === 'off') return {};
     return withLock(o.city, () => {
       const state = loadState(o.city);
-      let fence = ['Stop', 'PostToolUse'].includes(input.hook_event_name) ? eventFence(o.city) : undefined;
+      const turnId = input.hook_event_name === 'Stop' ? stopIdentity(input) : undefined;
+      let fence = ['Stop', 'PostToolUse'].includes(input.hook_event_name) ? Math.max(state.cursor?.seq || 0, eventFence(o.city)) : undefined;
       const caughtUp = syncEvents(state, o);
       if (!caughtUp && input.hook_event_name === 'PreToolUse') fence = eventFence(o.city);
       const manifest = json(path.join(stateDir(o.city), 'install.json'), { aliases: [] });
       const beforeDecision = structuredClone(state);
-      const result = decide(state, input, { ...o, mode, aliases: manifest.aliases, caughtUp, fence });
+      const result = decide(state, input, { ...o, mode, aliases: manifest.aliases, caughtUp, fence, turnId });
       checkDeadline(o.start);
       try { saveState(o.city, state); checkDeadline(o.start); }
       catch (error) {
@@ -518,7 +546,7 @@ function install(options = {}) {
     for (const event of EVENTS) {
       value.hooks[event] ||= [];
       const owned = old?.entries?.[event];
-      const existing = value.hooks[event].find(e => e.matcher === owned?.matcher && e.hooks?.some(h => h.command === owned.command));
+      const existing = owned && value.hooks[event].find(e => e.matcher === owned.matcher && e.hooks?.some(h => h.command === owned.command));
       let matcher = existing?.matcher || '^(?:.*)$';
       if (!existing) {
         while (value.hooks[event].some(e => e.matcher === matcher)) matcher = `(?:${matcher})`;

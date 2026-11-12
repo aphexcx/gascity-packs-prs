@@ -118,6 +118,9 @@ Archives replay in bounded decoded slices, including the window before a
 rotated archive is published. Stop records a sequence fence so unread older
 messages stay seen. The registered five-second harness timeout leaves cleanup
 time after the internal two-second measurement deadline.
+Stop uses the harness prompt ID, or a bounded read of its transcript to obtain
+the last user-row UUID. It keeps only the hashed identity, so two tool-free
+turns with the same answer remain distinct without storing their text.
 
 PostToolUse only records calls longer than 30 seconds: tool name, duration,
 and whether someone waited at the start or arrived during the call. It never

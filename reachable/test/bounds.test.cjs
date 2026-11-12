@@ -70,7 +70,7 @@ test('4: age expiry and an unrelated reaction do not stand in for words', () => 
 });
 
 test('13: duplicate Stop without a prompt ID cannot clear an intervening inbound', () => {
-  const state = initialState(); const o = { now: NOW, agent: 'mayor', session: 'session-example', mode: 'enforce' };
+  const state = initialState(); const o = { now: NOW, agent: 'mayor', session: 'session-example', mode: 'enforce', turnId: 'transcript-user-example' };
   decide(state, input('call'), o);
   const stop = { hook_event_name: 'Stop', session_id: 'harness-example' };
   decide(state, stop, o);

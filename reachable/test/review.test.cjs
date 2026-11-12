@@ -128,6 +128,78 @@ test('review 5: retained historical pack caches do not mask a new pack roll', t 
   assert.equal(command('status', ['--json'], { ...f.o, source: current }).current, false);
   assert.ok(doctor({ ...f.o, source: current, prompt: '' }).includes('hook_copy_outdated'));
 });
+test('codex 1: first install preserves valid hooks without matcher properties', t => {
+  const f = fixture(t); fs.mkdirSync(path.join(f.city, '.claude'));
+  const before = { hooks: Object.fromEntries(['PreToolUse', 'PostToolUse', 'Stop'].map(e => [e, [{ hooks: [{ type: 'command', command: 'example-other-hook' }] }]])) };
+  const file = path.join(f.city, '.claude/settings.json'); fs.writeFileSync(file, JSON.stringify(before));
+  install(f.o); command('uninstall', [], f.o);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)), before);
+});
+test('codex 1: maintenance callers cannot teach the worker identity as a mayor', t => {
+  const f = fixture(t); command('mode', ['enforce'], f.o);
+  for (const verb of ['status', 'pass', 'exempt']) {
+    const args = verb === 'status' ? [] : verb === 'pass' ? ['example/room-example'] : ['example/room-example', '--off'];
+    command(verb, args, { ...f.o, env: { GC_AGENT: 'worker', GC_SESSION_ID: 'worker-example' } });
+  }
+  fs.appendFileSync(f.log, line(row(2)));
+  fs.appendFileSync(f.log, line(row(3, 'extmsg.outbound', { session: 'worker-example' })));
+  assert.equal(command('status', ['--json'], f.o).waiting.length, 1);
+});
+test('codex 1: an empty caller session cannot match an unrouted message', t => {
+  for (const env of [{}, { GC_AGENT: 'worker', GC_SESSION_ID: 'worker-example' }]) {
+    const f = fixture(t);
+    fs.writeFileSync(f.log, line(row(1, 'extmsg.inbound', { target_agent: '', target_session: '' })));
+    assert.equal(command('status', ['--json'], { ...f.o, env }).waiting.length, 0);
+  }
+});
+test('codex 1: worker status preserves established legacy mayor sessions', t => {
+  const f = fixture(t);
+  fs.writeFileSync(f.log, line({ seq: 1, type: 'session.woke', ts: new Date(NOW - 90000).toISOString(), subject: 'mayor', session_id: 'session-example' }) + line(row(2, 'extmsg.inbound', { target_agent: '', target_session: 'session-example' })));
+  const worker = { ...f.o, env: { GC_AGENT: 'worker', GC_SESSION_ID: 'worker-example' } };
+  assert.equal(command('status', ['--json'], worker).waiting.length, 1);
+  assert.equal(command('status', ['--json'], f.o).waiting.length, 1);
+});
+test('codex 1: unknown legacy routing is not consumed by an unbound operator', t => {
+  const f = fixture(t);
+  fs.writeFileSync(f.log, line(row(1, 'extmsg.inbound', { target_agent: '', target_session: 'session-example' })));
+  assert.throws(() => command('status', ['--json'], { ...f.o, env: {} }), /mayor_session_unknown/);
+  assert.equal(command('status', ['--json'], f.o).waiting.length, 1);
+});
+test('codex 1: distinct tool-free turns and duplicate Stop use genuine transcript identities', t => {
+  const f = fixture(t); command('mode', ['enforce'], f.o);
+  const transcript = path.join(f.city, 'transcript.jsonl');
+  fs.writeFileSync(transcript, line({ type: 'user', uuid: 'turn-one', message: { content: 'example' } }));
+  const stop = { hook_event_name: 'Stop', transcript_path: transcript, last_assistant_message: 'Acknowledged.' };
+  runHook(stop, f.o);
+  fs.appendFileSync(f.log, line(row(2)));
+  runHook(stop, f.o);
+  assert.equal(command('status', ['--json'], f.o).waiting.length, 1);
+  fs.appendFileSync(transcript, line({ type: 'user', uuid: 'turn-two', message: { content: 'another example' } }));
+  runHook(stop, f.o);
+  assert.equal(command('status', ['--json'], f.o).waiting.length, 0);
+});
+test('codex 1: lifecycle snapshots retry a rotation during directory discovery', t => {
+  for (const event of ['Stop', 'PostToolUse']) {
+    const f = fixture(t); command('mode', ['enforce'], f.o);
+    fs.writeFileSync(f.log, line({ ...row(1, 'example.padding'), ts: new Date(NOW - 90000).toISOString() }));
+    runHook(input('in-flight'), { ...f.o, now: NOW - 90000 });
+    fs.appendFileSync(f.log, line(row(2)));
+    const readdir = fs.readdirSync; let rotated = false;
+    const rotating = f.log + '.rotating-20260102T120000Z-seq-1-2';
+    fs.readdirSync = (...args) => {
+      const names = readdir(...args);
+      if (!rotated && args[0] === f.dir) { rotated = true; fs.renameSync(f.log, rotating); fs.writeFileSync(f.log, ''); }
+      return names;
+    };
+    try { runHook({ hook_event_name: event, prompt_id: 'turn-example', tool_use_id: 'in-flight' }, f.o); }
+    finally { fs.readdirSync = readdir; }
+    fs.writeFileSync(f.log + '.archive-20260102T120000Z-seq-1-2.gz', zlib.gzipSync(fs.readFileSync(rotating)));
+    fs.unlinkSync(rotating); fs.writeFileSync(f.log, line(row(3, 'example.padding')));
+    const status = command('status', ['--json'], f.o);
+    if (event === 'Stop') assert.equal(status.waiting.length, 0);
+    else assert.equal(status.history.find(r => r.type === 'long_call').waiting, true);
+  }
+});
 test('review 6: resolved manifests determine aliases for every supported source form', t => {
   const f = fixture(t); const gcHome = path.join(f.city, 'home');
   const sources = [

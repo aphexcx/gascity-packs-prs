@@ -20,3 +20,11 @@ deferred history Stop fence reproduction: 1
 cd reachable/test && node --test --test-reporter=tap (final self-review fixes): 1
 archive partial-write reproduction: 1
 cd reachable/test && node --test --test-reporter=tap (self-review final): 0
+PATH=city-toolchain:$PATH make test final: 0
+Codex 1 early reproductions: 1
+Codex 1 focused fixes: 0
+Codex identity class empty-session reproduction: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 1 fixes): 0
+DEEP Codex round 1: 1
+Codex 1 full class reproductions: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 1 complete fixes): 0
