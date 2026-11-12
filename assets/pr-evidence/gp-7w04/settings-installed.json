@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(?:.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "example-other-hook"
+          }
+        ]
+      },
+      {
+        "matcher": "(?:^(?:.*)$)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/example/node' '/example/city/.gc/reachable/hook.cjs' --hook --city '/example/city'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(?:.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/example/node' '/example/city/.gc/reachable/hook.cjs' --hook --city '/example/city'",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "^(?:.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/example/node' '/example/city/.gc/reachable/hook.cjs' --hook --city '/example/city'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read"
+    ]
+  }
+}

@@ -13,7 +13,7 @@ function fixture(t) {
   t.after(() => fs.rmSync(city, { recursive: true, force: true }));
   fs.mkdirSync(path.join(city, '.gc'));
   const log = path.join(city, '.gc/events.jsonl'); fs.writeFileSync(log, '');
-  const options = { city, now: NOW, env: { GC_AGENT: 'mayor', GC_SESSION_ID: 'session-example' }, imports: 'reachable\t../reachable\t\t(path)' };
+  const options = { city, now: NOW, env: { GC_AGENT: 'mayor', GC_SESSION_ID: 'session-example' }, imports: '' };
   return { city, log, options };
 }
 const row = (seq = 1) => ({ seq, type: 'extmsg.inbound', ts: new Date(NOW - 60000).toISOString(), payload: { provider: 'example', conversation_id: 'room-example', target_agent: 'mayor' } });
@@ -34,8 +34,8 @@ test('11: an expired measurement never refuses and state-lock contention fails o
   const f = fixture(t); fs.writeFileSync(f.log, JSON.stringify(row()) + '\n');
   command('mode', ['enforce'], f.options);
   assert.deepEqual(runHook(input('timeout'), { ...f.options, start: performance.now() - 2100 }), {});
-  const lock = path.join(f.city, '.gc/reachable/lock.json');
-  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid }));
+  const lock = path.join(f.city, `.gc/reachable/lock-${process.pid}-example.json`);
+  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, ticket: 1 }));
   assert.deepEqual(runHook(input('busy'), f.options), {});
   fs.unlinkSync(lock);
   assert.ok(runHook(input('after'), f.options).hookSpecificOutput);
@@ -47,7 +47,8 @@ test('11: malformed hook stdin fails open and records one error using the instal
     env: { ...process.env, GC_AGENT: 'mayor', GC_CITY: '', GC_CITY_PATH: '' }, input: '{broken', encoding: 'utf8',
   });
   assert.equal(result.status, 0); assert.equal(result.stdout, ''); assert.equal(result.stderr, '');
-  const log = fs.readFileSync(path.join(f.city, '.gc/reachable/errors.jsonl'), 'utf8').trim().split('\n');
+  const dir = path.join(f.city, '.gc/reachable');
+  const log = fs.readdirSync(dir).filter(n => n.startsWith('error-')).flatMap(n => fs.readFileSync(path.join(dir, n), 'utf8').trim().split('\n'));
   assert.equal(log.length, 1);
   assert.doesNotMatch(log[0], /broken/);
 });
@@ -101,7 +102,8 @@ test('16: uninstall preserves a later hook added to the same matcher and rejects
 test('9: aliases come from all four pack rows, including a locally renamed directory', t => {
   const f = fixture(t); const renamed = path.join(f.city, 'renamed'); fs.mkdirSync(renamed);
   fs.writeFileSync(path.join(renamed, 'pack.toml'), '[pack]\nname = "gchat"\nschema = 2\n');
-  const text = ['s\thttps://example.invalid/packs/slack-full\t\tlocked', 'g\t./renamed\t\t(path)', 'w\thttps://example.invalid/packs/whatsapp#rev\t\tlocked', 'r\thttps://example.invalid/packs/reachable\t\tlocked', '(transitive)\thttps://example.invalid/packs/gchat\t\tlocked', 'no\thttps://example.invalid/packs/unrelated\t\tlocked'].join('\n');
+  for (const name of ['slack-full', 'whatsapp', 'reachable', 'unrelated']) { const dir = path.join(f.city, name); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, 'pack.toml'), `[pack]\nname = "${name}"\n`); }
+  const text = ['s\t./slack-full\t\t(path)', 'g\t./renamed\t\t(path)', 'w\t./whatsapp\t\t(path)', 'r\t./reachable\t\t(path)', '(transitive)\t./renamed\t\t(path)', 'no\t./unrelated\t\t(path)'].join('\n');
   assert.deepEqual(aliasesFromImports(text, f.city), ['s', 'g', 'w', 'r']);
 });
 

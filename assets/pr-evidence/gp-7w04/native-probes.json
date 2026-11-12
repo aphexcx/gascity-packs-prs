@@ -1,0 +1,82 @@
+[
+  {
+    "version": "2.1.309",
+    "binary_sha256": "4d704a8aecbe038affa3000f498ae17c1b4f753add8facb8764120affc99b658",
+    "builder_name": "$u",
+    "builder_byte_offset": 252620079,
+    "probes": {
+      "main": {
+        "session_id": "session-example",
+        "cwd": "/example/city",
+        "permission_mode": "default"
+      },
+      "subagent": {
+        "session_id": "session-example",
+        "cwd": "/example/city",
+        "permission_mode": "default",
+        "agent_id": "subagent-example",
+        "agent_type": "general-purpose"
+      },
+      "named_main": {
+        "session_id": "session-example",
+        "cwd": "/example/city",
+        "permission_mode": "default",
+        "agent_type": "reviewer-example"
+      }
+    },
+    "exact_tool_names_present": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "ListMcpResources",
+      "ReadMcpResource",
+      "ToolSearch",
+      "TaskGet",
+      "TaskList",
+      "TaskOutput"
+    ],
+    "duplicated_settings_commands": 2
+  },
+  {
+    "version": "2.1.322",
+    "binary_sha256": "a9d237949db816a0b7afd88a9a8e1df36b3a597a30f5a41d1c0539eb180a3450",
+    "builder_name": "Ip",
+    "builder_byte_offset": 274587817,
+    "probes": {
+      "main": {
+        "session_id": "session-example",
+        "cwd": "/example/city",
+        "permission_mode": "default"
+      },
+      "subagent": {
+        "session_id": "session-example",
+        "cwd": "/example/city",
+        "permission_mode": "default",
+        "agent_id": "subagent-example",
+        "agent_type": "general-purpose"
+      },
+      "named_main": {
+        "session_id": "session-example",
+        "cwd": "/example/city",
+        "permission_mode": "default",
+        "agent_type": "reviewer-example"
+      }
+    },
+    "exact_tool_names_present": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "ListMcpResources",
+      "ReadMcpResource",
+      "ToolSearch",
+      "TaskGet",
+      "TaskList",
+      "TaskOutput"
+    ],
+    "duplicated_settings_commands": 2
+  }
+]

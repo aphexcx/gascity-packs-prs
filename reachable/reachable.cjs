@@ -5,12 +5,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const zlib = require('node:zlib');
 const { performance } = require('node:perf_hooks');
 const { execFileSync } = require('node:child_process');
 
 const DAY = 86400000;
 const LIMITS = Object.freeze({ wait: 30000, refusals: 3, age: DAY, history: 14 * DAY, deadline: 2000 });
+const CHUNK = 8 * 1024 * 1024;
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const key = row => `${row.provider}/${row.conversation_id}`;
 function initialState() {
@@ -37,6 +37,59 @@ function parseRows(bytes, minimum, start) {
   return rows;
 }
 
+// A short-lived Node child streams one decoded archive slice. It never
+// materializes the whole archive; the cursor persists the decoded offset.
+// Replaying the compressed prefix is necessary because gzip has no seek index.
+function archiveWorker() {
+  const fs = require('node:fs');
+  const zlib = require('node:zlib');
+  const input = fs.createReadStream(process.argv[1]);
+  const stream = input.pipe(zlib.createGunzip());
+  let skip = Number(process.argv[2]), left = Number(process.argv[3]);
+  input.on('error', () => process.exit(1));
+  stream.on('error', () => process.exit(1));
+  stream.on('data', chunk => {
+    const n = Math.min(skip, chunk.length); skip -= n; chunk = chunk.subarray(n);
+    const part = chunk.subarray(0, left); left -= part.length;
+    for (let written = 0; written < part.length;) written += fs.writeSync(1, part.subarray(written));
+    if (!left) { input.destroy(); stream.destroy(); }
+  });
+}
+function archiveSlice(file, offset, start) {
+  checkDeadline(start);
+  return execFileSync(process.execPath, ['-e', `(${archiveWorker.toString()})()`, file, String(offset), String(CHUNK)], {
+    timeout: Math.max(1, Math.floor(LIMITS.deadline - (performance.now() - start))),
+    maxBuffer: CHUNK + 65536, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+function eventFence(city) {
+  const dir = path.join(city, '.gc');
+  let seq = 0;
+  for (const name of fs.readdirSync(dir)) {
+    const archive = /^events\.jsonl\.archive-\d{8}T\d{6}Z-seq-\d+-(\d+)\.gz$/.exec(name);
+    if (archive) { seq = Math.max(seq, Number(archive[1])); continue; }
+    const rotating = /^events\.jsonl\.rotating-\d{8}T\d{6}Z(?:-seq-\d+-(\d+))?$/.exec(name);
+    if (name !== 'events.jsonl' && !rotating) continue;
+    // The seq suffix survives a concurrent rename/removal of the file.
+    if (rotating?.[1]) seq = Math.max(seq, Number(rotating[1]));
+    let fd;
+    try {
+      fd = fs.openSync(path.join(dir, name), 'r');
+      const size = fs.fstatSync(fd).size;
+      const bytes = Buffer.alloc(Math.min(size, CHUNK));
+      fs.readSync(fd, bytes, 0, bytes.length, size - bytes.length);
+      const end = bytes.lastIndexOf(10);
+      if (end < 0) continue;
+      const begin = bytes.lastIndexOf(10, end - 1) + 1;
+      const row = JSON.parse(bytes.subarray(begin, end).toString());
+      if (!Number.isSafeInteger(row.seq)) throw new Error('invalid_event_row');
+      seq = Math.max(seq, row.seq);
+    } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
+  }
+  return seq;
+}
+
 // The active file is read through one descriptor. A retained boundary digest
 // also catches truncate-and-rewrite on a filesystem that reuses the inode.
 function readEvents(city, cursor, { now = Date.now(), start = performance.now() } = {}) {
@@ -49,7 +102,7 @@ function readEvents(city, cursor, { now = Date.now(), start = performance.now() 
     let offset = 0;
     let rows = [];
     let seq = cursor?.seq || 0;
-    let same = cursor && cursor.dev === stat.dev && cursor.ino === stat.ino && cursor.offset <= stat.size;
+    let same = cursor && !cursor.archive && cursor.dev === stat.dev && cursor.ino === stat.ino && cursor.offset <= stat.size;
     if (same && cursor.offset) {
       const boundary = Buffer.alloc(Math.min(128, cursor.offset));
       fs.readSync(fd, boundary, 0, boundary.length, cursor.offset - boundary.length);
@@ -57,7 +110,15 @@ function readEvents(city, cursor, { now = Date.now(), start = performance.now() 
     }
     if (same) offset = cursor.offset;
     else {
-      const archives = fs.readdirSync(dir).flatMap(name => {
+      const names = fs.readdirSync(dir);
+      // GC publishes the new active log before the compressed archive. Even
+      // a fresh cursor must wait for those captured sequences to be visible.
+      const pending = names.some(name => {
+        const m = /^events\.jsonl\.rotating-(\d{8}T\d{6}Z)-seq-(\d+)-(\d+)$/.exec(name);
+        return m && Number(m[3]) > seq && !names.includes(`events.jsonl.archive-${m[1]}-seq-${m[2]}-${m[3]}.gz`);
+      });
+      if (pending) return { rows: [], caughtUp: false, cursor: cursor || { dev: 0, ino: 0, offset: 0, seq: 0, boundary: '' } };
+      const archives = names.flatMap(name => {
         const m = /^events\.jsonl\.archive-(\d{8}T\d{6}Z)-seq-(\d+)-(\d+)\.gz$/.exec(name);
         if (!m) return [];
         const stamp = m[1].replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, '$1-$2-$3T$4:$5:$6Z');
@@ -65,23 +126,30 @@ function readEvents(city, cursor, { now = Date.now(), start = performance.now() 
       }).sort((a, b) => a.first - b.first);
       for (const archive of archives) {
         checkDeadline(start);
-        const contents = zlib.gunzipSync(fs.readFileSync(path.join(dir, archive.name)), { maxOutputLength: 512 * 1024 * 1024 });
-        if (contents.length && contents.at(-1) !== 10) throw new Error('incomplete_archive');
-        const recovered = parseRows(contents, seq, start);
+        const decodedOffset = cursor?.archive?.name === archive.name ? cursor.archive.offset : 0;
+        const contents = archiveSlice(path.join(dir, archive.name), decodedOffset, start);
+        const end = contents.lastIndexOf(10) + 1;
+        if (contents.length < CHUNK && end !== contents.length) throw new Error('incomplete_archive');
+        if (!end && contents.length === CHUNK) throw new Error('event_row_too_large');
+        const recovered = parseRows(contents.subarray(0, end), seq, start);
         for (const row of recovered) rows.push(row);
         if (recovered.length) seq = recovered.at(-1).seq;
+        if (contents.length === CHUNK) return { rows, caughtUp: false, cursor: { dev: cursor?.dev || 0, ino: cursor?.ino || 0, offset: cursor?.offset || 0, boundary: cursor?.boundary || '', seq, archive: { name: archive.name, offset: decodedOffset + end } } };
       }
     }
     checkDeadline(start);
     // Initial catch-up is bounded and continues on later calls. No refusal is
     // possible until caughtUp, because a later reply may still be unread.
-    const bytes = Buffer.alloc(Math.min(stat.size - offset, 8 * 1024 * 1024));
+    const bytes = Buffer.alloc(Math.min(stat.size - offset, CHUNK));
     const count = fs.readSync(fd, bytes, 0, bytes.length, offset);
     const end = bytes.subarray(0, count).lastIndexOf(10) + 1;
     if (!end && count === bytes.length && count === 8 * 1024 * 1024) throw new Error('event_row_too_large');
     const appended = parseRows(bytes.subarray(0, end), seq, start);
     for (const row of appended) rows.push(row);
     if (appended.length) seq = appended.at(-1).seq;
+    // A newly created empty active file can precede archive publication.
+    // Keep the old identity until an active row proves sequence continuity.
+    if (!same && cursor && !appended.length) return { rows, caughtUp: false, cursor: { ...cursor, seq, archive: undefined } };
     offset += end;
     const boundary = Buffer.alloc(Math.min(128, offset));
     fs.readSync(fd, boundary, 0, boundary.length, offset - boundary.length);
@@ -113,11 +181,18 @@ function reduceEvents(state, rows, { now, agent, session }) {
       const conv = key(p);
       if (!state.known.includes(conv)) state.known.push(conv);
       if (now - at >= LIMITS.age || state.exemptions.includes(conv)) continue;
+      for (const call of Object.values(state.calls)) {
+        if (call.priorWaiting && row.seq > (call.seenThrough || 0) && row.seq <= call.startThrough && !call.priorWaiting.includes(conv)) call.priorWaiting.push(conv);
+        if (at >= call.at && (!call.ended || at <= call.ended.at)) call.arrived = true;
+      }
+      if (row.seq <= (state.seenThrough || 0)) continue;
       state.waiting.push({ provider: p.provider, conversation_id: p.conversation_id, at, seq: row.seq, refusals: 0, released: false });
-      for (const call of Object.values(state.calls)) if (at >= call.at) call.arrived = true;
     } else {
       if (!identifier(p.session)) throw new Error('invalid_outbound_session');
-      if (own.has(hash(p.session))) state.waiting = state.waiting.filter(w => key(w) !== key(p) || w.at > at);
+      if (own.has(hash(p.session))) {
+        state.waiting = state.waiting.filter(w => key(w) !== key(p) || w.at > at);
+        for (const call of Object.values(state.calls)) if (call.priorWaiting && row.seq <= call.startThrough) call.priorWaiting = call.priorWaiting.filter(c => c !== key(p));
+      }
     }
   }
   state.sessions = [...own];
@@ -181,7 +256,10 @@ function decide(state, input, options) {
   const id = hash(`${session}:${event}:${token}`);
   if (state.receipts[id]) return state.receipts[id].output;
   let output = {};
-  if (event === 'Stop') state.waiting = [];
+  if (event === 'Stop') {
+    state.seenThrough = Math.max(state.seenThrough || 0, options.fence ?? state.cursor?.seq ?? Math.max(0, ...state.waiting.map(w => w.seq)));
+    state.waiting = state.waiting.filter(w => w.seq > state.seenThrough);
+  }
   else if (event === 'PreToolUse') {
     if (!identifier(input.tool_use_id) || !identifier(input.tool_name)) throw new Error('invalid_tool_input');
     state.turn = hash(input.tool_use_id);
@@ -198,7 +276,7 @@ function decide(state, input, options) {
       }
       if (mode === 'enforce') output = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: refusal(byConversation, now) } };
     }
-    if (!output.hookSpecificOutput) state.calls[hash(`${session}:${input.tool_use_id}`)] = { at: now, tool: input.tool_name, waiting: state.waiting.length > 0, arrived: false };
+    if (!output.hookSpecificOutput) state.calls[hash(`${session}:${input.tool_use_id}`)] = { at: now, tool: input.tool_name, waiting: state.waiting.length > 0, arrived: false, startThrough: options.fence ?? state.cursor?.seq ?? 0, seenThrough: state.seenThrough || 0, priorWaiting: caughtUp ? null : [...new Set(state.waiting.map(key))] };
   } else if (event === 'PostToolUse') {
     if (!identifier(input.tool_use_id)) throw new Error('invalid_tool_input');
     const callKey = hash(`${session}:${input.tool_use_id}`);
@@ -206,14 +284,21 @@ function decide(state, input, options) {
     if (call) {
       const elapsed = Number.isFinite(input.duration_ms) ? input.duration_ms : now - call.at;
       if (elapsed < 0) throw new Error('clock_moved_backwards');
-      if (elapsed > waitMs) state.log.push({ type: 'long_call', at: now, tool: call.tool, seconds: elapsed / 1000, waiting: call.waiting || call.arrived });
-      delete state.calls[callKey];
+      call.ended = { at: now, through: options.fence || state.cursor?.seq || 0, elapsed, waitMs };
+      finishCalls(state);
     }
   } else throw new Error('unknown_hook_event');
   state.receipts[id] = { at: now, output };
   for (const [k, v] of Object.entries(state.receipts)) if (now - v.at > LIMITS.age) delete state.receipts[k];
   for (const [k, v] of Object.entries(state.calls)) if (now - v.at > LIMITS.age) delete state.calls[k];
   return output;
+}
+function finishCalls(state) {
+  for (const [id, call] of Object.entries(state.calls)) {
+    if (!call.ended || (state.cursor?.seq || 0) < call.ended.through) continue;
+    if (call.ended.elapsed > call.ended.waitMs) state.log.push({ type: 'long_call', at: call.ended.at, tool: call.tool, seconds: call.ended.elapsed / 1000, waiting: (call.priorWaiting ? call.priorWaiting.length > 0 : call.waiting) || call.arrived });
+    delete state.calls[id];
+  }
 }
 
 function stateDir(city) { return path.join(city, '.gc', 'reachable'); }
@@ -247,32 +332,26 @@ function json(file, fallback) {
 function writeJSON(file, value) { atomic(file, JSON.stringify(value, null, 2) + '\n'); }
 function withLock(city, action) {
   prepare(city);
-  const file = path.join(stateDir(city), 'lock.json');
-  const recovery = path.join(stateDir(city), 'recovery.json');
-  const create = () => fs.writeFileSync(file, JSON.stringify({ pid: process.pid }), { flag: 'wx', mode: 0o600 });
-  // Serialize stale-lock recovery too: otherwise two processes could both
-  // observe a dead owner, and one could unlink the other's fresh lock.
+  const dir = stateDir(city);
+  const name = `lock-${process.pid}-${crypto.randomBytes(12).toString('hex')}.json`;
+  const file = path.join(dir, name);
+  // Nonblocking bakery tickets: each invocation owns a unique filename.
+  // Recovery only unlinks dead owners' unique names, never a shared guard.
+  const peers = () => fs.readdirSync(dir).filter(n => /^lock-\d+-[\w-]+\.json$/.test(n) && n !== name).flatMap(n => {
+    const p = path.join(dir, n), owner = json(p, null);
+    if (!owner) return [];
+    if (!Number.isInteger(owner.pid) || owner.pid <= 0 || !Number.isSafeInteger(owner.ticket)) throw new Error('invalid_lock');
+    try { process.kill(owner.pid, 0); }
+    catch (e) { if (e.code === 'ESRCH') { try { fs.unlinkSync(p); } catch (e) { if (e.code !== 'ENOENT') throw e; } return []; } }
+    return [{ ...owner, name: n }];
+  });
+  writeJSON(file, { pid: process.pid, ticket: 0 });
   try {
-    try {
-      create();
-      if (fs.existsSync(recovery)) { fs.unlinkSync(file); throw new Error('state_busy'); }
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      fs.writeFileSync(recovery, JSON.stringify({ pid: process.pid }), { flag: 'wx', mode: 0o600 });
-      try {
-        const old = json(file, null);
-        if (old) {
-          if (!Number.isInteger(old.pid) || old.pid <= 0) throw new Error('invalid_lock');
-          let alive = true;
-          try { process.kill(old.pid, 0); } catch (e) { if (e.code === 'ESRCH') alive = false; }
-          if (alive) throw new Error('state_busy');
-          fs.unlinkSync(file);
-        }
-        create();
-      } finally { fs.unlinkSync(recovery); }
-    }
-  } catch (e) { throw new Error(e.code === 'EEXIST' ? 'state_busy' : e.message); }
-  try { return action(); } finally { fs.unlinkSync(file); }
+    const ticket = Math.max(0, ...peers().map(p => p.ticket)) + 1;
+    writeJSON(file, { pid: process.pid, ticket });
+    if (peers().some(p => !p.ticket || p.ticket < ticket || (p.ticket === ticket && p.name < name))) throw new Error('state_busy');
+    return action();
+  } finally { fs.unlinkSync(file); }
 }
 function saveState(city, state) {
   writeJSON(path.join(stateDir(city), 'state.json'), state);
@@ -302,6 +381,7 @@ function syncEvents(state, options) {
   const result = readEvents(options.city, state.cursor, options);
   reduceEvents(state, result.rows, options);
   state.cursor = result.cursor;
+  finishCalls(state);
   return result.caughtUp;
 }
 function errorLog(city, now, error) {
@@ -311,12 +391,9 @@ function errorLog(city, now, error) {
   const code = known.includes(error.message) ? error.message : 'measurement_failed';
   try {
     prepare(city);
-    const file = path.join(stateDir(city), 'errors.jsonl');
-    regular(file, true);
-    let rows = [];
-    if (fs.existsSync(file)) rows = fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(s => JSON.parse(s)).filter(r => now - r.at <= LIMITS.history);
-    rows.push({ type: 'error', at: now, code });
-    atomic(file, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+    // Unique atomic records also work when the error is lock contention.
+    const file = path.join(stateDir(city), `error-${now}-${crypto.randomBytes(12).toString('hex')}.jsonl`);
+    atomic(file, JSON.stringify({ type: 'error', at: now, code }) + '\n');
   } catch { /* A broken state directory must never prevent a tool call. */ }
 }
 function runHook(input, options = {}) {
@@ -330,12 +407,23 @@ function runHook(input, options = {}) {
     if (mode === 'off') return {};
     return withLock(o.city, () => {
       const state = loadState(o.city);
+      let fence = ['Stop', 'PostToolUse'].includes(input.hook_event_name) ? eventFence(o.city) : undefined;
       const caughtUp = syncEvents(state, o);
+      if (!caughtUp && input.hook_event_name === 'PreToolUse') fence = eventFence(o.city);
       const manifest = json(path.join(stateDir(o.city), 'install.json'), { aliases: [] });
-      const result = decide(state, input, { ...o, mode, aliases: manifest.aliases, caughtUp });
+      const beforeDecision = structuredClone(state);
+      const result = decide(state, input, { ...o, mode, aliases: manifest.aliases, caughtUp, fence });
       checkDeadline(o.start);
-      saveState(o.city, state);
-      checkDeadline(o.start);
+      try { saveState(o.city, state); checkDeadline(o.start); }
+      catch (error) {
+        // A save can itself cross the deadline. Persist the actual fail-open
+        // outcome before releasing the lock, including duplicate accounting.
+        if (result.hookSpecificOutput) {
+          decide(beforeDecision, input, { ...o, mode: 'observe', aliases: manifest.aliases, caughtUp: false, fence });
+          saveState(o.city, beforeDecision);
+        }
+        throw error;
+      }
       return result;
     });
   } catch (error) { if (o) errorLog(o.city, o.now, error); return {}; }
@@ -345,21 +433,50 @@ function localGC(o, args) {
   // city's API. They run only from explicit commands, never the hot hook.
   return execFileSync('gc', ['--city', o.city, ...args], { cwd: o.city, env: o.env, encoding: 'utf8', timeout: 1500, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 }
-function aliasesFromImports(text, city) {
+function remoteParts(source) {
+  const clean = source.trim().replace(/#[^#]*$/, '');
+  const github = /^(?:(https?:\/\/))?github\.com\/([^/]+)\/([^/]+)\/(tree|blob)\/[^/]+(?:\/(.*))?$/.exec(clean);
+  if (github) return { clone: `${github[1] || ''}github.com/${github[2]}/${github[3]}.git`, sub: github[4] === 'blob' ? (github[5] || '').replace(/(?:^|\/)pack\.toml$/, '') : github[5] || '' };
+  const start = clean.includes('://') ? clean.indexOf('://') + 3 : 0;
+  const split = clean.indexOf('//', start);
+  let clone = (split < 0 ? clean : clean.slice(0, split)).replace(/\/+$/, '');
+  if (clone.startsWith('github.com/')) clone = 'https://' + clone;
+  return { clone, sub: split < 0 ? '' : clean.slice(split + 2).replace(/^\/+|\/+$/g, '') };
+}
+function lockedCommits(city) {
+  const file = path.join(city, 'packs.lock');
+  if (!fs.existsSync(file)) return {};
+  const commits = {}; let source = '';
+  // packs.lock is gc-generated TOML, with Go-quoted source keys and commits.
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    const section = /^\s*\[packs\.("(?:[^"\\]|\\.)*")\]\s*$/.exec(line);
+    if (section) { source = JSON.parse(section[1]); continue; }
+    if (/^\s*\[/.test(line)) source = '';
+    const commit = /^\s*commit\s*=\s*"([a-zA-Z0-9_-]+)"\s*$/.exec(line);
+    if (source && commit) commits[source] = commit[1];
+  }
+  return commits;
+}
+function aliasesFromImports(text, city, env = process.env) {
   const aliases = [];
+  const commits = lockedCommits(city);
   for (const line of text.trim().split('\n')) {
     const [alias, source] = line.split('\t');
     if (!alias || alias === '(transitive)' || !source) continue;
-    let pack;
-    if (/^https?:/.test(source)) pack = source.replace(/#.*$/, '').replace(/\/$/, '').split('/').at(-1);
-    else {
-      // Local paths need not end with a pack's name.
-      const file = path.join(path.resolve(city, source), 'pack.toml');
-      if (fs.existsSync(file)) {
-        const text = fs.readFileSync(file, 'utf8');
-        pack = /\[pack\]([\s\S]*?)(?=\n\[|$)/.exec(text)?.[1].match(/^name\s*=\s*['"]([^'"]+)['"]/m)?.[1];
-      } else pack = path.basename(source);
+    let dir = path.resolve(city, source);
+    if (/^(git@|ssh:\/\/|https?:\/\/|file:\/\/|github\.com\/)/.test(source)) {
+      const commit = commits[source];
+      // Bundled non-channel imports may have no lock or use a synthetic
+      // cache. They grant no exemption; inspect only installed manifests.
+      if (!commit) continue;
+      const { clone, sub } = remoteParts(source);
+      const gcHome = env.GC_HOME || (env.HOME && path.join(env.HOME, '.gc'));
+      if (!gcHome) throw new Error('import_resolution_unavailable');
+      dir = path.join(gcHome, 'cache/repos', hash(clone + commit), sub);
+      if (!fs.existsSync(path.join(dir, 'pack.toml'))) continue;
     }
+    const manifest = fs.readFileSync(path.join(dir, 'pack.toml'), 'utf8');
+    const pack = /^\s*\[pack\]\s*(?:#[^\n]*)?\n([\s\S]*?)(?=^\s*\[|$(?![\s\S]))/m.exec(manifest)?.[1].match(/^\s*name\s*=\s*['"]([^'"]+)['"]\s*(?:#.*)?$/m)?.[1];
     if (POLICY.packs.includes(pack)) aliases.push(alias);
   }
   return [...new Set(aliases)];
@@ -394,7 +511,7 @@ function install(options = {}) {
     const copy = path.join(fs.realpathSync(stateDir(o.city)), 'hook.cjs');
     const code = fs.readFileSync(source);
     const command = `${shellQuote(process.execPath)} ${shellQuote(copy)} --hook --city ${shellQuote(fs.realpathSync(o.city))}`;
-    const aliases = aliasesFromImports(o.imports ?? localGC(o, ['import', 'list']), o.city);
+    const aliases = aliasesFromImports(o.imports ?? localGC(o, ['import', 'list']), o.city, o.env);
     const entries = {};
     const existed = old?.existed || Object.fromEntries(EVENTS.map(e => [e, Object.hasOwn(value.hooks || {}, e)]));
     value.hooks ||= {};
@@ -405,9 +522,9 @@ function install(options = {}) {
       let matcher = existing?.matcher || '^(?:.*)$';
       if (!existing) {
         while (value.hooks[event].some(e => e.matcher === matcher)) matcher = `(?:${matcher})`;
-        value.hooks[event].push({ matcher, hooks: [{ type: 'command', command, timeout: 2 }] });
+        value.hooks[event].push({ matcher, hooks: [{ type: 'command', command, timeout: 5 }] });
       } else {
-        existing.hooks = existing.hooks.map(h => h.command === owned.command ? { ...h, command, timeout: 2 } : h);
+        existing.hooks = existing.hooks.map(h => h.command === owned.command ? { ...h, command, timeout: 5 } : h);
       }
       entries[event] = { matcher, command };
     }
@@ -451,7 +568,7 @@ function registration(o) {
     if (!manifest) return { registered: false, current: false };
     const { value } = settings(o.city);
     const registered = EVENTS.every(event => value.hooks?.[event]?.some(e => e.matcher === manifest.entries[event].matcher && e.hooks?.some(h => h.type === 'command' && h.command === manifest.entries[event].command)));
-    const current = hash(fs.readFileSync(manifest.source)) === hash(fs.readFileSync(path.join(stateDir(o.city), 'hook.cjs')));
+    const current = hash(fs.readFileSync(o.source || __filename)) === hash(fs.readFileSync(path.join(stateDir(o.city), 'hook.cjs')));
     return { registered, current };
   } catch { return { registered: false, current: false }; }
 }
@@ -466,7 +583,7 @@ function doctor(options = {}) {
   try { const fd = fs.openSync(path.join(o.city, '.gc/events.jsonl'), 'r'); fs.closeSync(fd); } catch { errors.push('event_log_unreadable'); }
   try {
     const prompt = o.prompt ?? localGC(o, ['prime', o.agent, '--strict']);
-    const source = o.source || json(path.join(stateDir(o.city), 'install.json'), {}).source || __filename;
+    const source = o.source || __filename;
     const fragment = fs.readFileSync(path.join(path.dirname(source), 'template-fragments/reachable.template.md'), 'utf8').split('\n').slice(1, -2).join('\n');
     if (!fragment || !prompt.includes(fragment)) errors.push('prompt_fragment_missing');
   } catch { errors.push('prompt_unreadable'); }

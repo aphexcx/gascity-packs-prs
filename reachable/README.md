@@ -114,6 +114,10 @@ with `would_refuse` records. The hook fails open on measurement errors, corrupt
 state, a backwards clock, state contention, or a measurement over two seconds.
 It suppresses refusals until initial event-log catch-up completes. The cursor
 then reads only appended bytes; a partial final row waits for the next call.
+Archives replay in bounded decoded slices, including the window before a
+rotated archive is published. Stop records a sequence fence so unread older
+messages stay seen. The registered five-second harness timeout leaves cleanup
+time after the internal two-second measurement deadline.
 
 PostToolUse only records calls longer than 30 seconds: tool name, duration,
 and whether someone waited at the start or arrived during the call. It never
@@ -131,7 +135,7 @@ freshness, event-log readability, and the rendered mayor prompt via local
 
 All state is in `.gc/reachable/`: mode, the installed script and its manifest,
 the atomic cursor/waiting/exemption transaction in `state.json`, a derived
-`log.jsonl`, and `errors.jsonl`. Files are 0600 in a 0700 directory and replaced
+`log.jsonl`, and unique `error-*.jsonl` records. Files are 0600 in a 0700 directory and replaced
 using a temporary file and rename. Message text and actor names are discarded;
 session and tool-use identities are hashed. Settings backups remain here too.
 

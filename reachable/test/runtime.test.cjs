@@ -12,7 +12,8 @@ function fixture(t) {
   fs.mkdirSync(path.join(city, '.gc'));
   fs.writeFileSync(path.join(city, '.gc/events.jsonl'), JSON.stringify({ seq: 1, type: 'extmsg.inbound', ts: new Date(NOW - 60000).toISOString(), payload: { provider: 'example', conversation_id: 'room-example', target_agent: 'mayor', actor: 'PRIVATE NAME', text: 'PRIVATE TEXT' } }) + '\n');
   const prompt = fs.readFileSync(path.join(__dirname, '../template-fragments/reachable.template.md'), 'utf8').split('\n').slice(1, -2).join('\n');
-  const options = { city, now: NOW, env: { GC_AGENT: 'mayor', GC_SESSION_ID: 'session-example' }, imports: 'talk-example\t../slack-full\t\t(path)\nreachable\t../reachable\t\t(path)', prompt, source: path.resolve(__dirname, '../reachable.cjs') };
+  for (const name of ['slack-full', 'reachable']) { const dir = path.join(city, name); fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, 'pack.toml'), `[pack]\nname = "${name}"\n`); }
+  const options = { city, now: NOW, env: { GC_AGENT: 'mayor', GC_SESSION_ID: 'session-example' }, imports: 'talk-example\t./slack-full\t\t(path)\nreachable\t./reachable\t\t(path)', prompt, source: path.resolve(__dirname, '../reachable.cjs') };
   return { city, options, stateFile: path.join(city, '.gc/reachable/state.json') };
 }
 const input = id => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: id, tool_input: { command: 'make test' } });
@@ -51,7 +52,7 @@ test('11: unreadable log, invalid state and backwards clock fail open and log on
   const f = fixture(t); command('mode', ['enforce'], f.options);
   fs.writeFileSync(f.stateFile, 'invalid');
   assert.deepEqual(runHook(input('broken'), f.options), {});
-  assert.equal(fs.readFileSync(path.join(f.city, '.gc/reachable/errors.jsonl'), 'utf8').trim().split('\n').length, 1);
+  assert.equal(fs.readdirSync(path.dirname(f.stateFile)).filter(n => n.startsWith('error-')).length, 1);
   fs.writeFileSync(f.stateFile, JSON.stringify(initialState()));
   runHook(input('first'), f.options);
   assert.deepEqual(runHook(input('backwards'), { ...f.options, now: NOW - 1000 }), {});
