@@ -1,0 +1,61 @@
+texts and tests at e385cffb2dad3a13df062d95e3e6a89a774e257b
+uv run --offline --with pytest python -m pytest -p no:cacheprovider tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -q -rA
+......................................................                   [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[gchat]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[slack]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_five_in_order[whatsapp]
+PASSED tests/test_texting_rules.py::test_the_five_rows_are_the_same_in_every_text
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[gchat]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[slack]
+PASSED tests/test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[whatsapp]
+PASSED tests/test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-after a blank line at the end of the list]
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-at the end of the section]
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[gchat-before the first rule]
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-after a blank line at the end of the list]
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-at the end of the section]
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[slack-before the first rule]
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-after a blank line at the end of the list]
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-at the end of the section]
+PASSED tests/test_texting_rules.py::test_a_fifth_rule_anywhere_in_the_section_fails[whatsapp-before the first rule]
+PASSED tests/test_texting_rules.py::test_every_react_command_names_its_message[gchat]
+PASSED tests/test_texting_rules.py::test_every_react_command_names_its_message[slack]
+PASSED tests/test_texting_rules.py::test_every_react_command_names_its_message[whatsapp]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[```\ngc slack react [--emoji NAME] [--session SID]\n```\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[React first: `gc slack react --emoji eyes`.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[Run `gc slack react` on the message.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[React with gc slack react --emoji mag before you start.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[```\ngc slack react --conversation-id Cxxx --emoji eyes\n```\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[React with `gc gchat react --emoji \U0001f440`.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[React first with `gc slack\nreact --emoji eyes`.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[React first with gc slack\nreact --emoji eyes.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_catches_a_form_that_names_no_message[Run `gc gchat react` first. When `gc gchat react` fails, say it in words.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_passes_a_form_that_names_its_message[When `gc slack react` fails, the reaction was not placed.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_passes_a_form_that_names_its_message[When `gc gchat\nreact` fails, the reaction was not placed.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_passes_a_form_that_names_its_message[```\ngc slack react --conversation-id Cxxx \\\n  --message-id 1234.5678 --emoji eyes\n```\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_passes_a_form_that_names_its_message[Run `gc slack react --conversation-id=Cxxx --message-id=1234.5678 --emoji eyes`.\n]
+PASSED tests/test_texting_rules.py::test_the_react_check_passes_a_form_that_names_its_message[React with `gc gchat react --message spaces/A/messages/B --emoji \U0001f440`.\n]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-an unindented line straight after rule 2]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a paragraph between rules 2 and 3]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a starred bullet at the end of the section]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[gchat-a numbered bullet after a blank line at the end of the list]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-an unindented line straight after rule 2]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a paragraph between rules 2 and 3]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a starred bullet at the end of the section]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[slack-a numbered bullet after a blank line at the end of the list]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-an unindented line straight after rule 2]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a paragraph between rules 2 and 3]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a starred bullet at the end of the section]
+PASSED tests/test_texting_rules.py::test_a_line_slipped_among_the_rules_fails[whatsapp-a numbered bullet after a blank line at the end of the list]
+PASSED tests/test_texting_rules.py::test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react
+PASSED tests/test_texting_rules.py::test_a_reaction_that_is_not_placed_is_said_in_words[gchat-When `gc gchat react` fails,]
+PASSED tests/test_texting_rules.py::test_a_reaction_that_is_not_placed_is_said_in_words[slack-The command prints a receipt. When it shows `"delivered": false`,]
+PASSED tests/test_texting_rules.py::test_google_chat_skill_has_the_table_and_no_free_choice
+PASSED tests/test_texting_rules.py::test_whatsapp_skill_says_the_mayor_cannot_react_there_yet
+PASSED tests/test_texting_rules.py::test_the_older_short_reply_lines_stay
+PASSED slack-full/tests/test_slack_prompt_contract.py::test_thread_ambient_response_gate_and_native_identity_contract
+PASSED slack-full/tests/test_slack_prompt_contract.py::test_reaction_vocabulary_contract
+54 passed in 0.04s
+rc=0
