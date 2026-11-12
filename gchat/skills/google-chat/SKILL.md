@@ -67,6 +67,9 @@ same on Slack, Google Chat and WhatsApp:
   are still fine for warmth or for a topic, but never in place of one of the
   five.
 
+When `gc gchat react` fails, the reaction was not placed, so say the same
+thing in words.
+
 - Reply once per message. Do not follow up in the same thread unless you
   have new information or someone responds to you.
 - **Nobody reads your terminal.** People reach you only through Chat. A

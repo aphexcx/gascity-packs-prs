@@ -116,6 +116,24 @@ def test_the_rules_are_the_same_in_every_text() -> None:
         assert rules_block(read(name)) == gchat, f"{name} differs from gchat"
 
 
+@pytest.mark.parametrize(
+    ("name", "failure"),
+    [
+        ("gchat", "When `gc gchat react` fails,"),
+        ("slack", 'The command prints a receipt. When it shows `"delivered": false`,'),
+    ],
+)
+def test_a_reaction_that_is_not_placed_is_said_in_words(name: str, failure: str) -> None:
+    """The rules make a reaction the whole answer, so a failed one must not be silent.
+
+    gc slack react exits 0 with "delivered": false when Slack refuses the
+    reaction (a company DM the switchboard token cannot see, a message that
+    is gone); gc gchat react exits non-zero with the HTTP error.
+    """
+    flat = normalized(read(name))
+    assert f"{failure} the reaction was not placed, so say the same thing in words." in flat
+
+
 def test_google_chat_skill_has_the_table_and_no_free_choice() -> None:
     text = read("gchat")
     flat = normalized(text)

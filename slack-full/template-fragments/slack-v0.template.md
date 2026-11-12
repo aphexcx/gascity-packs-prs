@@ -89,6 +89,9 @@ The first form reacts to the latest message routed to your session, with
 id and its timestamp. Use the second when another message may have reached
 you since.
 
+The command prints a receipt. When it shows `"delivered": false`, the
+reaction was not placed, so say the same thing in words.
+
 ## How to reply
 
 Plain assistant output stays private to the session and does NOT go to
