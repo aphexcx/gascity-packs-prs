@@ -161,8 +161,12 @@ Failed or interrupted attempts retry with the same durable key after waits
 of 1, 2, 4 and 8 minutes, subject to the next eligible wake for follow-ups.
 There are at most five delivery/recovery attempts per raise. A failed history
 lookup also consumes an attempt, so an unavailable history service cannot
-cause an endless retry loop. Old failed raises retain their keys and attempt
-counts. Ticks prioritize unattempted raises, then the least recently
+cause an endless retry loop. If a follow-up's wake closes before sending,
+that tick leaves its attempt count and backoff timestamp unchanged, including
+after a successful empty history lookup. The empty lookup stays reconciled
+and is not repeated on the next eligible tick.
+Old failed raises retain their keys and attempt counts. Ticks prioritize
+unattempted raises, then the least recently
 attempted, so slow failures cannot starve later mail. The 90-second tick
 budget (`TICK_BUDGET_MS`) includes lock waiting and reserves a full 15-second
 send timeout plus one second to save and release before starting another send

@@ -82,3 +82,110 @@ test('undeliverable reminders back off, stop, and remain visible to an operator'
   state = readState(h.dir);
   assert.equal(state.raises[0].attempts, 5);
 });
+
+test('a deferred follow-up preserves its final attempt for a healthy sender', async t => {
+  const h = fixture(t);
+  await h.edit(s => {
+    consent(s, owner, true, Date.parse('2026-11-09T00:00Z'));
+    hours(s, owner, { hours: 'daily 09:00-09:01', tz: 'UTC' });
+    addItem(s, owner, 'Invented pending task', Date.parse('2026-11-09T00:00Z'));
+  });
+  let sends = 0;
+  let lookups = 0;
+  const send = async () => { sends++; return { ok: sends === 5, unknown: false, error: 'invented spawn failure' }; };
+  const lookup = async () => { lookups++; return { ok: true, found: false }; };
+  for (const date of ['10', '11', '12', '13']) {
+    await tick({ dir: h.dir, now: Date.parse(`2026-11-${date}T09:00Z`), send, lookup });
+  }
+  const before = readState(h.dir).raises[0];
+  const boundary = Date.parse('2026-11-14T09:01Z');
+  let reads = 0;
+  await tick({ dir: h.dir, clock: () => ++reads <= 2 ? boundary - 100 : boundary, send, lookup });
+  const deferred = readState(h.dir);
+  const deferredText = statusText(status(deferred, boundary));
+  assert.equal(sends, 4);
+  assert.equal(lookups, 0);
+  await tick({ dir: h.dir, now: Date.parse('2026-11-15T09:00Z'), send, lookup });
+  const delivered = readState(h.dir);
+  t.diagnostic(`deferred attempts ${deferred.raises[0].attempts}; final state ${delivered.raises[0].state}; total sends ${sends}`);
+  assert.equal(deferred.raises[0].attempts, before.attempts);
+  assert.equal(deferred.raises[0].last_attempt_at, before.last_attempt_at);
+  assert.match(deferredText, /attempts 4;/);
+  assert.doesNotMatch(deferredText, /Mail delivery stopped/);
+  assert.equal(sends, 5);
+  assert.equal(delivered.raises[0].attempts, 5);
+  assert.equal(delivered.raises[0].state, 'sent');
+  assert.equal(delivered.items[0].state, 'raised');
+});
+
+test('wake-boundary deferrals preserve attempts and backoff with or without history lookup', async t => {
+  const cases = [
+    { name: 'hours close', hours: 'daily 09:00-09:01', boundary: '2026-11-10T09:01:00Z' },
+    { name: 'two-hour grace', hours: 'daily 09:00-23:00', boundary: '2026-11-10T11:00:00.001Z' },
+    { name: 'default afternoon cutoff', hours: null, boundary: '2026-11-10T17:02:00Z' },
+    { name: 'night cap', hours: 'daily 18:30-23:00', boundary: '2026-11-10T20:00:00Z' },
+  ];
+  for (const c of cases) for (const history of [false, true]) {
+    await t.test(`${c.name}: ${history ? 'not-found lookup' : 'no lookup'}`, async t => {
+      const h = fixture(t);
+      const boundary = Date.parse(c.boundary);
+      await h.edit(s => {
+        consent(s, owner, true, boundary - 2 * day);
+        hours(s, owner, c.hours ? { hours: c.hours, tz: 'UTC' } : { clear: true, tz: 'UTC' });
+        addItem(s, owner, 'Invented pending task', boundary - 2 * day);
+      });
+      let sends = 0;
+      let lookups = 0;
+      const send = async () => { sends++; return { ok: false, unknown: true, error: 'invented uncertain send' }; };
+      const lookup = async () => { lookups++; return { ok: true, found: false }; };
+      if (history) await tick({ dir: h.dir, now: boundary - 100 - day, send, lookup });
+      const before = readState(h.dir).raises[0] ?? { attempts: 0, last_attempt_at: null };
+      const sendsBefore = sends;
+      let reads = 0;
+      await tick({ dir: h.dir, clock: () => ++reads <= 2 ? boundary - 100 : boundary, send, lookup });
+      const deferred = readState(h.dir).raises[0];
+      assert.equal(sends, sendsBefore, 'the boundary must prevent sending');
+      assert.equal(lookups, history ? 1 : 0);
+      assert.equal(deferred.state, 'pending');
+      assert.equal(deferred.attempts, before.attempts, 'deferral must not spend an attempt');
+      assert.equal(deferred.last_attempt_at, before.last_attempt_at, 'deferral must not restart backoff');
+      if (history) assert.equal(deferred.delivery_unknown, false, 'a completed lookup must stay reconciled');
+      await tick({ dir: h.dir, now: boundary - 100 + day,
+        send: async () => { sends++; return { ok: true }; }, lookup });
+      const delivered = readState(h.dir).raises[0];
+      assert.equal(sends, sendsBefore + 1);
+      assert.equal(lookups, history ? 1 : 0, 'a refunded lookup must not repeat');
+      assert.equal(delivered.attempts, before.attempts + 1);
+      assert.equal(delivered.state, 'sent');
+    });
+  }
+});
+
+test('five real failed follow-up sends still back off and stop visibly', async t => {
+  for (const unknown of [false, true]) await t.test(`delivery unknown: ${unknown}`, async t => {
+    const h = fixture(t);
+    const morning = Date.parse('2026-11-10T09:00Z');
+    await h.edit(s => {
+      consent(s, owner, true, morning - day);
+      hours(s, owner, { hours: 'daily 09:00-20:00', tz: 'UTC' });
+      addItem(s, owner, 'Invented pending task', morning - day);
+    });
+    const attempts = [];
+    let lookups = 0;
+    for (let m = 0; m <= 30; m++) await tick({ dir: h.dir, now: morning + m * minute,
+      send: async () => { attempts.push(m); return { ok: false, unknown, error: 'invented send failure' }; },
+      lookup: async () => { lookups++; return { ok: true, found: false }; } });
+    const state = readState(h.dir);
+    assert.deepEqual(attempts, [0, 1, 3, 7, 15]);
+    assert.equal(lookups, unknown ? 4 : 0);
+    assert.equal(state.raises[0].attempts, 5);
+    assert.equal(state.raises[0].state, 'stopped');
+    assert.match(doctor(state, morning + 30 * minute).join('\n'), /delivery stopped.*operator action required/);
+    const text = statusText(status(state, morning + 30 * minute));
+    assert.match(text, /Mail delivery stopped: 1; operator action required/);
+    assert.match(text, /stopped; attempts 5;/);
+    let laterSends = 0;
+    await tick({ dir: h.dir, now: morning + day, send: async () => { laterSends++; return { ok: true }; } });
+    assert.equal(laterSends, 0);
+  });
+});

@@ -161,6 +161,7 @@ export async function tick({ dir, now, clock = now === undefined ? Date.now : ()
       if (raise.attempts >= MAX_DELIVERY_ATTEMPTS && !raise.delivery_unknown) {
         failed(raise, raise.error); save(); continue;
       }
+      const previousAttempt = { attempts: raise.attempts, last_attempt_at: raise.last_attempt_at };
       raise.last_attempt_at = attemptAt;
       const exhausted = raise.attempts >= MAX_DELIVERY_ATTEMPTS;
       // One last history lookup may confirm a crash during the final send;
@@ -180,7 +181,12 @@ export async function tick({ dir, now, clock = now === undefined ? Date.now : ()
         raise.delivery_unknown = false;
       }
       // A lookup may take time or cross the end of an allowed wake.
-      if (raise.kind === 'follow-up' && !recentWakes(state.owners[raise.conversation], clock()).length) { save(); continue; }
+      if (raise.kind === 'follow-up' && !recentWakes(state.owners[raise.conversation], clock()).length) {
+        // Preserve the retry budget and backoff when no send can follow.
+        // Keep a completed empty lookup reconciled so it is not repeated.
+        Object.assign(raise, previousAttempt);
+        save(); continue;
+      }
       if (raise.kind === 'follow-up') {
         const items = state.items.filter(i => raise.item_ids.includes(i.id) && !['done', 'dropped'].includes(i.state))
           .sort((a, b) => a.opened_at - b.opened_at);
