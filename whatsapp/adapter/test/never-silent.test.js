@@ -125,6 +125,71 @@ test('never-silent provider replay after progress expiry does not answer a newer
   });
 });
 
+test('never-silent lost-answer replay class', async (t) => {
+  for (const kind of ['text', 'captioned-file', 'update-template']) {
+    for (const cause of ['definite-failure', 'health', 'refused-connection-control']) {
+      await t.test(`${kind}: ${cause} across restart`, async (t) => {
+        const f = fixture(t);
+        const refused = cause === 'refused-connection-control';
+        const retrySession = refused ? 'original-session' : 'retry-session';
+        const targets = ['original-session', retrySession];
+        const originalAt = f.now;
+        const proofs = new Map();
+        let attempts = 0;
+        const gateway = {
+          window: async () => ({ windows: [{ conversation_id: 'example-owner', window_closes_at: f.now / 1000 + 3600 }] }),
+          upload: async () => ({ media_id: 'example-upload', expires_at: f.now / 1000 + 3600 }),
+          send: async (request) => {
+            attempts++;
+            if (attempts === 1 && refused) throw Object.assign(new Error('connection refused'), { noAnswer: true, notSent: true });
+            if (!proofs.has(request.idempotency_key)) proofs.set(request.idempotency_key, 'example-original-proof');
+            if (attempts === 1) throw Object.assign(new Error('accepted but answer lost'), { noAnswer: true });
+            return { message_id: proofs.get(request.idempotency_key) };
+          },
+        };
+        const acts = [];
+        const make = () => createPublisher({ stateDir: f.opts.stateDir, cityDir: f.opts.stateDir, gateway, clock: () => f.now,
+          notices: { status: () => f.e.status(), act: (...args) => { acts.push(args); f.e.act(...args); } },
+          gc: { recordOutbound: async () => ({ TranscriptEntry: { id: 'example-transcript' } }) },
+          ledger: { windowOpen: () => false },
+        });
+        const body = { session_id: 'original-session', conversation: { conversation_id: 'example-owner' }, to: 'example-owner',
+          text: 'example older reply', idempotency_key: 'example-original-key' };
+        if (kind === 'captioned-file') {
+          body.file = path.join(f.opts.stateDir, 'example.jpg');
+          fs.writeFileSync(body.file, Buffer.from('ffd8ffe000104a46494600010100000100010000ffd9', 'hex'));
+          body.caption = body.text;
+          delete body.text;
+        }
+        const call = (publisher, b) => kind === 'update-template'
+          ? publisher.handlePublishUpdate(JSON.stringify(b)) : publisher.handlePublish(JSON.stringify(b));
+        assert.equal((await call(make(), body)).json.delivered, false);
+        assert.equal(proofs.size, refused ? 0 : 1, 'first attempt reached the provider only in replay rows');
+        // Rebuild both components solely from their durable fake state.
+        f.restart();
+        const publisher = make();
+        f.now += 1000;
+        f.e.track({ id: 'example-new-inbound', conversation: 'example-owner', targets });
+        f.e.result('example-new-inbound', cause === 'definite-failure' ? 'failed' : 'delivered', targets);
+        f.now += 1000;
+        const retryAt = f.now;
+        assert.equal((await call(publisher, { ...body, session_id: retrySession })).json.delivered, true);
+        assert.equal(proofs.size, 1, 'same key produces exactly one provider send');
+        assert.equal(attempts, 2);
+        f.now += 180000;
+        if (cause === 'definite-failure') f.e.result('example-new-inbound', 'failed', targets);
+        else fs.writeFileSync(f.opts.healthFile, JSON.stringify({ state: 'session_down', since: new Date(f.now).toISOString(), checked_at: new Date(f.now).toISOString() }));
+        await f.e.poll();
+        assert.deepEqual([f.posts.length, f.mails.length], refused ? [0, 0] : [1, 1], 'only newly sent words answer the newer message');
+        assert.deepEqual(acts.at(-1), ['example-owner', 'original-session', refused ? retryAt : originalAt],
+          'replay retains the first uncertain attempt time and session; refused connections do not');
+        await f.e.poll();
+        assert.deepEqual([f.posts.length, f.mails.length], refused ? [0, 0] : [1, 1], 'one owner line and one operator mail');
+      });
+    }
+  }
+});
+
 function fixture(t, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'never-silent-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

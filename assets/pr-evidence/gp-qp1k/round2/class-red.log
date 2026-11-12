@@ -1,0 +1,188 @@
+✔ contract.test.js (48.499083ms)
+✔ conversation.test.js (47.937333ms)
+✔ deadack.test.js (46.035084ms)
+✔ evidence.test.js (47.177291ms)
+✔ files-out.test.js (46.637833ms)
+✔ gate.test.js (45.631375ms)
+✔ journal.test.js (44.959334ms)
+✔ keeper.test.js (46.483ms)
+✔ media.test.js (46.213ms)
+✔ never-silent-integration.test.js (46.486875ms)
+▶ never-silent lost-answer replay class
+  ✖ text: definite-failure across restart (123.964333ms)
+  ✖ text: health across restart (100.9205ms)
+  ✔ text: refused-connection-control across restart (132.394416ms)
+  ✖ captioned-file: definite-failure across restart (327.112917ms)
+  ✖ captioned-file: health across restart (322.30675ms)
+  ✔ captioned-file: refused-connection-control across restart (339.080083ms)
+  ✖ update-template: definite-failure across restart (146.226166ms)
+  ✖ update-template: health across restart (146.035291ms)
+  ✔ update-template: refused-connection-control across restart (149.126958ms)
+✖ never-silent lost-answer replay class (1788.774584ms)
+✔ outbound.test.js (46.764416ms)
+✔ pipeline.test.js (44.858667ms)
+✔ readings.test.js (44.289583ms)
+✔ recovery.test.js (47.56475ms)
+✔ render.test.js (36.769083ms)
+✔ restore.test.js (42.931667ms)
+✔ review.test.js (45.18175ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 20
+ℹ fail 7
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2072.211333
+
+✖ failing tests:
+
+test at never-silent.test.js:131:15
+✖ text: definite-failure across restart (123.964333ms)
+  AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
+  + actual - expected
+  
+    [
+  +   0,
+  +   0
+  -   1,
+  -   1
+    ]
+  
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 0, 0 ],
+    expected: [ 1, 1 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:131:15
+✖ text: health across restart (100.9205ms)
+  AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
+  + actual - expected
+  
+    [
+  +   0,
+  +   0
+  -   1,
+  -   1
+    ]
+  
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 0, 0 ],
+    expected: [ 1, 1 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:131:15
+✖ captioned-file: definite-failure across restart (327.112917ms)
+  AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
+  + actual - expected
+  
+    [
+  +   0,
+  +   0
+  -   1,
+  -   1
+    ]
+  
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 0, 0 ],
+    expected: [ 1, 1 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:131:15
+✖ captioned-file: health across restart (322.30675ms)
+  AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
+  + actual - expected
+  
+    [
+  +   0,
+  +   0
+  -   1,
+  -   1
+    ]
+  
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 0, 0 ],
+    expected: [ 1, 1 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:131:15
+✖ update-template: definite-failure across restart (146.226166ms)
+  AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
+  + actual - expected
+  
+    [
+  +   0,
+  +   0
+  -   1,
+  -   1
+    ]
+  
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 0, 0 ],
+    expected: [ 1, 1 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:131:15
+✖ update-template: health across restart (146.035291ms)
+  AssertionError [ERR_ASSERTION]: only newly sent words answer the newer message
+  + actual - expected
+  
+    [
+  +   0,
+  +   0
+  -   1,
+  -   1
+    ]
+  
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:183:16)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:131:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 0, 0 ],
+    expected: [ 1, 1 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

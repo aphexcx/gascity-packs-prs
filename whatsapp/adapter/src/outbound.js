@@ -245,6 +245,7 @@ export function createPublisher({
   // Successful primary evidence retains its original sender and time. Recovery
   // precedes notice polling and never attributes old words to a retry caller.
   const activityByProof = new Map();
+  const activityAttempts = new Map();
   const recoverActivity = notices?.status ? notices.status().enabled : Boolean(notices?.act);
   // This history is independent of the seven-day/count-bounded progress cache.
   // A gateway may still replay a proof after that cache has discarded its key.
@@ -256,23 +257,61 @@ export function createPublisher({
       for (const a of saved.activities ?? []) {
         if (validActivity(a)) activityByProof.set(`${a.conversation}\0${a.proof}`, a);
       }
+      for (const a of saved.attempts ?? []) {
+        if (typeof a.key === 'string' && validActivity({ ...a, proof: a.key })) activityAttempts.set(a.key, a);
+      }
     } catch (err) { if (err.code !== 'ENOENT') throw err; }
   }
-  function rememberActivity(activity) {
+  function saveActivity(activities = [...activityByProof.values()], attempts = [...activityAttempts.values()]) {
+    if (recoverActivity) writeFileAtomic(activityFile, `${JSON.stringify({ activities, attempts })}\n`);
+  }
+  function rememberActivity(activity, attemptKey) {
     const key = `${activity.conversation}\0${activity.proof}`;
     const original = activityByProof.get(key);
-    if (original) return original;
-    if (recoverActivity) writeFileAtomic(activityFile, `${JSON.stringify({ activities: [...activityByProof.values(), activity] })}\n`);
-    activityByProof.set(key, activity);
-    return activity;
+    if (original && !activityAttempts.has(attemptKey)) return original;
+    // Commit the proof and retire its pending attempt in the same durable write.
+    saveActivity(original ? [...activityByProof.values()] : [...activityByProof.values(), activity],
+      [...activityAttempts.values()].filter((a) => a.key !== attemptKey));
+    activityByProof.set(key, original ?? activity);
+    activityAttempts.delete(attemptKey);
+    return original ?? activity;
   }
   function restoreActivity(activity) {
     if (!validActivity(activity)) return;
     const original = rememberActivity(activity);
     notices?.act(original.conversation, original.session, original.at);
   }
-  function successfulActivity(conversation, session, proof) {
-    return rememberActivity({ conversation, session, proof, at: clock() });
+  async function sendWithActivity(request, conversation, session) {
+    const key = request.idempotency_key;
+    const previous = activityAttempts.get(key);
+    if (recoverActivity && !previous) {
+      const attempt = { key, conversation, session, at: clock() };
+      // A crash or a lost answer after dispatch must retain the first possible
+      // send's attribution, even if primary progress was never saved.
+      saveActivity([...activityByProof.values()], [...activityAttempts.values(), attempt]);
+      activityAttempts.set(key, attempt);
+    }
+    let answer;
+    try {
+      answer = await gateway.send(request);
+      if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
+    } catch (err) {
+      // A later refusal cannot disprove an earlier ambiguous attempt. In-flight,
+      // unknown, malformed and generic 5xx answers are also not a refusal.
+      const refused = err?.notSent || err?.config || err?.auth
+        || (!err?.noAnswer && !err?.malformed && err?.status >= 400 && err.status < 500 && err.status !== 408
+          && !['in_flight', 'outcome_unknown'].includes(err.json?.error))
+        || (err?.json?.error === 'meta_error' && err.json.meta_status >= 400 && err.json.meta_status < 500);
+      if (recoverActivity && !previous && refused) {
+        saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key));
+        activityAttempts.delete(key);
+      }
+      throw err;
+    }
+    const attempt = activityAttempts.get(key);
+    const activity = rememberActivity({ conversation, session: attempt?.session ?? session,
+      proof: str(answer.message_id), at: attempt?.at ?? clock() }, key);
+    return { answer, activity };
   }
   if (recoverActivity) {
     for (const activity of activityByProof.values()) restoreActivity(activity);
@@ -448,10 +487,10 @@ export function createPublisher({
       entry = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [], session_id: sessionId };
     }
     for (let i = entry.delivered; i < chunks.length; i++) {
-      let answer;
+      let answer, activity;
       try {
-        answer = await gateway.send({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] });
-        if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
+        ({ answer, activity } = await sendWithActivity({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] },
+          conversationId, entry.session_id ?? sessionId));
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
         if (err?.status === 422 && err.json?.error === 'window_closed') {
@@ -463,7 +502,6 @@ export function createPublisher({
       const messageId = str(answer.message_id);
       entry.message_ids[i] = messageId;
       entry.delivered = i + 1;
-      const activity = successfulActivity(conversationId, entry.session_id ?? sessionId, messageId);
       entry.activities ??= [];
       entry.activities.push(activity);
       progress.save(key, entry);
@@ -575,15 +613,18 @@ export function createPublisher({
           // The gateway checks that key before the window and grant. This sentinel
           // is not a gateway UUID handle, so even a window reopening during the
           // request cannot cause a new Meta send. No upload is made for the probe.
-          const sent = await gateway.send({ to, idempotency_key: `file-send:${operation}`, type: file.kind,
-            media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } });
+          const request = { to, idempotency_key: `file-send:${operation}`, type: file.kind,
+            media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } };
+          const { answer: sent, activity } = caption.trim()
+            ? await sendWithActivity(request, conversationId, entry.session_id ?? sessionId)
+            : { answer: await gateway.send(request) };
           killPoint('after-media-send', key);
           if (!str(sent?.message_id)) throw Object.assign(new Error('missing message id'), { noMessageId: true });
           entry.delivered = 1;
           entry.message_ids = [sent.message_id];
           entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
             metadata: { chunks: '1', message_ids: sent.message_id, file_name: file.name, file_bytes: String(file.size), file_sha256: file.sha256 } };
-          if (caption.trim()) entry.activity = successfulActivity(conversationId, entry.session_id ?? sessionId, sent.message_id);
+          if (activity) entry.activity = activity;
           progress.save(key, entry);
           killPoint('after-media-receipt', key);
           ledger?.noteSend?.(conversationId, { type: file.kind, message_id: sent.message_id, at: clock() });
@@ -672,16 +713,14 @@ export function createPublisher({
     const existing = progress.get(key);
     if (existing?.receipt) return { status: 200, json: existing.receipt };
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
-    let answer;
+    let answer, activity;
     try {
-      answer = await gateway.send({ to: recipient, idempotency_key: templateKey(key, to, template), type: 'template', template });
-      if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
+      ({ answer, activity } = await sendWithActivity({ to: recipient, idempotency_key: templateKey(key, to, template), type: 'template', template }, to, sessionId));
     } catch (err) {
       return failure(err, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
     }
     const messageId = str(answer.message_id);
     const at = clock();
-    const activity = successfulActivity(to, sessionId, messageId);
     let journaled = true;
     try {
       appendLine(updatesFile, {
