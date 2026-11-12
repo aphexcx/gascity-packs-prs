@@ -31,6 +31,38 @@ Native @mentions are exclusive: when someone is mentioned, only the
 mentioned agents wake — ambient readers do not. Everyone in the room can
 read every message in Slack; being silent is normal and fine.
 
+### Mention-only rooms
+
+In mention-only mode, only @mentions of your bot user, messages addressed to
+your handle, and replies in threads you posted in reach you. Read the rest of
+the room on demand with `gc slack read --conversation-id <channel>`.
+
+These deliveries name the sender, channel, message ts and thread ts, followed
+by the message and a reply command. The thread ts is the root to reply under;
+for a top-level message it equals the message ts. New thread context and
+attachments remain part of the delivered message.
+
+React with `writing_hand` when actively working on the message:
+
+```
+gc slack react --conversation-id <channel> --message-id <message_ts> --emoji writing_hand
+```
+
+Write your reply to a temporary file and use the delivery's explicit command:
+
+```
+gc slack publish-to-channel --conversation-id <channel> --thread-ts <thread_ts> --body-file <file>
+```
+
+This posts through the Slack adapter with your registered identity. You hold
+no channel binding for a mention-only room; this explicit destination is
+unaffected by any company-room pointer your session may carry. `gc slack react`,
+`reply-current --thread-current` and `upload --thread-current` can also resolve
+the delivery once gc has confirmed it, moments after it reaches you. The
+explicit channel and thread command works without waiting for that confirmation.
+Opt-in minimal reminders carry a `reply-to` id instead of the full command;
+use that id as `<thread_ts>` with the reminder's channel.
+
 ## When to respond
 
 - **targeted**: respond.
@@ -49,7 +81,7 @@ read every message in Slack; being silent is normal and fine.
 ## How to reply
 
 Plain assistant output stays private to the session and does NOT go to
-Slack. Every authenticated Slack reminder includes a `turn_ref`, channel id,
+Slack. Company-room and company-DM reminders include a `turn_ref`, channel id,
 thread root, and an exact `reply_command`. To send a human-visible reply,
 write the body to a file and copy that reminder's command exactly:
 

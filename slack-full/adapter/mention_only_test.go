@@ -207,12 +207,10 @@ func TestMentionOnly_BotMentionDelivered(t *testing.T) {
 	}
 	body := injections[0].body
 	for _, want := range []string{
-		"Slack mention-only room delivery: you were @mentioned",
-		"(Slack ts 100.000100)",
+		"Slack mention-only room delivery:",
+		"(ts=100.000100; thread=100.000100)",
 		"can you take this?",
-		"gc slack publish-to-channel \\\n    --conversation-id C1 \\\n    --thread-ts 100.000100 \\\n    --body-file <tmpfile>",
-		"gc slack react --conversation-id C1 --message-id 100.000100",
-		"gc slack read --conversation-id C1",
+		"Reply: gc slack publish-to-channel --conversation-id C1 --thread-ts 100.000100 --body-file <file>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("injection body missing %q:\n%s", want, body)
@@ -273,10 +271,7 @@ func TestMentionOnly_ThreadFollowUpOnOwnPostDelivered(t *testing.T) {
 		t.Fatalf("injections = %d, want 1 (thread follow-up on own post)", len(injections))
 	}
 	body := injections[0].body
-	if !strings.Contains(body, "a reply landed in a thread you posted in") {
-		t.Errorf("injection reason line missing:\n%s", body)
-	}
-	if !strings.Contains(body, "a reply in thread 100.000300") {
+	if !strings.Contains(body, "ts=100.000301; thread=100.000300") {
 		t.Errorf("injection must name the thread root:\n%s", body)
 	}
 	if !strings.Contains(body, "--thread-ts 100.000300") {

@@ -730,27 +730,12 @@ func mentionOnlyDeliveryClaimKey(sessionID, channel, ts string) string {
 	return "mention-only|" + sessionID + "|" + channel + "|" + ts
 }
 
-// mentionOnlyReasonLine renders the reason for the reminder head.
-func mentionOnlyReasonLine(reason, handle string) string {
-	switch reason {
-	case mentionOnlyReasonBotMention:
-		return "you were @mentioned"
-	case mentionOnlyReasonHandle:
-		if handle != "" {
-			return "@" + handle + " addressed you"
-		}
-		return "your handle was addressed"
-	case mentionOnlyReasonOwnThread:
-		return "a reply landed in a thread you posted in"
-	}
-	return reason
-}
-
 // formatMentionOnlyReminder renders the system reminder the lane injects.
 // Every interpolated field is neutralized so a workspace member cannot
 // forge a </system-reminder> boundary (cby.33 contract, same as the
-// alias dispatcher). Exposed for tests.
-func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, handle string) string {
+// alias dispatcher). Standing instructions live in slack-v0.template.md;
+// reason and handle are routing metadata, not repeated message text.
+func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, _, _ string) string {
 	msg = redactInboundMessage(msg)
 	attachmentsBlock := ""
 	if len(msg.Attachments) > 0 {
@@ -770,10 +755,8 @@ func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, h
 	if msg.Actor.DisplayName != "" && msg.Actor.DisplayName != msg.Actor.ID {
 		sender = msg.Actor.DisplayName + " (" + msg.Actor.ID + ")"
 	}
-	tsContext := neutralizeMarkupBoundaries(msg.ProviderMessageID)
 	replyThreadTS := msg.ProviderMessageID
 	if msg.ReplyToMessageID != "" && msg.ReplyToMessageID != msg.ProviderMessageID {
-		tsContext += ", a reply in thread " + neutralizeMarkupBoundaries(msg.ReplyToMessageID)
 		replyThreadTS = msg.ReplyToMessageID
 	}
 	channelID := neutralizeMarkupBoundaries(msg.Conversation.ConversationID)
@@ -782,35 +765,18 @@ func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, h
 	}
 	return fmt.Sprintf(
 		"<system-reminder>\n"+
-			"Slack mention-only room delivery: %s in channel %s (Slack ts %s) by user %s.\n"+
-			"\n"+
-			"Message text:\n"+
+			"Slack mention-only room delivery: %s in %s (ts=%s; thread=%s)\n\n"+
 			"%s\n"+
 			"%s"+
 			"\n"+
-			"You are bound to this room in mention-only mode: only @mentions of your bot user, messages addressed to your handle, and replies in threads you posted in reach you. Read the rest of the room on demand:\n"+
-			"  gc slack read --conversation-id %s\n"+
-			"\n"+
-			"React to this message with writing_hand to signal you are actively working on it:\n"+
-			"  gc slack react --conversation-id %s --message-id %s --emoji writing_hand\n"+
-			"\n"+
-			"To reply in that thread, write your reply to a tmpfile and run:\n"+
-			"  gc slack publish-to-channel \\\n"+
-			"    --conversation-id %s \\\n"+
-			"    --thread-ts %s \\\n"+
-			"    --body-file <tmpfile>\n"+
-			"\n"+
-			"This posts directly through the slack adapter with your registered identity (you hold no channel binding here, and it is unaffected by any company-room pointer your session may carry). `gc slack react`, `reply-current --thread-current` and `upload --thread-current` resolve this delivery on their own once gc has confirmed it (moments after it reaches you); the explicit --conversation-id/--thread-ts form above always works.\n"+
+			"Reply: gc slack publish-to-channel --conversation-id %s --thread-ts %s --body-file <file>\n"+
 			"</system-reminder>",
-		mentionOnlyReasonLine(reason, neutralizeMarkupBoundaries(handle)),
-		neutralizeMarkupBoundaries(channelDisplay(cfg, msg.Conversation.ConversationID)),
-		tsContext,
 		neutralizeMarkupBoundaries(sender),
+		neutralizeMarkupBoundaries(channelDisplay(cfg, msg.Conversation.ConversationID)),
+		neutralizeMarkupBoundaries(msg.ProviderMessageID),
+		neutralizeMarkupBoundaries(replyThreadTS),
 		neutralizeMarkupBoundaries(msg.Text),
 		attachmentsBlock,
-		channelID,
-		channelID,
-		neutralizeMarkupBoundaries(msg.ProviderMessageID),
 		channelID,
 		neutralizeMarkupBoundaries(replyThreadTS),
 	)

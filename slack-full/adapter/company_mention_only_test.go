@@ -149,8 +149,8 @@ func TestCompanyRoomMentionOnlyOutsiderReceivesOwnThreadFollowUp(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("own-thread follow-up injections = %d, want 1", len(got))
 	}
-	if !strings.Contains(got[0], "a reply landed in a thread you posted in") || !strings.Contains(got[0], "--thread-ts 1700000000.000600") {
-		t.Errorf("reminder must carry the own-thread reason and anchor at the root:\n%s", got[0])
+	if !strings.Contains(got[0], "ts=1700000000.000601; thread=1700000000.000600") || !strings.Contains(got[0], "--thread-ts 1700000000.000600") {
+		t.Errorf("reminder must carry both timestamps and anchor at the root:\n%s", got[0])
 	}
 }
 
