@@ -223,9 +223,9 @@ the service and offline recovery commands.
 | Command | Purpose |
 | --- | --- |
 | `gc gchat auth [--check]` | Sign in, or force a token refresh and print readiness and `identity_user_id`. |
-| `gc gchat publish --conversation-id spaces/AAAA --body-file reply.txt` | Send text, with optional `--thread`, `--session`, and `--idempotency-key`. |
-| `gc gchat reply-current --body-file reply.txt [--thread spaces/AAAA/threads/ID]` | Resolve the session's latest inbound conversation, then its latest active binding; `--conversation-id` overrides lookup. |
-| `gc gchat upload --conversation-id spaces/AAAA --file /absolute/path/file.txt` | Upload within the configured root; optional text, thread, session and idempotency key. |
+| `gc gchat publish --conversation-id spaces/AAAA --body-file post.txt` | Start a new topic that answers nothing; use `--to MESSAGE` to answer a message. |
+| `gc gchat reply-current --to spaces/AAAA/messages/ID --body-file reply.txt` | Answer with the command printed by the turn. The adapter takes the space and thread from that message. |
+| `gc gchat upload --to spaces/AAAA/messages/ID --file /absolute/path/file.txt` | Send a file in reply; use `--conversation-id spaces/AAAA` for a new topic. |
 | `gc gchat react --message spaces/AAAA/messages/ID --emoji '👍' [--remove]` | Add or remove the identity's reaction. |
 | `gc gchat read --space spaces/AAAA [--thread NAME] [--since RFC3339] [--limit 100]` | Read normalized history, newest last; limit 1–1000. |
 | `gc gchat spaces [--space spaces/AAAA --wake all\|mentions\|default]` | List spaces, or persist a wake override; `default` clears it. |
@@ -236,11 +236,21 @@ the service and offline recovery commands.
 Text commands accept `--body TEXT` or `--body-file PATH`. File contents retain
 trailing newlines and stream through the wrapper without becoming process
 arguments. The service accepts at most 4 MiB of JSON per command; escaping adds
-to the body size. `reply-current` uses `--session`, then `GC_SESSION_ID`, then
-a `GC_SESSION_NAME` lookup. Its inbound search uses the last two hours, at most
-500 events, and only the gchat provider; pass the target explicitly if older
-or outside that window. Pass `--thread` from the inbound turn to preserve its
-thread; conversation lookup alone does not infer the thread.
+to the body size. For an answer, run the reply command printed by that turn,
+with `--to MESSAGE`. The value is on its Message id line or in the `gchat:`
+item in its first line. A bare message name, its `gchat:` item, or the adapter's
+edit, deletion or reaction id all identify the same message. The adapter uses
+its recorded thread, or reads the message from Google when it has no record.
+An unknown or unreadable message is refused. `--top-level` sends in the same
+space without a thread. An additional `--conversation-id` or `--thread` must
+agree with the reference; a conflict is refused.
+
+`reply-current` requires `--to`, including for turns printed before this
+change. `publish` and `upload` require `--to` or `--conversation-id`; both
+may be supplied when they agree. Publishing with a space starts a new topic
+and answers nothing. Sends use `--session`, then `GC_SESSION_ID`, for transcript
+recording. If only a session name is available, pass its id with `--session`.
+The wrappers make no event, binding or session lookup.
 
 Publish, reply and upload print an idempotency key to stderr **before** sending.
 Keep that key and pass `--idempotency-key KEY` on every retry of the same send,
@@ -248,6 +258,12 @@ including after a timeout. A new invocation without a key creates a new send.
 JSON output reports `delivered` and `recorded` separately. Delivery failure
 exits nonzero; delivery without transcript recording exits zero with a warning.
 Inspect `reason`, `failure_kind` and `retry_after` (nanoseconds) before retrying.
+Every result also includes `conversation_id`, `space_name` (when known),
+`thread`, and `in_reply_to` (empty for a new topic). A delivered send writes
+one INFO line with its operation, destination ids, answered message, key,
+posted message id and session; the text is excluded. The ledger keeps the
+answered message and known space name. Rolling back drops those optional
+fields on the next save; existing delivery receipts and destinations survive.
 
 All network commands use `/v0/city/$GC_CITY_NAME/svc/gchat/<route>` at
 `GC_API_BASE_URL`; mutations include `X-GC-Request: gc-gchat`. Publish and reply
@@ -531,7 +547,7 @@ Use unquoted fenced blocks and simple emphasis when exact presentation matters.
 | `OAuth credential needs sign-in` | Run `gc gchat auth`; inspect the refresh failure reason. |
 | `subscription is SUSPENDED; expected ACTIVE` | Inspect status retry cause, API enablement, membership and Pub/Sub IAM; doctor stops until ACTIVE. |
 | `state restore/reset requires recovery-required health` | The live service is not in recovery mode; do not overwrite its ledger offline while it runs. |
-| `no inbound event and no binding found` | Pass `--conversation-id` and the turn's `--thread`, or use the correct session. |
+| `reply-current requires --to MESSAGE` | Use the Message id line or the `gchat:` item in the first line of the turn being answered. |
 | `delivery failed` | Inspect the JSON reason and retry hint; retry the same send with the printed key. |
 | `Delivered, but not recorded in gc` | Inspect binding/session and gc health; retry recording with the same key. |
 

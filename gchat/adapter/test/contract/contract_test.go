@@ -280,9 +280,10 @@ func TestRealGCContract(t *testing.T) {
 type gcProcess struct {
 	root, base string
 	client     *http.Client
+	env        []string
 }
 
-func startGC(t *testing.T, bin string) *gcProcess {
+func startGC(t *testing.T, bin string, capture ...bool) *gcProcess {
 	t.Helper()
 	bin, err := exec.LookPath(bin)
 	if err != nil {
@@ -318,6 +319,18 @@ func startGC(t *testing.T, bin string) *gcProcess {
 		"XDG_CONFIG_HOME=" + filepath.Join(root, "config"), "XDG_CACHE_HOME=" + filepath.Join(root, "cache"),
 		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "gitconfig"), "GIT_CONFIG_NOSYSTEM=1",
 		"DOLT_ROOT_PATH=" + root, "GC_BEADS=file", "GC_DOLT=skip", "GC_SESSION=fake", "GC_SUPERVISOR_LOG_TEE=0",
+	}
+	if len(capture) != 0 && capture[0] {
+		script := filepath.Join(root, "runtime.sh")
+		writeFile(t, script, captureRuntime)
+		if err := os.Chmod(script, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for i, value := range env {
+			if value == "GC_SESSION=fake" {
+				env[i] = "GC_SESSION=exec:" + script
+			}
+		}
 	}
 	configPath := filepath.Join(root, "city-input.toml")
 	writeFile(t, configPath, `[workspace]
@@ -378,7 +391,7 @@ provider = "file"
 	})
 	transport := &http.Transport{Proxy: nil}
 	t.Cleanup(transport.CloseIdleConnections)
-	gc := &gcProcess{root: root, base: fmt.Sprintf("http://127.0.0.1:%d", port), client: &http.Client{Transport: transport, Timeout: 10 * time.Second}}
+	gc := &gcProcess{root: root, base: fmt.Sprintf("http://127.0.0.1:%d", port), client: &http.Client{Transport: transport, Timeout: 10 * time.Second}, env: env}
 	deadline := time.NewTimer(20 * time.Second)
 	defer deadline.Stop()
 	ticker := time.NewTicker(50 * time.Millisecond)

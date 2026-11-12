@@ -65,7 +65,8 @@ type SubscriptionState struct {
 }
 
 type SpaceState struct {
-	Kind string `json:"kind"`
+	Kind        string `json:"kind"`
+	DisplayName string `json:"display_name,omitempty"`
 	// JoinedAt is the earliest history allowed by an observed membership. Old
 	// ledgers have no known join bound; never infer one from a moving cursor.
 	JoinedAt time.Time `json:"joined_at,omitzero"`
@@ -129,13 +130,15 @@ type ChangeState struct {
 }
 
 type SendState struct {
-	Key      string               `json:"key"`
-	Space    string               `json:"space"`
-	Thread   string               `json:"thread"`
-	Parts    []SendPart           `json:"parts"`
-	Receipt  *wire.PublishReceipt `json:"receipt"`
-	Recorded bool                 `json:"recorded"`
-	Created  time.Time            `json:"created"`
+	Key       string               `json:"key"`
+	InReplyTo string               `json:"in_reply_to,omitempty"`
+	SpaceName string               `json:"space_name,omitempty"`
+	Space     string               `json:"space"`
+	Thread    string               `json:"thread"`
+	Parts     []SendPart           `json:"parts"`
+	Receipt   *wire.PublishReceipt `json:"receipt"`
+	Recorded  bool                 `json:"recorded"`
+	Created   time.Time            `json:"created"`
 	// Optional command recovery data; old callback-only intents remain readable.
 	Request         *wire.PublishRequest `json:"request,omitempty"`
 	Upload          *SendUpload          `json:"upload,omitempty"`
