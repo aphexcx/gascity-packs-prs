@@ -9,8 +9,8 @@ promise, and the five keep their meanings. No rule about reply length is
 added, and none is removed.
 
 - Base: aphexcx/gascity-packs-prs main `28918336555abbeb4f52af3c05029e801c59cb6f`
-- Code head: `7a7faffd366950000fe7ea2286b94bd4dca71757`. The commit after it adds
-  only this directory.
+- Code head: `7a7faffd366950000fe7ea2286b94bd4dca71757`. The commits after it
+  touch only this directory.
 - Commits:
   - `df86b614` the tests (red)
   - `03e46996` the texts and changelogs
