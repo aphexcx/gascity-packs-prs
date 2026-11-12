@@ -126,6 +126,7 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
     let offset = 0;
     let rows = [];
     let seq = cursor?.seq || 0;
+    let archivedThrough = 0;
     let same = cursor && !cursor.archive && cursor.dev === stat.dev && cursor.ino === stat.ino && cursor.offset <= stat.size;
     if (same && cursor.offset) {
       const boundary = Buffer.alloc(Math.min(128, cursor.offset));
@@ -138,13 +139,18 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
       // GC publishes the new active log before the compressed archive. Even
       // a fresh cursor must wait for those captured sequences to be visible.
       const pending = names.some(name => {
-        const m = /^events\.jsonl\.rotating-(\d{8}T\d{6}Z)-seq-(\d+)-(\d+)$/.exec(name);
-        return m && Number(m[3]) > seq && !names.includes(`events.jsonl.archive-${m[1]}-seq-${m[2]}-${m[3]}.gz`);
+        const m = /^events\.jsonl\.rotating-(\d{8}T\d{6}Z)(?:-seq-(\d+)-(\d+))?$/.exec(name);
+        if (!m) return false;
+        if (m[3]) return Number(m[3]) > seq && !names.includes(`events.jsonl.archive-${m[1]}-seq-${m[2]}-${m[3]}.gz`);
+        // Legacy rotating names have no sequence suffix. Their matching
+        // published archive is the evidence that replay can proceed.
+        return !names.some(n => new RegExp(`^events\\.jsonl\\.archive-${m[1]}-seq-\\d+-\\d+\\.gz$`).test(n));
       });
       if (pending) return { rows: [], caughtUp: false, cursor: cursor || { dev: 0, ino: 0, offset: 0, seq: 0, boundary: '' } };
       const archives = names.flatMap(name => {
         const m = /^events\.jsonl\.archive-(\d{8}T\d{6}Z)-seq-(\d+)-(\d+)\.gz$/.exec(name);
         if (!m) return [];
+        archivedThrough = Math.max(archivedThrough, Number(m[3]));
         // Message expiry belongs in reduction. Older routing and wake rows
         // still identify the authors of replies delivered within 24 hours.
         return Number(m[3]) > seq ? [{ name, first: Number(m[2]) }] : [];
@@ -175,9 +181,14 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
     const appended = parseRows(bytes.subarray(0, end), seq, start);
     for (const row of appended) rows.push(row);
     if (appended.length) seq = appended.at(-1).seq;
-    // A newly created empty active file can precede archive publication.
-    // Keep the old identity until an active row proves sequence continuity.
-    if (!same && cursor && !appended.length) return { rows, caughtUp: false, cursor: { ...cursor, seq, archive: undefined } };
+    // Pending publication was checked before replay; parseRows checks each
+    // recovered sequence. An empty replacement needs no sentinel row once
+    // replay reaches the published tail (including the saved cursor).
+    if (!same && !appended.length) {
+      if (stat.size === 0) {
+        if (archivedThrough !== seq) throw new Error('event_sequence_gap');
+      } else if (cursor) return { rows, caughtUp: false, cursor: { ...cursor, seq, archive: undefined } };
+    }
     offset += end;
     const boundary = Buffer.alloc(Math.min(128, offset));
     fs.readSync(fd, boundary, 0, boundary.length, offset - boundary.length);
