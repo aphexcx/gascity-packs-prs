@@ -229,6 +229,7 @@ export function createPublisher({
   clock = () => Date.now(),
   log = () => {},
   ledger,
+  notices,
   onWindowClosed = () => {},
   updateLanguage = 'en_US',
   cityDir,
@@ -391,7 +392,7 @@ export function createPublisher({
     }
   }
 
-  async function sendChunks({ key, conversationId, to, text, textSha, conversation }) {
+  async function sendChunks({ key, conversationId, to, text, textSha, conversation, sessionId }) {
     const chunks = chunkText(text);
     let entry = progress.get(key);
     if (entry?.receipt) return { status: 200, json: entry.receipt };
@@ -415,6 +416,7 @@ export function createPublisher({
       entry.message_ids[i] = messageId;
       entry.delivered = i + 1;
       ledger?.noteSend?.(conversationId, { type: 'text', message_id: messageId, at: clock() });
+      notices?.act(conversationId, sessionId);
       if (entry.delivered < chunks.length) progress.save(key, entry);
     }
     entry.receipt = {
@@ -533,6 +535,7 @@ export function createPublisher({
           progress.save(key, entry);
           killPoint('after-media-receipt', key);
           ledger?.noteSend?.(conversationId, { type: file.kind, message_id: sent.message_id, at: clock() });
+          if (caption.trim()) notices?.act(conversationId, sessionId);
           return { status: 200, json: entry.receipt };
         } catch (err) {
           if (err?.status === 422 && err.json?.error === 'window_closed') ledger?.noteWindowClosed?.(conversationId, clock());
@@ -604,7 +607,7 @@ export function createPublisher({
       const answer = await once(key, { conversationId, textSha, endpoint: 'publish' }, conversation,
         () => chain(conversationId, () => toOwner(
           { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
-          (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation }),
+          (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation, sessionId }),
         )));
       return cli ? withTranscript(answer, { key, sessionId, conversationId, text: pub.text }) : answer;
     } catch (err) {
@@ -613,7 +616,7 @@ export function createPublisher({
     }
   }
 
-  async function sendUpdate({ key, to, recipient, text, textSha, conversation }) {
+  async function sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId }) {
     const existing = progress.get(key);
     if (existing?.receipt) return { status: 200, json: existing.receipt };
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
@@ -643,6 +646,7 @@ export function createPublisher({
     }
     // The send ledger only: a template never opens or extends the window.
     ledger?.noteSend?.(to, { type: 'template', message_id: messageId, at });
+    notices?.act(to, sessionId);
     const entry = {
       endpoint: 'update',
       conversation_id: to,
@@ -711,7 +715,7 @@ export function createPublisher({
       const answer = await once(key, { conversationId: to, textSha, endpoint: 'update' }, conversation,
         () => chain(to, () => toOwner(
           { conversationId: to, conversation, key, chunks: 1, delivered: 0 },
-          (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation })),
+          (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId })),
         )));
       return sessionId ? withTranscript(answer, { key, sessionId, conversationId: to, text: updateTranscriptText(text) }) : answer;
     } catch (err) {
@@ -720,7 +724,18 @@ export function createPublisher({
     }
   }
 
-  return { handlePublish, handlePublishUpdate };
+  // Owner notices deliberately bypass publish, transcript and reply bookkeeping.
+  // A refusal never becomes an update template or an automatic retry.
+  async function notice(conversationId, text, key) {
+    return chain(conversationId, async () => {
+      const recipient = await recipientFor(conversationId);
+      if (recipient.refused) throw new Error('never-silent recipient unavailable');
+      const answer = await gateway.send({ to: recipient.to, idempotency_key: key, type: 'text', text });
+      if (!str(answer?.message_id)) throw new Error('never-silent send uncertain');
+    });
+  }
+
+  return { handlePublish, handlePublishUpdate, notice };
 }
 
 // The outbound transcript line for an update: the template is Meta-side

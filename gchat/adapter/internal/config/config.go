@@ -104,10 +104,14 @@ type Settings struct {
 }
 
 type Config struct {
-	Secrets    Secrets
-	Settings   Settings
-	Endpoints  Endpoints
-	SecretsDir string
+	Secrets     Secrets
+	Settings    Settings
+	Endpoints   Endpoints
+	SecretsDir  string
+	NeverSilent struct {
+		Enabled                                    bool
+		HealthFile, OperatorContext, OperatorAgent string
+	}
 }
 
 // Load reads KEY=VALUE secrets and TOML settings, preserving Settings as decoded.
@@ -192,6 +196,19 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	setting := func(key string) string {
+		if v, present := os.LookupEnv(key); present {
+			return v
+		}
+		return values[key]
+	}
+	c.NeverSilent.Enabled = setting("NEVER_SILENT") == "on"
+	c.NeverSilent.HealthFile = setting("MAYOR_HEALTH_FILE")
+	if c.NeverSilent.HealthFile == "" {
+		c.NeverSilent.HealthFile = filepath.Join(city, ".gc", "mayor-health.json")
+	}
+	c.NeverSilent.OperatorContext = setting("NEVER_SILENT_OPERATOR_CONTEXT")
+	c.NeverSilent.OperatorAgent = setting("NEVER_SILENT_OPERATOR_AGENT")
 	mediaDir := c.Settings.Media.InboundDir
 	if mediaDir == "" {
 		mediaDir = filepath.Join(city, ".gc", "gchat-media", "inbound")

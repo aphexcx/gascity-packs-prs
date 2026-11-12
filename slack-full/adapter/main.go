@@ -318,6 +318,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"github.com/sjarmak/gc-slack-adapter/internal/neversilent"
 )
 
 const (
@@ -397,6 +399,7 @@ func (c config) tryAcquireDispatchSlot() (release func(), capacity int, ok bool)
 }
 
 type config struct {
+	neverSilent         *neversilent.Engine
 	publicListen        string
 	internalListen      string // unused when serviceSocket is set
 	serviceSocket       string // when set, bind a UDS here for /publish instead of internalListen
@@ -1759,6 +1762,10 @@ func main() {
 		log.Fatalf("handle alias registry: %v", err)
 	}
 	log.Printf("handle alias registry: store=%s", cfg.handleAliasStorePath)
+	cfg.neverSilent, err = newNeverSilent(cfg, identityReg, aliasReg)
+	if err != nil {
+		log.Fatalf("never-silent: %v", err)
+	}
 
 	threadReg, err := newThreadSessionRegistry(cfg.threadSessionsStorePath)
 	if err != nil {
@@ -1987,6 +1994,9 @@ func main() {
 			return false
 		}
 		deliverCfg.postFailures.clear("dead-letter:" + channel)
+		for _, member := range batch {
+			deliverCfg.stopNeverSilent(member.inbound, permanentDeliveryFailure(cause))
+		}
 		log.Printf("coalesce: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand once the rejection cause is fixed",
 			channel, len(batch), path)
 		return true
@@ -2028,6 +2038,7 @@ func main() {
 	internalMux.HandleFunc("GET /publish-receipt", handlePublishReceipt(cfg.publishReceipts))
 	internalMux.HandleFunc("/publish-file", handlePublishFile(cfg, identityReg))
 	internalMux.HandleFunc("/react", handleReact(cfg))
+	internalMux.HandleFunc("GET /never-silent/status", cfg.neverSilentStatus)
 	internalMux.HandleFunc("POST /identity", handleIdentity(identityReg))
 	internalMux.HandleFunc("DELETE /identity", handleIdentityDelete(identityReg))
 	internalMux.HandleFunc("POST /handle-alias", handleHandleAlias(aliasReg))
@@ -2136,6 +2147,7 @@ func main() {
 	go runInboundFileJanitor(janitorCtx, cfg)
 	go runDispatchDropSummary(janitorCtx, dispatchDropSummaryInterval, cfg.dispatchConcurrency)
 	go cfg.inboundLiveness.runWatchdog(janitorCtx)
+	go cfg.runNeverSilent(janitorCtx)
 
 	// Socket Mode inbound transport (gp-3og). Runs alongside the public
 	// listener; Slack routes each app's events to exactly one of the two
@@ -3270,6 +3282,7 @@ func handleReact(cfg config) http.HandlerFunc {
 			receipt.Delivered = true
 		}
 		if receipt.Delivered && !req.Remove {
+			cfg.noticeError(cfg.neverSilent.Reaction(neverSilentID(req.Conversation.ConversationID, req.MessageID), strings.TrimSpace(req.SessionID), time.Now()))
 			cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 				Kind: "reaction", Source: "session_react", Channel: req.Conversation.ConversationID,
 				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
@@ -3293,6 +3306,9 @@ func handleReact(cfg config) http.HandlerFunc {
 // own ts (messageTS). Either way, replies in that thread now reach the
 // posting session even when it is bound mention-only.
 func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sessionID string) {
+	if at, ok := ingestionPublishTime(messageTS); ok && sessionID != "" {
+		cfg.noticeError(cfg.neverSilent.Act(conversationID, replyTo, sessionID, at))
+	}
 	if at, ok := ingestionPublishTime(messageTS); ok && replyTo != "" && sessionID != "" {
 		cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 			Kind: "reply", Source: "session_publish", Channel: conversationID,
@@ -4035,6 +4051,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// adapter holds a message where the notice can still replace it.
 	if msg.Subtype == "message_deleted" {
 		if msg.DeletedTS != "" {
+			cfg.noticeError(cfg.neverSilent.Forget(neverSilentID(msg.Channel, msg.DeletedTS)))
 			if n := cfg.coalescer.markDeleted(msg.Channel, msg.DeletedTS); n > 0 {
 				log.Printf("inbound: chan=%s ts=%s deleted by sender before delivery — %d buffered cop(y/ies) replaced with a deletion notice",
 					msg.Channel, msg.DeletedTS, n)
@@ -4436,6 +4453,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		textForChannel = minimalReminder(cfg, inbound, text, filesBlock, anchor)
 	}
 	inbound.injectionWindows = []injectionWindow{contextWindow}
+	cfg.trackNeverSilent(inbound, env.EventID, convKind == "dm" || msg.ChannelType == "mpim" || target != "" || botMentioned)
 	// botMentioned/convKind/willBuffer were computed ahead of the
 	// thread-context preamble (the channel-claim gate needs them).
 	//
@@ -6689,8 +6707,12 @@ func renderAliasDispatch(cfg config, msg externalInboundMessage, handle string) 
 // and whether gc ACCEPTED the injection.
 func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessages ...externalInboundMessage) (result deliveryReceipt, accepted bool) {
 	started := time.Now().UTC()
+	var observationError error
 	defer func() {
 		if !accepted || len(journalMessages) == 0 {
+			if len(journalMessages) > 0 {
+				cfg.observeNeverSilent(journalMessages[0], deliveryReceipt{members: []deliveryReceiptMember{{SessionID: sessionID}}}, observationError)
+			}
 			return
 		}
 		msg := journalMessages[0]
@@ -6707,6 +6729,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 		cfg.gcAPIBase, url.PathEscape(cfg.cityName), url.PathEscape(sessionID))
 	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
+		observationError = err
 		log.Printf("alias dispatch: build request: %v", err)
 		return deliveryReceipt{}, false
 	}
@@ -6720,6 +6743,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 	req.Header.Set("X-GC-Delivery-Receipt", "require")
 	resp, err := gcForwardClient.Do(req)
 	if err != nil {
+		observationError = err
 		log.Printf("alias dispatch: POST %s: %v", target, err)
 		return deliveryReceipt{}, false
 	}
@@ -6728,6 +6752,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 	if resp.StatusCode >= 400 {
 		// The body is gc's and can be large or carry newlines; bounded and
 		// sanitized like every other gc string that reaches a log line.
+		observationError = &inboundPostError{Status: resp.StatusCode, Body: string(respBody)}
 		log.Printf("alias dispatch: %s -> %s: %s", target, resp.Status, sanitizeReceiptLogValue(string(respBody), receiptFollowUpLogLimit))
 		return deliveryReceipt{}, false
 	}
@@ -6878,6 +6903,8 @@ func postInboundWithReceipt(cfg config, msg externalInboundMessage) (receipt del
 	defer func() {
 		if postErr == nil {
 			cfg.inboundJournal.record(cfg, msg, receipt)
+		} else {
+			cfg.observeNeverSilent(msg, receipt, postErr)
 		}
 	}()
 	msg = redactInboundMessage(msg)

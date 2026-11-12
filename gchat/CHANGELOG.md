@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add opt-in never-silent owner notices, durable outage mail and health/status reporting for newly addressed human messages.
+
 - Answer a message with `--to` on reply-current, publish or upload. The adapter
   takes the space and thread from the message and refuses conflicting ids.
   Reply-current no longer guesses a destination and requires `--to`; publish

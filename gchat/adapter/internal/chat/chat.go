@@ -149,6 +149,32 @@ func (c *Client) CreateMessage(ctx context.Context, space, text, thread, request
 	return c.CreateMessageWithAttachments(ctx, space, text, thread, requestID, named, nil)
 }
 
+// CreateNotice attempts an adapter-authored notice once. Its caller has already
+// reserved a durable cooldown mark; even a rate limit must not start a retry loop.
+func (c *Client) CreateNotice(ctx context.Context, space, text, thread string, named bool) (string, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	m := &googlechat.Message{Text: text}
+	if thread != "" {
+		m.Thread = &googlechat.Thread{Name: thread}
+	}
+	call := c.api.Spaces.Messages.Create(space, m)
+	if named && thread != "" {
+		call.MessageReplyOption("REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD")
+	}
+	if err := c.limits.WaitWrite(ctx, space); err != nil {
+		return "", "", err
+	}
+	result, err := call.Context(ctx).Do()
+	if err != nil {
+		return "", "", err
+	}
+	if result.Thread != nil {
+		thread = result.Thread.Name
+	}
+	return result.Name, thread, nil
+}
+
 // CreateMessageWithAttachments posts previously uploaded attachment references.
 // The same requestID must be reused on retries, including retries after restart.
 func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, thread, requestID string, named bool, attachments []*googlechat.Attachment) (name, threadName string, err error) {

@@ -29,6 +29,7 @@ import (
 	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/markdown"
+	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/wire"
 	"github.com/BurntSushi/toml"
@@ -89,6 +90,7 @@ type Server struct {
 	chat            *chat.Client
 	gc              *gcclient.Client
 	poll            func(context.Context) error
+	neverSilent     *neversilent.Engine
 	mux             *http.ServeMux
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -180,7 +182,17 @@ func (s *Server) SetClients(c *chat.Client, g *gcclient.Client) {
 	s.gc = g
 }
 func (s *Server) SetPoll(p func(context.Context) error) { s.mu.Lock(); defer s.mu.Unlock(); s.poll = p }
-func (s *Server) Health() Health                        { s.mu.RLock(); defer s.mu.RUnlock(); return s.health }
+func (s *Server) SetNeverSilent(e *neversilent.Engine) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.neverSilent = e
+}
+func (s *Server) notices() *neversilent.Engine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.neverSilent
+}
+func (s *Server) Health() Health { s.mu.RLock(); defer s.mu.RUnlock(); return s.health }
 func (s *Server) clients() (*chat.Client, *gcclient.Client) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -651,6 +663,11 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		}
 		send.Parts[i].MessageName = name
 		send.Thread = thread
+		if strings.TrimSpace(part.Text) != "" {
+			if err := s.notices().Act(send.Space, thread, p.SessionID, time.Now()); err != nil {
+				s.opts.Logger.Warn("never-silent: could not record session reply")
+			}
+		}
 		if err = s.update(ctx, func(l *ledger.Ledger) error {
 			current := l.Sends[send.Key]
 			current.Parts[i].MessageName = name
@@ -1295,9 +1312,10 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var v struct {
-		Message string `json:"message"`
-		Emoji   string `json:"emoji"`
-		Remove  bool   `json:"remove"`
+		Message   string `json:"message"`
+		Emoji     string `json:"emoji"`
+		Remove    bool   `json:"remove"`
+		SessionID string `json:"session_id"`
 	}
 	if err := body(w, r, &v); err != nil || v.Message == "" || v.Emoji == "" {
 		problem(w, 400, errors.New("message and emoji are required"))
@@ -1314,6 +1332,15 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		problem(w, 502, err)
 		return
+	}
+	if !v.Remove && v.SessionID != "" {
+		l, readErr := s.snapshot(r.Context())
+		if readErr == nil && l.Messages[v.Message] != nil {
+			space := strings.Split(v.Message, "/messages/")[0]
+			if err := s.notices().Act(space, l.Messages[v.Message].Thread, v.SessionID, time.Now()); err != nil {
+				s.opts.Logger.Warn("never-silent: could not record session reaction")
+			}
+		}
 	}
 	respond(w, 200, map[string]any{"name": name, "removed": v.Remove})
 }
@@ -1643,6 +1670,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
 	status["pending"], status["deliveries"], status["stuck"] = inFlight, deliveries, stuck
+	status["never_silent"] = s.notices().Status()
 	if s.opts.SubscriptionStatus != nil {
 		failures, next, state, err := s.opts.SubscriptionStatus()
 		kind, code := logCause(err)
@@ -1707,6 +1735,10 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := map[string]string{"id": v.ID, "action": v.Action}
+	if err := s.notices().Forget(v.ID); err != nil {
+		problem(w, 500, err)
+		return
+	}
 	if v.Action == "replay" {
 		if err := poll(r.Context()); err != nil {
 			s.ObserveGCError(err)

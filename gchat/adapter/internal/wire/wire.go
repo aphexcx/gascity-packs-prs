@@ -46,9 +46,10 @@ type InboundEnvelope struct {
 }
 
 // DeliveryMember is one session's outcome inside gc's fan-out (gc's
-// InboundDeliveryMember). The session id, selector, digest and the "held"
-// block are not decoded.
+// InboundDeliveryMember). Session IDs attribute explicit session acts;
+// selector, digest and the "held" block are not decoded.
 type DeliveryMember struct {
+	SessionID      string `json:"session_id,omitempty"`
 	Status         string `json:"status"`
 	Terminal       bool   `json:"terminal,omitempty"`
 	DeliveredBytes int    `json:"delivered_bytes"`

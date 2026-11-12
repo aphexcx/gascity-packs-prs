@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"gchat-adapter/internal/fakes/fakegc"
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
@@ -321,6 +323,15 @@ func TestSpaceOrderHoldsBehindAnUnsettledMessage(t *testing.T) {
 // (d) A retry POST without a response is ambiguous and is never reposted.
 func TestAmbiguousRetryPOSTIsNeverReposted(t *testing.T) {
 	rf := retrySetup(t)
+	posts := 0
+	ns, err := neversilent.New(neversilent.Options{Enabled: true, Path: filepath.Join(t.TempDir(), "notices.json"), Now: rf.clock.Now, Post: func(context.Context, neversilent.Message, string) error { posts++; return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf.opts.NeverSilent = ns
+	if err = ns.Track(neversilent.Message{ID: messageName, Conversation: space, Created: rf.clock.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	target, _ := url.Parse(rf.gc.URL())
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	var lose atomic.Bool
@@ -351,6 +362,12 @@ func TestAmbiguousRetryPOSTIsNeverReposted(t *testing.T) {
 	rf.poll(t)
 	if c := rf.change(t, messageName); c.Status != "unresolved" || c.Reason != "POST response unavailable; delivery unknown" || c.Cause != "unknown" {
 		t.Fatalf("lost response: %+v", c)
+	}
+	if err = ns.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if posts != 0 {
+		t.Fatal("previous attempt's definite failure bypassed unknown-stop grace")
 	}
 	for range 3 {
 		rf.clock.Add(time.Hour)

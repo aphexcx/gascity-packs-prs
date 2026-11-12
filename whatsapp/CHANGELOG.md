@@ -2,6 +2,8 @@
 
 ## Unreleased (gp-g02t, PR 76 round 2)
 
+- Add opt-in never-silent owner notices, durable outage mail and health/status reporting for newly addressed human messages.
+
 - The adapter keys every owner by the gateway's `conversation_id` (PR 76's
   inbox), never the number: the gc conversation and the actor, the chain, the
   watermark, the lookup and the probe, the dead letter, the window ledger, the

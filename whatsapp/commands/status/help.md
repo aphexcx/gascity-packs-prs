@@ -1,7 +1,7 @@
 # gc whatsapp status
 
 ```
-gc whatsapp status
+gc whatsapp status [--json]
 ```
 
 Shows the WhatsApp door's state without secrets, message text or full phone
@@ -12,3 +12,7 @@ resolve`), every restore gap by conversation (clear with `gc whatsapp inbound
 clear-gap`), and per bound conversation (last four digits) the window's close time and
 the window-keeper's state: consent, the day's update raised or not, the marks
 fired, the lapses.
+
+Also shows never-silent enabled state, health age or unknown reason, open
+outages and their mail sent marks, and the owner-line count for seven days.
+Use `--json` for the same adapter status as structured JSON.
