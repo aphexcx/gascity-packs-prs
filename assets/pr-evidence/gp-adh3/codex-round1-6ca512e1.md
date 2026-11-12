@@ -1,6 +1,6 @@
 # codex-gate review: base 28918336555abbeb4f52af3c05029e801c59cb6f (merge base of --base 28918336555abbeb4f52af3c05029e801c59cb6f = 28918336555abbeb4f52af3c05029e801c59cb6f and the head) head 6ca512e1c91144a60535066c1373a7befe9fb6db; 8 file(s); class STANDARD; model gpt-6-astra; 2026-11-12T03:50:46Z
-# codex route: the hub (CODEX_HOME <hub home>; the hub rotates its Codex seats)
-# reviewed in a pristine detached worktree at the head (--head 6ca512e1c91144a60535066c1373a7befe9fb6db; the working tree of ~/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-b not consulted)
+# codex route: the hub
+# reviewed in a pristine detached worktree at the head (--head 6ca512e1c91144a60535066c1373a7befe9fb6db; the working tree of the lane worktree not consulted)
 # verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
 #  gchat/CHANGELOG.md                                 |   3 ++
 #  gchat/skills/google-chat/SKILL.md                  |  34 +++++++++++---

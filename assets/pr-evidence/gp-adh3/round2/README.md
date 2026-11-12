@@ -245,7 +245,7 @@ Before the push I read the round's whole delta, every commit message of
 the round, and PR 91's title and body against the public-repository rule. The pattern
 covered home and temp paths, the customer names on the rule's list, Slack,
 phone, user and message ids, email addresses, keys and tokens, hosts and
-ports, and the gate tool's account line.
+ports, and the gate tool's route line.
 
 - The texts, tests and README carry only the help page's placeholders
   (`Cxxx`, `1234.5678`, `spaces/<id>/messages/<id>`).
@@ -255,8 +255,8 @@ ports, and the gate tool's account line.
 
 Four things were changed in the evidence copies:
 
-1. The codex record's route line, which named the hub's home directory and
-   how it rotates accounts, now reads "the hub".
+1. The codex record's route line, which carried a detail of the gate tool's
+   own setup, now reads "the hub".
 2. The codex record's lane worktree path is now "the lane worktree".
 3. The codex record's link into the reviewer's temp directory now points at
    README.md.
