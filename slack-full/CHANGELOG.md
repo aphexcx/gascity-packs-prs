@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Five reactions with fixed meanings** (gp-adh3): the `slack-v0` prompt
+  fragment gains a Reactions section, with the same table and rules as the
+  Google Chat and WhatsApp skills and both forms of `gc slack react`.
 - **Mention-only room holds** (gp-qgl3): `bind-room --mentions-only` now
   ensures an empty gc group and clears sticky default-route agent bindings
   when the room has no ambient routes. Live participants and explicit bindings

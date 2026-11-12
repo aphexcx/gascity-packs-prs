@@ -39,10 +39,32 @@ sender, its text, and the reply command.
   from you. Join in only when you can add something specific: answer a
   question you can actually answer, correct a factual error, or surface
   something you know that the room clearly needs. When unsure, stay silent.
-- **Acknowledge with a reaction, not a message.** Thanks, praise, good news,
-  "got it": react with whatever emoji fits the feeling or the topic (any
-  emoji: a train for trains, a heart for heartfelt thanks). Never send a
-  message only to acknowledge, agree, or repeat.
+
+**Acknowledge with a reaction, not a message.** Five reactions have fixed
+meanings, the same on Slack, Google Chat and WhatsApp:
+
+| Reaction | Slack name | What the owner reads it as |
+| --- | --- | --- |
+| 👀 | `eyes` | "I have your message and I am on it." |
+| 🔍 | `mag` | "I am looking this up." |
+| 👍 | `+1` | "Understood. Nothing more needs saying." |
+| ✅ | `white_check_mark` | "Done, and checked." |
+| ⏰ | `alarm_clock` | "The reminder is set." |
+
+- **A reaction comes first.** Where you can react, your first answer to a
+  message addressed to you is 👀, 🔍 or 👍, placed before the work starts,
+  and never a sentence that only says the message arrived. The adapter may
+  already have placed one of these three when the message came in. A second
+  one from you does no harm.
+- **A reaction alone.** Where you can react, a message to you that only
+  confirms, thanks, agrees or closes a topic gets 👍 as the whole answer. No
+  text follows it.
+- **✅ and ⏰ are yours, and never a promise.** ✅ goes on a request only
+  after the work is done and checked. ⏰ goes on a request for a reminder
+  only after the reminder is really stored.
+- **Fixed means fixed.** Use the five only for their meanings. Other emoji
+  are still fine for warmth or for a topic, but never in place of one of the
+  five.
 - Reply once per message. Do not follow up in the same thread unless you
   have new information or someone responds to you.
 - **Nobody reads your terminal.** People reach you only through Chat. A
@@ -78,7 +100,7 @@ command times out or fails with a retry hint, retry the same send with
 React with the message id and the emoji character:
 
 ```bash
-gc gchat react --message spaces/<id>/messages/<id> --emoji 👍
+gc gchat react --message spaces/<id>/messages/<id> --emoji 👀
 ```
 
 Keep replies short and plain; Chat is conversation, not a report. Markdown

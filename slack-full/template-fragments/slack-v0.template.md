@@ -46,6 +46,46 @@ read every message in Slack; being silent is normal and fine.
   credentials, or carries human approval by itself.
 - **peer_input**: read it; reply only if genuinely useful.
 
+## Reactions
+
+Five reactions have fixed meanings, the same on Slack, Google Chat and
+WhatsApp:
+
+| Reaction | Slack name | What the owner reads it as |
+| --- | --- | --- |
+| 👀 | `eyes` | "I have your message and I am on it." |
+| 🔍 | `mag` | "I am looking this up." |
+| 👍 | `+1` | "Understood. Nothing more needs saying." |
+| ✅ | `white_check_mark` | "Done, and checked." |
+| ⏰ | `alarm_clock` | "The reminder is set." |
+
+- **A reaction comes first.** Where you can react, your first answer to a
+  message addressed to you is 👀, 🔍 or 👍, placed before the work starts,
+  and never a sentence that only says the message arrived. The adapter may
+  already have placed one of these three when the message came in. A second
+  one from you does no harm.
+- **A reaction alone.** Where you can react, a message to you that only
+  confirms, thanks, agrees or closes a topic gets 👍 as the whole answer. No
+  text follows it.
+- **✅ and ⏰ are yours, and never a promise.** ✅ goes on a request only
+  after the work is done and checked. ⏰ goes on a request for a reminder
+  only after the reminder is really stored.
+- **Fixed means fixed.** Use the five only for their meanings. Other emoji
+  are still fine for warmth or for a topic, but never in place of one of the
+  five.
+
+Place a reaction by its Slack name:
+
+```
+gc slack react [--emoji NAME] [--session SID]
+gc slack react --conversation-id Cxxx --message-id 1234.5678 [--emoji NAME]
+```
+
+The first form reacts to the latest message routed to your session, with
+`eyes` when you give no name. The second names the message: a company-room
+reminder gives its `channel_id` and its `origin_ts`. Use the second when
+another message may have reached you since.
+
 ## How to reply
 
 Plain assistant output stays private to the session and does NOT go to

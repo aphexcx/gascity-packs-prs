@@ -2,6 +2,9 @@
 
 ## Unreleased (gp-g02t, PR 76 round 2)
 
+- The skill carries the five reactions with fixed meanings, with the same
+  table and rules as the Slack fragment and the Google Chat skill, and says
+  the mayor cannot place a reaction on WhatsApp yet (gp-adh3).
 - The adapter keys every owner by the gateway's `conversation_id` (PR 76's
   inbox), never the number: the gc conversation and the actor, the chain, the
   watermark, the lookup and the probe, the dead letter, the window ledger, the

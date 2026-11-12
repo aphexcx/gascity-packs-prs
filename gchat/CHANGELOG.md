@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The skill gives five reactions fixed meanings, with the same table and
+  rules as the Slack fragment and the WhatsApp skill, in place of any emoji
+  that fits (gp-adh3).
 - Resolve reports whether a replay landed or is waiting and why. Each replay
   clears its waiting and end mail marks, so a stuck replay is mailed once
   after two minutes even if an earlier life was mailed. Clear a fragment
