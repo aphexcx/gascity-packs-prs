@@ -107,6 +107,9 @@ They retain their separate test hooks and timing assertions.
 
 ## Validation
 
+- `make test` from the repository root: 2,695 passed, 126 skipped,
+  10,734 subtests passed in 451.71 s. Two existing multi-threaded `os.fork`
+  deprecation warnings came from the Slack outbound flock-race test.
 - `python3 -m unittest discover -s tests -p 'test_toolchain_shims.py'`
   from `gascity/`: 68 tests passed in 168.280 s.
 - Loaded comparison: 0 failures / 200 runs; every run had three successful
@@ -118,3 +121,7 @@ They retain their separate test hooks and timing assertions.
   pnpm; no pnpm install was needed and no unsupported-engine warning occurred.
 - The production asset diff from the base is empty:
   `git diff --stat e84b685a177b109877c4d47d36953e4ad85539ed -- gascity/assets`.
+- A fresh STANDARD self-review with `gpt-6-astra` at
+  `2a7c7d6cbc64d951d76efc7593133b49b8bb831f` returned `CLEAN`, with no
+  actionable correctness or regression findings. The later evidence-only
+  commit adds the completed whole-suite result; test code is unchanged.
