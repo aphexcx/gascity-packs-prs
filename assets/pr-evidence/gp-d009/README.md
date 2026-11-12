@@ -142,7 +142,15 @@ so the company-room fake dispatcher recognizes the same deliveries.
 Python 3.15.0: `python -m pytest tests -q`, from `slack-full`, passed 976 tests
 and 10 subtests, with 3 existing skips and 2 existing `os.fork` deprecation
 warnings. Go 1.27.3: `go test -race -count=1 -json ./...`, from `slack-full/cli`,
-passed 237 test cases. No Node tests are involved.
+passed 237 test/subtest entries (199 top-level tests). No Node tests are involved.
+
+From `slack-full/adapter`, `go test -race -count=1 -timeout=20m -json ./...`
+passed 13,100 test/subtest entries (1,491 top-level tests), with 3 existing
+skips and zero failures, at `015182f7`. The only subsequent test changes
+preserve the two handle-reason checks through delivery metadata; the unchanged
+production code and those final assertions were then exercised by
+`go test -race -count=1 -run 'Test(MentionOnly|FormatMentionOnly|CompanyRoomMentionOnly|MinimalDirectSessionPaths)' -json .`:
+61 entries passed, zero failures. Both the full and focused runs use fakes.
 
 Self-review round 1 (STANDARD, code commit `fa50efb3`): 0 critical, 1 major,
 0 minor. Class: incomplete format migration in test assertions/fake interceptors.
@@ -152,6 +160,12 @@ covers all three admission reasons and both root/reply cases. All stale sites
 were updated, the retry fake still rejects its selected message, and the
 former reason-text assertions retain their checks through delivery metadata.
 The focused delivery suite then passed all 61 cases under the race detector.
+Outcome: **FIXED** in `51078dfd` (including the text updates in `015182f7`).
+
+Self-review round 2 (STANDARD, `51078dfdb19fd7f209dca43471e946bbd6823e7c`):
+**CLEAN**, 0 critical / 0 major / 0 minor / 0 nit. The reviewer read the full
+delta against the base in a separate read-only checkout and did not run tests
+in its sandbox. Only this validation record changes after the reviewed commit.
 
 Public-repo check: all added fixtures and captures contain invented values;
 no live messages, credentials or host-specific paths are included.
