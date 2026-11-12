@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased (gp-xt33)
+
+- Docs only: the gateway README names the relay it read as a reference by its
+  owner's role, a hosting partner, instead of by name. No code change.
+
 ## Unreleased (gp-g02t, PR 76 round 2)
 
 - The adapter keys every owner by the gateway's `conversation_id` (PR 76's

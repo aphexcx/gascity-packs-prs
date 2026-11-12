@@ -331,7 +331,7 @@
       "length": 196,
       "urls": [
         {
-          "host": "instinct.com",
+          "host": "competitor.example",
           "length": 19,
           "occurrences": 1,
           "working_standalone_redacted": false,
@@ -352,7 +352,7 @@
       "working_changed": false,
       "slack_links": [
         {
-          "host": "instinct.com",
+          "host": "competitor.example",
           "working_target_readable": true,
           "working_label_changed": false
         },
@@ -1131,7 +1131,7 @@
     }
   ],
   "by_host": {
-    "instinct.com": {
+    "competitor.example": {
       "urls": 1,
       "pinned_redacted": 0,
       "working_redacted": 0

@@ -27,7 +27,7 @@ standalone-URL metric remains recorded separately for comparison.
 
 | Host | URL occurrences | Redacted before | Redacted after |
 | --- | ---: | ---: | ---: |
-| instinct.com | 1 | 0 | 0 |
+| competitor.example | 1 | 0 | 0 |
 | hark.com | 1 | 0 | 0 |
 | gist.github.com | 2 | 2 | 2 |
 | angelmatch.io | 2 | 0 | 0 |

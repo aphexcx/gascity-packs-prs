@@ -575,7 +575,7 @@
       "length": 196,
       "urls": [
         {
-          "host": "instinct.com",
+          "host": "competitor.example",
           "length": 19,
           "pinned_redacted": false,
           "working_redacted": false
@@ -1299,7 +1299,7 @@
     }
   ],
   "by_host": {
-    "instinct.com": {
+    "competitor.example": {
       "urls": 1,
       "pinned_redacted": 0,
       "working_redacted": 0
