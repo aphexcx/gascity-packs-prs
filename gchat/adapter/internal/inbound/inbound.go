@@ -261,9 +261,6 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 // what is due (see Options.Raise); a raise failure is logged, not returned.
 func (p *Processor) Poll(ctx context.Context) error {
 	err := p.Pass(ctx)
-	if noticeErr := p.opts.NeverSilent.Poll(ctx); noticeErr != nil {
-		err = errors.Join(err, noticeErr)
-	}
 	p.raise(ctx)
 	return err
 }

@@ -319,6 +319,15 @@ export function createPublisher({
     // retain their earliest uncertain attribution rather than invent new words.
     const pending = activityAttempts.get(key);
     const accepted = answer.activity_attempt_id && [pending, ...(pending?.retries ?? [])].find((a) => a?.id === answer.activity_attempt_id);
+    if (answer.replayed === true && !accepted) {
+      // A replay without one of our attempt ids proves no words at the retry's
+      // time. Retire the speculative attempt without inventing activity.
+      if (recoverActivity) {
+        saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key));
+        activityAttempts.delete(key);
+      }
+      return { answer };
+    }
     const attempt = accepted || (recoverActivity && answer.replayed === false ? current : pending);
     const activity = rememberActivity({ conversation, session: attempt?.session ?? session,
       proof: str(answer.message_id), at: attempt?.at ?? clock() }, key);
@@ -518,9 +527,9 @@ export function createPublisher({
       entry.message_ids[i] = messageId;
       entry.delivered = i + 1;
       entry.activities ??= [];
-      entry.activities.push(activity);
+      if (activity) entry.activities.push(activity);
       progress.save(key, entry);
-      ledger?.noteSend?.(conversationId, { type: 'text', message_id: messageId, at: activity.at });
+      ledger?.noteSend?.(conversationId, { type: 'text', message_id: messageId, at: activity?.at ?? clock() });
       restoreActivity(activity);
     }
     entry.receipt = {

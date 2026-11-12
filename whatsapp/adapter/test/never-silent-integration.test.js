@@ -3,8 +3,30 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { rig, adapterRequest, waitFor } from './fakes.js';
-import { OWNER_LINES } from '../src/never-silent.js';
+import { OWNER_LINES, createNeverSilent } from '../src/never-silent.js';
 import { openJournal } from '../src/journal.js';
+
+test('never-silent integration: outage watch survives registration 503 and a second restart', async (t) => {
+  const r = await setup(t);
+  r.gc.registrationStatus = 503;
+  r.gw.bound.add('example-owner');
+  r.gw.lastInbound.set('example-owner', r.clock.now());
+  const e = createNeverSilent({ enabled: true, stateDir: path.join(r.dir, '.gc', 'whatsapp'),
+    clock: () => r.clock.now() - 240000, post: async () => {} });
+  e.track({ id: 'example-message', conversation: 'example-owner' });
+  e.result('example-message', 'unreachable');
+  const remote = () => r.mails().filter((args) => args.includes('--context'));
+  for (const restart of ['first-restart', 'second-restart']) {
+    const before = r.gc.registrations.length;
+    await r.restart(r.options);
+    await waitFor(() => r.gc.registrations.length > before);
+    await waitFor(() => r.gw.sends.length === 1 && remote().length === 1);
+    await r.pump(10000);
+    assert.deepEqual([r.gw.sends.length, remote().length], [1, 1], restart);
+    assert.equal(r.gw.sends[0].text, OWNER_LINES.not_delivered);
+    t.diagnostic(`${restart}: registration 503; owner lines=1 operator mails=1`);
+  }
+});
 
 test('never-silent integration: captioned reply activity survives primary receipt SIGKILL without replay', { timeout: 30000 }, async (t) => {
   const r = await setup(t);

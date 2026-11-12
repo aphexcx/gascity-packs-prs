@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,7 +17,6 @@ import (
 	"gchat-adapter/internal/events"
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/inbound"
-	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/token"
@@ -38,9 +36,6 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	defer cancel()
 	g := gcclient.New(a.cfg.Secrets.GCAPIBase, a.cfg.Secrets.CityName)
 	g.SetConnectionRefusedHandler(func(err error) { a.gcDown.Store(true); a.s.ObserveGCError(err) })
-	if err := a.ensureRegistered(ctx, registered); err != nil {
-		return err
-	}
 	hc, err := source.Client(ctx)
 	if err != nil {
 		return err
@@ -61,6 +56,11 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		}
 	}
 	a.chatClient.Store(c)
+	// Provider access is needed by the service's outage watch even while gc
+	// refuses registration. Only inbound work waits at this barrier.
+	if err := a.ensureRegistered(ctx, registered); err != nil {
+		return err
+	}
 	a.s.SetClients(c, g)
 	g.SetConnectionRefusedHandler(func(err error) { a.gcDown.Store(true); a.s.ObserveGCError(err) })
 	es, err := workspace.NewService(ctx, option.WithHTTPClient(hc), option.WithEndpoint(strings.TrimRight(a.cfg.Endpoints.EventsAPIBase, "/")+"/"))
@@ -79,22 +79,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		lookup = principal.DirectoryLookup(hc, a.cfg.Endpoints.PeopleAPIBase)
 	}
 	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup})
-	notices, err := neversilent.New(neversilent.Options{
-		Enabled: a.cfg.NeverSilent.Enabled, Path: a.cfg.Endpoints.StateFile + ".never-silent.json",
-		HealthFile: a.cfg.NeverSilent.HealthFile, City: a.cfg.Secrets.CityName, Channel: "gchat",
-		OperatorContext: a.cfg.NeverSilent.OperatorContext, OperatorAgent: a.cfg.NeverSilent.OperatorAgent, GC: os.Getenv("GC_BIN"),
-		Log: func(s string) { a.log.Warn(s) },
-		SendLocal: func(ctx context.Context, m neversilent.Message, line string) error {
-			return a.raiseDelivery(ctx, inbound.Raise{ID: "never-silent:" + m.ID, Space: m.Conversation, Thread: m.Thread, Message: m.ID, Recorded: m.Created,
-				Body: fmt.Sprintf("The adapter told the owner: %q\nSpace: %s\nThread: %s\nMessage: %s\nRead: gc gchat read --space %s\nStatus: gc gchat status\n", line, m.Conversation, m.Thread, m.ID, m.Conversation)})
-		},
-		Post: a.s.PostNotice,
-	})
-	if err != nil {
-		return err
-	}
-	a.s.SetNeverSilent(notices)
-	proc, err := inbound.New(inbound.Options{NeverSilent: notices, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
+	proc, err := inbound.New(inbound.Options{NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
 	if err != nil {
 		return err
 	}

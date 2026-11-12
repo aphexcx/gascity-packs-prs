@@ -2061,6 +2061,12 @@ func main() {
 	internalMux.HandleFunc("/healthz", handleHealthz)
 
 	startup := &startupGate{}
+	// A saved outage must be reported even while gc refuses registration.
+	// New work and spool replay still wait at the existing registration barrier.
+	noticeCtx, stopNotices := context.WithCancel(context.Background())
+	defer stopNotices()
+	go cfg.runNeverSilent(noticeCtx)
+
 	if cfg.registerOnStart {
 		startup.attempt.Store(1)
 	}
@@ -2147,7 +2153,6 @@ func main() {
 	go runInboundFileJanitor(janitorCtx, cfg)
 	go runDispatchDropSummary(janitorCtx, dispatchDropSummaryInterval, cfg.dispatchConcurrency)
 	go cfg.inboundLiveness.runWatchdog(janitorCtx)
-	go cfg.runNeverSilent(janitorCtx)
 
 	// Socket Mode inbound transport (gp-3og). Runs alongside the public
 	// listener; Slack routes each app's events to exactly one of the two

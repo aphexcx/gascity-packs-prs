@@ -717,6 +717,11 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 }
 
 func (s *Server) named(ctx context.Context, space string) (bool, error) {
+	c, _ := s.clients()
+	return s.namedWithClient(ctx, c, space)
+}
+
+func (s *Server) namedWithClient(ctx context.Context, c *chat.Client, space string) (bool, error) {
 	l, err := s.snapshot(ctx)
 	if err != nil {
 		return false, err
@@ -724,7 +729,6 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 	if v := l.Spaces[space]; v != nil && v.ChatType != "" {
 		return v.ChatType == "SPACE", nil
 	}
-	c, _ := s.clients()
 	spaces, err := c.ListSpaces(ctx)
 	if err != nil {
 		return false, err
@@ -758,11 +762,20 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 
 // PostNotice is separate from publishing and its session/reply bookkeeping.
 func (s *Server) PostNotice(ctx context.Context, m neversilent.Message, line string) error {
-	named, err := s.named(ctx, m.Conversation)
+	c, _ := s.clients()
+	return s.PostNoticeWithClient(ctx, c, m, line)
+}
+
+// PostNoticeWithClient lets the service's outage watch use its provider client
+// before registration without enabling normal publishing or inbound work.
+func (s *Server) PostNoticeWithClient(ctx context.Context, c *chat.Client, m neversilent.Message, line string) error {
+	if c == nil {
+		return errors.New("Chat credentials are not available for the owner notice")
+	}
+	named, err := s.namedWithClient(ctx, c, m.Conversation)
 	if err != nil {
 		return err
 	}
-	c, _ := s.clients()
 	_, _, err = c.CreateNotice(ctx, m.Conversation, line, m.Thread, named, m.CanPost)
 	return err
 }

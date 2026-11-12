@@ -190,6 +190,51 @@ test('never-silent lost-answer replay class', async (t) => {
   }
 });
 
+test('never-silent lost-answer replay class across switch enablement', async (t) => {
+  for (const kind of ['text', 'captioned-file', 'update-template']) {
+    for (const cause of ['definite-failure', 'uncertain-stop', 'health']) {
+      for (const initial of ['off', 'on', 'foreign-attempt']) await t.test(`${kind}: ${cause}: initially ${initial}`, async (t) => {
+        const proofs = new Map();
+        let calls = 0;
+        const f = outboundCase(t, kind, async (request) => {
+          calls++;
+          const replayed = proofs.has(request.idempotency_key);
+          if (!replayed) proofs.set(request.idempotency_key, { message_id: 'example-proof', activity_attempt_id: request.activity_attempt_id });
+          if (calls === 1) throw Object.assign(new Error('accepted but answer lost'), { noAnswer: true });
+          return { ...proofs.get(request.idempotency_key), replayed,
+            ...(initial === 'foreign-attempt' ? { activity_attempt_id: 'example-unrecognized-attempt' } : {}) };
+        });
+        f.opts.enabled = initial === 'on';
+        f.restart();
+        const originalAt = f.now;
+        assert.equal((await f.call(f.make())).json.delivered, false);
+        assert.equal(Boolean([...proofs.values()][0].activity_attempt_id), initial === 'on');
+        f.opts.enabled = true;
+        f.restart();
+        const publisher = f.make();
+        f.now += 1000;
+        f.e.track({ id: 'example-new-inbound', conversation: 'example-owner', targets: ['original-session'] });
+        if (cause === 'uncertain-stop') f.e.stop('example-new-inbound', false);
+        else f.e.result('example-new-inbound', cause === 'health' ? 'delivered' : 'failed', ['original-session']);
+        f.now += 1000;
+        assert.equal((await f.call(publisher)).json.delivered, true);
+        assert.equal(proofs.size, 1, 'the replay sent no new words');
+        assert.equal(calls, 2);
+        const saved = () => JSON.parse(fs.readFileSync(path.join(f.opts.stateDir, 'never-silent.json')));
+        // A second restart must not recover the retry as fresh activity.
+        f.restart();
+        f.make();
+        f.now += 180000;
+        if (cause === 'health') fs.writeFileSync(f.opts.healthFile, JSON.stringify({ state: 'session_down', since: new Date(f.now).toISOString(), checked_at: new Date(f.now).toISOString() }));
+        await f.e.poll();
+        await f.e.poll();
+        assert.deepEqual([f.posts.length, f.mails.length], [1, 1]);
+        assert.deepEqual(saved().acts.map((a) => a.at), initial === 'on' ? [originalAt] : [], 'only an accepted attempt of ours supplies activity');
+      });
+    }
+  }
+});
+
 test('never-silent activity journal failures remain retryable for every send kind', async (t) => {
   for (const kind of ['text', 'captioned-file', 'update-template']) {
     for (const phase of ['before-dispatch', 'after-acceptance']) await t.test(`${kind}: ${phase}`, async (t) => {

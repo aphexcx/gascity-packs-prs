@@ -143,6 +143,10 @@ func TestNeverSilentNewAddressedMessagesOnly(t *testing.T) {
 			}
 			rf.clock.Add(3 * time.Minute)
 			rf.poll(t)
+			// The service owns notice polling independently of inbound recovery.
+			if err := ns.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
 			want := 0
 			if tc.name == "new dm" {
 				want = 1

@@ -23,6 +23,7 @@ import (
 	"gchat-adapter/internal/events"
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/server"
 	"gchat-adapter/internal/token"
 )
@@ -51,6 +52,7 @@ type application struct {
 	s                  *server.Server
 	manager            atomic.Pointer[events.Manager]
 	chatClient         atomic.Pointer[chat.Client]
+	neverSilent        *neversilent.Engine
 	loaded             atomic.Bool
 	lastEvent          atomic.Int64
 	gcDown             atomic.Bool
@@ -292,8 +294,14 @@ func (a *application) run(ctx context.Context) error {
 	reload := make(chan struct{}, 1)
 	stopWatch := watchToken(ctx, source, reload)
 	defer func() { stopWatch() }()
+	a.neverSilent, err = a.newNeverSilent()
+	if err != nil {
+		return err
+	}
+	a.s.SetNeverSilent(a.neverSilent)
 	var auxiliaries sync.WaitGroup
 	auxiliaries.Go(func() { a.notifyLoop(ctx) })
+	auxiliaries.Go(func() { a.pollNeverSilent(ctx) })
 	// Sweeps belong to the service, not a credential generation. A reload does
 	// not cancel a recording operation halfway through its gc callback.
 	registered := &atomic.Bool{}

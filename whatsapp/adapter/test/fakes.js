@@ -339,6 +339,7 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
     panes: new Map(),
     transcriptErrors: [], // statuses to answer GET /extmsg/transcript with, one per call
     registrations: [],
+    registrationStatus: 200,
     outbound: [],
     requests: [],
     withheld: [],
@@ -481,7 +482,7 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
     f.requests.push(entry);
 
     if (req.method === 'POST' && p === '/extmsg/inbound') return inbound(req, res, body);
-    if (req.method === 'POST' && p === '/extmsg/adapters') { f.registrations.push(body); return send(res, 200, { status: 'registered' }); }
+    if (req.method === 'POST' && p === '/extmsg/adapters') { f.registrations.push(body); return send(res, f.registrationStatus, { status: f.registrationStatus === 200 ? 'registered' : 'unavailable' }); }
     if (req.method === 'POST' && p === '/extmsg/outbound') {
       f.outbound.push(body);
       return send(res, 200, f.recordOutbounds ? { TranscriptEntry: { id: f.outbound.length } } : { ok: true });
