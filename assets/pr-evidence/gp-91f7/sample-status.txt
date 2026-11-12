@@ -1,0 +1,7 @@
+Owners: 1; consent on: 1; consenting without zone: 0
+Owners without zone: none
+Items: 0 open, 1 raised, 0 closed
+Reminders set: 0
+Next wake slack/example: 2026-11-10T09:00:00.000Z
+Last tick: 2026-11-10T09:00:00.000Z
+Failing raises: 0

@@ -1,0 +1,6 @@
+[order]
+description = "Raise due follow-ups and reminders to the city's own mayor"
+trigger = "cooldown"
+interval = "1m"
+exec = "$ORDER_DIR/scripts/follow-through-tick.sh"
+timeout = "2m"

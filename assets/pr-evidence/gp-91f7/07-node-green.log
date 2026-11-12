@@ -1,0 +1,38 @@
+✔ 1,5,7,15,18,19: command lifecycle, file input, private status and doctor exit (3034.976208ms)
+✔ 8,9: every due item in one wake; never raised twice across thirty days (4452.231208ms)
+✔ 9,10,11: empty wakes, no zone, off between wakes, outage grace and 20:00 cutoff (627.93775ms)
+✔ 3,14,15,16: reminders are durable, independent of hours/consent, cancelled ones never fire (186.335542ms)
+✔ 3,13: failed mail retries once a minute with the same key; expires at 24h (917.329042ms)
+✔ 11,13: revoking consent also blocks a pending follow-up retry (234.022042ms)
+✔ 18,19: status has exact safe fields, doctor reports stale tick, missing zone and failed raises (245.672042ms)
+✔ 5,6,11: consent defaults off; hours set, clear, retain/set zone; invalid changes are atomic (11.42ms)
+✔ 7: item IDs, length, single lines, conversation form and retained terminal records (0.23925ms)
+✔ 15: RFC3339 offset and minutes/hours/days; cancellation retains the record (1.017667ms)
+✔ 12,14: fake gc records agent, notify, stable key, subjects and fixed fact bodies (691.613083ms)
+▶ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail
+  ✔ follow-up: killed planned (769.581625ms)
+  ✔ follow-up: killed attempt (756.224042ms)
+  ✔ follow-up: killed sent (730.544042ms)
+  ✔ follow-up: killed during (733.329ms)
+  ✔ reminder: killed planned (550.99875ms)
+  ✔ reminder: killed attempt (558.16325ms)
+  ✔ reminder: killed sent (610.273ms)
+  ✔ reminder: killed during (607.728125ms)
+✔ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail (5318.041292ms)
+✔ 13: three real gc failures then success make one delivered mail with one key (826.45075ms)
+✔ 17: two ticks started together serialize and deliver once (255.590625ms)
+✔ 5,9: two wake instants across split hours, midnight, east/west zones and DST (12.101167ms)
+✔ 5: keeper hours grammar and zone validation copied with their edge cases (0.503458ms)
+✔ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.296542ms)
+✔ 9,10 ruling: on time for <120s, then late policy; 20:00 always wins (0.351792ms)
+✔ 2: tick and command use the same explicit gc pack state directory (0.443875ms)
+✔ 2,4: private atomic file survives another process with every record intact (130.994459ms)
+✔ 2: interrupted replacement leaves the previous valid state (242.101792ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7143.069791

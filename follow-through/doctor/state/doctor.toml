@@ -1,0 +1,2 @@
+description = "Follow-through: recent tick, consenting owners with zones, and failed raises"
+run = "../check.sh"

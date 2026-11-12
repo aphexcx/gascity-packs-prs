@@ -1,0 +1,14 @@
+✔ 5,9: two wake instants across split hours, midnight, east/west zones and DST (11.871958ms)
+✔ 5: keeper hours grammar and zone validation copied with their edge cases (0.512875ms)
+✔ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.311334ms)
+✔ 2: tick and command use the same explicit gc pack state directory (0.481958ms)
+✔ 2,4: private atomic file survives another process with every record intact (80.28075ms)
+✔ 2: interrupted replacement leaves the previous valid state (67.176416ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 193.833584

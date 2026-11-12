@@ -1,0 +1,4 @@
+Reminder due in slack/example.
+reminder-f6dfd5d2-49d8-46fd-bdba-850a6ae069f4: Invented reminder
+Set 2026-11-09T09:00:00.000Z for 2026-11-10T09:00:00.000Z.
+Read the follow-through skill before you write to the owner.
