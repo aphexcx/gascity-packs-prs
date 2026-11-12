@@ -191,5 +191,12 @@ After that correction, from the repository root,
 `python -m pytest tests -q -k 'prompt_contract or reply_template_contract'`
 passed 8 cases (973 deselected). The adapter and its tests did not change.
 
+Round 3 outcome: **FIXED** in `99d7e31a`.
+Self-review round 4 (STANDARD, `99d7e31affe19aa1b01d9d67b9fef3c9731fe4b2`):
+**CLEAN**, 0 critical / 0 major / 0 minor / 0 nit. The final full Slack-local
+run, `python -m pytest tests -q` from `slack-full`, passed 978 tests and
+10 subtests, with 3 existing skips and 2 existing `os.fork` deprecation
+warnings. Only this validation record was added after that reviewed commit.
+
 Public-repo check: all added fixtures and captures contain invented values;
 no live messages, credentials or host-specific paths are included.
