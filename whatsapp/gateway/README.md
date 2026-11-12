@@ -35,6 +35,8 @@ A city box never holds a Meta secret. It holds one gateway credential, minted at
 | `src/gateway.ts` | The routes, the webhook plan and its one D1 transaction, enrollment, the inbox and ack, send, read, window, media, the operator routes, the cron. |
 | `src/meta.ts` | The Cloud API wire: the signature, the payload parse, the send bodies, the Graph calls. |
 | `src/window.ts` | The 24-hour window: its arithmetic and which inbound types move it. |
+| `src/wake.ts` | `CityWake`: one hibernating Durable Object per city, holding wake-only sockets without storage, timers or alarms. |
+| `src/wake-client.ts` | The binding client and bounded post-commit wake or rollback close; committed deliveries and live credential hashes select recipients. |
 | `test/` | vitest on `@cloudflare/vitest-plugin` (a real D1 in workerd) with a fake Graph API. `fixtures/` holds Meta's own example payloads; `fixtures/SOURCES.md` says where each came from. |
 
 ## The contract (v1)
@@ -221,6 +223,76 @@ ignores it during the deploy gap. Apply migrations, deploy the gateway, then
 roll the pack per city; an old gateway refuses the new route, sending nothing.
 Only the mayor deploys and runs the post-merge live proof (one image and one
 PDF to the founder, inside the window); this lane tests exclusively on fakes.
+
+## The held connection
+
+The additive `GET /v1/wake` route was posted on the gateway and adapter
+contract beads before implementation. The frozen v1 contract above is unchanged:
+messages still live in D1, the adapter still reads the inbox, and acknowledgements
+still name individual delivery ids. An adapter that only polls keeps working.
+
+The request carries `Authorization: Bearer <credential>` and `Upgrade: websocket`.
+The bearer is checked before upgrading: a missing, unknown or revoked credential
+receives `401 unauthorized`; a live credential without the upgrade receives
+`426 upgrade_required`. Success is `101`. Other methods receive `405`. With
+`WAKE=off` or no `CITY_WAKE` binding, the route returns `404 not_found`.
+
+The wire carries only three fixed words: the gateway sends text `wake` and
+`pong`; the adapter sends text `ping`. Close codes are `4401` for a revoked
+credential, `1008` for any client frame other than `ping` (also for the oldest
+connection when a fifth opens), and `4503` when the gateway switch closes a
+city's existing connections. No frame carries a message, identifier, number,
+name or count. The Worker chooses the object from the authenticated city;
+caller-supplied routing headers or query parameters cannot override it.
+
+After a commit adds a delivery, the Worker looks up the cities holding rows
+for that payload and their live credential hashes in one query. This includes
+joined deliveries, ordinary messages, statuses, early statuses adopted by a
+send, historical-link retries, and rows committed before a later batch fails.
+Only sockets opened under a currently live hash receive a wake. Other sockets
+close with `4401`. A wake failure is bounded at two seconds, logs only a fixed
+event and count, and never changes the webhook's answer or removes a row.
+
+`CityWake` accepts sockets through the hibernation API and automatically
+answers `ping` with `pong` while asleep. It stores only a credential hash in
+each socket's attachment, with no persistent storage, timer or alarm. At most
+four sockets are open per city; the oldest closes when another connects.
+
+The adapter opens the link with its runtime's built-in WebSocket, carrying
+the credential in the header only. Each connect and wake requests an inbox
+read; wakes during a read coalesce into one further read. A quiet healthy link
+uses `WHATSAPP_HELD_POLL_MS` (default `300000`) for safety reads. Whenever the
+link is down, disabled, unsupported by the runtime, or refused by an older
+gateway, `WHATSAPP_POLL_MS` keeps its existing default of `2000`. Owed keeper
+binds retain that original cadence even while the inbox link is held.
+
+The adapter sends `ping` every 30 seconds and requires `pong` within 10 seconds.
+Reconnect waits are 1, 5, 15, 60, then 300 seconds. Only the inbox's `401`
+decides credential validity and stops reconnecting. `/status` includes
+`inbound.link`: mode, state, since, last_wake_at, wakes, reconnects and reason;
+`gc whatsapp status` prints it directly below enrollment.
+
+This is never weaker than polling: the same bearer check and TLS protect the
+link, every inbox read and ack authenticates again, and revocation is checked
+before every wake. An offline box loses only hints; its unacknowledged rows
+remain in D1. On reconnect it reads them from the start. The existing journal
+deduplicates repeated reads, including across a crash; no cursor or second
+message-delivery path is introduced.
+
+Deploy the gateway first, then adapters one box at a time. There is no D1
+migration. The deploy configuration must carry `CITY_WAKE`, the SQLite-backed
+`CityWake` class declaration, and `WAKE`; a configuration without the binding
+leaves boxes polling. Cloudflare does not allow a version rollback across the
+deployment that adds a Durable Object class
+([rollback rules](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/rollbacks/),
+read 2026-11-12). Roll back by a forward deployment with `WAKE=off`: new
+connections stop immediately, and the Worker closes each city's existing
+sockets with `4503` where it would send a wake and on that city's inbox read.
+Each box returns to its ordinary poll at its next message or safety read,
+whichever is first—at most five minutes for an idle box using the default.
+The per-box `WHATSAPP_HELD_CONNECTION=off` switch and adapter restart restore
+polling immediately for that box. The class remains declared; D1 needs no
+rollback.
 
 ## Business-scoped user ids (gp-ac0u)
 

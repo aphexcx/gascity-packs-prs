@@ -66,6 +66,7 @@ gateway, over HTTPS, with the one credential it was given at enrollment.
 4. The adapter polls `GET /v1/inbox` (every `WHATSAPP_POLL_MS`, 2 seconds by default). The inbox
    answers with the city's unacknowledged deliveries, oldest first, and every poll reads them from the
    start, so a restarted box reads again everything it never acknowledged.
+   With the held connection up, each connect or wake triggers that same read, with a five-minute safety read; a down or disabled link uses the ordinary polling interval.
 5. The adapter writes the delivery to its journal, then posts it to gc's `POST /extmsg/inbound` with
    `provider_message_id` (the wamid), `dedup_key` (the request id), the actor (the owner's profile
    name when there is one, `is_bot: false`), `received_at` (Meta's time for the message) and any

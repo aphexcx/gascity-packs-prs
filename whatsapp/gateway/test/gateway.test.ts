@@ -1175,6 +1175,8 @@ describe("Health, logs, the entry point", () => {
   it("no log line carries a phone number, a message body, a token or a secret", async () => {
     const t = setup();
     const city = await t.enrollCity("Hou Dynasty");
+    t.deps.wake = { open: async () => new Response(null, { status: 503 }),
+      notify: async () => { throw new Error(`sensitive ${city.token} ${city.id}`); } };
     const code = await t.invite(city);
     const wa = phone();
     const stranger = phone();
@@ -1195,11 +1197,11 @@ describe("Health, logs, the entry point", () => {
     await t.gateway.maintain();
     const lines = [...t.logs, ...broken.logs].map((e) => JSON.stringify(e));
     const events = new Set([...t.logs, ...broken.logs].map((e) => e.event));
-    for (const e of ["webhook", "send", "send_failed", "send_refused", "webhook_refused", "webhook_store_failed", "invite_minted", "city_enrolled"]) {
+    for (const e of ["webhook", "send", "send_failed", "send_refused", "webhook_refused", "webhook_store_failed", "invite_minted", "city_enrolled", "wake_failed"]) {
       expect(events).toContain(e);
     }
     expect(lines.length).toBeGreaterThan(0);
-    for (const needle of [wa, wa.slice(2), stranger, "4242", "vault", "private reply", "Taylor", code, city.token, SECRETS.app, SECRETS.access, SECRETS.verify, SECRETS.admin]) {
+    for (const needle of [wa, wa.slice(2), stranger, "4242", "vault", "private reply", "Taylor", code, city.token, city.id, SECRETS.app, SECRETS.access, SECRETS.verify, SECRETS.admin]) {
       for (const line of lines) expect(line).not.toContain(needle);
     }
   });

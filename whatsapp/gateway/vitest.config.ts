@@ -28,6 +28,7 @@ export default defineConfig(async () => {
         },
       }),
     ],
-    test: { setupFiles: ["./test/setup.ts"] },
+    // The replay tables now exercise a real object call after every committed payload.
+    test: { setupFiles: ["./test/setup.ts"], testTimeout: 120000 },
   };
 });

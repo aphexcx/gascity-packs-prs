@@ -110,6 +110,7 @@ export interface Deps {
   now(): number;
   fetch: typeof fetch;
   log(event: LogEvent): void;
+  wake?: import("./wake-client.js").Wake;
 }
 
 class HttpError extends Error {
@@ -524,6 +525,8 @@ export function createGateway(deps: Deps) {
       }
     }
     const committed = (index: number) => index < results.length && changes(results[index]) === 1;
+    if (deps.wake) await (await import("./wake-client.js")).wakeDeliveries(deps,
+      [...batch.messages.map((message) => message.wamid), ...batch.statuses.map((status) => status.wamid)]);
     // Best effort from here: a failed send is counted, never a 5xx to Meta.
     let welcomed = 0;
     let canned = 0;
@@ -958,6 +961,7 @@ export function createGateway(deps: Deps) {
 
   async function inbox(request: Request, url: URL): Promise<Response> {
     const cityId = await cityOf(request);
+    if (deps.wake?.enabled === false) await (await import("./wake-client.js")).closeCity(deps, cityId);
     const after = intParam(url, "after", 0, 0, Number.MAX_SAFE_INTEGER);
     const limit = intParam(url, "limit", 100, 1, 200);
     const { results } = await db
@@ -1143,6 +1147,7 @@ export function createGateway(deps: Deps) {
           .bind(cityId, wamid, owner.conversation_id),
         db.prepare("DELETE FROM orphan_statuses WHERE wamid = ?").bind(wamid),
       ]);
+      if (deps.wake) await (await import("./wake-client.js")).wakeDeliveries(deps, [wamid]);
     } catch (e) {
       // Meta took it; the answer stands. A repeat of the key reads outcome_unknown, never a resend.
       log({ event: "send_record_failed", type: req.type, error: errorName(e) });
@@ -1314,6 +1319,12 @@ export function createGateway(deps: Deps) {
     "/v1/enroll": { POST: (r) => enroll(r) },
     "/v1/invites": { POST: (r) => invites(r) },
     "/v1/inbox": { GET: inbox },
+    "/v1/wake": { GET: async (r) => {
+      if (!deps.wake || deps.wake.enabled === false) return fail(404, "not_found");
+      const city = await cityOf(r);
+      if (r.headers.get("upgrade")?.toLowerCase() !== "websocket") return fail(426, "upgrade_required");
+      return deps.wake.open(city, await sha256Hex(bearer(r)!));
+    } },
     "/v1/inbox/ack": { POST: (r) => ack(r) },
     "/v1/send": { POST: (r) => send(r) },
     "/v1/uploads": { POST: async (r) => upload(r, await cityOf(r), db, deps.now(), graph) },

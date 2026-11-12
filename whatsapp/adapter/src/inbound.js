@@ -26,6 +26,7 @@ import { pasteFound, probeShape } from './evidence.js';
 import {
   conversationOf, inboundAtMs, lastFour, pmidOfRid, providerMessageId, renderMessage, ridFor, statusOf,
 } from './render.js';
+import { createLink } from './link.js';
 
 export const READBACK_FAST_MS = 5000;
 export const READBACK_FAST_FOR_MS = 10 * 60 * 1000;
@@ -139,6 +140,7 @@ export function createInbound({
   compactMs = 10 * 60 * 1000,
   routeAgent = 'mayor',
   onAuthFailure = () => {},
+  heldConnection,
 }) {
   const graceMs = gcPostTimeoutMs + GRACE_MARGIN_MS;
   const ackOwedIds = new Map(); // gateway delivery id -> rid (null for a status delivery that is only acked)
@@ -249,11 +251,22 @@ export function createInbound({
 
   // --- the gateway poll ------------------------------------------------------
 
+  let pollWanted = false;
+  let nextBindRetryAt = 0;
+  const link = createLink({
+    ...heldConnection,
+    enabled: heldConnection?.enabled ?? false,
+    clock,
+    onRead: () => { pollWanted = true; },
+    onDown: () => { nextPollAt = Math.min(nextPollAt, clock()); },
+  });
+  const heldPollMs = heldConnection?.pollMs ?? 300000;
+
   async function poll() {
     polling = true;
+    pollWanted = false;
     const seq = ++pollSeq;
     try {
-      retryOwedBinds();
       const deliveries = await readWholeInbox(gateway);
       pollFailures = 0;
       lastCompletedPollSeq = seq;
@@ -269,11 +282,12 @@ export function createInbound({
         watermarkWanted = true;
         keeper?.noteDelivery?.();
       }
-      nextPollAt = clock() + pollMs;
+      nextPollAt = clock() + (link.up ? heldPollMs : pollMs);
     } catch (err) {
       stats.lastPollError = err.message;
       if (err.auth) {
         authFailed = true;
+        link.stop('unauthorized');
         log('gateway answered 401: the credential is unknown or revoked; polling stopped (gc whatsapp enroll)');
         onAuthFailure(err);
         return;
@@ -931,7 +945,13 @@ export function createInbound({
     if (!started) startup();
     const now = clock();
 
-    if (!authFailed && !polling && now >= nextPollAt) void poll();
+    if (authFailed) link.stop('unauthorized');
+    else link.tick();
+    if (!authFailed && now >= nextBindRetryAt) {
+      retryOwedBinds();
+      nextBindRetryAt = now + pollMs;
+    }
+    if (!authFailed && !polling && (pollWanted || now >= nextPollAt)) void poll();
     if (!acking && ackOwedIds.size && now >= ackNextAt) void driveAcks(false);
 
     if (journal.watermarks.size && !watermarkRunning
@@ -1039,6 +1059,7 @@ export function createInbound({
     }
     return {
       auth_failed: authFailed,
+      link: link.status(),
       last_poll_at: stats.lastPollAt,
       last_poll_error: stats.lastPollError,
       polls: stats.polls,
@@ -1058,7 +1079,7 @@ export function createInbound({
     resolve,
     clearGap,
     status,
-    stop() { stopped = true; },
+    stop() { stopped = true; link.stop(); },
     get authFailed() { return authFailed; },
     // exposed for tests and the doctor's runtime view
     _readAllWatermarks: readAllWatermarks,

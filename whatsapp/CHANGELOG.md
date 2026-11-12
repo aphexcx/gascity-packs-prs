@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (gp-60dl)
+
+- A hibernating WebSocket per city wakes the adapter to read its existing
+  inbox. Quiet connections use a five-minute safety read; disconnected or
+  unsupported boxes keep polling. The journal, inbox and acknowledgement
+  contract stay unchanged. Status shows whether the link is held or polling.
+- The gateway switch closes existing sockets on the next message or inbox
+  read; a per-box switch restores polling immediately on restart. No D1
+  migration, and no deployment is included in this change.
+
 ## Unreleased (gp-tu0b)
 
 - Test fixtures now use invented names.
