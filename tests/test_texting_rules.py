@@ -33,8 +33,9 @@ INTRO = "These reactions have fixed meanings, the same on Slack, Google Chat and
 # The sentence before each table: the first holds the rows an adapter may
 # place, the second the rows that claim a finished fact.
 TABLE_LEADS = (
-    "Each one in the first table is true the moment a message arrives, so "
-    "you or the adapter may place it:",
+    "Each one in the first table can be true the moment a message arrives, "
+    "so the adapter may place it, and so may you on a channel where you can "
+    "react:",
     "Each one in the second table states a finished fact, so it is yours to "
     "place, and only once the fact is true:",
 )
@@ -80,14 +81,84 @@ def tables(text: str) -> list[list[str]]:
     return found
 
 
+# Characters that belong to the symbol before them: the emoji presentation
+# selector, the keycap mark, the five skin tones and the tag characters. A
+# zero-width joiner also takes the character after it.
+JOINS = frozenset({"️", "⃣", *map(chr, range(0x1F3FB, 0x1F400)), *map(chr, range(0xE0020, 0xE0080))})
+ZWJ = "‍"
+
+
 def reactions_shown(text: str) -> list[str]:
-    """Every emoji the text shows: a pictographic symbol, with the emoji
-    presentation selector when the text has one after it."""
-    shown = []
-    for i, ch in enumerate(text):
-        if unicodedata.category(ch) == "So" and ord(ch) >= 0x2190:
-            shown.append(ch + ("️" if text[i + 1 : i + 2] == "️" else ""))
+    """Every emoji the text shows, whole: a pictographic symbol (or any
+    character the presentation selector makes an emoji), with the
+    characters that belong to it, so 👍🏽 is not read as 👍."""
+    shown, i = [], 0
+    while i < len(text):
+        ch = text[i]
+        if not ((unicodedata.category(ch) == "So" and ord(ch) >= 0x2190) or text[i + 1 : i + 2] == "️"):
+            i += 1
+            continue
+        j = i + 1
+        while j < len(text):
+            if text[j] in JOINS:
+                j += 1
+            elif text[j] == ZWJ and j + 1 < len(text):
+                j += 2
+            else:
+                break
+        shown.append(text[i:j])
+        i = j
     return shown
+
+
+def outside_the_tables(text: str) -> str:
+    return "".join(line + "\n" for line in text.splitlines() if not line.startswith("|"))
+
+
+# The reactions a text shows outside its two tables, in order. Each was read
+# for its meaning; one added later is read the same way and named here.
+OUTSIDE_THE_TABLES = {
+    # an inbound reaction's line, rule 3's two examples, the react example
+    "gchat": ["👍", "✅", "⏰", "👀"],
+    # rule 3's two examples
+    "slack": ["✅", "⏰"],
+    "whatsapp": ["✅", "⏰"],
+}
+
+# Backticked words outside the tables that are Slack emoji names but not
+# reactions: Google Chat's `thread` is a field of a message.
+NOT_REACTIONS = {"gchat": {"thread"}, "slack": set(), "whatsapp": set()}
+
+SLACK_EMOJI_NAMES = REPO / "slack-full" / "adapter" / "slack_emoji_names.go"
+
+
+def slack_names() -> set[str]:
+    return {
+        line[2:-2]
+        for line in SLACK_EMOJI_NAMES.read_text(encoding="utf-8").splitlines()
+        if line.startswith('\t"') and line.endswith('",')
+    }
+
+
+NUMBER = (
+    r"(\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)"
+)
+# A count of the reactions, or of a table's rows: it goes stale with the catalog.
+COUNTS = re.compile(rf"\b{NUMBER}\s+(reactions|rows)\b|\bthe\s+((first|last)\s+)?{NUMBER}\b", re.IGNORECASE)
+
+
+def reactions_span(text: str) -> str:
+    """The text from the paragraph that holds the intro to the end of the last rule."""
+    lines = text.splitlines()
+    opening = " ".join(INTRO.split()[:3])
+    first = next(i for i, line in enumerate(lines) if opening in line)
+    while first > 0 and lines[first - 1].strip():
+        first -= 1
+    last = next(i for i, line in enumerate(lines) if line.startswith(RULE_LEADS[-1]))
+    while last + 1 < len(lines) and lines[last + 1].startswith("  "):
+        last += 1
+    return "\n".join(lines[first : last + 1]) + "\n"
 
 
 # The other bullets of the section the rules sit in, before the rules and
@@ -346,9 +417,47 @@ def test_the_intro_and_the_two_table_leads_come_in_order(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(TEXTS))
+def test_outside_the_tables_a_text_shows_only_the_reactions_named_here(name: str) -> None:
+    """A catalog reaction in prose could be given another meaning there
+    ("put 🎉 on a request once the work is done"); each one is named here
+    after a read (the gp-bis1 self-review, m3)."""
+    assert reactions_shown(outside_the_tables(read(name))) == OUTSIDE_THE_TABLES[name]
+
+
+@pytest.mark.parametrize("name", sorted(TEXTS))
+def test_outside_the_tables_no_slack_name_is_named(name: str) -> None:
+    """A Slack name in prose (`fire` when the work is urgent) is a reaction by
+    another route; outside the tables only the words named here may be one."""
+    known = slack_names()
+    assert len(known) > 1000, "the adapter's table did not parse"
+    spans = set(re.findall(r"`([^`\n]+)`", outside_the_tables(read(name))))
+    assert sorted((spans & known) - NOT_REACTIONS[name]) == []
+
+
+@pytest.mark.parametrize("name", sorted(TEXTS))
 def test_no_text_counts_the_reactions(name: str) -> None:
     """The texts stop saying five (gp-bis1): a count goes stale with the catalog."""
-    assert not re.search(r"\b(five|the first three)\b", read(name), re.IGNORECASE)
+    span = reactions_span(read(name))
+    assert INTRO in normalized(span) and RULE_LEADS[-1] in span
+    found = [m.group(0) for m in COUNTS.finditer(span)]
+    assert not found, f"{name} counts: {found}"
+
+
+@pytest.mark.parametrize(
+    ("probe", "counts"),
+    [
+        ("Five reactions have fixed meanings.\n", True),
+        ("The catalog has 18 reactions.\n", True),
+        ("The first table's eleven rows.\n", True),
+        ("The adapter may place one of the first three.\n", True),
+        ("Use the five only for their meanings.\n", True),
+        ("The adapter recovers up to 28 days of history.\n", False),
+        ("When the message has not reached you for two minutes.\n", False),
+        ("Files up to 200 MB.\n", False),
+    ],
+)
+def test_the_count_check_finds_a_count(probe: str, counts: bool) -> None:
+    assert bool(COUNTS.search(probe)) is counts, probe
 
 
 @pytest.mark.parametrize(
@@ -357,6 +466,9 @@ def test_no_text_counts_the_reactions(name: str) -> None:
         ("React with 🙏 when they thank you.\n", ["🙏"]),
         ("React with ❤ when they thank you.\n", ["❤"]),
         ("React with ❤️ when they thank you.\n", []),
+        ("Agree with 👍🏽.\n", ["👍🏽"]),
+        ("Mark an urgent one ‼️.\n", ["‼️"]),
+        ("A family: 👨‍👩‍👧.\n", ["👨‍👩‍👧"]),
         ("Copyright ™ and © are not reactions.\n", []),
     ],
 )

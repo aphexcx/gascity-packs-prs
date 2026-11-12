@@ -4,8 +4,8 @@ Google Chat, Slack and WhatsApp ship as separate packs, so each pack carries
 the catalog as its own reactions.json. The source is gchat/reactions.json;
 the other copies must equal it byte for byte. The channel texts show the
 same rows (tests/test_texting_rules.py). An adapter's Jev choice can read
-the rows an adapter may place: the Slack name is the option's name and the
-meaning is its description.
+the rows an adapter may place, with the meaning as each option's
+description; the option's name is the adapter's to choose.
 """
 
 import json
@@ -54,7 +54,6 @@ TRUE_AT_ARRIVAL = frozenset(
         "mag",
         "+1",
         "thinking_face",
-        "inbox_tray",
         "heart",
         "wave",
         "tada",
@@ -63,10 +62,14 @@ TRUE_AT_ARRIVAL = frozenset(
         "crossed_fingers",
     }
 )
+# An attachment can arrive unavailable (Google Chat's "unavailable" line,
+# WhatsApp's "media store unavailable"), and an adapter's choice sees only
+# the text, so "I have the attachment" is a claim the mayor checks first.
 CLAIMS = frozenset(
     {
         "white_check_mark",
         "alarm_clock",
+        "inbox_tray",
         "outbox_tray",
         "date",
         "credit_card",
@@ -74,6 +77,33 @@ CLAIMS = frozenset(
         "warning",
     }
 )
+
+# Each Slack name's character, from Slack's own table: the "unified" field
+# of iamcal/emoji-data emoji.json at commit
+# 13ee711e222ea17fe537bfea953c687866f16411, the commit
+# slack-full/adapter/slack_emoji_names.go is generated from. Slack places a
+# reaction by its name and Google Chat and WhatsApp by its character, so a
+# row whose character is not its name's would differ between the channels.
+CODEPOINTS = {
+    "eyes": "1F440",
+    "mag": "1F50D",
+    "+1": "1F44D",
+    "thinking_face": "1F914",
+    "heart": "2764-FE0F",
+    "wave": "1F44B",
+    "tada": "1F389",
+    "cry": "1F622",
+    "joy": "1F602",
+    "crossed_fingers": "1F91E",
+    "white_check_mark": "2705",
+    "alarm_clock": "23F0",
+    "inbox_tray": "1F4E5",
+    "outbox_tray": "1F4E4",
+    "date": "1F4C5",
+    "credit_card": "1F4B3",
+    "memo": "1F4DD",
+    "warning": "26A0-FE0F",
+}
 
 
 def no_repeated_keys(pairs: list[tuple[str, object]]) -> dict:
@@ -144,6 +174,14 @@ def test_every_slack_name_is_one_the_slack_adapter_knows() -> None:
     assert len(known) > 1000, "the adapter's table did not parse"
     unknown = [row["slack_name"] for row in load() if row["slack_name"] not in known]
     assert not unknown, f"Slack names the adapter does not know: {unknown}"
+
+
+def test_each_emoji_is_the_character_slack_gives_its_name() -> None:
+    rows = load()
+    assert {row["slack_name"] for row in rows} == set(CODEPOINTS), "name each row's codepoints here"
+    for row in rows:
+        expected = "".join(chr(int(part, 16)) for part in CODEPOINTS[row["slack_name"]].split("-"))
+        assert row["emoji"] == expected, row
 
 
 def test_the_count_is_above_five_and_within_the_jev_choice_limit() -> None:
