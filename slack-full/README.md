@@ -38,7 +38,8 @@ words lines record posts. An unwritable journal warns once and delivery continue
 The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
 timing directory for every adapter.
 
-Run `gc slack stopwatch` with the pack's installed alias. It needs no running adapter.
+Run `gc slack stopwatch` with the pack's installed alias. It requires Python 3.11+
+and needs no running adapter.
 With city context it discovers the service's state directory when present.
 `--state-dir DIRECTORY` selects a custom directory; `--since TIME` and
 `--until TIME` filter inbound channel timestamps inclusively; `--json` prints

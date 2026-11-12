@@ -8,6 +8,7 @@ import json
 import math
 import os
 from pathlib import Path
+import tomllib
 
 
 def instant(value):
@@ -21,7 +22,9 @@ def default_directory():
     env = os.environ
     if env.get("GC_SERVICE_STATE_ROOT"):
         return Path(env["GC_SERVICE_STATE_ROOT"])
-    pack = Path(__file__).resolve().parent.parent.name
+    root = Path(__file__).resolve().parent.parent
+    with (root / "pack.toml").open("rb") as stream:
+        pack = tomllib.load(stream)["pack"]["name"]
     city = env.get("GC_CITY_PATH") or env.get("GC_CITY")
     service = {"gchat": "gchat", "slack-full": "slack", "whatsapp": "whatsapp"}[pack]
     if city:
@@ -101,14 +104,14 @@ def report(directory, since=None, until=None, now=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--state-dir", type=Path, default=default_directory())
+    parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--since", type=instant)
     parser.add_argument("--until", type=instant)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
-        rows = report(args.state_dir, args.since, args.until)
-    except OSError:
+        rows = report(args.state_dir or default_directory(), args.since, args.until)
+    except (OSError, KeyError, ValueError):
         parser.exit(1, "stopwatch: cannot read state directory\n")
     if args.json:
         print(json.dumps(rows, indent=2))

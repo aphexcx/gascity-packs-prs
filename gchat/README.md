@@ -40,7 +40,8 @@ words lines record posts. An unwritable journal warns once and delivery continue
 The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
 timing directory for every adapter.
 
-Run `gc gchat stopwatch` with the pack's installed alias. It needs no running adapter.
+Run `gc gchat stopwatch` with the pack's installed alias. It requires Python 3.11+
+and needs no running adapter.
 With city context it discovers the service's state directory when present.
 `--state-dir DIRECTORY` selects a custom directory; `--since TIME` and
 `--until TIME` filter inbound channel timestamps inclusively; `--json` prints
@@ -124,7 +125,7 @@ key holder creates them.
 Requirements: gc with schema-2 packs, `proxy_process` services and the extmsg
 API; a Unix platform with advisory file locks; Go 1.27.2 or newer for builds;
 POSIX sh, curl, jq, and the standard `od`
-and `tr` utilities. Python 3 is needed only for the wrapper tests. The source
+and `tr` utilities. Python 3.11+ runs the stopwatch command and wrapper tests. The source
 module is independent; no global Go install step is required.
 
 1. Place the pack at `packs/gchat`. Import it under the binding `gchat` in the

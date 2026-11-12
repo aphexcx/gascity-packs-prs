@@ -1,6 +1,7 @@
 """Offline timing report: known samples, thread isolation, and release cuts."""
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -54,3 +55,18 @@ def test_stopwatch_finds_supervised_state_from_command_city(tmp_path):
         env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path / "home-example"), "GC_CITY_PATH": str(tmp_path / service)}
         result = json.loads(subprocess.check_output(["python3", str(script), "--json"], env=env, text=True))
         assert len(result) == 2
+
+
+def test_stopwatch_pack_identity_survives_install_directory_name(tmp_path):
+    installed = tmp_path / "installed-alias"
+    (installed / "commands").mkdir(parents=True)
+    source = SCRIPTS[0]
+    shutil.copy2(source, installed / "commands/stopwatch.py")
+    shutil.copy2(source.parent.parent / "pack.toml", installed / "pack.toml")
+    state = tmp_path / "city/.gc/services/gchat"
+    state.mkdir(parents=True)
+    fixture(state)
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path / "home-example"), "GC_CITY_PATH": str(tmp_path / "city")}
+    result = subprocess.run(["python3", str(installed / "commands/stopwatch.py"), "--json"], env=env, text=True, capture_output=True)
+    assert result.returncode == 0
+    assert len(json.loads(result.stdout)) == 2

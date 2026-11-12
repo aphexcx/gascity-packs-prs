@@ -90,3 +90,9 @@ Regression tests are `TestCompanyConfirmedPostsAreTimed`,
 `test_stopwatch_finds_supervised_state_from_command_city`. Visible company
 reactions are also timed with arrivals off; words events deduplicate across
 restart. No additional session observer was introduced.
+
+The state-discovery regression also covers renamed pack installations with
+`test_stopwatch_pack_identity_survives_install_directory_name`. Pack identity
+comes from the manifest, independent of its installation directory or alias.
+The report and parity suite passes all four tests; command-help validation
+passes both selected tests and all eleven subtests.
