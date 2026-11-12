@@ -1,0 +1,140 @@
+"""Mutation probes: each new test fails on the defect it is for.
+
+usage: probes.py <repo> <probe root> <emoji.json> <out file>
+
+For each probe, a fresh directory under <probe root> gets the files the two
+test modules read (the tests, the three texts, the three catalogs and the
+Slack adapter's name list) from <repo>, one defect is written into it, and
+pytest runs both modules there. The report lists the failing tests per probe.
+Directories are never reused or removed: each probe has its own.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import unicodedata
+
+repo, root, emoji_json, out = sys.argv[1:5]
+FILES = [
+    "tests/test_reaction_catalog.py",
+    "tests/test_texting_rules.py",
+    "gchat/skills/google-chat/SKILL.md",
+    "slack-full/template-fragments/slack-v0.template.md",
+    "whatsapp/skills/whatsapp/SKILL.md",
+    "gchat/reactions.json",
+    "slack-full/reactions.json",
+    "whatsapp/reactions.json",
+    "slack-full/adapter/slack_emoji_names.go",
+]
+CATALOGS = ["gchat/reactions.json", "slack-full/reactions.json", "whatsapp/reactions.json"]
+TEXTS = {
+    "gchat": "gchat/skills/google-chat/SKILL.md",
+    "slack": "slack-full/template-fragments/slack-v0.template.md",
+    "whatsapp": "whatsapp/skills/whatsapp/SKILL.md",
+}
+
+
+def edit(d, rel, old, new, count=1):
+    p = os.path.join(d, rel)
+    s = open(p, encoding="utf-8").read()
+    assert s.count(old) >= 1, (rel, old)
+    open(p, "w", encoding="utf-8").write(s.replace(old, new, count))
+
+
+def edit_catalogs(d, old, new):
+    for rel in CATALOGS:
+        edit(d, rel, old, new)
+
+
+def many_rows(d):
+    """256 rows: the catalog's own, then valid rows from Slack's table."""
+    table = json.load(open(emoji_json, encoding="utf-8"))
+    p = os.path.join(d, "gchat/reactions.json")
+    doc = json.load(open(p, encoding="utf-8"))
+    have = {r["emoji"] for r in doc["reactions"]} | {r["slack_name"] for r in doc["reactions"]}
+    known = set(open(os.path.join(d, "slack-full/adapter/slack_emoji_names.go"), encoding="utf-8").read().split('"'))
+    for e in table:
+        if len(doc["reactions"]) == 256:
+            break
+        ch = "".join(chr(int(h, 16)) for h in e["unified"].split("-"))
+        name = e["short_names"][0]
+        if len(ch) != 1 or unicodedata.category(ch) != "So" or ord(ch) < 0x2190 or ch in have or name in have or name not in known:
+            continue
+        doc["reactions"].append({"emoji": ch, "slack_name": name, "meaning": f"Probe row {len(doc['reactions'])}.", "adapter_may_place": True})
+    assert len(doc["reactions"]) == 256
+    body = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    for rel in CATALOGS:
+        open(os.path.join(d, rel), "w", encoding="utf-8").write(body)
+
+
+ROW_TADA = '{"emoji": "🎉", "slack_name": "tada", "meaning": "That is great news.", "adapter_may_place": true}'
+PROBES = [
+    ("00-unchanged", "nothing changed: every test passes", lambda d: None),
+    ("01-copy-differs", "the Slack copy's meaning for tada differs from the source",
+     lambda d: edit(d, "slack-full/reactions.json", "That is great news.", "Great news.")),
+    ("02-field-missing", "a row without adapter_may_place",
+     lambda d: edit_catalogs(d, ROW_TADA, '{"emoji": "🎉", "slack_name": "tada", "meaning": "That is great news."}')),
+    ("03-field-extra", "a row with a fifth field",
+     lambda d: edit_catalogs(d, ROW_TADA, ROW_TADA[:-1] + ', "jev": "tada"}')),
+    ("04-emoji-repeated", "crossed_fingers carries the wave's emoji",
+     lambda d: edit_catalogs(d, '"emoji": "🤞"', '"emoji": "👋"')),
+    ("05-slack-name-unknown", "a Slack name the adapter does not know",
+     lambda d: edit_catalogs(d, '"slack_name": "crossed_fingers"', '"slack_name": "fingers_crossed"')),
+    ("06-count-256", "256 rows, one over the vendor's limit", many_rows),
+    ("07-claim-placeable", "warning marked placeable by an adapter",
+     lambda d: edit_catalogs(d, '"meaning": "It did not work; my reply says why.", "adapter_may_place": false', '"meaning": "It did not work; my reply says why.", "adapter_may_place": true')),
+    ("08-row-unclassified", "a new row the test does not name",
+     lambda d: edit_catalogs(d, ROW_TADA, ROW_TADA + ',\n    {"emoji": "🙏", "slack_name": "pray", "meaning": "Thank you.", "adapter_may_place": true}')),
+    ("09-five-meaning-changed", "the check mark's meaning changed in the catalog",
+     lambda d: edit_catalogs(d, '"Done, and checked."', '"Done."')),
+    ("10-key-repeated", "a row that names emoji twice",
+     lambda d: edit_catalogs(d, '{"emoji": "🎉", "slack_name": "tada"', '{"emoji": "🎉", "emoji": "🎉", "slack_name": "tada"')),
+    ("11-text-meaning-differs", "the Google Chat table says Paid. for credit_card",
+     lambda d: edit(d, TEXTS["gchat"], '"It is paid."', '"Paid."')),
+    ("12-text-rows-swapped", "the Slack table has tada and cry swapped",
+     lambda d: edit(d, TEXTS["slack"], '| 🎉 | `tada` | "That is great news." |\n| 😢 | `cry` | "I am sorry; that is sad news." |',
+                    '| 😢 | `cry` | "I am sorry; that is sad news." |\n| 🎉 | `tada` | "That is great news." |')),
+    ("13-text-claim-in-first-table", "the WhatsApp first table also lists the sent row",
+     lambda d: edit(d, TEXTS["whatsapp"], '| 🤞 | `crossed_fingers` | "Good luck; I hope it goes well." |',
+                    '| 🤞 | `crossed_fingers` | "Good luck; I hope it goes well." |\n| 📤 | `outbox_tray` | "It is sent." |')),
+    ("14-text-stray-reaction", "the WhatsApp skill tells the mayor to answer thanks with 🙏 in another section",
+     lambda d: edit(d, TEXTS["whatsapp"], "## Write for a phone\n", "## Write for a phone\n\nAnswer a thank-you with 🙏.\n")),
+    ("15-text-heart-without-selector", "the Google Chat rule names ❤ without U+FE0F",
+     lambda d: edit(d, TEXTS["gchat"], "⏰ once the reminder is really stored,", "⏰ once the reminder is really stored, ❤ for thanks,")),
+    ("16-text-says-five", "the Slack intro says five again",
+     lambda d: edit(d, TEXTS["slack"], "These reactions have fixed meanings", "Five reactions have fixed meanings")),
+    ("17-text-lead-missing", "the Slack second table has no lead",
+     lambda d: edit(d, TEXTS["slack"], "Each one in the second table states a finished fact, so it is yours to\nplace, and only once the fact is true:\n", "")),
+    ("18-emoji-not-its-names", "tada's row shows 🥳 in every catalog copy and every text (the self-review's m2)",
+     lambda d: [edit_catalogs(d, '"emoji": "🎉"', '"emoji": "🥳"')] + [edit(d, rel, "| 🎉 | `tada` |", "| 🥳 | `tada` |") for rel in TEXTS.values()]),
+    ("19-prose-other-meaning", "the Google Chat skill says to put 🎉 on finished work (m3)",
+     lambda d: edit(d, TEXTS["gchat"], "When `gc gchat react` fails, the reaction was not placed, so say the same\nthing in words.\n",
+                    "When `gc gchat react` fails, the reaction was not placed, so say the same\nthing in words. Put 🎉 on a request once the work is done.\n")),
+    ("20-skin-tone-in-prose", "the WhatsApp skill says to agree with 👍🏽 (m3)",
+     lambda d: edit(d, TEXTS["whatsapp"], "## Write for a phone\n", "## Write for a phone\n\nAgree with 👍🏽.\n")),
+    ("21-slack-name-in-prose", "the Slack fragment says to use `fire` when work is urgent (m3)",
+     lambda d: edit(d, TEXTS["slack"], "## How to reply\n", "Use `fire` when the work is urgent.\n\n## How to reply\n")),
+    ("22-text-counts-by-number", "the WhatsApp intro says these 18 reactions (n3)",
+     lambda d: edit(d, TEXTS["whatsapp"], "These reactions have fixed meanings", "These 18 reactions have fixed meanings")),
+]
+
+env = {k: v for k, v in os.environ.items() if k != "GC_TEMPLATE"}
+report = []
+for slug, what, mutate in PROBES:
+    d = os.path.join(root, slug)
+    os.makedirs(d)  # fails if it exists: each probe gets a fresh directory
+    for rel in FILES:
+        os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+        shutil.copyfile(os.path.join(repo, rel), os.path.join(d, rel))
+    mutate(d)
+    p = subprocess.run(
+        ["uv", "run", "--with", "pytest", "python3", "-m", "pytest", "tests/test_reaction_catalog.py", "tests/test_texting_rules.py",
+         "-q", "-p", "no:cacheprovider", "-rf", "--tb=no"],
+        cwd=d, capture_output=True, text=True, env=env,
+    )
+    failed = sorted({line.split(" ", 1)[1].split(" - ")[0].replace("tests/", "") for line in p.stdout.splitlines() if line.startswith("FAILED ")})
+    summary = p.stdout.strip().splitlines()[-1] if p.stdout.strip() else p.stderr.strip()[-200:]
+    report.append(f"## {slug}: {what}\n{summary}\n" + "".join(f"  FAILED {t}\n" for t in failed))
+open(out, "w", encoding="utf-8").write("\n".join(report))
+print("\n".join(report))

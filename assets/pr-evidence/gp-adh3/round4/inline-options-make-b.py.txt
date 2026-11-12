@@ -1,0 +1,51 @@
+"""Option (b): the texts as built (option a), with each table cut to the five
+of rounds 1 to 3 and one paragraph after the second table naming the file.
+
+usage: make_option_b.py <repo> <out dir>; also writes the base texts
+(ce018700) to <out dir>/../base-texts for the measure.
+"""
+import json
+import os
+import subprocess
+import sys
+
+BASE = "ce0187006b0f216a487173b2eefe789998f6cf29"
+
+repo, out = sys.argv[1], sys.argv[2]
+base_out = os.path.join(os.path.dirname(out), "base-texts")
+os.makedirs(out, exist_ok=True)
+os.makedirs(base_out, exist_ok=True)
+
+rows = json.load(open(f"{repo}/gchat/reactions.json", encoding="utf-8"))["reactions"]
+five = {"eyes", "mag", "+1", "white_check_mark", "alarm_clock"}
+cut = {f'| {r["emoji"]} | `{r["slack_name"]}` | "{r["meaning"]}" |' for r in rows if r["slack_name"] not in five}
+
+SKILL_POINTER = """More reactions have fixed meanings too, each marked as true on arrival
+or as a finished fact, in `reactions.json` at the root of this skill's
+pack (`../../reactions.json` from this file). Read it before you place a
+reaction that is not in these tables.
+"""
+SLACK_POINTER = """More reactions have fixed meanings too, each marked as true on arrival
+or as a finished fact, in `reactions.json` at the root of the slack-full
+pack. Read it before you place a reaction that is not in these tables.
+"""
+TEXTS = {
+    "gchat": ("gchat/skills/google-chat/SKILL.md", SKILL_POINTER),
+    "slack": ("slack-full/template-fragments/slack-v0.template.md", SLACK_POINTER),
+    "whatsapp": ("whatsapp/skills/whatsapp/SKILL.md", SKILL_POINTER),
+}
+LAST_FIVE_ROW = '| ⏰ | `alarm_clock` | "The reminder is set." |\n'
+
+for name, (rel, pointer) in TEXTS.items():
+    lines = open(f"{repo}/{rel}", encoding="utf-8").read().splitlines(keepends=True)
+    kept = [line for line in lines if line.rstrip("\n") not in cut]
+    assert len(lines) - len(kept) == len(cut), name
+    text = "".join(kept)
+    assert text.count(LAST_FIVE_ROW) == 1, name
+    text = text.replace(LAST_FIVE_ROW, LAST_FIVE_ROW + "\n" + pointer, 1)
+    with open(f"{out}/{name}.md", "w", encoding="utf-8") as f:
+        f.write(text)
+    base = subprocess.run(["git", "-C", repo, "show", f"{BASE}:{rel}"], capture_output=True, text=True, check=True).stdout
+    with open(f"{base_out}/{name}.md", "w", encoding="utf-8") as f:
+        f.write(base)
+    print(name, "option b and base written")

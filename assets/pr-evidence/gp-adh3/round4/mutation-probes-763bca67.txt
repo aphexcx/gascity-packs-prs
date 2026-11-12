@@ -1,0 +1,144 @@
+## 00-unchanged: nothing changed: every test passes
+100 passed in 0.09s
+
+## 01-copy-differs: the Slack copy's meaning for tada differs from the source
+1 failed, 99 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_the_copies_are_the_source_byte_for_byte
+
+## 02-field-missing: a row without adapter_may_place
+6 failed, 94 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_every_row_has_its_kind_named_here_and_in_the_file
+  FAILED test_reaction_catalog.py::test_every_row_has_the_four_fields
+  FAILED test_reaction_catalog.py::test_no_claim_is_placeable_by_an_adapter
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+
+## 03-field-extra: a row with a fifth field
+1 failed, 99 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_every_row_has_the_four_fields
+
+## 04-emoji-repeated: crossed_fingers carries the wave's emoji
+8 failed, 92 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_each_emoji_is_the_character_slack_gives_its_name
+  FAILED test_reaction_catalog.py::test_emoji_slack_names_and_meanings_are_unique
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+  FAILED test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[gchat]
+  FAILED test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[slack]
+  FAILED test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[whatsapp]
+
+## 05-slack-name-unknown: a Slack name the adapter does not know
+6 failed, 94 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_each_emoji_is_the_character_slack_gives_its_name
+  FAILED test_reaction_catalog.py::test_every_row_has_its_kind_named_here_and_in_the_file
+  FAILED test_reaction_catalog.py::test_every_slack_name_is_one_the_slack_adapter_knows
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+
+## 06-count-256: 256 rows, one over the vendor's limit
+6 failed, 94 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_each_emoji_is_the_character_slack_gives_its_name
+  FAILED test_reaction_catalog.py::test_every_row_has_its_kind_named_here_and_in_the_file
+  FAILED test_reaction_catalog.py::test_the_count_is_above_five_and_within_the_jev_choice_limit
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+
+## 07-claim-placeable: warning marked placeable by an adapter
+5 failed, 95 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_every_row_has_its_kind_named_here_and_in_the_file
+  FAILED test_reaction_catalog.py::test_no_claim_is_placeable_by_an_adapter
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+
+## 08-row-unclassified: a new row the test does not name
+6 failed, 94 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_each_emoji_is_the_character_slack_gives_its_name
+  FAILED test_reaction_catalog.py::test_every_row_has_its_kind_named_here_and_in_the_file
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+  FAILED test_texting_rules.py::test_the_scan_finds_a_reaction_outside_the_catalog[React with \U0001f64f when they thank you.\n-stray0]
+
+## 09-five-meaning-changed: the check mark's meaning changed in the catalog
+4 failed, 96 passed in 0.08s
+  FAILED test_reaction_catalog.py::test_the_five_stay_with_their_meanings
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+
+## 10-key-repeated: a row that names emoji twice
+8 failed, 92 passed in 0.08s
+  FAILED test_reaction_catalog.py::test_each_emoji_is_the_character_slack_gives_its_name
+  FAILED test_reaction_catalog.py::test_emoji_slack_names_and_meanings_are_unique
+  FAILED test_reaction_catalog.py::test_every_row_has_its_kind_named_here_and_in_the_file
+  FAILED test_reaction_catalog.py::test_every_row_has_the_four_fields
+  FAILED test_reaction_catalog.py::test_every_slack_name_is_one_the_slack_adapter_knows
+  FAILED test_reaction_catalog.py::test_no_claim_is_placeable_by_an_adapter
+  FAILED test_reaction_catalog.py::test_the_count_is_above_five_and_within_the_jev_choice_limit
+  FAILED test_reaction_catalog.py::test_the_five_stay_with_their_meanings
+
+## 11-text-meaning-differs: the Google Chat table says Paid. for credit_card
+2 failed, 98 passed in 0.09s
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[gchat]
+  FAILED test_texting_rules.py::test_the_tables_are_the_same_in_every_text
+
+## 12-text-rows-swapped: the Slack table has tada and cry swapped
+2 failed, 98 passed in 0.10s
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[slack]
+  FAILED test_texting_rules.py::test_the_tables_are_the_same_in_every_text
+
+## 13-text-claim-in-first-table: the WhatsApp first table also lists the sent row
+2 failed, 98 passed in 0.08s
+  FAILED test_texting_rules.py::test_each_text_carries_the_whole_catalog_in_its_two_tables[whatsapp]
+  FAILED test_texting_rules.py::test_the_tables_are_the_same_in_every_text
+
+## 14-text-stray-reaction: the WhatsApp skill tells the mayor to answer thanks with 🙏 in another section
+3 failed, 97 passed in 0.08s
+  FAILED test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[whatsapp]
+  FAILED test_texting_rules.py::test_outside_the_tables_a_text_shows_only_the_reactions_named_here[whatsapp]
+  FAILED test_texting_rules.py::test_the_older_short_reply_lines_stay
+
+## 15-text-heart-without-selector: the Google Chat rule names ❤ without U+FE0F
+3 failed, 97 passed in 0.08s
+  FAILED test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[gchat]
+  FAILED test_texting_rules.py::test_outside_the_tables_a_text_shows_only_the_reactions_named_here[gchat]
+  FAILED test_texting_rules.py::test_the_rules_are_the_same_in_every_text
+
+## 16-text-says-five: the Slack intro says five again
+3 failed, 97 passed in 0.08s
+  FAILED test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[slack]
+  FAILED test_texting_rules.py::test_no_text_counts_the_reactions[slack]
+  FAILED test_texting_rules.py::test_the_intro_and_the_two_table_leads_come_in_order[slack]
+
+## 17-text-lead-missing: the Slack second table has no lead
+1 failed, 99 passed in 0.09s
+  FAILED test_texting_rules.py::test_the_intro_and_the_two_table_leads_come_in_order[slack]
+
+## 18-emoji-not-its-names: tada's row shows 🥳 in every catalog copy and every text (the self-review's m2)
+1 failed, 99 passed in 0.09s
+  FAILED test_reaction_catalog.py::test_each_emoji_is_the_character_slack_gives_its_name
+
+## 19-prose-other-meaning: the Google Chat skill says to put 🎉 on finished work (m3)
+1 failed, 99 passed in 0.09s
+  FAILED test_texting_rules.py::test_outside_the_tables_a_text_shows_only_the_reactions_named_here[gchat]
+
+## 20-skin-tone-in-prose: the WhatsApp skill says to agree with 👍🏽 (m3)
+3 failed, 97 passed in 0.09s
+  FAILED test_texting_rules.py::test_every_reaction_a_text_shows_is_a_catalog_row[whatsapp]
+  FAILED test_texting_rules.py::test_outside_the_tables_a_text_shows_only_the_reactions_named_here[whatsapp]
+  FAILED test_texting_rules.py::test_the_older_short_reply_lines_stay
+
+## 21-slack-name-in-prose: the Slack fragment says to use `fire` when work is urgent (m3)
+1 failed, 99 passed in 0.09s
+  FAILED test_texting_rules.py::test_outside_the_tables_no_slack_name_is_named[slack]
+
+## 22-text-counts-by-number: the WhatsApp intro says these 18 reactions (n3)
+3 failed, 97 passed in 0.09s
+  FAILED test_texting_rules.py::test_each_text_carries_the_four_rules_and_no_other[whatsapp]
+  FAILED test_texting_rules.py::test_no_text_counts_the_reactions[whatsapp]
+  FAILED test_texting_rules.py::test_the_intro_and_the_two_table_leads_come_in_order[whatsapp]
