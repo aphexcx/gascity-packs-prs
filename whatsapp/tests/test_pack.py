@@ -125,6 +125,7 @@ def test_env_missing_file_fails_closed(tmp_path):
     assert result.returncode == 2
     assert 'env file missing' in result.stdout
     assert 'GC_SERVICE_SECRETS_DIR' in result.stdout
+    assert 'GC_CITY_PATH' in result.stdout
     assert 'HOME default' in result.stdout
     assert 'create the per-city' not in result.stdout
 
@@ -708,12 +709,75 @@ def test_env_file_agrees_across_enroll_run_and_doctor(tmp_path, fake, city_set, 
         'enroll': written[0], 'run': loaded, 'doctor': checked[0],
     }, sort_keys=True))
 
-    # Keep the adapter's pre-existing precedence, including when CITY alone is set.
-    expected = 'override' if override_set else 'service' if secrets_set else 'home'
+    # Commands and startup share the city fallback when neither override is set.
+    expected = 'override' if override_set else 'service' if secrets_set else 'city' if city_set else 'home'
     assert loaded == expected
     assert written == checked == [expected]
     assert credential == 'fixture-credential'
     assert gateway.requests == [('POST', '/v1/enroll', {'code': 'fixture-code', 'name': 'Fixture City'})]
+
+
+def test_enroll_and_doctor_match_supervised_startup(tmp_path, fake):
+    gateway = fake({
+        'POST /v1/enroll': (200, {'city_id': 'fixture-city', 'credential': 'fixture-credential'}),
+        'GET /healthz': (200, {'ok': True}),
+        'GET /v1/inbox?limit=1': (200, {'messages': []}),
+    })
+    home = tmp_path / 'fresh home'
+    home.mkdir()
+    city = tmp_path / 'fixture city'
+    secrets = city / '.gc/services/whatsapp/secrets'
+    secrets.mkdir(parents=True)
+    selected = secrets / 'env'
+    selected.write_text(f'WHATSAPP_GATEWAY_URL={gateway.url}\nGC_CITY_NAME=fixture-city\n'
+                        'GC_API_BASE_URL=http://127.0.0.1:9443\n')
+    command_env = {'HOME': str(home), 'GC_CITY_PATH': str(city), 'WHATSAPP_GATEWAY_URL': gateway.url}
+    enrolled = verb('enroll.sh', '--code', 'fixture-code', '--name', 'Fixture City', **command_env)
+    assert enrolled.returncode == 0, enrolled.stderr
+
+    # Only the supervisor supplies the service directory; observe the real
+    # startup shell loading the credential without starting a live adapter.
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    node = bin_dir / 'node'
+    node.write_text('#!/bin/sh\n[ "$1" = "-e" ] && exit 0\n'
+                    'printf "%s\\n" "${WHATSAPP_GATEWAY_CREDENTIAL:-missing}"\n')
+    node.chmod(0o755)
+    supervisor_env = dict(command_env, GC_SERVICE_SECRETS_DIR=str(secrets),
+                          PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
+    started = subprocess.run([str(PACK / 'adapter/run.sh')], env=clean_env(**supervisor_env),
+                             text=True, capture_output=True, timeout=20)
+    assert started.returncode == 0, started.stderr
+    assert started.stdout.strip() == 'fixture-credential'
+    assert "WHATSAPP_GATEWAY_CREDENTIAL='fixture-credential'" in selected.read_text()
+    assert selected.stat().st_mode & 0o777 == 0o600
+    assert not (home / '.config/gc-whatsapp-adapter/env').exists()
+    for check in ('env', 'gateway'):
+        result = doctor(check, **command_env)
+        assert result.returncode == 0, result.stdout + result.stderr
+    assert gateway.requests == [
+        ('POST', '/v1/enroll', {'code': 'fixture-code', 'name': 'Fixture City'}),
+        ('GET', '/healthz', None), ('GET', '/v1/inbox?limit=1', None),
+    ]
+
+
+@pytest.mark.parametrize('check', ['env', 'gateway'])
+def test_doctor_finds_existing_city_file_without_service_env(tmp_path, fake, check):
+    gateway = fake({'GET /healthz': (200, {'ok': True}),
+                    'GET /v1/inbox?limit=1': (200, {'messages': []})})
+    home = tmp_path / 'fresh home'
+    home.mkdir()
+    city = tmp_path / 'fixture city'
+    selected = city / '.gc/services/whatsapp/secrets/env'
+    selected.parent.mkdir(parents=True)
+    selected.write_text(f'WHATSAPP_GATEWAY_URL={gateway.url}\nGC_CITY_NAME=fixture-city\n'
+                        "WHATSAPP_GATEWAY_CREDENTIAL='fixture-credential'\n"
+                        'GC_API_BASE_URL=http://127.0.0.1:9443\n')
+    result = doctor(check, HOME=str(home), GC_CITY_PATH=str(city))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (home / '.config/gc-whatsapp-adapter/env').exists()
+    if check == 'gateway':
+        assert gateway.requests == [('GET', '/healthz', None), ('GET', '/v1/inbox?limit=1', None)]
 
 
 def test_enroll_writes_the_credential_0600_and_prints_nothing_secret(tmp_path):

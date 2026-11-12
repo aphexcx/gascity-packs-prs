@@ -1,12 +1,14 @@
 #!/bin/sh
 # The shared env-file resolver for enrollment, startup and diagnostics.
-# Keep startup's existing precedence: GC_CITY_PATH locates state, not secrets.
+# Pack commands get the city path; the supervisor supplies its secrets directory.
 # An explicit service path must never fall through to another city's file,
 # even when the selected file does not exist yet.
 if [ -n "${GC_WHATSAPP_ADAPTER_ENV:-}" ]; then
   env_file="$GC_WHATSAPP_ADAPTER_ENV"
 elif [ -n "${GC_SERVICE_SECRETS_DIR:-}" ]; then
   env_file="$GC_SERVICE_SECRETS_DIR/env"
+elif [ -n "${GC_CITY_PATH:-}" ]; then
+  env_file="$GC_CITY_PATH/.gc/services/whatsapp/secrets/env"
 else
   env_file="$HOME/.config/gc-whatsapp-adapter/env"
 fi

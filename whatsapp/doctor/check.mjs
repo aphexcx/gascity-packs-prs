@@ -63,7 +63,7 @@ function env() {
   const read = readEnvFile(names);
   if (read.missingFile) return finish(2,
     'adapter env file missing or unreadable; use the same GC_WHATSAPP_ADAPTER_ENV or GC_SERVICE_SECRETS_DIR as the whatsapp service '
-    + '(otherwise the HOME default); gc whatsapp enroll writes the credential into that file');
+    + '(otherwise the GC_CITY_PATH per-city file, then the HOME default); gc whatsapp enroll writes the credential into that file');
   const missing = names.filter((name) => !read.values[name] && !read.dynamic.has(name));
   if (missing.length) return finish(2, `missing adapter env vars: ${missing.join(' ')}${missing.includes('WHATSAPP_GATEWAY_CREDENTIAL') ? ' (not enrolled: run gc whatsapp enroll)' : ''}`);
   if (read.dynamic.size) return finish(1, `cannot verify shell expressions without executing them: ${[...read.dynamic].join(' ')}`);

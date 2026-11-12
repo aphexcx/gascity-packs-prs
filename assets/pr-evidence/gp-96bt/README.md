@@ -1,5 +1,8 @@
 # Shared WhatsApp env-file resolution
 
+Historical round 1 record. [Round 2](round2/README.md) restores the city
+fallback after testing the distinct command and supervisor environments.
+
 Base: `c546802da5d42fb5d073b7d0bab6716b2e48b6f5`.
 
 Enrollment, startup and the doctor now call `whatsapp/adapter/env-file.sh`.
