@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Test fixtures now use invented names (gp-tu0b).
+
 - **Mention-only room holds** (gp-qgl3): `bind-room --mentions-only` now
   ensures an empty gc group and clears sticky default-route agent bindings
   when the room has no ambient routes. Live participants and explicit bindings

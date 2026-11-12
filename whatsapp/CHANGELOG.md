@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (gp-tu0b)
+
+- Test fixtures now use invented names.
+
 ## Unreleased (gp-xt33)
 
 - Docs only: the gateway README names the relay it read as a reference by its
