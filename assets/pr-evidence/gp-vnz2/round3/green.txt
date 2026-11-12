@@ -1,0 +1,54 @@
+$ env -u GC_BIN make test PYTEST_DIRS=follow-through/tests PYTEST_ARGS='-q -rA --tb=short'
+# at 2f96198d, from the repository root
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) follow-through/tests -q -rA --tb=short
+..............................................                           [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED follow-through/tests/test_follow_through_pack.py::test_node_behavior_suite
+PASSED follow-through/tests/test_follow_through_pack.py::test_pack_has_only_local_commands_order_and_doctor
+PASSED follow-through/tests/test_follow_through_pack.py::test_20_python_suite_is_in_make_and_ci
+PASSED follow-through/tests/test_follow_through_pack.py::test_readme_explains_delivery_and_privacy
+PASSED follow-through/tests/test_follow_through_pack.py::test_command_order_and_doctor_work_through_a_directory_symlink
+PASSED follow-through/tests/test_follow_through_skill.py::test_skill_front_matter_names_it_follow_through
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_command_reader_takes_whole_words_and_quoted_values
+PASSED follow-through/tests/test_follow_through_skill.py::test_skill_names_every_shipped_verb_and_no_other
+PASSED follow-through/tests/test_follow_through_skill.py::test_verbs_list_gives_each_verb_its_help_line
+PASSED follow-through/tests/test_follow_through_skill.py::test_every_flag_in_the_skill_is_one_its_verb_takes
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[never for work you owe]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[never for small talk]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[unsure means out]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[none in, nothing sent]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[one follow-up]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[no blame]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[no "just checking in"]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[nothing added]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[only on the pack's mail]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[never with consent off]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[the daytime bound]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[outside the hours, nothing]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[unrecorded consent is off]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[ask once, in their conversation]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[stop at once]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[the zone never guessed]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[a reminder never only in the session]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[told set only once stored]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[cancelled only on the verb's word]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[no free text after the window]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[never the update template]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[no unasked news]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[a major feature only]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_founders_rule_stands_word_for_word_in_its_section[no message on the no-daytime-hours mail]
+PASSED follow-through/tests/test_follow_through_skill.py::test_every_mail_subject_in_the_pack_is_read
+PASSED follow-through/tests/test_follow_through_skill.py::test_every_mail_kind_and_the_stopped_line_are_read
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_opening_names_every_mail_the_pack_sends[follow-through: follow-up due]
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_opening_names_every_mail_the_pack_sends[follow-through: no daytime hours]
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_opening_names_every_mail_the_pack_sends[follow-through: reminder due]
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_health_section_says_what_a_stopped_mail_of_each_kind_means[follow-up]
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_health_section_says_what_a_stopped_mail_of_each_kind_means[hours-notice]
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_health_section_says_what_a_stopped_mail_of_each_kind_means[reminder]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: follow-up due]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: no daytime hours]
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: reminder due]
+PASSED follow-through/tests/test_follow_through_skill.py::test_skill_has_no_em_dash
+46 passed in 50.56s
+make exit 0
