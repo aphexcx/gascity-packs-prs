@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Answer a message with `--to` on reply-current, publish or upload. The adapter
+  takes the space and thread from the message and refuses conflicting ids.
+  Reply-current no longer guesses a destination and requires `--to`; publish
+  with a space starts a new topic. Results and identifier-only delivery logs
+  show where each send landed. The ledger retains the answered message.
+
 - Resolve reports whether a replay landed or is waiting and why. Each replay
   clears its waiting and end mail marks, so a stuck replay is mailed once
   after two minutes even if an earlier life was mailed. Clear a fragment

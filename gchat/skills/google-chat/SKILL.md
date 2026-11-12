@@ -51,25 +51,29 @@ sender, its text, and the reply command.
 
 ## How to reply
 
-Reply in one command; people are waiting:
+Answer with the reply command printed by the turn you are answering:
 
 ```bash
-gc gchat reply-current --conversation-id spaces/<id> --body 'Short plain reply.'
+gc gchat reply-current --to spaces/<id>/messages/<id> --body 'Short plain reply.'
 ```
 
 `--body-file <path>` suits long or multi-line replies. Do not lead with your
 handle: Chat already shows your name, and a leading `mayor:` is dropped.
 
-That posts top-level, which is right for a DM and for a fresh topic in a
-space. Thread deliberately:
+The message reference is on the turn's Message id line or in the `gchat:`
+item in its first line. The adapter takes the space and thread from that
+message. Edit, deletion and reaction ids also work. `--to` is required even
+when an older turn prints a command with only a space. Do not copy another
+turn's command: you still choose which message your text answers.
 
-- **The reminder names a thread** (`spaces/<id>/threads/<id>`): the message
-  sits in that thread; answer there with `--thread spaces/<id>/threads/<id>`.
-  In a space, a reply to a specific message belongs in its thread.
-- **A busy space, answering one of several messages:** a thread keeps the
-  answer next to its question.
+Use `--top-level` to send in that message's space without its thread. If you
+also supply a space or thread, it must agree with the reference.
 
-To start a new topic: `gc gchat publish --conversation-id spaces/<id> --body-file post.md`.
+To start a new topic that answers nothing:
+`gc gchat publish --conversation-id spaces/<id> --body-file post.md`.
+Publish and upload also accept `--to MESSAGE` to answer a message. Every send
+prints its destination as `conversation_id`, `space_name` when known,
+`thread`, and `in_reply_to`; check that it is the message you meant to answer.
 
 Every send prints an idempotency key on stderr before sending. If the
 command times out or fails with a retry hint, retry the same send with
@@ -89,8 +93,9 @@ than Chat allows are split at paragraph boundaries.
 ## Files and history
 
 - **Send a file:** write it under `.gc/gchat-out/` in the city directory,
-  then `gc gchat upload --conversation-id spaces/<id> --file
-  "$PWD/.gc/gchat-out/<name>" [--thread ...] [--body 'caption']`. Only files
+  then `gc gchat upload --to spaces/<id>/messages/<id> --file
+  "$PWD/.gc/gchat-out/<name>" [--body 'caption']`. Use `--conversation-id`
+  instead for a new topic. Only files
   under that directory can be sent, by absolute path, up to 200 MB.
 - **Read history:** `gc gchat read --space spaces/<id> [--thread
   spaces/<id>/threads/<id>] [--since 2026-01-02T00:00:00Z] [--limit 100]`,

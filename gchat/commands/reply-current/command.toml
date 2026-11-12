@@ -1,2 +1,2 @@
-description = "Reply to the latest inbound conversation for this session"
+description = "Answer a message with --to using the command printed by its turn"
 run = "../reply-current.sh"

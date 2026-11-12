@@ -37,30 +37,6 @@ gchat_post_stream() {
         -H 'Content-Type: application/json' -H 'X-GC-Request: gc-gchat' \
         --data-binary @- "$gchat_service_url/$1"
 }
-gchat_session() {
-    if [ -n "$session" ]; then return; fi
-    session=${GC_SESSION_ID:-}
-    if [ -z "$session" ] && [ -n "${GC_SESSION_NAME:-}" ]; then
-        sessions=$(gchat_get "$gchat_city_url/sessions")
-        session=$(printf '%s' "$sessions" | jq -r --arg name "$GC_SESSION_NAME" \
-            '[.items[]? | select(.alias == $name or .session_name == $name) | .id | select(. != null and . != "")][0] // ""')
-        [ -n "$session" ] || gchat_die 'could not resolve GC_SESSION_NAME; pass --session explicitly'
-    fi
-}
-gchat_reply_target() {
-    [ -n "$session" ] || gchat_die 'no session; pass --session or --conversation-id explicitly'
-    # Match slack-full: recent inbound events first, then the latest active
-    # binding. The time window matters because gc returns oldest events first.
-    events=$(gchat_get "$gchat_city_url/events?type=extmsg.inbound&since=2h&limit=500")
-    conversation=$(printf '%s' "$events" | jq -r --arg sid "$session" \
-        '[.items[]? | .payload | select(.target_session == $sid and .provider == "gchat") | .conversation_id | select(. != null and . != "")][-1] // ""')
-    if [ -z "$conversation" ]; then
-        bindings=$(gchat_get "$gchat_city_url/extmsg/bindings?session_id=$(gchat_uri "$session")")
-        conversation=$(printf '%s' "$bindings" | jq -r \
-            '[.items[]? | select(.Status == "active") | .Conversation | select(.provider == "gchat") | .conversation_id | select(. != null and . != "")][-1] // ""')
-    fi
-    [ -n "$conversation" ] || gchat_die 'no inbound event and no binding found; pass --conversation-id explicitly'
-}
 gchat_send_result() {
     printf '%s\n' "$1" | jq .
     if ! printf '%s' "$1" | jq -e '.delivered == true' >/dev/null; then
