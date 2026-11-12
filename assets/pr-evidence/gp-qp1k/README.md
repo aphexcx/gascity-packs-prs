@@ -4,13 +4,17 @@ This change adds opt-in owner notices and durable outage mail to Google Chat,
 Slack and WhatsApp. `NEVER_SILENT` remains off by default. No pack version,
 live adapter, customer conversation or deployed configuration was changed.
 
+This draft is blocked on one reproduced WhatsApp issue from round 4. The mayor
+must rule before further fixes or another review under the bead's round limit.
+See the open finding below and the included reproduction patch.
+
 ## Contract coverage
 
 | Item | Result and verification |
 | --- | --- |
 | 1 | DONE: only newly admitted, addressed human messages are tracked. Adapter integration tests exclude replay, ambient, bot and edit traffic; WhatsApp excludes keeper/status/reaction events. |
-| 2 | DONE: definite failures and transport failures have separate continuous waits; pending resets them. Stopped unknown deliveries wait three minutes without a session act before posting. Fake adapter tests and durable-engine tests exercise these paths. |
-| 3 | DONE: all four health states and missing/malformed/stale/unknown evidence are tested; whole-paste pending requires conclusion. Session activity suppresses health notices. |
+| 2 | STOPPED: the implemented cause rules pass their fixtures, but round 4 reproduces a WhatsApp lost-response replay that incorrectly suppresses a newer failure. |
+| 3 | STOPPED: health and delivery fixtures pass, but the same unresolved WhatsApp activity-attribution class can suppress health eligibility. |
 | 4 | DONE: three-minute failure/delivery waits, five-minute freshness, six-hour cooldown and mail retry bounds are named constants. Tests advance fake clocks. |
 | 5 | DONE: fixed owner strings use the same conversation/thread and reply identity. Channel senders are separate from normal publishes. |
 | 6 | DONE: the owner reservation is durable before posting. Aggregation, restart and refused-post tests verify at-most-once attempts within six hours. |
@@ -309,6 +313,38 @@ Slack `go test . ./internal/neversilent -run
 'TestNeverSilent|TestWithdrawalBeforeEnrollment|TestHandleReact' -count=1 -json`
 passed 15 top-level / 70 events. The full-suite results above are labeled by
 their prior stage where applicable; later full checks are recorded in READY.
+
+## Open round 4 finding
+
+Codex DEEP round 4 reviewed `a1d5635aaab961dedd24086735aa435a389db6c1` and
+returned BLOCK with one MAJOR at `whatsapp/adapter/src/outbound.js:274`.
+If a provider accepts a send but its response is lost, the original proof
+never reaches local history. A retry returning that old proof is assigned the
+retry's time. It can therefore look like an answer to a newer request.
+
+The worker reproduced the text case against that production revision with
+fake owner/mail senders and a fake gateway. The gateway accepted exactly one
+send, threw `noAnswer`, then returned the original ID on retry. A newer request
+had continuous definite failure for more than three minutes. Expected owner
+notices and outage mails were `[1, 1]`; actual counts were `[0, 0]`.
+
+The [reproduction patch](r4-wa-lost-response-repro.patch) adds the failing test
+to the existing fixture suite. From `whatsapp/adapter/test`, run
+`pnpm exec node --test --test-name-pattern='lost send response replay cannot'`.
+The test was run and failed as described, then removed from the active suite;
+the patch preserves it for the ruling and next implementation step.
+
+The reviewer identified analogous captioned-media and template paths; those
+variants were source-derived, not separately executed in this final reproduction.
+This fault already existed before the round-3 fix commit, so it fails the
+fourth-round rule that further fixes must also be in that round's own delta.
+Disposition: REPRODUCED, NOT FIXED, mayor ruling required. No fifth review was
+started. The Google timestamp, Slack no-op reaction and withdrawal fixes were
+accepted by the reviewer; it reported no separate MINOR/NIT findings.
+
+Only evidence was added after the reviewed revision. Runtime sources remain
+at `a1d5635aaab961dedd24086735aa435a389db6c1`. The latest full Slack run at that
+revision passed 1,518 top-level / 13,185 test events across three packages.
 
 ## Source research and limits
 
