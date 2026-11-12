@@ -1,0 +1,26 @@
+[
+  [
+    "mail",
+    "send",
+    "local-mayor",
+    "--notify",
+    "--dedup",
+    "follow-through:20a00532-a71e-452a-8d53-c7064266fce4",
+    "-s",
+    "follow-through: follow-up due",
+    "-m",
+    "Follow-up due in slack/example.\nitem-70b66734-350e-4719-8638-acfd172632ac: Invented follow-up (opened 2026-11-09T09:00:00.000Z)\nRead the follow-through skill before you write to the owner. Each item gets one follow-up, or none."
+  ],
+  [
+    "mail",
+    "send",
+    "local-mayor",
+    "--notify",
+    "--dedup",
+    "follow-through:19369a72-468c-4626-9ce2-fdbd4521346d",
+    "-s",
+    "follow-through: reminder due",
+    "-m",
+    "Reminder due in slack/example.\nreminder-8039a8ee-6510-4a03-9cf4-150be18ed189: Invented reminder\nSet 2026-11-09T09:00:00.000Z for 2026-11-10T09:00:00.000Z.\nRead the follow-through skill before you write to the owner."
+  ]
+]

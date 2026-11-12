@@ -48,6 +48,7 @@ from gc_live_city import (
 # cost of bringing it under live-gc coverage; everything below derives from the
 # pack's own contents.
 MAINTAINED_PACKS = (
+    "follow-through",
     "oversight-rig",
     "pr-pipeline",
     "slack-channel",
@@ -61,6 +62,7 @@ MAINTAINED_PACKS = (
 # Anything not written down is a regression, and removing an entry without
 # removing its cause is caught too, because the assertion is equality.
 EXPECTED_DOCTOR_DELTA: dict[str, frozenset[str]] = {
+    "follow-through": frozenset(),
     "oversight-rig": frozenset(),
     "pr-pipeline": frozenset(),
     "slack-channel": frozenset(),

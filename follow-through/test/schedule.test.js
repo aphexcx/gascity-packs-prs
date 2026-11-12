@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { parseHours, assertZone, zonedToInstant } from '../src/zoned.js';
 import { wakesForDay, wakeAllowed, nextWake } from '../src/schedule.js';
 
@@ -19,6 +21,12 @@ test('5,9: two wake instants across split hours, midnight, east/west zones and D
     assert.deepEqual(wakesForDay({ tz, hours }, date).map(iso), expected);
   }
   assert.deepEqual(wakesForDay({ tz: 'UTC', hours: null }, { year: 2026, month: 11, day: 14 }), []);
+  if (process.env.FOLLOW_THROUGH_TEST_EVIDENCE_DIR) {
+    const evidence = process.env.FOLLOW_THROUGH_TEST_EVIDENCE_DIR;
+    fs.mkdirSync(evidence, { recursive: true });
+    const rows = wakeCases.map(([tz, hours, date, expected]) => `| ${tz} | ${hours || 'default'} | ${date.year}-${date.month}-${date.day} | ${expected.join(' | ')} |`);
+    fs.writeFileSync(path.join(evidence, 'wake-times.md'), '# Wake times proved by schedule.test.js\n\n| Zone | Hours | Local opening day | First UTC instant | Second UTC instant |\n| --- | --- | --- | --- | --- |\n' + rows.join('\n') + '\n');
+  }
 });
 
 test('5: keeper hours grammar and zone validation copied with their edge cases', () => {
@@ -43,6 +51,19 @@ test('6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes
   assert.equal(wakeAllowed({ ...owner, tz: null }, at, at), false);
   assert.equal(wakeAllowed(owner, Date.parse('2026-11-10T22:00Z'), Date.parse('2026-11-10T22:00Z')), false);
   assert.equal(wakeAllowed({ ...owner, hours: null }, Date.parse('2026-11-10T17:00Z'), Date.parse('2026-11-10T17:00Z')), true);
-  assert.equal(wakeAllowed({ ...owner, hours: null }, Date.parse('2026-11-10T17:00Z'), Date.parse('2026-11-10T17:00:01Z')), false);
+  assert.equal(wakeAllowed({ ...owner, hours: null }, Date.parse('2026-11-10T17:00Z'), Date.parse('2026-11-10T17:00:01Z')), true);
   assert.equal(nextWake({ ...owner, tz: null }, at), null);
+});
+
+test('9,10 ruling: on time for <120s, then late policy; 20:00 always wins', () => {
+  const scheduled = Date.parse('2026-11-10T17:00:00Z');
+  for (const hours of [null, 'Mon-Fri 09:00-18:00']) {
+    const owner = { consent: true, tz: 'UTC', hours };
+    for (const seconds of [1, 59, 90, 119]) assert.equal(wakeAllowed(owner, scheduled, scheduled + seconds * 1000), true);
+    for (const seconds of [120, 600]) assert.equal(wakeAllowed(owner, scheduled, scheduled + seconds * 1000), hours !== null);
+  }
+  const owner = { consent: true, tz: 'UTC', hours: 'daily 09:00-23:00' };
+  const evening = Date.parse('2026-11-10T20:00:00Z');
+  assert.equal(wakeAllowed(owner, evening, evening), false);
+  assert.equal(wakeAllowed(owner, evening, evening + 90000), false);
 });

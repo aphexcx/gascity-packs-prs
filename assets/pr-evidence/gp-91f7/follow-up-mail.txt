@@ -1,0 +1,3 @@
+Follow-up due in slack/example.
+item-70b66734-350e-4719-8638-acfd172632ac: Invented follow-up (opened 2026-11-09T09:00:00.000Z)
+Read the follow-through skill before you write to the owner. Each item gets one follow-up, or none.

@@ -1,0 +1,58 @@
+✔ 1,5,7,15,18,19: command lifecycle, file input, private status and doctor exit (3082.849041ms)
+✔ 8,9: every due item in one wake; never raised twice across thirty days (4539.474125ms)
+✔ 9,10,11: empty wakes, no zone, off between wakes, outage grace and 20:00 cutoff (751.441958ms)
+✔ 3,14,15,16: reminders are durable, independent of hours/consent, cancelled ones never fire (265.378375ms)
+✔ 3,13: failed mail retries once a minute with the same key; expires at 24h (924.655208ms)
+✔ 11,13: revoking consent also blocks a pending follow-up retry (271.884875ms)
+✖ 10: recheck the wall clock before each mail when earlier delivery takes time (118.584667ms)
+✔ 18,19: status has exact safe fields, doctor reports stale tick, missing zone and failed raises (275.199416ms)
+✔ 5,6,11: consent defaults off; hours set, clear, retain/set zone; invalid changes are atomic (11.4455ms)
+✔ 7: item IDs, length, single lines, conversation form and retained terminal records (0.700334ms)
+✔ 15: RFC3339 offset and minutes/hours/days; cancellation retains the record (0.589542ms)
+✔ 12,14: fake gc records agent, notify, stable key, subjects and fixed fact bodies (686.942458ms)
+▶ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail
+  ✔ follow-up: killed planned (744.30525ms)
+  ✔ follow-up: killed attempt (732.881625ms)
+  ✔ follow-up: killed sent (783.11525ms)
+  ✔ follow-up: killed during (654.311ms)
+  ✔ reminder: killed planned (638.16825ms)
+  ✔ reminder: killed attempt (595.430458ms)
+  ✔ reminder: killed sent (662.227459ms)
+  ✔ reminder: killed during (640.155417ms)
+✔ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail (5452.030375ms)
+✔ 13: three real gc failures then success make one delivered mail with one key (926.520416ms)
+✔ 17: two ticks started together serialize and deliver once (342.186708ms)
+✔ 5,9: two wake instants across split hours, midnight, east/west zones and DST (12.272459ms)
+✔ 5: keeper hours grammar and zone validation copied with their edge cases (0.500584ms)
+✔ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.288209ms)
+✔ 9,10 ruling: on time for <120s, then late policy; 20:00 always wins (0.358792ms)
+✔ 2: tick and command use the same explicit gc pack state directory (0.50925ms)
+✔ 2,4: private atomic file survives another process with every record intact (157.212417ms)
+✔ 2: interrupted replacement leaves the previous valid state (218.766ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 29
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7456.375375
+
+✖ failing tests:
+
+test at engine.test.js:113:1
+✖ 10: recheck the wall clock before each mail when earlier delivery takes time (118.584667ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/engine.test.js:128:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

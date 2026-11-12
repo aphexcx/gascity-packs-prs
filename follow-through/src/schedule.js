@@ -3,6 +3,7 @@ import { addDays, daySpans, localDay, parseHours, spanIntervals, wallClock, week
 export const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
+export const ON_TIME_MS = 120_000;
 
 export function wakesForDay(owner, date) {
   if (!owner.tz) return [];
@@ -15,14 +16,13 @@ export function wakesForDay(owner, date) {
   return [...new Set([spans[0].start, spans.at(-1).end - HOUR])].sort((a, b) => a - b);
 }
 
-export function wakeAllowed(owner, scheduled, now) {
+export function wakeAllowed(owner, scheduled, now, onTimeMs = ON_TIME_MS) {
   if (!owner?.consent || !owner.tz || now < scheduled || now - scheduled > 2 * HOUR) return false;
   const wall = wallClock(now, owner.tz);
   if (wall.hour >= 20) return false;
+  if (now - scheduled < onTimeMs) return true;
   if (!owner.hours) {
-    // The exact 17:00 wake is allowed; a late retry must be before 17:00.
-    return ![0, 6].includes(weekday(localDay(now, owner.tz))) && wall.hour >= 9 &&
-      (wall.hour < 17 || now === scheduled && wall.hour === 17 && wall.minute === 0 && wall.second === 0);
+    return ![0, 6].includes(weekday(localDay(now, owner.tz))) && wall.hour >= 9 && wall.hour < 17;
   }
   return spanIntervals(parseHours(owner.hours), owner.tz, now, now)
     .some(s => s.start <= now && now < s.end);

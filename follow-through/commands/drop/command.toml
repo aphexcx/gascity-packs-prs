@@ -1,0 +1,2 @@
+description = "Drop an item"
+run = "../drop.sh"

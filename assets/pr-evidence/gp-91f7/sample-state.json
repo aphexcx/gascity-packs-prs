@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "owners": {
+    "slack/example": {
+      "consent": true,
+      "consent_at": 1794214800000,
+      "hours": null,
+      "tz": "UTC"
+    }
+  },
+  "items": [
+    {
+      "id": "item-70b66734-350e-4719-8638-acfd172632ac",
+      "conversation": "slack/example",
+      "summary": "Invented follow-up",
+      "opened_at": 1794214800000,
+      "state": "raised",
+      "raised_at": 1794301200000
+    }
+  ],
+  "reminders": [
+    {
+      "id": "reminder-8039a8ee-6510-4a03-9cf4-150be18ed189",
+      "conversation": "slack/example",
+      "text": "Invented reminder",
+      "due_at": 1794301200000,
+      "set_at": 1794214800000,
+      "state": "raised",
+      "raised_at": 1794301200000
+    }
+  ],
+  "raises": [
+    {
+      "id": "20a00532-a71e-452a-8d53-c7064266fce4",
+      "key": "follow-through:20a00532-a71e-452a-8d53-c7064266fce4",
+      "kind": "follow-up",
+      "conversation": "slack/example",
+      "created_at": 1794301200000,
+      "state": "sent",
+      "attempts": 1,
+      "last_attempt_at": 1794301200000,
+      "error": null,
+      "scheduled_at": 1794301200000,
+      "item_ids": [
+        "item-70b66734-350e-4719-8638-acfd172632ac"
+      ],
+      "subject": "follow-through: follow-up due",
+      "body": "Follow-up due in slack/example.\nitem-70b66734-350e-4719-8638-acfd172632ac: Invented follow-up (opened 2026-11-09T09:00:00.000Z)\nRead the follow-through skill before you write to the owner. Each item gets one follow-up, or none.",
+      "sent_at": 1794301200000
+    },
+    {
+      "id": "19369a72-468c-4626-9ce2-fdbd4521346d",
+      "key": "follow-through:19369a72-468c-4626-9ce2-fdbd4521346d",
+      "kind": "reminder",
+      "conversation": "slack/example",
+      "created_at": 1794301200000,
+      "state": "sent",
+      "attempts": 1,
+      "last_attempt_at": 1794301200000,
+      "error": null,
+      "reminder_id": "reminder-8039a8ee-6510-4a03-9cf4-150be18ed189",
+      "subject": "follow-through: reminder due",
+      "body": "Reminder due in slack/example.\nreminder-8039a8ee-6510-4a03-9cf4-150be18ed189: Invented reminder\nSet 2026-11-09T09:00:00.000Z for 2026-11-10T09:00:00.000Z.\nRead the follow-through skill before you write to the owner.",
+      "sent_at": 1794301200000
+    }
+  ],
+  "wakes": {
+    "slack/example:1794301200000": 1794301200000
+  },
+  "last_tick_at": 1794301200000
+}

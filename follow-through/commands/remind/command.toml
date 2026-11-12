@@ -1,0 +1,2 @@
+description = "Set, list or cancel durable reminders"
+run = "../remind.sh"
