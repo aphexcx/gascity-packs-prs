@@ -1,0 +1,37 @@
+pack copied from 5729f9062600d09b446a1f0297a96f1bef8bf69e; base skill from b04ae9380fc5472aa4900785866841b90201aaca; test file follow-through/tests/test_follow_through_skill.py
+mutation: none (the skill and the test as written)
+  failed: none
+  10 passed in 2.36s
+  exit 0
+mutation: red at the round's start: the skill as round 1 left it, at the base
+  failed: test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: reminder due]
+  1 failed, 9 passed in 2.40s
+  exit 1
+mutation: the round's new sentences removed from the skill
+  failed: test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: reminder due]
+  1 failed, 9 passed in 3.21s
+  exit 1
+mutation: a third raise with a subject the skill never names
+  failed: test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: digest due]
+  1 failed, 10 passed in 2.40s
+  exit 1
+mutation: a third raise whose subject is a variable passed by shorthand
+  failed: test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: digest due]
+  1 failed, 10 passed in 2.30s
+  exit 1
+mutation: a third raise whose fields come from elsewhere
+  failed: test_every_mail_subject_in_the_pack_is_read
+  1 failed, 9 passed in 2.32s
+  exit 1
+mutation: a mail subject built at run time, not a plain quoted string
+  failed: test_every_mail_subject_in_the_pack_is_read
+  1 failed, 8 passed in 2.30s
+  exit 1
+mutation: a third raise described in the Reminders section with no rule of its own
+  failed: test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: digest due], test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: reminder due]
+  2 failed, 9 passed in 2.24s
+  exit 1
+mutation: control: a third raise whose own section has the rule (stays green)
+  failed: none
+  11 passed in 2.32s
+  exit 0
