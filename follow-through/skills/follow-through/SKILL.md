@@ -185,9 +185,10 @@ when one is recorded. Only then tell the owner it is set: react with ⏰ where
 the channel lets you react, and otherwise answer with one short line that
 says when.
 
-A reminder comes soon after the time the owner chose, at any hour, and
-needs no consent and no zone. When a mail with the subject "follow-through:
-reminder due" arrives, look at the conversation it names. If the owner
+A reminder comes at any hour and needs no consent and no zone. It comes soon
+after the time the owner chose, unless its mail delivery stopped. The Health
+section below says what you do then. When a mail with the subject
+"follow-through: reminder due" arrives, look at the conversation it names. If the owner
 cancelled that reminder there, send nothing. The same mail can also reach
 you twice for one reminder. Look in that conversation, and on any other
 channel the WhatsApp section below may have sent you to, not in what you
@@ -207,9 +208,11 @@ gc follow-through remind --cancel ID
 ```
 
 Tell the owner it is cancelled only when the verb says so. If it answers
-that the reminder has already been raised, the pack could not stop it, and
-its mail will reach you or already has. Tell the owner it was already on its
-way to you and that you will not pass it on, and keep to that.
+that the reminder has already been raised, the pack had already tried to
+send you that reminder. Its mail may already have reached you, may still
+come, or may never come if its delivery stopped. Tell the owner it was
+already on its way to you and that you will not pass it on, and keep to that
+in every case, a stopped reminder included.
 
 `gc follow-through remind --list` shows every reminder with its id and state.
 
@@ -235,7 +238,23 @@ every update gets one, and when nobody gave you a note, you send none.
 or a reminder's text. Its count of failing raises also counts a mail planned
 a moment ago and not yet tried, so a count above zero is not a fault by
 itself. If the same raise is still there later, with attempts and an error,
-tell the operator. Never make up for it by writing to the owner yourself.
+tell the operator.
+
+A `Mail delivery stopped` line means the pack will never send that mail
+again, and it will not tell you so. Tell the operator. Each such mail also
+has a line of its own, with its kind, its conversation and the word stopped.
+What you do depends on its kind:
+
+- For a stopped `follow-up`, send nothing, and never make up for it by
+  writing to the owner yourself. Its items stay open, and the pack will not
+  raise them again.
+- For a stopped `hours-notice`, do what the section No daytime hours says,
+  as if its mail had come.
+- For a stopped `reminder`, you still give it, because the owner was told it
+  is set. Find it with `gc follow-through remind --list`: it is a reminder of
+  that conversation still shown as set after its time. Then do what the
+  Reminders section says for a reminder mail that says it is late, as if
+  that mail had just come.
 
 ## The verbs
 
