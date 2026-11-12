@@ -1,0 +1,9 @@
+cwd=gascity; python3 ../assets/pr-evidence/pnpm-wait-gates/measure.py --runs 50 --output ../assets/pr-evidence/pnpm-wait-gates/base-load.jsonl; exit=1; initial light instrumentation, 1/50 failed
+cwd=gascity; python3 ../assets/pr-evidence/pnpm-wait-gates/measure.py --runs 50 --output ../assets/pr-evidence/pnpm-wait-gates/base-gate-trace.jsonl; exit=1; detailed instrumentation, 10/50 failed
+cwd=gascity; python3 ../assets/pr-evidence/pnpm-wait-gates/measure.py --runs 200 --output ../assets/pr-evidence/pnpm-wait-gates/head-gate-trace.jsonl; exit=0; detailed instrumentation, 0/200 failed
+cwd=gascity; python3 -m unittest discover -s tests -p test_toolchain_shims.py; exit=0; 68 passed in 168.280s
+cwd=gascity; python3 ../assets/pr-evidence/pnpm-wait-gates/check_cleanup.py; exit=0; bounded failure and process-group cleanup verified
+cwd=repository; make test; exit=0; 2695 passed, 126 skipped, 2 warnings, 10734 subtests passed in 451.71s
+cwd=repository; pnpm exec node --version; exit=0; v24.21.0
+cwd=repository; git diff --check; exit=0
+STANDARD Codex self-review at 2a7c7d6cbc64d951d76efc7593133b49b8bb831f; exit=0; anchored VERDICT: CLEAN

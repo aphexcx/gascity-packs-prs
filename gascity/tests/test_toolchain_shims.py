@@ -69,6 +69,8 @@ write after a successful open).
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import ExitStack
 import getpass
 import hashlib
 import os
@@ -89,6 +91,7 @@ PNPM_SHIM = TOOLCHAIN / "pnpm"
 NODE_SHIM = TOOLCHAIN / "node"
 
 CHECK = "--config.verify-deps-before-run=error exec true"
+LANE_WAIT = "waiting for another caller's lane install"
 
 FAKE_PNPM = r"""#!/bin/sh
 # A stand-in for pnpm 11.20: records `<cwd>|<verify env>|<argv>` per call,
@@ -97,6 +100,11 @@ FAKE_PNPM = r"""#!/bin/sh
 # state its installs write (lockfile + manifests + workspace membership),
 # installs (optionally slowly, optionally failing), and lets the cleanup
 # built-ins and --lockfile-only leave the tree out of sync.
+test_gate() {
+    [ -n "$1" ] || return 0
+    : > "$1.started"
+    while [ ! -f "$1.release" ]; do sleep 0.02; done
+}
 printf '%s|%s|%s\n' "$(pwd -P)" "${pnpm_config_verify_deps_before_run-unset}" "$*" >> "$FAKE_PNPM_LOG"
 printf 'PATH0=%s\n' "${PATH%%:*}" >> "$FAKE_PNPM_LOG"
 start="$(pwd)"
@@ -157,6 +165,7 @@ done
 [ -n "$first" ] || for a in "$@"; do case "$a" in install|i|ci|add|update|it|install-test) first="$a"; break ;; esac; done   # `pnpm -- install`
 case "$first" in
     install|i|ci|add|update|it|install-test)
+        test_gate "${FAKE_PNPM_INSTALL_GATE-}"
         [ -z "${FAKE_PNPM_SLEEP-}" ] || sleep "$FAKE_PNPM_SLEEP"
         if [ "${FAKE_PNPM_FAIL_INSTALL-}" = 1 ]; then echo "fake pnpm: install failed" >&2; exit 7; fi
         L="$(lane)"
@@ -171,12 +180,14 @@ case "$first" in
         echo "fake pnpm: installed"
         exit 0 ;;
     clean|purge|prune|dedupe|rebuild|remove|rm|link|unlink|patch)
+        test_gate "${FAKE_PNPM_INSTALL_GATE-}"
         [ -z "${FAKE_PNPM_SLEEP-}" ] || sleep "$FAKE_PNPM_SLEEP"
         L="$(lane)"
         rm -f "$L/node_modules/.fake-state"
         echo "fake pnpm: mutated"
         exit 0 ;;
 esac
+test_gate "${FAKE_PNPM_RUN_GATE-}"
 [ -z "${FAKE_PNPM_RUN_SLEEP-}" ] || sleep "$FAKE_PNPM_RUN_SLEEP"
 if [ -n "${FAKE_PNPM_RUN_HOOK-}" ]; then $FAKE_PNPM_RUN_HOOK || exit 9; fi   # a script of the command re-entering the wrapper
 echo "fake pnpm ran: $*"
@@ -191,6 +202,70 @@ def write_exec(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+class RunningCall:
+    """Observe a live caller, with a bounded wait and cleanup of its children.
+
+    Files keep stdout/stderr drain-free while the test inspects a wait message.
+    The fake's optional gate is released by the test, never by a fixed delay.
+    """
+
+    def __init__(self, fx: Fixture, prog: str, *args: str, cwd: pathlib.Path,
+                 hold: str | None = None, **extra: str) -> None:
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="caller-", dir=fx.root))
+        self.gate = self.root / "gate"
+        self.stdout = self.root / "stdout"
+        self.stderr = self.root / "stderr"
+        self.command = [str(fx.shims / prog), *args]
+        if hold is not None:
+            if hold not in ("install", "run"):
+                raise ValueError(f"unknown fake gate: {hold}")
+            extra[f"FAKE_PNPM_{hold.upper()}_GATE"] = str(self.gate)
+        with self.stdout.open("w") as out, self.stderr.open("w") as err:
+            self.proc = subprocess.Popen(
+                self.command, cwd=cwd, env=fx.env(**extra),
+                stdout=out, stderr=err, text=True, start_new_session=True,
+            )
+
+    def __enter__(self) -> RunningCall:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        # Kill the whole private process group, including a fake still at its
+        # gate, on assertion failure or timeout; never leave a sleeper behind.
+        try:
+            os.killpg(self.proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        self.proc.wait(timeout=10)
+
+    def wait_for(self, predicate: Callable[[], bool], description: str) -> None:
+        deadline = time.monotonic() + 60
+        while not predicate():
+            status = self.proc.poll()
+            if status is not None or time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"caller did not reach {description} within 60s "
+                    f"(returncode={status}): {self.stderr.read_text()}"
+                )
+            time.sleep(0.02)
+
+    def wait_for_gate(self) -> None:
+        self.wait_for(self.gate.with_suffix(".started").exists, "the fake pnpm gate")
+
+    def wait_for_wait(self) -> None:
+        self.wait_for(lambda: LANE_WAIT in self.stderr.read_text(), "the lane-install wait message")
+
+    def release(self) -> None:
+        self.gate.with_suffix(".release").touch()
+
+    def finish(self) -> subprocess.CompletedProcess[str]:
+        try:
+            status = self.proc.wait(timeout=60)
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError(f"caller did not finish within 60s: {self.stderr.read_text()}") from error
+        return subprocess.CompletedProcess(self.command, status, self.stdout.read_text(), self.stderr.read_text())
 
 
 class Fixture:
@@ -237,6 +312,9 @@ class Fixture:
             capture_output=True,
             text=True,
         )
+
+    def start(self, prog: str, *args: str, cwd: pathlib.Path, hold: str | None = None, **extra: str) -> RunningCall:
+        return RunningCall(self, prog, *args, cwd=cwd, hold=hold, **extra)
 
     def all_calls(self) -> list[str]:
         if not self.log.exists():
@@ -543,26 +621,21 @@ class PnpmShimTests(unittest.TestCase):
 
     def test_concurrent_callers_wait_for_one_install_instead_of_racing_it(self) -> None:
         proj = self.fx.project()
-        results: list[subprocess.CompletedProcess[str]] = []
-        lock = threading.Lock()
-
-        def call(name: str) -> None:
-            r = self.fx.run("pnpm", "exec", name, cwd=proj, FAKE_PNPM_SLEEP="2")
-            with lock:
-                results.append(r)
-
-        threads = [threading.Thread(target=call, args=(n,)) for n in ("vitest", "eslint", "tsc")]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=60)
+        with ExitStack() as stack:
+            first = stack.enter_context(self.fx.start("pnpm", "exec", "vitest", cwd=proj, hold="install"))
+            first.wait_for_gate()
+            peers = [stack.enter_context(self.fx.start("pnpm", "exec", name, cwd=proj)) for name in ("eslint", "tsc")]
+            for peer in peers:
+                peer.wait_for_wait()
+            first.release()
+            results = [caller.finish() for caller in (first, *peers)]
         self.assertEqual(len(results), 3)
         for r in results:
             self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fx.installs()), 1, self.fx.calls())
         ran = sorted(a for a in self.fx.argv() if a != "install --frozen-lockfile")
         self.assertEqual(ran, ["exec eslint", "exec tsc", "exec vitest"])
-        waited = [r for r in results if "waiting for another caller's lane install" in r.stderr]
+        waited = [r for r in results if LANE_WAIT in r.stderr]
         self.assertEqual(len(waited), 2, [r.stderr for r in results])
 
     def test_failed_install_leaves_the_lane_out_of_sync_and_the_command_does_not_run(self) -> None:
@@ -786,23 +859,15 @@ class PnpmShimMutationTests(unittest.TestCase):
         self.assertEqual(self.fx.calls(), [])
         (lock / "pid").unlink()
         lock.rmdir()
-        results: list[subprocess.CompletedProcess[str]] = []
-        guard = threading.Lock()
-
-        def call(argv: list[str], sleep: str) -> None:
-            r = self.fx.run("pnpm", *argv, cwd=proj, FAKE_PNPM_SLEEP=sleep)
-            with guard:
-                results.append(r)
-
-        t1 = threading.Thread(target=call, args=(["install"], "2"))
-        t2 = threading.Thread(target=call, args=(["exec", "vitest"], "0"))
-        t1.start()
-        time.sleep(0.5)
-        t2.start()
-        t1.join(timeout=60)
-        t2.join(timeout=60)
+        with self.fx.start("pnpm", "install", cwd=proj, hold="install") as install:
+            install.wait_for_gate()
+            with self.fx.start("pnpm", "exec", "vitest", cwd=proj) as command:
+                command.wait_for_wait()
+                install.release()
+                results = [install.finish(), command.finish()]
         for r in results:
             self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(LANE_WAIT, results[1].stderr)
         # the explicit install finished first and left the lane in sync: no frozen install followed
         self.assertEqual(self.fx.argv(), ["install", "exec vitest"])
 
@@ -1352,20 +1417,12 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertEqual(self.fx.argv(), ["exec vitest"])
         # a concurrent mutate: the project command runs only after it released the lane
         self.fx.reset()
-        results: dict[str, subprocess.CompletedProcess[str]] = {}
-
-        def mutate() -> None:
-            results["add"] = self.fx.run("pnpm", "add", "left-pad", cwd=proj, FAKE_PNPM_SLEEP="3")
-
-        def check() -> None:
-            time.sleep(1)
-            results["exec"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
-
-        threads = [threading.Thread(target=mutate), threading.Thread(target=check)]
-        for th in threads:
-            th.start()
-        for th in threads:
-            th.join(timeout=60)
+        with self.fx.start("pnpm", "add", "left-pad", cwd=proj, hold="install") as mutate:
+            mutate.wait_for_gate()
+            with self.fx.start("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="20") as check:
+                check.wait_for_wait()
+                mutate.release()
+                results = {"add": mutate.finish(), "exec": check.finish()}
         self.assertEqual(results["add"].returncode, 0, results["add"].stderr)
         self.assertEqual(results["exec"].returncode, 0, results["exec"].stderr)
         self.assertIn("waiting for another caller's lane install", results["exec"].stderr)
@@ -1480,77 +1537,56 @@ class PnpmShimShapeATests(unittest.TestCase):
         self.fx.run("pnpm", "exec", "vitest", cwd=proj)     # prepared: pnpm says yes from here on
         nm = proj / "node_modules"
         self.fx.reset()
-        result: dict[str, subprocess.CompletedProcess[str]] = {}
-
-        def check() -> None:
-            result["r"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_SLEEP="3")
-
-        th = threading.Thread(target=check)
-        th.start()
-        time.sleep(1.5)
-        self.assertFalse((nm / ".gc-lane-deps.lock").exists())
-        self.assertEqual([p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps")], [])
-        th.join(timeout=60)
-        self.assertEqual(result["r"].returncode, 0, result["r"].stderr)
+        with self.fx.start("pnpm", "exec", "vitest", cwd=proj, hold="run") as check:
+            check.wait_for_gate()
+            self.assertFalse((nm / ".gc-lane-deps.lock").exists())
+            self.assertEqual([p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps")], [])
+            check.release()
+            result = check.finish()
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.fx.argv(), ["exec vitest"])
         self.assertEqual(len(self.fx.checks()), 1)      # asked once, under the lock, before the command
         self.assertEqual([p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps")], [])
 
     def test_two_mutating_calls_serialize_on_the_lane_lock(self) -> None:
-        """(ii) the second waits for the first's lock; measured order and time."""
+        """(ii) the second cannot enter its mutation until the first is released."""
         proj = self.fx.project()
         lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        results: dict[str, subprocess.CompletedProcess[str]] = {}
-        ends: dict[str, float] = {}
-
-        def mutate(name: str, delay: float) -> None:
-            time.sleep(delay)
-            results[name] = self.fx.run("pnpm", "add", name, cwd=proj, FAKE_PNPM_SLEEP="2", GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
-            ends[name] = time.monotonic()
-
-        started = time.monotonic()
-        threads = [threading.Thread(target=mutate, args=("left-pad", 0.0)), threading.Thread(target=mutate, args=("right-pad", 0.5))]
-        for th in threads:
-            th.start()
-        for th in threads:
-            th.join(timeout=60)
+        with self.fx.start("pnpm", "add", "left-pad", cwd=proj, hold="install") as first:
+            first.wait_for_gate()
+            with self.fx.start("pnpm", "add", "right-pad", cwd=proj, hold="install", GC_TOOLCHAIN_LANE_DEPS_WAIT="20") as second:
+                second.wait_for_wait()
+                self.assertFalse(second.gate.with_suffix(".started").exists())
+                self.assertEqual(self.fx.argv(), ["add left-pad"])
+                first.release()
+                results = {"left-pad": first.finish()}
+                second.wait_for_gate()
+                second.release()
+                results["right-pad"] = second.finish()
         for name in ("left-pad", "right-pad"):
             self.assertEqual(results[name].returncode, 0, (name, results[name].stderr))
         self.assertNotIn("waiting", results["left-pad"].stderr)
         self.assertIn("waiting for another caller's lane install", results["right-pad"].stderr)
         self.assertEqual(self.fx.argv(), ["add left-pad", "add right-pad"])       # the measured order
-        self.assertGreaterEqual(ends["right-pad"], ends["left-pad"])
-        self.assertGreaterEqual(ends["right-pad"] - started, 3.5)                # two seconds each, never side by side
         self.assertFalse(lock.exists())
 
     def test_a_mutate_does_not_wait_for_a_running_project_command(self) -> None:
-        """(iii) the non-goal pinned as behaviour: a rebuild started one second
-        into a four-second check takes the lock at once and ends before the
+        """(iii) the non-goal pinned as behaviour: a rebuild started during
+        a held check takes the lock at once and ends before the
         check does. Bare pnpm's own position; one lane, one agent."""
         proj = self.fx.project()
         self.fx.run("pnpm", "exec", "vitest", cwd=proj)
         self.fx.reset()
-        results: dict[str, subprocess.CompletedProcess[str]] = {}
-        marks: dict[str, float] = {}
-
-        def check() -> None:
-            results["check"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_SLEEP="4")
-            marks["check_end"] = time.monotonic()
-
-        def rebuild() -> None:
-            time.sleep(1)
-            results["rebuild"] = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
-            marks["rebuild_end"] = time.monotonic()
-
-        threads = [threading.Thread(target=check), threading.Thread(target=rebuild)]
-        for th in threads:
-            th.start()
-        for th in threads:
-            th.join(timeout=60)
+        with self.fx.start("pnpm", "exec", "vitest", cwd=proj, hold="run") as check:
+            check.wait_for_gate()
+            with self.fx.start("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="20") as rebuild:
+                results = {"rebuild": rebuild.finish()}
+            self.assertIsNone(check.proc.poll())       # rebuild finished while the check remains held
+            check.release()
+            results["check"] = check.finish()
         self.assertEqual(results["check"].returncode, 0, results["check"].stderr)
         self.assertEqual(results["rebuild"].returncode, 0, results["rebuild"].stderr)
         self.assertNotIn("waiting", results["rebuild"].stderr)
-        self.assertLess(marks["rebuild_end"], marks["check_end"])       # ran under the check: unfenced by design
         self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
         self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
 
