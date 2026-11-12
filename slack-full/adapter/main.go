@@ -1987,30 +1987,7 @@ func main() {
 	if err := os.MkdirAll(cfg.inboundDeadLetterDir, 0o700); err != nil {
 		log.Printf("inbound dead-letter dir %q could not be created at startup (%v) — writes will retry creating it", cfg.inboundDeadLetterDir, err)
 	}
-	cfg.coalescer.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
-		path, err := writeInboundDeadLetter(deliverCfg.inboundDeadLetterDir, channel, batch, cause)
-		if err != nil {
-			// The write retries on a backoff (parkDeadLetter); log the
-			// error once per DISTINCT failure, not per attempt (gp-sgu7
-			// contract 3) — the coalescer's own parked/retry lines mark
-			// the state changes.
-			if deliverCfg.postFailures.changed("dead-letter:"+channel, err.Error()) {
-				log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) parked out of the delivery path; the write retries with backoff: %v",
-					channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
-			}
-			return false
-		}
-		deliverCfg.postFailures.clear("dead-letter:" + channel)
-		if err := deliverCfg.inboundRecovery.importDeadLetters(); err != nil {
-			log.Printf("inbound dead-letter index refresh: %v", err)
-		}
-		for _, member := range batch {
-			deliverCfg.stopNeverSilent(member.inbound, permanentDeliveryFailure(cause))
-		}
-		log.Printf("coalesce: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand once the rejection cause is fixed",
-			channel, len(batch), path)
-		return true
-	}
+	cfg.coalescer.deadLetter = inboundDeadLetterSink(deliverCfg)
 	log.Printf("inbound coalescer: window=%s (0 disables) policy_channels=%d spool=%q dead_letter_dir=%q",
 		cfg.coalesceWindow, deliveryPolicy.Len(), cfg.coalesceSpoolPath, cfg.inboundDeadLetterDir)
 
@@ -7008,6 +6985,34 @@ var slackUploadClient = &http.Client{Timeout: 120 * time.Second}
 func postInbound(cfg config, msg externalInboundMessage) error {
 	_, err := postInboundWithReceipt(cfg, msg)
 	return err
+}
+
+// inboundDeadLetterSink persists a rejected batch before updating its observers.
+func inboundDeadLetterSink(deliverCfg config) func(string, []pendingChannelInbound, error) bool {
+	return func(channel string, batch []pendingChannelInbound, cause error) bool {
+		path, err := writeInboundDeadLetter(deliverCfg.inboundDeadLetterDir, channel, batch, cause)
+		if err != nil {
+			// The write retries on a backoff (parkDeadLetter); log the
+			// error once per DISTINCT failure, not per attempt (gp-sgu7
+			// contract 3) — the coalescer's own parked/retry lines mark
+			// the state changes.
+			if deliverCfg.postFailures.changed("dead-letter:"+channel, err.Error()) {
+				log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) parked out of the delivery path; the write retries with backoff: %v",
+					channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
+			}
+			return false
+		}
+		deliverCfg.postFailures.clear("dead-letter:" + channel)
+		if err := deliverCfg.inboundRecovery.importDeadLetters(); err != nil {
+			log.Printf("inbound dead-letter index refresh: %v", err)
+		}
+		for _, member := range batch {
+			deliverCfg.stopNeverSilent(member.inbound, permanentDeliveryFailure(cause))
+		}
+		log.Printf("coalesce: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand once the rejection cause is fixed",
+			channel, len(batch), path)
+		return true
+	}
 }
 
 // postInboundWithReceipt forwards one inbound and returns gc's delivery
