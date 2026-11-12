@@ -1,0 +1,41 @@
+=== RUN   TestNeverSilentHoldLegacyWriters
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/uncertain
+2026/11/12 16:48:34 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkuncertain2467373443/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+    never_silent_hold_test.go:174: record missing from recovery index
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/failed
+2026/11/12 16:48:35 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkfailed663963433/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+    never_silent_hold_test.go:174: record missing from recovery index
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/refused
+2026/11/12 16:48:35 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkrefused3064643950/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+    never_silent_hold_test.go:174: record missing from recovery index
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/uncertain
+2026/11/12 16:48:36 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowupuncertain1972434468/001/dead/example-channel.jsonl — inspect and re-post by hand
+    never_silent_hold_test.go:174: record missing from recovery index
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/failed
+2026/11/12 16:48:36 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowupfailed1246607873/001/dead/example-channel.jsonl — inspect and re-post by hand
+    never_silent_hold_test.go:174: record missing from recovery index
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/refused
+2026/11/12 16:48:37 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowuprefused1556126552/001/dead/example-channel.jsonl — inspect and re-post by hand
+    never_silent_hold_test.go:174: record missing from recovery index
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/uncertain
+2026/11/12 16:48:37 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasuncertain3091318824/001/dead/example-channel.jsonl — re-inject alias_body by hand
+    never_silent_hold_test.go:174: record missing from recovery index
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/failed
+2026/11/12 16:48:37 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasfailed3501537340/001/dead/example-channel.jsonl — re-inject alias_body by hand
+    never_silent_hold_test.go:174: record missing from recovery index
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/refused
+2026/11/12 16:48:38 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasrefused3758292419/001/dead/example-channel.jsonl — re-inject alias_body by hand
+    never_silent_hold_test.go:174: record missing from recovery index
+--- FAIL: TestNeverSilentHoldLegacyWriters (4.21s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/sink/uncertain (0.35s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/sink/failed (0.54s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/sink/refused (0.44s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/followup/uncertain (0.48s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/followup/failed (0.54s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/followup/refused (0.49s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/alias/uncertain (0.40s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/alias/failed (0.49s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/alias/refused (0.49s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	4.498s
+FAIL

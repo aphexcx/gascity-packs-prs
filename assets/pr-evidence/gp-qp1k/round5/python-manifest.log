@@ -1,0 +1,1 @@
+command=make test PYTEST_DIRS=slack-full/tests whatsapp/tests gchat/tests log=python-1.log exit=0

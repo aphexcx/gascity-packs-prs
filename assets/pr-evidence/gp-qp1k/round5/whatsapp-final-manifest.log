@@ -1,0 +1,1 @@
+command=env -u GC_BIN -u NEVER_SILENT pnpm test exit=0

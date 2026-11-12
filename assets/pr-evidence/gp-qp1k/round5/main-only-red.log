@@ -1,0 +1,41 @@
+=== RUN   TestNeverSilentHoldLegacyWriters
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/uncertain
+2026/11/12 16:48:20 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkuncertain4106371218/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=false
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/failed
+2026/11/12 16:48:20 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkfailed3613151723/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=true
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/refused
+2026/11/12 16:48:21 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkrefused2425522756/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=true
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/uncertain
+2026/11/12 16:48:21 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowupuncertain1563250268/001/dead/example-channel.jsonl — inspect and re-post by hand
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=false
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/failed
+2026/11/12 16:48:21 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowupfailed1192387186/001/dead/example-channel.jsonl — inspect and re-post by hand
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=true
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/refused
+2026/11/12 16:48:21 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowuprefused155343259/001/dead/example-channel.jsonl — inspect and re-post by hand
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=true
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/uncertain
+2026/11/12 16:48:21 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasuncertain1129413003/001/dead/example-channel.jsonl — re-inject alias_body by hand
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=false
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/failed
+2026/11/12 16:48:22 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasfailed2739245794/001/dead/example-channel.jsonl — re-inject alias_body by hand
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=true
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/refused
+2026/11/12 16:48:22 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasrefused2856228040/001/dead/example-channel.jsonl — re-inject alias_body by hand
+    never_silent_hold_test.go:178: writer stop=0001-01-01 00:00:00 +0000 UTC uncertain=false want definite=false
+--- FAIL: TestNeverSilentHoldLegacyWriters (1.64s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/sink/uncertain (0.18s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/sink/failed (0.20s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/sink/refused (0.17s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/followup/uncertain (0.21s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/followup/failed (0.21s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/followup/refused (0.18s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/alias/uncertain (0.18s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/alias/failed (0.18s)
+    --- FAIL: TestNeverSilentHoldLegacyWriters/alias/refused (0.14s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	1.856s
+FAIL
