@@ -76,6 +76,9 @@ OTHER_BULLETS = {
 
 BULLET = re.compile(r"([-*+]|\d+[.)]) ")
 
+# A Markdown heading: one to six hashes, then a space or the end of the line.
+HEADING = re.compile(r"#{1,6}( |$)")
+
 
 def section_blocks(text: str) -> list[tuple[str, list[str]]]:
     """The section the rules sit in, as bullets with their lines, and other lines.
@@ -96,7 +99,7 @@ def section_blocks(text: str) -> list[tuple[str, list[str]]]:
     for i, line in enumerate(lines):
         if line.startswith("```"):
             fence = not fence
-        elif not fence and line.startswith("#"):
+        elif not fence and HEADING.match(line):
             headings.append(i)
     top = max((i for i in headings if i < first), default=-1)
     bottom = min((i for i in headings if i > first), default=len(lines))
@@ -191,7 +194,7 @@ def with_a_fifth_rule(text: str, place: str) -> str:
     for i, line in enumerate(lines):
         if line.startswith("```"):
             fence = not fence
-        elif not fence and i > first and line.startswith("#"):
+        elif not fence and i > first and HEADING.match(line):
             section_end = i
             break
     if place == "after a blank line at the end of the list":
@@ -385,7 +388,7 @@ def with_a_line_among_the_rules(text: str, place: str) -> str:
     while end + 1 < len(lines) and lines[end + 1].startswith("  "):
         end += 1
     section_end = next(
-        (i for i in range(end + 1, len(lines)) if lines[i].startswith("## ")), len(lines)
+        (i for i in range(end + 1, len(lines)) if HEADING.match(lines[i])), len(lines)
     )
     if place == "an unindented line straight after rule 2":
         lines[third:third] = ["Except in a DM, where a line of text follows."]
