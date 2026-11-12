@@ -234,8 +234,30 @@ outcome:
 
 ### Codex round
 
-One round, class STANDARD, on the round's delta from `a59a65c3`. Its record and the outcome of each finding follow in the next commit.
+One round, class STANDARD, on the round's delta `a59a65c3..99b3f8be`
+(the code head plus this directory): **VERDICT: CLEAN**, no finding at any
+severity (`codex-round1-99b3f8be.md`). The reviewer ran no tests (read-only
+sandbox) and read the transcripts here.
 
 ## Public repository
 
-The check runs over the whole round before the push; its result follows in the next commit.
+Before the push I read the round's whole delta, its six commit messages,
+and PR 91's title and body against the public-repository rule. The pattern
+covered home and temp paths, the customer names on the rule's list, Slack,
+phone, user and message ids, email addresses, keys and tokens, hosts and
+ports, and the gate tool's account line.
+
+- The texts, tests and README carry only the help page's placeholders
+  (`Cxxx`, `1234.5678`, `spaces/<id>/messages/<id>`).
+- The pytest transcripts quote the WhatsApp skill's own description line,
+  which is on main.
+- The commit authors are the noreply addresses already on main.
+
+Four things were changed in the evidence copies:
+
+1. The codex record's route line, which named the hub's home directory and
+   how it rotates accounts, now reads "the hub".
+2. The codex record's lane worktree path is now "the lane worktree".
+3. The codex record's link into the reviewer's temp directory now points at
+   README.md.
+4. The suite transcript's clone path is now `<clone>`.
