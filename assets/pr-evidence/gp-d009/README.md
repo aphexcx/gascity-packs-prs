@@ -58,9 +58,9 @@ thread root with forty distinct synthetic message timestamps, joining
 deliveries with a newline. It models a session already participating in the
 thread, with no new context or attachments. The saved 8,920 tokens exclude the
 one-time startup-fragment cost. The single-mention reduction is 205 tokens.
-The raw startup fragment adds 1,482 bytes / 320 tokens relative to the base
-(also unchanged relative to the integrated main at `a453efab`),
-so the forty-reply example saves 8,600 tokens after that one-time cost. This
+Relative to integrated main `a453efab`, the raw startup fragment adds
+1,561 bytes / 333 tokens, so the forty-reply example saves 8,587 tokens after
+that one-time cost. This
 counts the fragment source; template interpolation can change the full prompt.
 
 Refresh the after capture from `slack-full/adapter`:
@@ -116,10 +116,10 @@ All destinations below refer to **Mention-only rooms** in the startup fragment.
 | --- | --- |
 | “You are bound ... only @mentions ... handle ... replies in threads you posted in reach you.” | First paragraph preserves the three delivery triggers. |
 | “Read the rest of the room on demand” and its command | First paragraph includes `gc slack read --conversation-id <channel>`. |
-| “React ... with writing_hand ... actively working on it” and its command | Reaction paragraph and explicit channel/message command. |
+| “React ... with writing_hand ... actively working on it” and its command | The moved paragraph references the shared Reactions catalog and gives an explicit channel/message command. The legacy reaction name is superseded by main's fixed-meaning catalog; the working-state signal remains defined there. |
 | “To reply ... write your reply to a tmpfile and run” and four-line command | Reply paragraph and single-line `publish-to-channel` command; the filled-in command also stays in every full-mode delivery. |
 | “This posts directly ... registered identity ... no channel binding ... unaffected by any company-room pointer” | Final paragraph preserves identity, binding and pointer rules. |
-| “react, reply-current --thread-current and upload --thread-current resolve ... once gc has confirmed ... moments after it reaches you” | Final paragraph names all three commands and confirmation timing. |
+| “react, reply-current --thread-current and upload --thread-current resolve ... once gc has confirmed ... moments after it reaches you” | Final paragraph preserves reply/upload confirmation timing. Implicit reaction lookup is dropped because the shared catalog requires the exact message coordinates; the explicit reaction command remains above. |
 | “the explicit --conversation-id/--thread-ts form above always works” | Final paragraph says the explicit destination needs no confirmation wait. |
 | Reason prose (“you were @mentioned”, addressed handle, own-thread reply) | Dropped from presentation; routing reasons remain in delivery records. Timestamps identify the thread. |
 | “Message text:” label | Removed as redundant framing; the message itself remains verbatim after existing redaction/markup neutralization. |
@@ -175,6 +175,21 @@ From `slack-full`, `python -m pytest tests -q -k 'prompt_contract or reply_templ
 then passed 7 cases (973 deselected), including both the new reaction-catalog
 contract and this bead's mention-only contract. The shared reaction section was
 also compared byte-for-byte with main. This bead does not edit that catalog.
+
+Self-review round 3 (STANDARD, `39c63ed5`): 0 critical / 1 major / 0 minor.
+Class: moved guidance violates shared reaction prompt contracts introduced
+by the integrated main. Both reported cases reproduced: a legacy inline
+reaction name outside the catalog and a bare reaction command without ids.
+The existing repository-wide class tests failed twice; the added
+`test_mention_only_reaction_guidance_uses_shared_catalog` also failed before
+the correction. The moved guidance now references the shared catalog and
+requires explicit reaction coordinates, leaving the catalog text unchanged.
+
+After that correction, from the repository root,
+`python -m pytest tests -q -k 'texting_rules or reaction_catalog'` passed
+100 cases (440 deselected). From `slack-full`,
+`python -m pytest tests -q -k 'prompt_contract or reply_template_contract'`
+passed 8 cases (973 deselected). The adapter and its tests did not change.
 
 Public-repo check: all added fixtures and captures contain invented values;
 no live messages, credentials or host-specific paths are included.

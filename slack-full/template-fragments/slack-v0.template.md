@@ -42,10 +42,11 @@ by the message and a reply command. The thread ts is the root to reply under;
 for a top-level message it equals the message ts. New thread context and
 attachments remain part of the delivered message.
 
-React with `writing_hand` when actively working on the message:
+Choose the matching reaction from the Reactions section to signal your work,
+using this message's own channel and timestamp:
 
 ```
-gc slack react --conversation-id <channel> --message-id <message_ts> --emoji writing_hand
+gc slack react --conversation-id <channel> --message-id <message_ts> --emoji <name>
 ```
 
 Write your reply to a temporary file and use the delivery's explicit command:
@@ -56,10 +57,11 @@ gc slack publish-to-channel --conversation-id <channel> --thread-ts <thread_ts> 
 
 This posts through the Slack adapter with your registered identity. You hold
 no channel binding for a mention-only room; this explicit destination is
-unaffected by any company-room pointer your session may carry. `gc slack react`,
+unaffected by any company-room pointer your session may carry.
 `reply-current --thread-current` and `upload --thread-current` can also resolve
-the delivery once gc has confirmed it, moments after it reaches you. The
-explicit channel and thread command works without waiting for that confirmation.
+the delivery once gc has confirmed it, moments after it reaches you. Reactions
+always use the explicit message coordinates above. The explicit commands work
+without waiting for that confirmation.
 Opt-in minimal reminders carry a `reply-to` id instead of the full command;
 use that id as `<thread_ts>` with the reminder's channel.
 

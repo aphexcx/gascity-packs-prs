@@ -39,14 +39,24 @@ def test_mention_only_standing_rules_and_explicit_reply_form() -> None:
         "gc slack publish-to-channel --conversation-id <channel> "
         "--thread-ts <thread_ts> --body-file <file>"
     ) in prompt
-    assert (
-        "gc slack react --conversation-id <channel> "
-        "--message-id <message_ts> --emoji writing_hand"
-    ) in prompt
     assert "reply-current --thread-current" in prompt
     assert "upload --thread-current" in prompt
     assert "once gc has confirmed" in normalized
     assert "company-room pointer" in normalized
+
+
+def test_mention_only_reaction_guidance_uses_shared_catalog() -> None:
+    prompt = FRAGMENT.read_text(encoding="utf-8")
+    section = prompt.split("### Mention-only rooms", 1)[1].split("## When to respond", 1)[0]
+    normalized = " ".join(section.split())
+
+    assert "matching reaction from the Reactions section" in normalized
+    assert "writing_hand" not in section
+    assert "`gc slack react`" not in section
+    assert (
+        "gc slack react --conversation-id <channel> "
+        "--message-id <message_ts> --emoji <name>"
+    ) in section
 
 
 def test_reaction_vocabulary_contract() -> None:
