@@ -326,7 +326,11 @@ export function createPublisher({
         saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key));
         activityAttempts.delete(key);
       }
-      return { answer };
+      // A completed attempt has left the pending map, but its committed proof
+      // still supplies the original activity. Reapply it if the notice-state
+      // write failed after the proof was saved; never use the retry's time.
+      const activity = activityByProof.get(`${conversation}\0${str(answer.message_id)}`);
+      return { answer, activity };
     }
     const attempt = accepted || (recoverActivity && answer.replayed === false ? current : pending);
     const activity = rememberActivity({ conversation, session: attempt?.session ?? session,

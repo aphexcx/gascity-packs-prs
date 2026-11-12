@@ -277,38 +277,11 @@ func (p *Processor) Pass(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ids := make([]string, 0)
-	for _, send := range l.Sends {
-		if send.Request == nil || send.Request.SessionID == "" {
-			continue
-		}
-		for _, part := range send.Parts {
-			if part.MessageName != "" && strings.TrimSpace(part.Text) != "" && !part.SentAt.IsZero() {
-				if err := p.opts.NeverSilent.Act(send.Space, "", send.Request.SessionID, part.SentAt); err != nil {
-					return err
-				}
-			}
-		}
+	if err := ReconcileNeverSilent(l, p.opts.NeverSilent); err != nil {
+		return err
 	}
+	ids := make([]string, 0)
 	for id, c := range l.Changes {
-		// Repair a crash after the authoritative ledger write but before the
-		// sidecar write. These calls never enroll an untracked/replayed message.
-		var noticeErr error
-		switch {
-		case c.NoticeResolved || c.Reason == "operator accepted" || c.Reason == "operator replay" || c.Reason == reasonWithdrawn:
-			noticeErr = p.opts.NeverSilent.Forget(id)
-		case c.NoticeDelivered:
-			noticeErr = p.opts.NeverSilent.ResultAt(id, "delivered", nil, c.NoticeAt)
-		case c.Status == "unresolved":
-			noticeErr = p.opts.NeverSilent.StopAt(id, strings.HasPrefix(c.Reason, "gc rejected the POST:"), c.NoticeAt)
-		case c.Status == "committed" && c.Reason == "no_route":
-			noticeErr = p.opts.NeverSilent.StopAt(id, true, c.NoticeAt)
-		case c.Status == "committed" && (c.Reason == "delivered" || c.Reason == reasonLanded):
-			noticeErr = p.opts.NeverSilent.ResultAt(id, "delivered", nil, c.NoticeAt)
-		}
-		if noticeErr != nil {
-			return noticeErr
-		}
 		if c.Status == "pending" || c.Status == "intent" {
 			ids = append(ids, id)
 		}

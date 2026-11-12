@@ -235,6 +235,58 @@ test('never-silent lost-answer replay class across switch enablement', async (t)
   }
 });
 
+test('never-silent committed proof replay repairs the template activity after a notice write fault', async (t) => {
+  for (const kind of ['text', 'captioned-file', 'update-template']) {
+    for (const cause of ['definite-failure', 'uncertain-stop', 'health']) await t.test(`${kind}: ${cause}`, async (t) => {
+      const proofs = new Map();
+      let calls = 0;
+      const f = outboundCase(t, kind, async (request) => {
+        calls++;
+        const replayed = proofs.has(request.idempotency_key);
+        if (!replayed) proofs.set(request.idempotency_key, { message_id: 'example-proof', activity_attempt_id: request.activity_attempt_id });
+        return { ...proofs.get(request.idempotency_key), replayed };
+      });
+      const publisher = f.make();
+      f.e.track({ id: 'example-message', conversation: 'example-owner', targets: ['original-session'] });
+      if (cause === 'uncertain-stop') f.e.stop('example-message', false);
+      else f.e.result('example-message', cause === 'health' ? 'delivered' : 'failed', ['original-session']);
+      await f.e.poll();
+      f.now += 60000;
+      const answeredAt = f.now;
+      const rename = fs.renameSync;
+      let faults = 0;
+      t.mock.method(fs, 'renameSync', (from, to) => {
+        if (to === path.join(f.opts.stateDir, 'never-silent.json') && faults++ === 0) {
+          throw Object.assign(new Error('fake notice storage full'), { code: 'ENOSPC' });
+        }
+        return rename(from, to);
+      });
+      const first = await f.call(publisher);
+      assert.equal(first.json.delivered, false);
+      assert.equal(first.json.failure_kind, kind === 'captioned-file' ? 'permanent' : 'transient');
+      assert.equal(faults, 1);
+      f.now += 30000;
+      assert.equal((await f.call(publisher)).json.delivered, true);
+      t.mock.restoreAll();
+      assert.equal(proofs.size, 1, 'one provider send');
+      assert.equal(calls, kind === 'update-template' ? 2 : 1, 'text and file progress skip the gateway on retry');
+      const acts = JSON.parse(fs.readFileSync(path.join(f.opts.stateDir, 'never-silent.json'))).acts;
+      // Text/file retries still bypass the owed act (the separately deferred
+      // storage-recovery issue). Only the template reaches this replay branch.
+      assert.deepEqual(acts.map((a) => a.at), kind === 'update-template' ? [answeredAt] : []);
+      f.now += 181000;
+      if (cause === 'health') fs.writeFileSync(f.opts.healthFile, JSON.stringify({ state: 'session_down', since: new Date(f.now).toISOString(), checked_at: new Date(f.now).toISOString() }));
+      await f.e.poll();
+      await f.e.poll();
+      const suppressed = kind === 'update-template' && cause !== 'definite-failure';
+      assert.equal(f.posts.length, suppressed ? 0 : 1);
+      if (cause === 'uncertain-stop' && suppressed) {
+        assert.equal(f.mails.filter((m) => m.subject.endsWith(' cleared')).length, 1);
+      }
+    });
+  }
+});
+
 test('never-silent activity journal failures remain retryable for every send kind', async (t) => {
   for (const kind of ['text', 'captioned-file', 'update-template']) {
     for (const phase of ['before-dispatch', 'after-acceptance']) await t.test(`${kind}: ${phase}`, async (t) => {

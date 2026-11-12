@@ -52,6 +52,8 @@ type application struct {
 	s                  *server.Server
 	manager            atomic.Pointer[events.Manager]
 	chatClient         atomic.Pointer[chat.Client]
+	noticeProvider     atomic.Pointer[noticeProvider]
+	credentialHold     atomic.Bool
 	neverSilent        *neversilent.Engine
 	loaded             atomic.Bool
 	lastEvent          atomic.Int64
@@ -335,12 +337,11 @@ func (a *application) run(ctx context.Context) error {
 			retryTimer.Stop()
 		}
 	}()
-	credentialHold := false
 	var lastCredentialFailure time.Time
 	reloaded := false
 	settingsBytes, _ := os.ReadFile(a.opts.SettingsPath)
 	start := func() {
-		if a.checkStateLock() != nil || recovery || credentialHold || generationDone != nil {
+		if a.checkStateLock() != nil || recovery || a.credentialHold.Load() || generationDone != nil {
 			return
 		}
 		if source.State() != token.Ready {
@@ -382,14 +383,14 @@ func (a *application) run(ctx context.Context) error {
 			// owns the ledger. It has already replaced and saved the shared value.
 			recovery = false
 			a.loaded.Store(true)
-			credentialHold = false
+			a.credentialHold.Store(false)
 			start()
 		case <-reload:
 			if !recovery {
 				a.health("initializing", "credentials replaced; rebuilding clients")
 			}
 			stopGeneration()
-			credentialHold = false
+			a.credentialHold.Store(false)
 			lastCredentialFailure = time.Time{}
 			reloaded = true
 			a.noticeMu.Lock()
@@ -445,7 +446,7 @@ func (a *application) run(ctx context.Context) error {
 				retryTimer = time.NewTimer(a.nextRestartDelay())
 				retry = retryTimer.C
 			} else if source.State() != token.Ready || bounded {
-				credentialHold = true
+				a.credentialHold.Store(true)
 				reason := "credential rejected; run gc gchat auth"
 				if bounded {
 					reason = "two consecutive credential rejections within five minutes after refresh; run gc gchat auth"
@@ -490,7 +491,7 @@ func (a *application) run(ctx context.Context) error {
 							stopWatch()
 							source = fresh
 							stopWatch = watchToken(ctx, source, reload)
-							credentialHold = false
+							a.credentialHold.Store(false)
 							lastCredentialFailure = time.Time{}
 							reloaded = true
 						}
@@ -512,10 +513,10 @@ func (a *application) run(ctx context.Context) error {
 					}
 				}
 			}
-			if !recovery && source.State() == token.NeedsSignIn && !credentialHold {
+			if !recovery && source.State() == token.NeedsSignIn && !a.credentialHold.Load() {
 				a.health("needs-sign-in", "credential rejected; run gc gchat auth")
 				stopGeneration()
-				credentialHold = true
+				a.credentialHold.Store(true)
 				a.notice("credentials")
 			}
 		}

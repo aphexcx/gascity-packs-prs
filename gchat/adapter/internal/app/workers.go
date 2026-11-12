@@ -56,6 +56,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		}
 	}
 	a.chatClient.Store(c)
+	a.noticeProvider.Store(&noticeProvider{client: c, source: source})
 	// Provider access is needed by the service's outage watch even while gc
 	// refuses registration. Only inbound work waits at this barrier.
 	if err := a.ensureRegistered(ctx, registered); err != nil {

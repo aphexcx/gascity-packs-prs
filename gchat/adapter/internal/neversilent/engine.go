@@ -104,6 +104,9 @@ type Options struct {
 	// OwnerReady defers owner reservations during provider initialization,
 	// without deferring outage tracking or operator mail. Nil means ready.
 	OwnerReady func() bool
+	// Guard enforces local state ownership before every save and effect.
+	// Nil means the caller has no additional ownership boundary.
+	Guard func() error
 }
 
 type Engine struct {
@@ -175,6 +178,11 @@ func (e *Engine) change(fn func(*state)) error {
 	b, err = json.Marshal(next)
 	if err != nil {
 		return err
+	}
+	if e.opts.Guard != nil {
+		if err := e.opts.Guard(); err != nil {
+			return err
+		}
 	}
 	if err = atomicSave(e.opts.Path, b); err != nil {
 		return err
@@ -518,6 +526,9 @@ func (e *Engine) Poll(ctx context.Context) error {
 		p.message.CanPost = func() bool {
 			e.mu.Lock()
 			defer e.mu.Unlock()
+			if e.opts.Guard != nil && e.opts.Guard() != nil {
+				return false
+			}
 			now := e.opts.Now()
 			cause, ready := e.cause(e.state.Messages[p.message.ID], ReadHealth(e.opts.HealthFile, now, HealthMaxAge), now)
 			return ready && cause != "" && line(cause) == p.line
@@ -630,6 +641,11 @@ func (e *Engine) sendLocal(ctx context.Context, now time.Time) error {
 func (e *Engine) effect(fn func() error) error {
 	e.mu.Unlock()
 	defer e.mu.Lock()
+	if e.opts.Guard != nil {
+		if err := e.opts.Guard(); err != nil {
+			return err
+		}
+	}
 	return fn()
 }
 
