@@ -159,11 +159,12 @@ affected. The mail can come at any hour, whether the owner's consent is on,
 off or never recorded. It comes from the pack, not from the owner, and you
 never reply to it.
 
-Never write to the owner because of this mail, and bring it up only the next
-time they write to you. When they do, look in the conversation the mail
-names. If it shows you already told them what the section above says to
+Never write to the owner because of this mail: wait until they next write to
+you. When they do, look in the conversation the mail names. If it shows you
+already told them what the Consent, hours and zone section above says to
 tell an owner whose hours are all at night, there is nothing more to say.
-Otherwise tell them that, once.
+Otherwise tell them that, once, if `gc follow-through status` still shows
+that conversation with no recorded hours between 08:00 and 20:00.
 
 This mail can reach you twice for one conversation, and the second is the
 same notice arriving a second time. Send nothing for it.
@@ -229,9 +230,9 @@ writes. On another channel, a follow-up goes only to a conversation where
 the owner's consent is on.
 
 When you set a reminder on WhatsApp for a time after the owner's current
-window closes, say in the short line that tells them it is set how it will
-reach them if they have not written again by then: on the other channel you
-will use, or when they next write.
+window closes, the short line that tells them it is set also says how it
+will reach them if they have not written to you in the day before it falls
+due: on the other channel you will use, or when they next write.
 
 ## News about yourself
 

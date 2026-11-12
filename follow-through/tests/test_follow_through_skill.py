@@ -82,7 +82,7 @@ FOUNDERS_RULES = [
     Rule("a major feature only", "contract item 9, Afik's word on release notes", "News about yourself",
          "A note about a new ability goes out only when you were given one for a major feature."),
     Rule("no message on the no-daytime-hours mail", "Afik, 2026-11-12", "No daytime hours",
-         "Never write to the owner because of this mail, and bring it up only the next time they write to you."),
+         "Never write to the owner because of this mail: wait until they next write to you."),
 ]
 
 # A command runs from "gc follow-through" to the end of its code span or line.
