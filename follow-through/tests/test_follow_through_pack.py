@@ -1,4 +1,4 @@
-"""Exercise the installed surfaces without sending to a real city."""
+"""Exercise follow-through's installed surfaces without sending to a real city."""
 import json
 import os
 from pathlib import Path

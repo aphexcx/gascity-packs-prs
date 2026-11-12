@@ -1,16 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { withState } from './state.js';
-import { DAY, HOUR, MINUTE, nextWake, recentWakes, wakeAllowed } from './schedule.js';
+import { HOUR, MINUTE, hasDaytimeHours, nextWake, recentWakes } from './schedule.js';
+import { wallClock } from './zoned.js';
 import { assertMailBody, MAIL_TIMEOUT_MS, MAX_MAIL_BODY_BYTES, sendMail } from './mail.js';
 
 export const iso = ms => ms == null ? null : new Date(ms).toISOString();
 export const MAX_WAKE_ITEMS = 25;
 export const TICK_BUDGET_MS = 90_000;
 
-export function followUpBody(conversation, wakeId, items, maxBytes = MAX_MAIL_BODY_BYTES) {
+function mailTime(ms, tz) {
+  const utc = `${iso(ms)} (UTC)`;
+  if (!tz) return utc;
+  const wall = wallClock(ms, tz);
+  const pad = n => String(n).padStart(2, '0');
+  return `${wall.year}-${pad(wall.month)}-${pad(wall.day)} ${pad(wall.hour)}:${pad(wall.minute)}:${pad(wall.second)} (${tz}); ${utc}`;
+}
+
+const mailTail = "The mayor decides whether and how to write, by the channel's rules.";
+
+export function followUpBody(conversation, wakeId, items, maxBytes = MAX_MAIL_BODY_BYTES, tz = null) {
   const prefix = [`Follow-up due in ${conversation}.`, `Wake ${wakeId}.`];
-  const tail = 'Read the follow-through skill before you write to the owner. Each item gets one follow-up, or none.';
-  const lines = items.slice(0, MAX_WAKE_ITEMS).map(i => `${i.id}: ${i.summary} (opened ${iso(i.opened_at)})`);
+  const tail = `Read the follow-through skill. Each item gets one follow-up, or none. ${mailTail}`;
+  const lines = items.slice(0, MAX_WAKE_ITEMS).map(i => `${i.id}: ${i.summary} (opened ${mailTime(i.opened_at, tz)})`);
   const assemble = shown => [...prefix, ...shown,
     ...(items.length > shown.length ? [`${items.length - shown.length} more are due. See them all: gc follow-through list --wake ${wakeId}`] : []), tail].join('\n');
   while (lines.length > 1 && Buffer.byteLength(assemble(lines)) > maxBytes) lines.pop();
@@ -39,6 +50,7 @@ function makeRaise(state, kind, conversation, now, fields) {
 }
 
 function plan(state, now) {
+  const reservedItems = new Set(state.raises.filter(r => ['pending', 'failed'].includes(r.state)).flatMap(r => r.item_ids || []));
   for (const [conversation, owner] of Object.entries(state.owners)) {
     for (const scheduled of recentWakes(owner, now)) {
       const key = `${conversation}:${scheduled}`;
@@ -46,29 +58,51 @@ function plan(state, now) {
       // Mark even an empty wake so an item added later cannot retroactively
       // enter that wake. It remains open for the next scheduled wake.
       state.wakes[key] = now;
-      const items = state.items.filter(i => i.conversation === conversation && i.state === 'open' && i.opened_at + 12 * HOUR <= scheduled)
+      const items = state.items.filter(i => i.conversation === conversation && i.state === 'open' && !reservedItems.has(i.id) && i.opened_at + 12 * HOUR <= scheduled)
         .sort((a, b) => a.opened_at - b.opened_at);
       if (!items.length) continue;
       const wakeId = `wake-${randomUUID()}`;
-      const body = followUpBody(conversation, wakeId, items);
-      for (const item of items) { item.state = 'raised'; item.raised_at = now; item.wake_id = wakeId; }
+      const body = followUpBody(conversation, wakeId, items, MAX_MAIL_BODY_BYTES, owner.tz);
+      for (const item of items) { item.wake_id = wakeId; reservedItems.add(item.id); }
       makeRaise(state, 'follow-up', conversation, now, {
         scheduled_at: scheduled, wake_id: wakeId, item_ids: items.map(i => i.id), subject: 'follow-through: follow-up due', body,
       });
     }
   }
   for (const reminder of state.reminders) {
-    if (reminder.state !== 'set' || reminder.due_at > now) continue;
-    reminder.state = 'raised';
-    reminder.raised_at = now;
-    const late = Math.floor((now - reminder.due_at) / MINUTE);
+    if (reminder.state !== 'set' || reminder.due_at > now || state.raises.some(r => r.reminder_id === reminder.id)) continue;
     makeRaise(state, 'reminder', reminder.conversation, now, {
       reminder_id: reminder.id, subject: 'follow-through: reminder due',
-      body: assertMailBody([`Reminder due in ${reminder.conversation}.`, `${reminder.id}: ${reminder.text}`,
-        `Set ${iso(reminder.set_at)} for ${iso(reminder.due_at)}.`,
-        ...(now - reminder.due_at > 5 * MINUTE ? [`This reminder is ${late} minutes late.`] : []),
-        'Read the follow-through skill before you write to the owner.'].join('\n')),
+      body: reminderBody(reminder, state.owners[reminder.conversation]?.tz, now),
     });
+  }
+}
+
+function reminderBody(reminder, tz, now) {
+  return assertMailBody([`The owner asked for this reminder in ${reminder.conversation}.`, `${reminder.id}: ${reminder.text}`,
+    `Set ${mailTime(reminder.set_at, tz)} for ${mailTime(reminder.due_at, tz)}.`,
+    ...(now - reminder.due_at > 5 * MINUTE ? [`This reminder is ${Math.floor((now - reminder.due_at) / MINUTE)} minutes late.`] : []),
+    `Read the follow-through skill. ${mailTail}`].join('\n'));
+}
+
+function outstanding(state, raise) {
+  if (!['pending', 'failed'].includes(raise.state)) return false;
+  return raise.kind === 'follow-up'
+    ? state.items.some(i => raise.item_ids.includes(i.id) && !['done', 'dropped'].includes(i.state))
+    : state.reminders.some(r => r.id === raise.reminder_id && r.state !== 'cancelled');
+}
+
+// A saved plan reserves its records and key, but delivery alone spends them.
+// Normalize records written by earlier versions without changing their keys.
+function recover(state) {
+  for (const raise of state.raises) {
+    if (!outstanding(state, raise)) continue;
+    raise.state = 'pending';
+    for (const item of state.items.filter(i => raise.item_ids?.includes(i.id) && i.state === 'raised')) {
+      item.state = 'open'; delete item.raised_at;
+    }
+    const reminder = state.reminders.find(r => r.id === raise.reminder_id && r.state === 'raised');
+    if (reminder) { reminder.state = 'set'; delete reminder.raised_at; }
   }
 }
 
@@ -79,22 +113,30 @@ export async function tick({ dir, now, clock = now === undefined ? Date.now : ()
   const deadline = monotonic() + budgetMs;
   return withState(dir, async (state, save) => {
     const started = clock();
+    recover(state);
     plan(state, started);
     state.last_tick_at = started;
     save();
     await afterPersist('planned');
     // New raises go first; otherwise oldest attempted first. Persisting the
     // attempt before spawning gc also rotates the queue after a killed tick.
-    const pending = state.raises.filter(r => r.state === 'pending')
+    const pending = state.raises.filter(r => outstanding(state, r))
       .sort((a, b) => (a.last_attempt_at ?? -Infinity) - (b.last_attempt_at ?? -Infinity));
     for (const raise of pending) {
       const attemptAt = clock();
-      if (attemptAt - raise.created_at >= DAY) { raise.state = 'failed'; save(); continue; }
       if (raise.last_attempt_at !== null && attemptAt - raise.last_attempt_at < MINUTE) continue;
-      // Retries remain subject to consent, hours, grace and the evening cap.
-      if (raise.kind === 'follow-up' && !wakeAllowed(state.owners[raise.conversation], raise.scheduled_at, attemptAt)) continue;
+      // Re-evaluate this owner's current wake, consent, zone and hours. An
+      // expired original window does not consume an undelivered follow-up.
+      if (raise.kind === 'follow-up' && !recentWakes(state.owners[raise.conversation], attemptAt).length) continue;
       // Leave a full send timeout plus time to persist and release the lock.
       if (deadline - monotonic() < MAIL_TIMEOUT_MS + 1000) break;
+      if (raise.kind === 'follow-up') {
+        const items = state.items.filter(i => raise.item_ids.includes(i.id) && !['done', 'dropped'].includes(i.state))
+          .sort((a, b) => a.opened_at - b.opened_at);
+        raise.body = followUpBody(raise.conversation, raise.wake_id, items, MAX_MAIL_BODY_BYTES, state.owners[raise.conversation]?.tz);
+      } else {
+        raise.body = reminderBody(state.reminders.find(r => r.id === raise.reminder_id), state.owners[raise.conversation]?.tz, attemptAt);
+      }
       raise.last_attempt_at = attemptAt;
       raise.attempts++;
       save();
@@ -103,7 +145,14 @@ export async function tick({ dir, now, clock = now === undefined ? Date.now : ()
       try { result = await send(raise); }
       catch { result = { ok: false, error: 'mail command failed' }; }
       await afterPersist('sent', raise);
-      if (result.ok) { raise.state = 'sent'; raise.sent_at = clock(); raise.error = null; }
+      if (result.ok) {
+        raise.state = 'sent'; raise.sent_at = clock(); raise.error = null;
+        for (const item of state.items.filter(i => raise.item_ids?.includes(i.id) && i.state === 'open')) {
+          item.state = 'raised'; item.raised_at = raise.sent_at;
+        }
+        const reminder = state.reminders.find(r => r.id === raise.reminder_id);
+        if (reminder) { reminder.state = 'raised'; reminder.raised_at = raise.sent_at; }
+      }
       else raise.error = result.error || 'mail command failed';
       save();
     }
@@ -123,9 +172,9 @@ export function status(state, now = Date.now()) {
     reminders_set: state.reminders.filter(r => r.state === 'set').length,
     next_wakes: owners.map(([conversation, o]) => ({ conversation, at: iso(nextWake(o, now)) })),
     last_tick_at: iso(state.last_tick_at),
-    failing_raises: state.raises.filter(r => r.state === 'failed' || r.state === 'pending' && r.attempts > 0)
+    failing_raises: state.raises.filter(r => outstanding(state, r))
       .map(r => ({ id: r.id, kind: r.kind, conversation: r.conversation, state: r.state, attempts: r.attempts,
-        last_attempt_at: iso(r.last_attempt_at), expires_at: iso(r.created_at + DAY), error: r.error })),
+        last_attempt_at: iso(r.last_attempt_at), expires_at: null, error: r.error })),
   };
 }
 
@@ -135,7 +184,8 @@ export function doctor(state, now = Date.now()) {
   if (active && (state.last_tick_at === null || now - state.last_tick_at > 5 * MINUTE)) problems.push('tick has not run in the last five minutes');
   for (const [conversation, owner] of Object.entries(state.owners)) {
     if (owner.consent === true && !owner.tz) problems.push(`consenting owner has no zone: ${conversation}`);
+    if (!hasDaytimeHours(owner)) problems.push(`owner has no recorded hours between 08:00 and 20:00: ${conversation}`);
   }
-  for (const raise of state.raises) if (raise.state === 'failed') problems.push(`raise failed: ${raise.id}`);
+  for (const raise of state.raises) if (outstanding(state, raise)) problems.push(`raise undelivered: ${raise.id}`);
   return problems;
 }

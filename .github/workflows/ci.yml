@@ -49,6 +49,10 @@ jobs:
       - name: Run Python pack tests
         run: python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q
 
+      - name: Run follow-through Node tests on Linux
+        working-directory: follow-through/test
+        run: node --test
+
       - name: Lint and exercise shared role prompt composition
         run: |
           go install github.com/gastownhall/gascity/cmd/gc@latest

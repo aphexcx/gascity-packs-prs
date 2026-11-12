@@ -73,7 +73,7 @@ test('12,14: fake gc records agent, notify, stable key, subjects and fixed fact 
     assert.match(args[5], /^follow-through:/);
     assert.equal(args[6], '-s');
     assert.equal(args[8], '-m');
-    assert.match(args[9], /Read the follow-through skill before you write to the owner\./);
+    assert.match(args[9], /The mayor decides whether and how to write, by the channel's rules\.$/);
   }
   assert.equal(h.calls()[0][7], 'follow-through: follow-up due');
   assert.equal(h.calls()[1][7], 'follow-through: reminder due');

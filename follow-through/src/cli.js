@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { readState, resolveStateDir, withState } from './state.js';
 import { consent, hours, addItem, closeItem, setReminder, cancelReminder, parseAt, parseDuration } from './model.js';
 import { tick, status, doctor, iso } from './engine.js';
+import { hasDaytimeHours } from './schedule.js';
 
 const string = { type: 'string' };
 const boolean = { type: 'boolean' };
@@ -41,13 +42,14 @@ function printRows(rows, asJSON, text) {
   console.log(asJSON ? json(rows) : rows.length ? rows.map(text).join('\n') : 'None.');
 }
 
-export function statusText(snapshot) {
+export function statusText(snapshot, owners = {}) {
   return [
     `Owners: ${snapshot.owners}; consent on: ${snapshot.consent_on}; consenting without zone: ${snapshot.consent_on_without_zone}`,
     `Owners without zone: ${snapshot.owners_without_zone.join(', ') || 'none'}`,
     `Items: ${snapshot.items.open} open, ${snapshot.items.raised} raised, ${snapshot.items.closed} closed`,
     `Reminders set: ${snapshot.reminders_set}`,
-    ...snapshot.next_wakes.map(row => `Next wake ${row.conversation}: ${row.at || 'none'}`),
+    ...snapshot.next_wakes.map(row => `Next wake ${row.conversation}: ${row.at || 'none'}${
+      owners[row.conversation] && !hasDaytimeHours(owners[row.conversation]) ? ' (no recorded hours between 08:00 and 20:00)' : ''}`),
     `Last tick: ${snapshot.last_tick_at || 'never'}`,
     `Failing raises: ${snapshot.failing_raises.length}`,
     ...snapshot.failing_raises.map(r => `${r.id}: ${r.kind} ${r.conversation} ${r.state}; attempts ${r.attempts}; ${r.error || 'unconfirmed send'}`),
@@ -69,8 +71,9 @@ async function main(args) {
   const now = Date.now();
   if (verb === 'tick') { await tick({ dir }); return; }
   if (verb === 'status') {
-    const snapshot = status(readState(dir), now);
-    console.log(values.json ? json(snapshot) : statusText(snapshot));
+    const state = readState(dir);
+    const snapshot = status(state, now);
+    console.log(values.json ? json(snapshot) : statusText(snapshot, state.owners));
     return;
   }
   if (verb === 'doctor') {

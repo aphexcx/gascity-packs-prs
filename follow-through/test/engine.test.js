@@ -96,7 +96,7 @@ test('3,14,15,16: reminders are durable, independent of hours/consent, cancelled
     cancelReminder(s, cancel.id, start);
   });
   await tick({ dir: h.dir, now: start + 10 * 60000, send: async r => {
-    assert.equal(readState(h.dir).reminders[0].state, 'raised');
+    assert.equal(readState(h.dir).reminders[0].state, 'set');
     assert.equal(readState(h.dir).raises[0].attempts, 1);
     return h.send(r);
   } });
@@ -104,11 +104,11 @@ test('3,14,15,16: reminders are durable, independent of hours/consent, cancelled
   assert.equal(h.mails.length, 1);
   assert.equal(h.mails[0].subject, 'follow-through: reminder due');
   assert.match(h.mails[0].body, /This reminder is 9 minutes late\./);
-  assert.match(h.mails[0].body, /^Reminder due in slack\/example\./);
-  assert.match(h.mails[0].body, /Read the follow-through skill before you write to the owner\.$/);
+  assert.match(h.mails[0].body, /^The owner asked for this reminder in slack\/example\./);
+  assert.match(h.mails[0].body, /The mayor decides whether and how to write, by the channel's rules\.$/);
 });
 
-test('3,13: failed mail retries once a minute with the same key; expires at 24h', async t => {
+test('3,13: failed mail retries once a minute with the same key, including after 24h', async t => {
   const h = harness(t);
   await h.edit(s => setReminder(s, conversation, 'Invented retry', start + 1, start));
   const attempts = [];
@@ -123,8 +123,8 @@ test('3,13: failed mail retries once a minute with the same key; expires at 24h'
   await h.edit(s => setReminder(s, conversation, 'Invented permanent failure', start + 10 * 60000, start));
   await tick({ dir: h.dir, now: start + 10 * 60000, send: async () => ({ ok: false, error: 'exit 1' }) });
   await tick({ dir: h.dir, now: start + 10 * 60000 + 86400000, send: h.send });
-  assert.equal(readState(h.dir).raises[1].state, 'failed');
-  assert.equal(h.mails.length, 0);
+  assert.equal(readState(h.dir).raises[1].state, 'sent');
+  assert.equal(h.mails.length, 1);
 });
 
 test('11,13: revoking consent also blocks a pending follow-up retry', async t => {
@@ -216,6 +216,6 @@ test('18,19: status has exact safe fields, doctor reports stale tick, missing zo
   assert.deepEqual(doctor(readState(h.dir), start), ['tick has not run in the last five minutes', `consenting owner has no zone: ${conversation}`]);
   await tick({ dir: h.dir, now: start + 1000, send: async () => ({ ok: false, error: 'exit 1' }) });
   await tick({ dir: h.dir, now: start + 1000 + 86400000, send: h.send });
-  assert.match(doctor(readState(h.dir), start + 1000 + 86400000).join('\n'), /raise failed/);
+  assert.deepEqual(doctor(readState(h.dir), start + 1000 + 86400000), [`consenting owner has no zone: ${conversation}`]);
   assert.doesNotMatch(JSON.stringify(status(readState(h.dir), start)), /SECRET/);
 });

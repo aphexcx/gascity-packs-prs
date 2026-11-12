@@ -11,9 +11,9 @@ export const wakeCases = [
   ['Asia/Tokyo', null, day, ['2026-11-10T00:00:00.000Z', '2026-11-10T08:00:00.000Z']],
   ['America/Chicago', null, day, ['2026-11-10T15:00:00.000Z', '2026-11-10T23:00:00.000Z']],
   ['UTC', 'Mon-Fri 09:00-12:00, 13:00-18:00', day, ['2026-11-10T09:00:00.000Z', '2026-11-10T17:00:00.000Z']],
-  ['UTC', 'Mon-Fri 18:00-02:00', day, ['2026-11-10T18:00:00.000Z', '2026-11-11T01:00:00.000Z']],
-  ['America/Chicago', 'daily 01:00-18:00', { year: 2026, month: 3, day: 8 }, ['2026-03-08T07:00:00.000Z', '2026-03-08T22:00:00.000Z']],
-  ['America/Chicago', 'daily 01:00-18:00', { year: 2026, month: 11, day: 1 }, ['2026-11-01T06:00:00.000Z', '2026-11-01T23:00:00.000Z']],
+  ['UTC', 'Mon-Fri 18:00-02:00', day, ['2026-11-10T18:00:00.000Z', '2026-11-10T19:59:00.000Z']],
+  ['America/Chicago', 'daily 01:00-18:00', { year: 2026, month: 3, day: 8 }, ['2026-03-08T13:00:00.000Z', '2026-03-08T22:00:00.000Z']],
+  ['America/Chicago', 'daily 01:00-18:00', { year: 2026, month: 11, day: 1 }, ['2026-11-01T14:00:00.000Z', '2026-11-01T23:00:00.000Z']],
 ];
 
 test('5,9: two wake instants across split hours, midnight, east/west zones and DST', () => {
@@ -68,7 +68,7 @@ test('9,10 ruling: on time for <120s, then late policy; 20:00 always wins', () =
   assert.equal(wakeAllowed(owner, evening, evening + 90000), false);
 });
 
-test('18: next wake is the earliest instant across overlapping opening days', () => {
+test('18: next wake skips overlapping overnight spans with no daytime hours', () => {
   const owner = { consent: true, tz: 'UTC', hours: 'Mon 18:00-03:00, Tue 00:00-02:00' };
-  assert.equal(iso(nextWake(owner, Date.parse('2026-11-09T23:30Z'))), '2026-11-10T00:00:00.000Z');
+  assert.equal(iso(nextWake(owner, Date.parse('2026-11-09T23:30Z'))), '2026-11-16T18:00:00.000Z');
 });

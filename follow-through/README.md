@@ -94,31 +94,34 @@ An item is raised only once in its life. A wake with nothing due sends nothing.
 The mail prints a durable wake ID and at most 25 due items in full, oldest
 first. Overflow says `N more are due. See them all: gc follow-through list
 --wake WAKE_ID`. Every due item, including overflow, stores the wake ID and
-becomes raised. Mail bodies are capped at 64 KiB: fewer lines are shown if
+becomes raised only after successful delivery. Mail bodies are capped at 64 KiB: fewer lines are shown if
 needed, and a single oversized line is shortened without losing its ID.
 Reminder bodies obey the same byte bound. The item cap (`MAX_WAKE_ITEMS`),
 body cap (`MAX_MAIL_BODY_BYTES`) and conversation cap
 (`MAX_CONVERSATION_BYTES`) are proposal constants from dispatch ruling 2.
 
-With hours, wakes are the start of the day's first span and 60 minutes before
-the end of its last span. Spans belong to the local day on which they open,
-including a close after midnight. Without hours, wakes are 09:00 and 17:00
+With hours, nominal wakes are the start of the day's first opening span and
+60 minutes before the end of its last opening span, including overnight closes.
+Move each nominal wake to the nearest minute inside both the recorded hours and 08:00–20:00 on that local day, prefer the earlier minute on a tie, and coalesce duplicates; no overlap means no wake that day.
+The last eligible minute before the night cap is 19:59. The local day here is
+the spans' opening day; a day with no opening span has no scheduled wake.
+Without hours, wakes are 09:00 and 17:00
 Monday to Friday. No zone is guessed. DST folds use the earlier occurrence;
 nonexistent wall times move forward by the gap, as in the window-keeper.
 
 The dispatch ruling for gp-91f7 defines **on time** as less than 120 seconds
-after the scheduled instant. Such a wake skips the late-wake hours check.
+after the scheduled instant. Recorded hours are checked even on time.
 From 120 seconds onward, a missed wake is eligible only within two hours of
 its scheduled instant and inside the owner's hours; without recorded hours,
 it must be before 17:00 local. Thus a default 17:00 wake fires on time or waits
-until morning. **No follow-up wake is ever raised at or after 20:00 local**,
+until morning. **No follow-up wake is ever raised before 08:00 or at or after 20:00 local**,
 on time or late. Turning consent off prevents further follow-up sends,
 including pending retries. Open items remain open while consent is off.
 
 A reminder fires at the first tick at or after its chosen time, at any hour,
 without requiring consent or a zone. One missed during an outage fires once
 after recovery. Its fixed body includes how many minutes late it is when
-raised, if more than five minutes late. Cancelling a set reminder prevents
+delivered, if more than five minutes late; that line is refreshed at every attempt. Cancelling a set reminder prevents
 its raise; an already-raised reminder cannot be recalled.
 
 The cooldown order runs once a minute, while gc's orchestrator checks orders
@@ -128,13 +131,14 @@ If the mayor is busy, `--notify` queues delivery until its turn ends; it does
 not interrupt the turn. A sleeping mayor gets a managed wake.
 
 The 12 hours, 09:00 and 17:00, Monday to Friday, 60 minutes, two-hour grace,
-120 seconds and 20:00 cap are proposal defaults awaiting the founder's ruling
+120 seconds and 08:00–20:00 cap are proposal defaults awaiting the founder's ruling
 at merge. `ON_TIME_MS` is a single constant; schedule tests can shorten it.
 
 ## Mail recovery and health
 
-Every raise, item/reminder transition, and attempt timestamp is fsynced before
-mail. The only delivery command is:
+Every raise plan and attempt timestamp is fsynced before mail. Items remain
+open and reminders remain set until delivery succeeds; their raised state is
+then fsynced with the delivery result. The only delivery command is:
 
 ```text
 ${GC_BIN:-gc} mail send ${FOLLOW_THROUGH_AGENT:-mayor} --notify --dedup KEY -s SUBJECT -m BODY
@@ -144,16 +148,22 @@ ${GC_BIN:-gc} mail send ${FOLLOW_THROUGH_AGENT:-mayor} --notify --dedup KEY -s S
 owner-recipient argument. Subjects are `follow-through: follow-up due` and
 `follow-through: reminder due`. Bodies contain facts and the instruction to
 read the follow-through skill; they do not draft a message to the owner.
+The reminder's first line says the owner asked for it. Both bodies give times
+in the recorded zone with its name and UTC beside it, or labelled UTC alone
+when no zone is recorded. Both end by leaving whether and how to write to the
+mayor, under the channel's rules.
 
 Failed or interrupted attempts retry on the next eligible tick, no more than
-once a minute, with the same durable key. After 24 hours from the raise they
-become failed. Ticks prioritize unattempted raises, then the least recently
+once a minute, with the same durable key. Undelivered work does not expire;
+old failed raises are also recovered using their original keys. Ticks prioritize unattempted raises, then the least recently
 attempted, so slow failures cannot starve later mail. The 90-second tick
 budget (`TICK_BUDGET_MS`) includes lock waiting and reserves a full 15-second
 send timeout plus one second to save and release before starting another send.
 This leaves room below the order's two-minute deadline. Raises remain durable
-for later ticks when the budget is spent. Follow-up retries still obey consent, the original wake's
-grace, hours and 20:00 cutoff; reminders remain eligible at any hour. The file
+for later ticks when the budget is spent. An undelivered follow-up is eligible
+at the owner's next allowed wake, with consent, zone, current hours, grace
+and the night cap checked anew; reminders remain eligible at any hour. Closed
+items and cancelled reminders are omitted from pending sends. The file
 keeps the pending record if a process dies before the send. If it dies after
 delivery but before recording success, gc dedup suppresses the repeated key
 while the earlier mail is unarchived. This is gc's bounded dedup guarantee,
@@ -165,7 +175,11 @@ governs whether an owner receives one follow-up or none.
 eligible scheduled wakes (whether or not an item is due), last tick, and
 pending or failed mail attempts. Doctor is red if an active owner or set
 reminder has no tick in five minutes, a consenting owner has no zone, or a
-raise has exhausted its retries. Mail subprocesses have a 15-second timeout;
+raise is still undelivered. Resolved or closed work clears that finding.
+Status and doctor name owners whose recorded hours never overlap 08:00–20:00;
+those owners get no follow-up. The status JSON keys stay unchanged, with
+`expires_at: null` for undelivered raises, which have no expiry.
+Mail subprocesses have a 15-second timeout;
 their output is never included in status or doctor.
 
 ## Tests
