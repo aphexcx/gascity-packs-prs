@@ -1,0 +1,33 @@
+"""The added size of each text under option (a) and option (b), in characters
+and in tokens, against the text at the round's base (ce018700).
+
+usage: measure.py <repo> <option-b dir> <base-texts dir>
+Tokenizer: tiktoken's o200k_base (an OpenAI encoding; Claude's own tokenizer
+is not public and counts differently, so read the tokens as a scale).
+"""
+import sys
+
+import tiktoken
+
+repo, opt_b, base_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+enc = tiktoken.get_encoding("o200k_base")
+TEXTS = {
+    "gchat": "gchat/skills/google-chat/SKILL.md",
+    "slack": "slack-full/template-fragments/slack-v0.template.md",
+    "whatsapp": "whatsapp/skills/whatsapp/SKILL.md",
+}
+
+
+def size(text: str) -> tuple[int, int, int]:
+    return len(text), len(text.encode("utf-8")), len(enc.encode(text))
+
+
+print("tokenizer: tiktoken", tiktoken.__version__, "o200k_base")
+print(f"{'text':9} {'what':12} {'chars':>6} {'bytes':>6} {'tokens':>6}   {'+chars':>6} {'+tokens':>7}")
+for name, rel in TEXTS.items():
+    base = size(open(f"{base_dir}/{name}.md", encoding="utf-8").read())
+    a = size(open(f"{repo}/{rel}", encoding="utf-8").read())
+    b = size(open(f"{opt_b}/{name}.md", encoding="utf-8").read())
+    print(f"{name:9} {'base':12} {base[0]:>6} {base[1]:>6} {base[2]:>6}")
+    for label, s in (("(a) inline", a), ("(b) core+path", b)):
+        print(f"{name:9} {label:12} {s[0]:>6} {s[1]:>6} {s[2]:>6}   {s[0]-base[0]:>+6} {s[2]-base[2]:>+7}")

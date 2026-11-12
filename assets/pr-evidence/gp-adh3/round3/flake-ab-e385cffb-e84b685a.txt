@@ -1,0 +1,24 @@
+test: gascity/tests/test_toolchain_shims.py::PnpmShimTests::test_concurrent_callers_wait_for_one_install_instead_of_racing_it
+M    clone HEAD e385cffb2dad3a13df062d95e3e6a89a774e257b
+main clone HEAD e84b685a177b109877c4d47d36953e4ad85539ed
+run 1 M: 1 passed in 3.31s
+run 1 main: 1 failed in 3.47s
+run 2 M: 1 passed in 4.48s
+run 2 main: 1 passed in 4.60s
+run 3 M: 1 passed in 4.31s
+run 3 main: 1 passed in 3.37s
+run 4 M: 1 passed in 4.29s
+run 4 main: 1 passed in 3.40s
+run 5 M: 1 passed in 4.41s
+run 5 main: 1 passed in 3.38s
+run 6 M: 1 passed in 4.46s
+run 6 main: 1 passed in 3.64s
+run 7 M: 1 passed in 4.51s
+run 7 main: 1 passed in 3.40s
+run 8 M: 1 passed in 3.49s
+run 8 main: 1 passed in 3.50s
+run 9 M: 1 passed in 3.41s
+run 9 main: 1 passed in 3.44s
+run 10 M: 1 passed in 4.58s
+run 10 main: 1 passed in 3.49s
+DONE

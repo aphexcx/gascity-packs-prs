@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Test fixtures now use invented names (gp-tu0b).
 
+- **Reactions with fixed meanings** (gp-adh3): the `slack-v0` prompt
+  fragment gains a Reactions section, with the same tables and rules as the
+  Google Chat and WhatsApp skills. It shows one form of `gc slack react`,
+  which names the message by the channel id and the timestamp in its
+  reminder: the form with no ids cannot see a company room, DM or group DM
+  turn and can react on another message (gp-1v3u). The rows are a catalog,
+  `reactions.json` at the pack's root and the same file in all three packs
+  (gp-bis1).
 - **Mention-only room holds** (gp-qgl3): `bind-room --mentions-only` now
   ensures an empty gc group and clears sticky default-route agent bindings
   when the room has no ambient routes. Live participants and explicit bindings

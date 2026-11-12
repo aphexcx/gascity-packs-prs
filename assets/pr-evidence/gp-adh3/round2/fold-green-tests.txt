@@ -1,0 +1,4 @@
+The self-review fold, green: tests and texts as committed at 5917d03a. In the lane, under env -i HOME PATH
+uv run --offline --with pytest python -m pytest -p no:cacheprovider tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -q -rf
+......................................................                   [100%]
+54 passed in 0.04s
