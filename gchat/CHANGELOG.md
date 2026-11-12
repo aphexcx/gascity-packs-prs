@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-- The skill gives five reactions fixed meanings, with the same table and
-  rules as the Slack fragment and the WhatsApp skill, in place of any emoji
-  that fits (gp-adh3).
+- The skill gives reactions fixed meanings, with the same tables and rules
+  as the Slack fragment and the WhatsApp skill, in place of any emoji that
+  fits (gp-adh3). The rows are a catalog, `reactions.json` at the pack's
+  root and the same file in all three packs: the reactions an adapter may
+  place when a message arrives, and those that claim a finished fact,
+  which only the mayor places (gp-bis1).
 
 - Answer a message with `--to` on reply-current, publish or upload. The adapter
   takes the space and thread from the message and refuses conflicting ids.

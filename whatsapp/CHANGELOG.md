@@ -2,9 +2,11 @@
 
 ## Unreleased (gp-g02t, PR 76 round 2)
 
-- The skill carries the five reactions with fixed meanings, with the same
-  table and rules as the Slack fragment and the Google Chat skill, and says
-  the mayor cannot place a reaction on WhatsApp yet (gp-adh3). Until it can,
+- The skill carries the reactions with fixed meanings, with the same
+  tables and rules as the Slack fragment and the Google Chat skill, and says
+  the mayor cannot place a reaction on WhatsApp yet (gp-adh3). The rows are
+  a catalog, `reactions.json` at the pack's root and the same file in all
+  three packs (gp-bis1). Until it can,
   a message that only thanks, confirms, agrees or closes a topic gets an
   answer in words (gp-1v3u).
 - The adapter keys every owner by the gateway's `conversation_id` (PR 76's
