@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import tomllib
 
+import yaml
+
 PACK = Path(__file__).resolve().parents[1]
 SKILL = PACK / "skills/follow-through/SKILL.md"
 
@@ -49,9 +51,10 @@ def verb_flags() -> dict[str, set[str]]:
 def test_skill_front_matter_names_it_follow_through():
     match = re.match(r"\A---\n(?P<body>.*?)\n---\n", skill_text(), re.DOTALL)
     assert match, "the skill has no front matter"
-    fields = dict(line.split(":", 1) for line in match.group("body").splitlines())
-    assert fields["name"].strip() == "follow-through"
-    assert fields["description"].strip()
+    fields = yaml.safe_load(match.group("body"))
+    assert fields["name"] == "follow-through"
+    description = fields["description"]
+    assert description.strip() and "\n" not in description, "the description is one line"
 
 
 def test_skill_names_every_shipped_verb_and_no_other():
@@ -65,7 +68,7 @@ def test_verbs_list_gives_each_verb_its_help_line():
     section = skill_text().split("\n## The verbs\n", 1)
     assert len(section) == 2, "the skill has no section headed The verbs"
     listed = sorted(line for line in section[1].splitlines() if line.startswith("- "))
-    assert listed == sorted(f"- `gc follow-through {verb}`: {description}."
+    assert listed == sorted(f"- `gc follow-through {verb}`: {description}"
                             for verb, description in shipped_verbs().items())
 
 

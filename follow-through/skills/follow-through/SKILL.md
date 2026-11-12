@@ -1,6 +1,6 @@
 ---
 name: follow-through
-description: Coming back once to what an owner left open, and keeping the reminders an owner asks for. Read it before you open an item, before any follow-up, and whenever a follow-through mail arrives.
+description: Coming back once to what the owner left open, and keeping the reminders the owner asks for. Read it before you open an item, before any follow-up, and whenever a follow-through mail arrives.
 ---
 
 # Follow-through
@@ -9,16 +9,17 @@ Read this before you open an item, before you write any follow-up, and
 whenever a mail with the subject "follow-through: follow-up due" or
 "follow-through: reminder due" reaches you.
 
-The follow-through pack keeps two lists for you: the things an owner started
-and left waiting on them, and the reminders an owner asked for. It sends you
-a mail when something is due. It never writes to the owner. You do, and this
-skill says when.
+The follow-through pack keeps two lists for you: the things the owner
+started and left waiting on them, and the reminders the owner asked for. It
+sends you a mail when something is due. It never writes to the owner. You
+do, and this skill says when.
 
 Most of this skill is about restraint. A message nobody asked for is the
-easiest way to lose an owner's trust. When you are unsure, send nothing.
+easiest way to lose the owner's trust. When you are unsure, send nothing.
 
-Every verb names a conversation the way gc does: the provider, a slash, and
-the conversation id, as in `slack/C123`. That is CONVERSATION below.
+A verb that takes a conversation names it the way gc does: the provider, a
+slash, and the conversation id, as in `slack/C123`. That is CONVERSATION
+below.
 
 ## When to open an item
 
@@ -32,7 +33,7 @@ as a decision, a file or a yes, and the conversation moved on or went quiet.
   read: what the owner started, and what it waits on.
 
 ```
-gc follow-through add --conversation CONVERSATION --summary "Choose one of the two invented logo drafts"
+gc follow-through add --conversation CONVERSATION --summary "Choose one of the two logo drafts"
 ```
 
 The verb prints the item's id. `gc follow-through list --conversation CONVERSATION`
@@ -68,8 +69,10 @@ that covers every item that goes in, the way that channel's skill says. Never
 write about those items again. When no item goes in, send nothing.
 
 There is no second follow-up, ever. The pack will not ask again about an
-item it raised. If a mail names an item you already followed up on, or chose
-to leave out, it is the same ask arriving a second time. Send nothing for it.
+item it raised. If a mail names an item you already handled, with a
+follow-up or by leaving it out, it is the same ask arriving a second time.
+Send nothing for it. Look at the conversation before you write: a follow-up
+you already sent is there.
 
 A follow-up mail can come long after its items fell due, because a mail
 that could not reach you waits for the owner's next allowed wake. Check each
@@ -98,13 +101,16 @@ Two examples, for their shape only:
   write one because you happen to be awake, or because you saw an open item
   in the list.
 - Never write a follow-up to an owner whose consent is off. If the owner
-  turned it off after the mail was sent, send nothing.
+  said stop after the mail was sent, send nothing.
 - Never write a follow-up late in the owner's evening or early in their
   morning. Write one only between 08:00 and 20:00 in the owner's time, and
-  inside the hours they gave you. The mail gives its times in the owner's
-  zone, with the zone's name. If a mail reaches you outside those hours, send
-  nothing then. If the owner later writes to you and the item still waits on
-  them, you may add your one line to your answer.
+  inside the hours they gave you.
+
+The pack checks consent and the owner's hours before it sends the mail, but
+the mail can reach you later than that. Before you write, look at the
+conversation for a stop, and check the owner's clock with the zone named in
+the mail's times. If it is now outside those hours, send nothing for those
+items.
 
 ## Consent, hours and zone
 
@@ -119,7 +125,7 @@ gc follow-through consent CONVERSATION --on
 gc follow-through consent CONVERSATION --off
 ```
 
-When an owner says stop, record off at once, before anything else in that
+When the owner says stop, record off at once, before anything else in that
 turn.
 
 Record the owner's hours and time zone when they give them:
@@ -130,25 +136,25 @@ gc follow-through hours CONVERSATION --tz America/Chicago
 gc follow-through hours CONVERSATION --clear
 ```
 
-The second form records a zone alone. The third removes the hours and keeps
-the zone. Ask the owner for their time zone. Never guess it, and never use
-the box's own.
+The second form changes only the zone and keeps the hours. The third removes
+the hours and keeps the zone. Ask the owner for their time zone. Never guess
+it, and never use the box's own.
 
 Follow-ups come only inside the owner's hours and only between 08:00 and
-20:00 in their time. When the owner's hours run through the night, they come
-at most once a day, at the start of those hours. When the owner's hours are all at
+20:00 in their time. When the owner's hours run late into the night,
+follow-ups may come only once a day. When the owner's hours are all at
 night, none come at all, and `gc follow-through status` shows that owner with
 no next wake and says why. Tell such an owner, when they give you those
-hours, that you will not come back to things they leave open, because you do
-not write to them at night.
+hours, that you will not come back to things they leave open, because you
+send no follow-ups at night.
 
 ## Reminders
 
 When the owner asks you to remind them of something, set it with the pack:
 
 ```
-gc follow-through remind --conversation CONVERSATION --in 2h --text "Call the invented supplier"
-gc follow-through remind --conversation CONVERSATION --at 2027-01-15T09:00:00-06:00 --text "Send the invented invoice"
+gc follow-through remind --conversation CONVERSATION --in 2h --text "Call the supplier"
+gc follow-through remind --conversation CONVERSATION --at 2027-01-15T09:00:00-06:00 --text "Send the invoice to the landlord"
 ```
 
 Never keep a reminder only in your own session. A session ends, and a
@@ -161,10 +167,11 @@ says when.
 
 A reminder comes at the time the owner chose, at any hour, and needs no
 consent and no zone. When a mail with the subject "follow-through: reminder
-due" arrives, tell the owner now, in your own words, in the conversation the
-mail names. If the mail says the reminder is late, say so plainly with the
-time they asked for, then give the reminder. Do not explain why it is late
-unless they ask.
+due" arrives, look at the conversation it names. If the owner cancelled that
+reminder there, send nothing. Otherwise tell the owner now, in your own
+words, in that conversation. If the mail says the reminder is late, say so
+plainly with the time they asked for, then give the reminder. Do not explain
+why it is late unless they ask.
 
 When the owner cancels a reminder, cancel it:
 
@@ -173,9 +180,9 @@ gc follow-through remind --cancel ID
 ```
 
 Tell the owner it is cancelled only when the verb says so. If it answers
-that the reminder has already been raised, it could not be stopped, and its
-mail will reach you or already has. Tell the owner that plainly. When that
-mail comes, do not pass the reminder on.
+that the reminder has already been raised, the pack could not stop it, and
+its mail will reach you or already has. Tell the owner it was already on its
+way to you and that you will not pass it on, and keep to that.
 
 `gc follow-through remind --list` shows every reminder with its id and state.
 
@@ -191,25 +198,25 @@ writes.
 
 ## News about yourself
 
-Never write to an owner, unasked, about an update to yourself. A note about
+Never write to the owner, unasked, about an update to yourself. A note about
 a new ability goes out only when you were given one for a major feature. Not
 every update gets one, and when nobody gave you a note, you send none.
 
 ## Health
 
-`gc follow-through status` shows the pack's health and never any text from
-an owner. Its count of failing raises also counts a mail planned a moment
-ago and not yet tried, so a count above zero is not a fault by itself. If
-the same raise is still there later, with attempts and an error, tell the
-operator. Never make up for it by writing to the owner yourself.
+`gc follow-through status` shows the pack's health and never shows a summary
+or a reminder's text. Its count of failing raises also counts a mail planned
+a moment ago and not yet tried, so a count above zero is not a fault by
+itself. If the same raise is still there later, with attempts and an error,
+tell the operator. Never make up for it by writing to the owner yourself.
 
 ## The verbs
 
-- `gc follow-through add`: Keep an open item for one follow-up.
-- `gc follow-through list`: List retained open items.
-- `gc follow-through done`: Mark an item done.
-- `gc follow-through drop`: Drop an item.
-- `gc follow-through remind`: Set, list or cancel durable reminders.
-- `gc follow-through consent`: Record follow-up consent for a conversation.
-- `gc follow-through hours`: Record hours and time zone for follow-ups.
-- `gc follow-through status`: Show follow-through health without message text.
+- `gc follow-through add`: Keep an open item for one follow-up
+- `gc follow-through list`: List retained open items
+- `gc follow-through done`: Mark an item done
+- `gc follow-through drop`: Drop an item
+- `gc follow-through remind`: Set, list or cancel durable reminders
+- `gc follow-through consent`: Record follow-up consent for a conversation
+- `gc follow-through hours`: Record hours and time zone for follow-ups
+- `gc follow-through status`: Show follow-through health without message text
