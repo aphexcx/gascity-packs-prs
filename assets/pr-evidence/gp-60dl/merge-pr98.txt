@@ -1,0 +1,45 @@
+be8db9910f56a1da17f44993f9598791535228f0
+100644 8dceda298e2f30a531307c3ae3d0b95e75794a0d 1	gchat/CHANGELOG.md
+100644 df84b5ff10077eddb343b3eb6969e11d2eac1a1b 2	gchat/CHANGELOG.md
+100644 b587bd1e27d31efbf45c64499ba2b88502478695 3	gchat/CHANGELOG.md
+100644 5e487e9c3741496f658b4b07cfbaecad3650169b 1	slack-full/CHANGELOG.md
+100644 8446be4c20a9e773254d667724476ed50889614c 2	slack-full/CHANGELOG.md
+100644 0064c385817fa48d7180238398b7859c523d2ad5 3	slack-full/CHANGELOG.md
+100644 b0bc00043ed7a67dcb78330815c0b6239f60724f 1	slack-full/adapter/inbound_dead_letter.go
+100644 782d43ca1fd881a365c5f81b09009995d5755b4c 2	slack-full/adapter/inbound_dead_letter.go
+100644 8c59c539807627435304e8ee96becb562ae3c290 3	slack-full/adapter/inbound_dead_letter.go
+100644 8dbef8c9820b4db3047b83d3a28d79d97ff908be 1	slack-full/adapter/main.go
+100644 12ffecb21e6f86799f7183d37d4108a7bf617fe3 2	slack-full/adapter/main.go
+100644 ba1aeb48e3a0016c09aa556ee1f9ce130b2bd48a 3	slack-full/adapter/main.go
+100644 e9c6255c066f97e54d0a128fbc45ff959c569c56 1	slack-full/adapter/receipt_follow_up.go
+100644 171ac5662ec254ca1ed07ebed8a296dcdb2da060 2	slack-full/adapter/receipt_follow_up.go
+100644 8e31bc7cb3ac71c7fcb29afe811eab21047fdd4e 3	slack-full/adapter/receipt_follow_up.go
+100644 63737044f05940c428507bd04e94d159a6407d15 1	whatsapp/CHANGELOG.md
+100644 2f3e31ce43affe1c56ceb40d7dacab2980c586c5 2	whatsapp/CHANGELOG.md
+100644 ecfc0ffde2b54fdba7b78bba8d09b4f329a93793 3	whatsapp/CHANGELOG.md
+
+Auto-merging gchat/CHANGELOG.md
+CONFLICT (content): Merge conflict in gchat/CHANGELOG.md
+Auto-merging gchat/README.md
+Auto-merging slack-full/CHANGELOG.md
+CONFLICT (content): Merge conflict in slack-full/CHANGELOG.md
+Auto-merging slack-full/README.md
+Auto-merging slack-full/adapter/inbound_dead_letter.go
+CONFLICT (content): Merge conflict in slack-full/adapter/inbound_dead_letter.go
+Auto-merging slack-full/adapter/inbound_journal.go
+Auto-merging slack-full/adapter/main.go
+CONFLICT (content): Merge conflict in slack-full/adapter/main.go
+Auto-merging slack-full/adapter/receipt_follow_up.go
+CONFLICT (content): Merge conflict in slack-full/adapter/receipt_follow_up.go
+Auto-merging whatsapp/CHANGELOG.md
+CONFLICT (content): Merge conflict in whatsapp/CHANGELOG.md
+Auto-merging whatsapp/README.md
+Auto-merging whatsapp/adapter/src/inbound.js
+Auto-merging whatsapp/adapter/src/index.js
+Auto-merging whatsapp/adapter/test/fakes.js
+Auto-merging whatsapp/commands/status.sh
+Auto-merging whatsapp/commands/status/help.md
+Auto-merging whatsapp/gateway/README.md
+Auto-merging whatsapp/gateway/src/gateway.ts
+Auto-merging whatsapp/gateway/test/gateway.test.ts
+Auto-merging whatsapp/tests/test_pack.py

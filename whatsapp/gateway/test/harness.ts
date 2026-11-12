@@ -7,6 +7,7 @@
 import { env } from "cloudflare:test";
 import { createGateway, type Deps, type GatewayConfig, type LogEvent } from "../src/gateway.js";
 import { signatureHeader } from "../src/meta.js";
+import { createWake } from "../src/wake-client.js";
 import audioFixture from "./fixtures/audio.json";
 import imageFixture from "./fixtures/image.json";
 import reactionFixture from "./fixtures/reaction.json";
@@ -413,6 +414,7 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
   };
   const deps: Deps = {
     db: opts.db ?? env.DB,
+    wake: createWake(env.CITY_WAKE, env.WAKE),
     config,
     now: () => clock.now,
     fetch: graph.fetch,

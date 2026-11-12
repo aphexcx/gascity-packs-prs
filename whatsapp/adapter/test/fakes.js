@@ -284,8 +284,11 @@ export async function startFakeGateway({ clock } = {}) {
     }
     return send(res, 404, { error: `no route ${route}` });
   });
+  const { attachWakeServer } = await import('./wake-server.js');
+  g.link = attachWakeServer(server, g, now);
   g.url = await listen(server);
   g.close = () => new Promise((resolve) => {
+    g.link.drop();
     for (const res of g.hung) res.destroy();
     server.closeAllConnections?.();
     server.close(() => resolve());
@@ -307,6 +310,7 @@ export const FAKE_GATEWAY_ROUTES = [
   'GET /v1/window',
   'GET /v1/media/<media_id>',
 ];
+export const FAKE_HELD_ROUTE = 'GET /v1/wake';
 
 // --- the fake gc -------------------------------------------------------------------
 
@@ -553,6 +557,7 @@ export function adapterEnv({ dir, clock, gw, gc, extra = {} }) {
     WHATSAPP_TEST_CLOCK: clock.file,
     WHATSAPP_TICK_MS: '10',
     WHATSAPP_POLL_MS: '0',
+    WHATSAPP_HELD_CONNECTION: 'off',
     // 5 s, not production's 30: a withheld answer still times out quickly,
     // and a child on a loaded host still answers in time.
     WHATSAPP_GC_POST_TIMEOUT_MS: '5000',

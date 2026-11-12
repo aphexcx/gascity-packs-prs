@@ -29,7 +29,7 @@ points at all of them.
 | --- | --- |
 | `pack.toml` | one `proxy_process` service, `whatsapp`, private, `./adapter/run.sh`, health `/healthz` |
 | `city-fragment.toml` | `[[extmsg.default_route]] provider "whatsapp" agent "mayor"` (pack.toml cannot carry extmsg config) |
-| `adapter/` | Node 20+, plain `fetch`, no package dependency; `run.sh` sources the env file and execs `node src/index.js` |
+| `adapter/` | Node 20+, plain `fetch`, no package dependency; the held link needs a built-in WebSocket, and a box without one polls; `run.sh` sources the env file and execs `node src/index.js` |
 | `commands/` | `gc whatsapp publish`, `invite`, `consent`, `hours`, `enroll`, `status`, `inbound resolve`, `inbound clear-gap` |
 | `doctor/` | nine rows: env, dependencies, runtime, gateway, deadletters, held, restore, probes, keeper |
 | `tests/test_pack.py` | discovery, every doctor row failing closed, the verbs against a fake adapter |
@@ -56,6 +56,8 @@ at the adapter directory; a missing selected file never falls back to another.
 | `WHATSAPP_GATEWAY_CREDENTIAL` | the per-city credential (written by `gc whatsapp enroll`, 0600) |
 | `GC_CITY_NAME`, `GC_API_BASE_URL` | the city and its API (not controller-injected; check `gc status`) |
 | `WHATSAPP_POLL_MS` | inbox poll, default 2000 |
+| `WHATSAPP_HELD_CONNECTION` | held wake link, default on; off restores the ordinary poll |
+| `WHATSAPP_HELD_POLL_MS` | safety inbox read while the link is up, default 300000 |
 | `WHATSAPP_WATERMARK_CHECK_MS` | the all-watermark restore read, default 60000 |
 | `WHATSAPP_ROUTE_AGENT` | the default route's agent for the paste probe, default `mayor` |
 | `WHATSAPP_KEEPER_UPDATE_HOUR`, `WHATSAPP_CITY_TZ` | the keeper's daily update hour (default 10) and the city's zone |
