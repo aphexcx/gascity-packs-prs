@@ -61,12 +61,14 @@ func (s *Service) ObserveUsing(in Input, send func(context.Context, Input, Row) 
 		if !claimed {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
 		var how string
 		if s.SendChoice != nil {
-			how, err = s.SendChoice(ctx, in, func(choiceCtx context.Context) (Row, string) { return s.Choice.Choose(choiceCtx, in.Text, in.Seen) })
+			// A paced channel bounds HTTP after granting a slot. Its backlog is
+			// retained, including overflow beyond the reaction target deadline.
+			how, err = s.SendChoice(context.Background(), in, func(choiceCtx context.Context) (Row, string) { return s.Choice.Choose(choiceCtx, in.Text, in.Seen) })
 		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 			var row Row
 			row, how = s.Choice.Choose(ctx, in.Text, in.Seen)
 			err = send(ctx, in, row)

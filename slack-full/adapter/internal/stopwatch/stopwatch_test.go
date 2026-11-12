@@ -17,7 +17,10 @@ func TestMonthlyPrivateJournalAndRestart(t *testing.T) {
 	w.Record(in)
 	w.Record(in)
 	w.Record(Event{Event: "reaction", Conversation: in.Conversation, Message: in.Message, At: at.Add(time.Second), Actor: "adapter", Choice: "fixed"})
+	words := Event{Event: "words", Conversation: in.Conversation, Message: "reply-example", At: at.Add(time.Second)}
+	w.Record(words)
 	w = New(dir, "gchat", "release-example", nil)
+	w.Record(words)
 	w.Record(in)
 	w.Record(Event{Event: "reaction", Conversation: in.Conversation, Message: in.Message, At: at.Add(2 * time.Second), Actor: "agent"})
 	files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
@@ -45,7 +48,7 @@ func TestMonthlyPrivateJournalAndRestart(t *testing.T) {
 			}
 		}
 	}
-	if total != 2 {
+	if total != 3 {
 		t.Fatalf("duplicate events: %d", total)
 	}
 }

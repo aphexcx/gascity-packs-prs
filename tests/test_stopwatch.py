@@ -1,5 +1,6 @@
 """Offline timing report: known samples, thread isolation, and release cuts."""
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -43,3 +44,13 @@ def test_go_runtime_copies_stay_identical():
     for package, files in {"ack": ("catalog.go", "choice.go", "service.go"), "stopwatch": ("stopwatch.go",)}.items():
         for file in files:
             assert (ROOT / "gchat/adapter/internal" / package / file).read_bytes() == (ROOT / "slack-full/adapter/internal" / package / file).read_bytes()
+
+
+def test_stopwatch_finds_supervised_state_from_command_city(tmp_path):
+    for script, service in zip(SCRIPTS, ("gchat", "slack", "whatsapp")):
+        state = tmp_path / service / ".gc/services" / service
+        state.mkdir(parents=True)
+        fixture(state)
+        env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path / "home-example"), "GC_CITY_PATH": str(tmp_path / service)}
+        result = json.loads(subprocess.check_output(["python3", str(script), "--json"], env=env, text=True))
+        assert len(result) == 2

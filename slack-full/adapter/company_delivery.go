@@ -837,6 +837,7 @@ func (g *companyGateway) deliverReceipt(origin ReceiptOrigin) deliverOutcome {
 			case botResolveOK:
 				msg.ResolvedBotUserID = res.Agent.BotUserID
 				authorAgent = res.Agent
+				g.recordCompanyWords(msg, authorAgent)
 			}
 			// botResolveUnknown: leave ResolvedBotUserID empty.
 		}

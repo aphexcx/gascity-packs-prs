@@ -63,7 +63,7 @@ func New(dir, channel, release string, log func(string)) *Writer {
 	return w
 }
 func eventKey(e Event) string {
-	if (e.Event == "inbound" || e.Event == "reaction") && e.Message != "" {
+	if (e.Event == "inbound" || e.Event == "reaction" || e.Event == "words") && e.Message != "" {
 		return e.Event + "\x00" + e.Conversation + "\x00" + e.Message
 	}
 	return ""

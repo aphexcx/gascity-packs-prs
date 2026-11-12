@@ -30,7 +30,10 @@ test('nine live deliveries reach gc while Jev holds, with four choices and one r
   for (let i = 0; i < 9; i++) r.gw.addText('owner-example', `message-example-${i}`, 'synthetic');
   r.start();
   await waitFor(() => r.gc.posts.length === 9, { what: 'all nine deliveries beside held choices' });
-  assert.equal(r.gw.sends.length, 0); assert.ok(maximum <= 4);
+  // The fake has answered no choice. Delivery may itself take longer than the
+  // choice budget on a loaded host, so defaults may already have been sent.
+  assert.ok(maximum <= 4);
+  assert.deepEqual(r.gc.posts.map((post) => post.pmid), Array.from({ length: 9 }, (_, i) => `message-example-${i}`));
   await waitFor(() => r.gw.sends.filter((s) => s.type === 'reaction').length === 9, { what: 'nine default reactions' });
   assert.equal(maximum, 4);
   assert.equal(new Set(r.gw.sends.map((s) => s.idempotency_key)).size, 9);

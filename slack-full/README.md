@@ -27,7 +27,7 @@ two seconds from first sight; channel confirmation can take longer.
 
 Slack rejects an acknowledgement that overlaps `BUSY_REACTION`, and rejects enabling both `ACK_REACTION` and `SLACK_COMPANY_VISIBLE_ACKS`. The busy reaction retains its existing add/remove lifecycle. There is no local reaction pace; a channel refusal is not retried by the arrival path.
 
-Slack words times use Slack post timestamps, including file-share timestamps. Session acts feed the stopwatch directly; no second session observer is added. State defaults to the city's `.gc/slack` directory, or `/tmp/gc-slack-adapter` without a city.
+Slack words times use Slack post timestamps, including file-share timestamps. Existing session acts and authenticated company self-echo receipts feed the stopwatch; no second session observer is added. Standalone state defaults to the city's `.gc/slack` directory, or `/tmp/gc-slack-adapter` without a city.
 
 The stopwatch runs even with acknowledgement off. It writes monthly UTC
 `stopwatch-YYYY-MM.jsonl` files with mode 0600, containing coordinates and
@@ -39,6 +39,7 @@ The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
 timing directory for every adapter.
 
 Run `gc slack stopwatch` with the pack's installed alias. It needs no running adapter.
+With city context it discovers the service's state directory when present.
 `--state-dir DIRECTORY` selects a custom directory; `--since TIME` and
 `--until TIME` filter inbound channel timestamps inclusively; `--json` prints
 the same numbers as JSON. Each release reports count, nearest-rank median and

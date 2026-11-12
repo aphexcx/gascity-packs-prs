@@ -165,3 +165,65 @@ func TestStopwatchFileSharesUseSlackTime(t *testing.T) {
 		t.Fatal("wrong share time or thread")
 	}
 }
+
+func TestCompanyConfirmedPostsAreTimed(t *testing.T) {
+	for _, kind := range []string{"room", "dm", "mpim"} {
+		t.Run(kind, func(t *testing.T) {
+			var h *companyHarness
+			switch kind {
+			case "dm":
+				h, _, _ = setupDM(t)
+			case "mpim":
+				h, _, _, _ = setupMpim(t)
+			default:
+				gc := newFakeGC(t)
+				df := baseDirectoryFile()
+				bf := baseBindingsFile()
+				h = newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+				h.openBarrier()
+			}
+			dir := t.TempDir()
+			h.gw.cfg.inboundJournal = &inboundJournal{watch: stopwatch.New(dir, "slack", "release-example", nil)}
+			ts := "1700000002.000001"
+			thread := "1700000000.000001"
+			ev := slackMessageEvent{Type: "message", Subtype: "bot_message", BotID: "bot-example", User: "U0AAAAAA1", AppID: ollieAppID, Channel: testChannelID, TS: ts, ThreadTS: thread, Text: "synthetic reply"}
+			h.gw.authors = fakeAuthorResolver{byBot: map[string]companyBotInfo{"bot-example": {UserID: ev.User, AppID: ev.AppID}}}
+			switch kind {
+			case "dm":
+				ev.Channel = dmMessage(ev.User, ts, ev.Text).Channel
+				admitDMViaHandler(t, h, ev, ollieAppID, 0)
+			case "mpim":
+				ev.Channel = mpimMessage(ev.User, ts, ev.Text).Channel
+				admitMpimViaHandler(t, h, ev, ollieAppID, 0)
+			default:
+				h.admitViaHandler(t, ev, 0)
+			}
+			h.wait()
+			files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
+			if len(files) != 1 {
+				t.Fatal("confirmed company post has no words event")
+			}
+			data, _ := os.ReadFile(files[0])
+			var event stopwatch.Event
+			if json.Unmarshal(data, &event) != nil || event.Event != "words" || event.At.Unix() != 1700000002 || event.Thread != thread {
+				t.Fatal("company words timestamp or thread lost")
+			}
+		})
+	}
+}
+
+func TestCompanyVisibleReactionTimesWithArrivalOff(t *testing.T) {
+	dir := t.TempDir()
+	g := &companyGateway{cfg: config{inboundJournal: &inboundJournal{watch: stopwatch.New(dir, "slack", "release-example", nil)}}, reactHook: func(string, string, string, string) ackOutcome { return ackSuccess }}
+	g.react("", "reactions.add", "conversation-example", "1700000000.000001", "eyes")
+	g.react("", "reactions.remove", "conversation-example", "1700000000.000001", "eyes")
+	files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
+	if len(files) != 1 {
+		t.Fatal("visible acknowledgement not timed")
+	}
+	data, _ := os.ReadFile(files[0])
+	var event stopwatch.Event
+	if json.Unmarshal(data, &event) != nil || event.Event != "reaction" || event.Actor != "adapter" || event.Choice != "fixed" {
+		t.Fatal("incorrect reaction timing")
+	}
+}

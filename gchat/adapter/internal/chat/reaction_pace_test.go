@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -10,8 +11,40 @@ import (
 	"testing/synctest"
 	"time"
 
+	"gchat-adapter/internal/ack"
 	"gchat-adapter/internal/config"
 )
+
+func TestOverflowKeepsEveryArrivalPastTenSeconds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var mu sync.Mutex
+		calls := 0
+		client, err := New(context.Background(), &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"name":"spaces/example/messages/example/reactions/example"}`))}, nil
+		})}, config.Endpoints{ChatAPIBase: "http://127.0.0.1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		choice, err := ack.New(ack.Options{Mode: "eyes", Catalog: ack.Catalog})
+		if err != nil {
+			t.Fatal(err)
+		}
+		service := &ack.Service{Choice: choice, Dir: t.TempDir(), SendChoice: func(ctx context.Context, in ack.Input, choose func(context.Context) (ack.Row, string)) (string, error) {
+			return client.CreateArrivalReaction(ctx, in.Message, in.Seen.Add(ack.ReactionBudget), ack.Default.Emoji, func(ctx context.Context) (string, string) { row, how := choose(ctx); return row.Emoji, how })
+		}}
+		start := time.Now()
+		for i := 0; i < 60; i++ {
+			service.Observe(ack.Input{Conversation: "spaces/example", Message: fmt.Sprintf("spaces/example/messages/item-%d", i), Human: true, Addressed: true, Time: start, Seen: start})
+		}
+		service.Wait()
+		if calls != 60 {
+			t.Fatalf("overflow dropped requests: got %d want 60", calls)
+		}
+	})
+}
 
 func TestArrivalPaceFakeRequests(t *testing.T) {
 	for _, tc := range []struct {

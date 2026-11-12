@@ -359,7 +359,9 @@ func (c *Client) CreateArrivalReaction(ctx context.Context, message string, dead
 		selected, method = emoji, how
 	}
 	cancel()
-	result, err := c.api.Spaces.Messages.Reactions.Create(message, &googlechat.Reaction{Emoji: &googlechat.Emoji{Unicode: selected}}).Context(ctx).Do()
+	requestCtx, requestCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer requestCancel()
+	result, err := c.api.Spaces.Messages.Reactions.Create(message, &googlechat.Reaction{Emoji: &googlechat.Emoji{Unicode: selected}}).Context(requestCtx).Do()
 	var apiError *googleapi.Error
 	if errors.As(err, &apiError) && apiError.Code == http.StatusConflict {
 		return method, nil

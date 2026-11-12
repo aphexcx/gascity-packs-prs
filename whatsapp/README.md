@@ -41,6 +41,7 @@ The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
 timing directory for every adapter.
 
 Run `gc whatsapp stopwatch` with the pack's installed alias. It needs no running adapter.
+With city context it discovers the service's state directory when present.
 `--state-dir DIRECTORY` selects a custom directory; `--since TIME` and
 `--until TIME` filter inbound channel timestamps inclusively; `--json` prints
 the same numbers as JSON. Each release reports count, nearest-rank median and

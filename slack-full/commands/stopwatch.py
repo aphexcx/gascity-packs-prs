@@ -23,6 +23,11 @@ def default_directory():
         return Path(env["GC_SERVICE_STATE_ROOT"])
     pack = Path(__file__).resolve().parent.parent.name
     city = env.get("GC_CITY_PATH") or env.get("GC_CITY")
+    service = {"gchat": "gchat", "slack-full": "slack", "whatsapp": "whatsapp"}[pack]
+    if city:
+        supervised = Path(city) / ".gc/services" / service
+        if supervised.is_dir():
+            return supervised
     if pack == "whatsapp":
         return Path(env.get("WHATSAPP_STATE_DIR") or str(Path(city or ".") / ".gc/whatsapp"))
     if pack == "slack-full":

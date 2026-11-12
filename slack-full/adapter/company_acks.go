@@ -3,6 +3,9 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
+
+	"github.com/sjarmak/gc-slack-adapter/internal/stopwatch"
 )
 
 // company_acks.go — the config-gated visible-ack reactions (Slack company-rooms
@@ -51,13 +54,16 @@ const (
 // through the token-parameterized hook, choosing the actor token per receipt
 // (switchboard for rooms, owner agent for DMs).
 func (g *companyGateway) react(token, method, channel, ts, name string) ackOutcome {
+	out := ackUnchanged
 	if g.reactHook != nil {
-		return g.reactHook(method, channel, ts, name)
+		out = g.reactHook(method, channel, ts, name)
+	} else if g.reactHookTok != nil {
+		out = g.reactHookTok(token, method, channel, ts, name)
 	}
-	if g.reactHookTok != nil {
-		return g.reactHookTok(token, method, channel, ts, name)
+	if out == ackSuccess && method == "reactions.add" && g.cfg.inboundJournal != nil {
+		g.cfg.inboundJournal.watch.Record(stopwatch.Event{Event: "reaction", Conversation: channel, Message: ts, At: time.Now(), Actor: "adapter", Choice: "fixed"})
 	}
-	return ackUnchanged
+	return out
 }
 
 func (g *companyGateway) reply(token, channel, threadTS, text string) bool {
