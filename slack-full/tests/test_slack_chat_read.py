@@ -154,12 +154,12 @@ def test_history_renders_chronological_with_names(slack_api, monkeypatch, capsys
         ],
         "has_more": False,
     })
-    slack_api.handlers["/users.info"] = _users_info({"U1": "Afik", "U2": "Milena"})
+    slack_api.handlers["/users.info"] = _users_info({"U1": "Afik", "U2": "Example Reader Two"})
 
     assert mod.main(["--conversation-id", "C0TEST"]) == 0
     out = capsys.readouterr().out
 
-    assert out.index("first") < out.index("second line") < out.index("Milena")
+    assert out.index("first") < out.index("second line") < out.index("Example Reader Two")
     assert "Afik (U1)" in out
     assert "  second line" in out  # multi-line text stays indented under its header
     # Thread hint points at the parent ts with a runnable command.

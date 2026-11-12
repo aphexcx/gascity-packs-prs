@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased (gp-tu0b)
+
+- Test fixtures now use invented names.
+
+## Unreleased (gp-xt33)
+
+- Docs only: the gateway README names the relay it read as a reference by its
+  owner's role, a hosting partner, instead of by name. No code change.
+
 ## Unreleased (gp-g02t, PR 76 round 2)
 
 - The skill carries the reactions with fixed meanings, with the same

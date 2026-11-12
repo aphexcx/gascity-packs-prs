@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Test fixtures now use invented names (gp-tu0b).
+
 - **Reactions with fixed meanings** (gp-adh3): the `slack-v0` prompt
   fragment gains a Reactions section, with the same tables and rules as the
   Google Chat and WhatsApp skills. It shows one form of `gc slack react`,

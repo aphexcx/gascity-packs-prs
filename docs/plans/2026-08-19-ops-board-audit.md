@@ -2,7 +2,7 @@
 
 Re-scope per Afik (04:08Z): "just show one of the available bead dashboards … don't reinvent
 this wheel." This is the audit of the existing SPA (gc 1.4.2, build 559c00e14, supervisor
-127.0.0.1:8372, also live on the tailnet at https://tailor512g8s-mac-studio.magpie-egret.ts.net:8443
+127.0.0.1:8372, also live on the tailnet at https://city-host.tailnet-name.ts.net:8443
 via the hardened :8447 listener — GET open, verified 200 for /city/city/beads and /v0/city/city/status
 from this host), Playwright-headless screenshots in this folder, and a delta proposal.
 Nothing has been built for the delta; the /board scaffolding stays parked on branch
@@ -132,14 +132,14 @@ non-SPA path; the parked branch already has the server-side version if that ever
 
 ## 5. Reachability (Taylor / Afik)
 
-URL: **https://tailor512g8s-mac-studio.magpie-egret.ts.net:8443/city/city/beads** (bookmark
+URL: **https://city-host.tailnet-name.ts.net:8443/city/city/beads** (bookmark
 `…/beads`; `…/agents` for the workers view). Tailnet-only — the hostname resolves and the
-listener answers only for devices logged into the magpie-egret tailnet; it is NOT on the public
+listener answers only for devices logged into the city's tailnet; it is NOT on the public
 Funnel (the Funnel on :443 fronts other services). Reads are open, mutations require a signed
 grant, so the page is effectively read-only for a browser (NEW BEAD / CLOSE will be refused).
 
 Phone recipe (2 steps): (1) install Tailscale from the App Store / Play Store and sign in with the
-same identity/org as the magpie-egret tailnet (accept the invite if one is pending); toggle the
+same identity/org as the city's tailnet (accept the invite if one is pending); toggle the
 VPN on. (2) open the URL above in Safari/Chrome — the cert is a real Let's-Encrypt cert issued via
 Tailscale, so no warning. Add to Home Screen for a one-tap board. Laptop: same — Tailscale app on,
 then the URL. If it does not load: check the Tailscale app shows "Connected" and that the device

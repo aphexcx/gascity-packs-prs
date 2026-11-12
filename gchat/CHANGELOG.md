@@ -68,6 +68,8 @@
   turns a waiting message with four or more POSTs unresolved without a mail
   and posts a message that waited behind another at once: resolve waiting
   rows first.
+- Docs only: the README's sample owners line uses an invented given name. No
+  code change.
 
 ## 0.5.0 — 2026-11-09
 

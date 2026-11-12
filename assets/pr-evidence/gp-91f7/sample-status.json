@@ -1,0 +1,20 @@
+{
+  "owners": 1,
+  "consent_on": 1,
+  "consent_on_without_zone": 0,
+  "owners_without_zone": [],
+  "items": {
+    "open": 0,
+    "raised": 1,
+    "closed": 0
+  },
+  "reminders_set": 0,
+  "next_wakes": [
+    {
+      "conversation": "slack/example",
+      "at": "2026-11-10T09:00:00.000Z"
+    }
+  ],
+  "last_tick_at": "2026-11-10T09:00:00.000Z",
+  "failing_raises": []
+}

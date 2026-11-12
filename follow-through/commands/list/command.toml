@@ -1,0 +1,2 @@
+description = "List retained open items"
+run = "../list.sh"

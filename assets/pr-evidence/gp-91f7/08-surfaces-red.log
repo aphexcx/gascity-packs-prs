@@ -1,0 +1,46 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+..FF                                                                     [100%]
+=================================== FAILURES ===================================
+____________________ test_20_python_suite_is_in_make_and_ci ____________________
+
+    def test_20_python_suite_is_in_make_and_ci():
+>       assert "follow-through/tests" in (ROOT / "Makefile").read_text().split("PYTEST_DIRS ?= ", 1)[1].splitlines()[0]
+E       AssertionError: assert 'follow-through/tests' in 'tests contributing-to-gascity/tests gascity/tests discord/tests github/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests gchat/tests'
+
+tests/test_pack.py:44: AssertionError
+__________________ test_readme_explains_delivery_and_privacy ___________________
+
+    def test_readme_explains_delivery_and_privacy():
+>       text = (PACK / "README.md").read_text()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_pack.py:49:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+../../../../../.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = PosixPath('/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/README.md')
+mode = 'r', buffering = -1, encoding = 'locale', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/README.md'
+
+../../../../../.local/share/uv/python/cpython-3.13.13-macos-aarch64-none/lib/python3.13/pathlib/_local.py:537: FileNotFoundError
+=========================== short test summary info ============================
+FAILED tests/test_pack.py::test_20_python_suite_is_in_make_and_ci - Assertion...
+FAILED tests/test_pack.py::test_readme_explains_delivery_and_privacy - FileNo...
+2 failed, 2 passed in 8.22s

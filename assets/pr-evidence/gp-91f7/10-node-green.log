@@ -1,0 +1,39 @@
+✔ 1,5,7,15,18,19: command lifecycle, file input, private status and doctor exit (4419.427625ms)
+✔ 8,9: every due item in one wake; never raised twice across thirty days (5688.39625ms)
+✔ 9,10,11: empty wakes, no zone, off between wakes, outage grace and 20:00 cutoff (651.315292ms)
+✔ 3,14,15,16: reminders are durable, independent of hours/consent, cancelled ones never fire (155.100417ms)
+✔ 3,13: failed mail retries once a minute with the same key; expires at 24h (910.122917ms)
+✔ 11,13: revoking consent also blocks a pending follow-up retry (253.732334ms)
+✔ 10: recheck the wall clock before each mail when earlier delivery takes time (161.2935ms)
+✔ 18,19: status has exact safe fields, doctor reports stale tick, missing zone and failed raises (217.186375ms)
+✔ 5,6,11: consent defaults off; hours set, clear, retain/set zone; invalid changes are atomic (10.809959ms)
+✔ 7: item IDs, length, single lines, conversation form and retained terminal records (0.244208ms)
+✔ 15: RFC3339 offset and minutes/hours/days; cancellation retains the record (0.57075ms)
+✔ 12,14: fake gc records agent, notify, stable key, subjects and fixed fact bodies (2194.35ms)
+▶ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail
+  ✔ follow-up: killed planned (778.2295ms)
+  ✔ follow-up: killed attempt (687.023083ms)
+  ✔ follow-up: killed sent (682.553458ms)
+  ✔ follow-up: killed during (608.8065ms)
+  ✔ reminder: killed planned (556.123ms)
+  ✔ reminder: killed attempt (561.752167ms)
+  ✔ reminder: killed sent (654.126208ms)
+  ✔ reminder: killed during (607.257291ms)
+✔ 3,4,16: SIGKILL at every raise boundary keeps records and one deduplicated mail (5137.16225ms)
+✔ 13: three real gc failures then success make one delivered mail with one key (864.772792ms)
+✔ 17: two ticks started together serialize and deliver once (345.161958ms)
+✔ 5,9: two wake instants across split hours, midnight, east/west zones and DST (11.768958ms)
+✔ 5: keeper hours grammar and zone validation copied with their edge cases (0.463417ms)
+✔ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.291959ms)
+✔ 9,10 ruling: on time for <120s, then late policy; 20:00 always wins (0.334375ms)
+✔ 2: tick and command use the same explicit gc pack state directory (0.4395ms)
+✔ 2,4: private atomic file survives another process with every record intact (1599.86625ms)
+✔ 2: interrupted replacement leaves the previous valid state (233.417792ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8591.612958
