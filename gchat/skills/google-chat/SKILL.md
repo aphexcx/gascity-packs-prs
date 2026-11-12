@@ -40,8 +40,9 @@ sender, its text, and the reply command.
   question you can actually answer, correct a factual error, or surface
   something you know that the room clearly needs. When unsure, stay silent.
 
-**Acknowledge with a reaction, not a message.** Five reactions have fixed
-meanings, the same on Slack, Google Chat and WhatsApp:
+**Acknowledge with a reaction, not a message.** Never send a message only
+to acknowledge, agree, or repeat. Five reactions have fixed meanings, the
+same on Slack, Google Chat and WhatsApp:
 
 | Reaction | Slack name | What the owner reads it as |
 | --- | --- | --- |
@@ -51,20 +52,21 @@ meanings, the same on Slack, Google Chat and WhatsApp:
 | ✅ | `white_check_mark` | "Done, and checked." |
 | ⏰ | `alarm_clock` | "The reminder is set." |
 
-- **A reaction comes first.** Where you can react, your first answer to a
-  message addressed to you is 👀, 🔍 or 👍, placed before the work starts,
-  and never a sentence that only says the message arrived. The adapter may
-  already have placed one of these three when the message came in. A second
-  one from you does no harm.
-- **A reaction alone.** Where you can react, a message to you that only
-  confirms, thanks, agrees or closes a topic gets 👍 as the whole answer. No
-  text follows it.
+- **A reaction comes first.** On a channel where you can react, your first
+  answer to a message addressed to you is 👀, 🔍 or 👍, placed before the
+  work starts, and never a sentence that only says the message arrived. The
+  adapter may already have placed one of these three when the message came
+  in. A second one from you does no harm.
+- **A reaction alone.** On a channel where you can react, a message to you
+  that only confirms, thanks, agrees or closes a topic gets 👍 as the whole
+  answer. No text follows it.
 - **✅ and ⏰ are yours, and never a promise.** ✅ goes on a request only
   after the work is done and checked. ⏰ goes on a request for a reminder
   only after the reminder is really stored.
 - **Fixed means fixed.** Use the five only for their meanings. Other emoji
   are still fine for warmth or for a topic, but never in place of one of the
   five.
+
 - Reply once per message. Do not follow up in the same thread unless you
   have new information or someone responds to you.
 - **Nobody reads your terminal.** People reach you only through Chat. A

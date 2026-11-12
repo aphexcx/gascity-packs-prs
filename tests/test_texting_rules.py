@@ -18,6 +18,8 @@ TEXTS = {
     "whatsapp": REPO / "whatsapp" / "skills" / "whatsapp" / "SKILL.md",
 }
 
+INTRO = "Five reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp:"
+
 TABLE_HEADER = "| Reaction | Slack name | What the owner reads it as |"
 
 FIVE = [
@@ -57,17 +59,27 @@ def table_rows(text: str) -> list[str]:
     return rows
 
 
-def rule(text: str, lead: str) -> str:
-    """One rule bullet with its wrapped lines, exactly as the file has them."""
+def rules_block(text: str) -> list[str]:
+    """The list of rules, from the first lead to the end of the list.
+
+    The list runs on through bullets, their wrapped lines, and any indented
+    paragraph inside a bullet. It ends at a line that is neither, or at a
+    blank line that is not followed by an indented line.
+    """
     lines = text.splitlines()
-    starts = [i for i, line in enumerate(lines) if line.startswith(lead)]
-    assert len(starts) == 1, f"expected {lead!r} once, found {len(starts)}"
-    bullet = [lines[starts[0]]]
-    for line in lines[starts[0] + 1 :]:
-        if not line.startswith("  ") or not line.strip():
+    starts = [i for i, line in enumerate(lines) if line.startswith(RULE_LEADS[0])]
+    assert len(starts) == 1, f"expected the first rule once, found {len(starts)}"
+    block = []
+    rest = lines[starts[0] :]
+    for i, line in enumerate(rest):
+        if not line.strip():
+            following = rest[i + 1] if i + 1 < len(rest) else ""
+            if not following.startswith("  "):
+                break
+        elif not line.startswith(("- ", "  ")):
             break
-        bullet.append(line)
-    return "\n".join(bullet)
+        block.append(line)
+    return block
 
 
 @pytest.mark.parametrize("name", sorted(TEXTS))
@@ -88,11 +100,20 @@ def test_the_five_rows_are_the_same_in_every_text() -> None:
         assert table_rows(read(name)) == gchat, f"{name} differs from gchat"
 
 
-@pytest.mark.parametrize("lead", RULE_LEADS)
-def test_each_rule_is_the_same_in_every_text(lead: str) -> None:
-    gchat = rule(read("gchat"), lead)
+@pytest.mark.parametrize("name", sorted(TEXTS))
+def test_each_text_carries_the_four_rules_and_no_other(name: str) -> None:
+    text = read(name)
+    assert INTRO in normalized(text)
+    bullets = [line for line in rules_block(text) if line.startswith("- ")]
+    assert len(bullets) == len(RULE_LEADS), bullets
+    for bullet, lead in zip(bullets, RULE_LEADS):
+        assert bullet.startswith(lead), bullet
+
+
+def test_the_rules_are_the_same_in_every_text() -> None:
+    gchat = rules_block(read("gchat"))
     for name in ("slack", "whatsapp"):
-        assert rule(read(name), lead) == gchat, f"{name} differs from gchat"
+        assert rules_block(read(name)) == gchat, f"{name} differs from gchat"
 
 
 def test_google_chat_skill_has_the_table_and_no_free_choice() -> None:
