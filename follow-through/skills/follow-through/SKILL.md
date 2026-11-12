@@ -161,9 +161,9 @@ never reply to it.
 
 Never write to the owner because of this mail, and bring it up only the next
 time they write to you. When they do, look in the conversation the mail
-names. If it shows you already told them what the section Consent, hours and
-zone says to tell such an owner, there is nothing more to say. Otherwise
-tell them that, once.
+names. If it shows you already told them what the section above says to
+tell an owner whose hours are all at night, there is nothing more to say.
+Otherwise tell them that, once.
 
 This mail can reach you twice for one conversation, and the second is the
 same notice arriving a second time. Send nothing for it.
@@ -188,9 +188,9 @@ says when.
 A reminder comes at any hour and needs no consent and no zone. It comes soon
 after the time the owner chose, unless its mail delivery stopped. The Health
 section below says what you do then. When a mail with the subject
-"follow-through: reminder due" arrives, look at the conversation it names. If the owner
-cancelled that reminder there, send nothing. The same mail can also reach
-you twice for one reminder. Look in that conversation, and on any other
+"follow-through: reminder due" arrives, look at the conversation it names. If
+the owner cancelled that reminder there, send nothing. The same mail can also
+reach you twice for one reminder. Look in that conversation, and on any other
 channel the WhatsApp section below may have sent you to, not in what you
 remember, because a session ends. If you already gave the owner this
 reminder there after the time it was due, naming that time, it is the same
@@ -240,16 +240,16 @@ a moment ago and not yet tried, so a count above zero is not a fault by
 itself. If the same raise is still there later, with attempts and an error,
 tell the operator.
 
-A `Mail delivery stopped` line means the pack will never send that mail
-again, and it will not tell you so. Tell the operator. Each such mail also
-has a line of its own, with its kind, its conversation and the word stopped.
-What you do depends on its kind:
+A `Mail delivery stopped` line counts mails the pack will never send again,
+and the pack will not tell you about them, so tell the operator at once.
+Each such mail also has a line of its own, with its kind, its conversation
+and the word stopped. What you do depends on its kind:
 
 - For a stopped `follow-up`, send nothing, and never make up for it by
   writing to the owner yourself. Its items stay open, and the pack will not
   raise them again.
-- For a stopped `hours-notice`, do what the section No daytime hours says,
-  as if its mail had come.
+- For a stopped `hours-notice`, do what the No daytime hours section above
+  says, as if its mail had come.
 - For a stopped `reminder`, you still give it, because the owner was told it
   is set. Find it with `gc follow-through remind --list`: it is a reminder of
   that conversation still shown as set after its time. Then do what the
