@@ -90,7 +90,7 @@ func observeSlackArrival(cfg config, env slackEventEnvelope, msg slackMessageEve
 	}
 	thread := msg.ThreadTS
 	in := ack.Input{Conversation: msg.Channel, Message: msg.TS, Thread: thread, Text: msg.Text, Time: at, Seen: seen, Addressed: addressed,
-		Human: msg.User != "" && msg.BotID == "", Own: msg.User == env.botUserID(), Edit: (msg.Type != "message" && msg.Type != "app_mention") || (msg.Subtype != "" && msg.Subtype != "file_share"), Replay: env.replayed || cfg.recoveryReplay || strings.HasPrefix(env.EventID, "backfill:")}
+		Human: msg.User != "" && msg.BotID == "", Own: msg.User == env.botUserID(), Edit: (msg.Type != "message" && msg.Type != "app_mention") || (msg.Subtype != "" && msg.Subtype != "file_share" && msg.Subtype != "thread_broadcast"), Replay: env.replayed || cfg.recoveryReplay || strings.HasPrefix(env.EventID, "backfill:")}
 	if send == nil {
 		cfg.arrival.Observe(in)
 	} else {
@@ -109,9 +109,19 @@ func (g *companyGateway) observeArrival(env slackEventEnvelope, ev slackMessageE
 	receipt := *r
 	go func() {
 		addressed := isDMFamilyKind(receipt.Kind)
+		dir := g.dirStore.Snapshot()
+		msg := decodeCompanyMessage(receipt.Origin, env.Event)
+		if addressed {
+			// A stored receipt is not permission to send its text to Jev.
+			// Reuse the DM worker's policy and MPIM mention decisions.
+			if isBotAuthored(msg) || g.dmAuthorDecision(dir, &receipt, msg) != dmAuthorAllow {
+				return
+			}
+			if receipt.Kind == receiptKindMpim && len(mpimWokenAgents(dir, msg)) == 0 {
+				return
+			}
+		}
 		if !addressed {
-			dir := g.dirStore.Snapshot()
-			msg := decodeCompanyMessage(receipt.Origin, env.Event)
 			decision := ComputeWakeSet(dir, msg, g.cfg.companySelfBotUserID)
 			if decision.Room == nil {
 				return

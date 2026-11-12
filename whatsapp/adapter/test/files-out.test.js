@@ -436,7 +436,10 @@ for (const f of fixtures) for (const point of ['before-media-upload', 'after-med
     const first = r.start({ WHATSAPP_TEST_KILL_AT: point });
     await ready(r);
     const pending = adapterRequest(r.socket, 'POST', '/publish', body).catch(() => null);
-    const exit = await first.exited;
+    const exit = await Promise.race([first.exited, pending.then((answer) => {
+      assert.equal(answer, null, `publish returned before ${point}: ${JSON.stringify(answer)}`);
+      return first.exited;
+    })]);
     assert.equal(exit.signal, 'SIGKILL'); await pending;
     if (point === 'after-media-send') {
       fs.unlinkSync(path.join(r.dir, '.gc', 'whatsapp', PROGRESS_FILE));

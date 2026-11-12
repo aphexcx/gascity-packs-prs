@@ -636,6 +636,11 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 	if blindCopy && len(targets) == 0 {
 		return
 	}
+	if len(targets) > 0 {
+		// This lane owns addressing for outsiders to company membership.
+		// Reuse its selected targets; receipt routing alone cannot see them.
+		observeSlackArrival(cfg, env, ev, true, nil)
+	}
 	g.runMentionOnlyTargets(origin, ev, target, targets, scanFailed || blindCopy)
 }
 

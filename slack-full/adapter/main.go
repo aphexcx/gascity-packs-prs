@@ -2711,6 +2711,11 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 		cfg.publishReceipts.recordReadback(req.IdempotencyKey, &replay.receipt)
 		if replayed {
 			cached := replay.receipt
+			acceptedTarget := target
+			if cached.readbackTarget.messageTS != "" {
+				acceptedTarget = cached.readbackTarget
+			}
+			recordAcceptedSlackWords(cfg, acceptedTarget.channel, acceptedTarget.threadTS, cached.MessageID)
 			log.Printf("publish: dedup hit idem=%s conv=%s delivered=%t re_verified=%t -> returning cached receipt (no re-post)",
 				req.IdempotencyKey, req.Conversation.ConversationID, cached.Delivered, replay.reVerified)
 			// A replay that re-verified a posted-but-unconfirmed receipt is
@@ -2759,6 +2764,7 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			}
 		default:
 			receipt.MessageID = slackResp.TS
+			recordAcceptedSlackWords(cfg, req.Conversation.ConversationID, req.ReplyToMessageID, slackResp.TS)
 			// Keep Slack's truncation warning on the receipt even if readback fails.
 			for _, warning := range slackResp.ResponseMetadata.Warnings {
 				if warning != "message_truncated" {
@@ -4033,11 +4039,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		return
 	}
 	msg.Text = redactInboundText(msg.Text)
-	// Acknowledgement classification precedes the delivery path's lookups and
-	// hydration. The normal route remains unchanged and never waits on it.
-	arrivalKind := slackKindFromChannelType(msg.ChannelType, msg.Channel)
-	arrivalTarget, _ := resolveAddressTarget(cfg, aliasReg, subteamMap, msg.Text)
-	observeSlackArrival(cfg, env, msg, arrivalKind == "dm" || msg.ChannelType == "mpim" || arrivalTarget != "" || msg.Type == "app_mention" || slackTextMentionsUser(msg.Text, env.botUserID()), nil)
 	// Human emoji reactions forward to the bound session as tagged
 	// notifications (gp-by3); the branch terminates here — a reaction
 	// is never an ask. Requires the reaction_added/reaction_removed
@@ -4165,6 +4166,14 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// typed `@<handle>: <body>` from the start.
 		}
 	}
+	// Use the resolved target, including thread stickiness. Known own-thread
+	// bindings are local, so acknowledgement can start before hydration.
+	arrivalAddressed := slackKindFromChannelType(msg.ChannelType, msg.Channel) == "dm" || msg.ChannelType == "mpim" || target != "" || msg.Type == "app_mention" || slackTextMentionsUser(msg.Text, env.botUserID())
+	if !arrivalAddressed && msg.ThreadTS != "" && msg.ThreadTS != msg.TS {
+		posters, known := cfg.ownThreads.posters(msg.Channel, msg.ThreadTS)
+		arrivalAddressed = len(selectMentionOnlyTargets(mentionOnlyInput{bindings: cfg.mentionOnly.ForChannel(msg.Channel), isThreadReply: true, threadPosters: posters, threadKnown: known})) > 0
+	}
+	observeSlackArrival(cfg, env, msg, arrivalAddressed, nil)
 
 	// Alias-dispatch turn-dedup (gp-729 item 5): resolve the alias early
 	// so the duplicate-suppression verdict can shape the channel copy's
@@ -4586,6 +4595,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			}
 		}
 		mentionOnlyTargets = selectMentionOnlyTargets(moIn)
+		if len(mentionOnlyTargets) > 0 {
+			observeSlackArrival(cfg, env, msg, true, nil)
+		}
 	}
 	// runMentionOnly performs the injections. Called from exactly one of
 	// two places: right before a buffered channel copy is enqueued, or —

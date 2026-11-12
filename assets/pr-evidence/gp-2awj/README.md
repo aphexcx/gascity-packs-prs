@@ -96,3 +96,34 @@ The state-discovery regression also covers renamed pack installations with
 comes from the manifest, independent of its installation directory or alias.
 The report and parity suite passes all four tests; command-help validation
 passes both selected tests and all eleven subtests.
+
+The first DEEP Codex round returned BLOCK with three major findings. Each was
+reproduced before changing production code:
+
+- Admission policy: denied DMs, denied MPIMs and unmentioned MPIMs entered the
+  arrival path. `TestArrivalUsesDMFamilyAdmissionPolicy` now passes all five
+  allowed/rejected cases using the existing policy functions.
+- Addressing coverage: company switchboard mentions, handles, mapped user
+  groups, own-thread turns and thread broadcasts, plus legacy sticky and
+  own-thread turns, lacked timing records. `TestArrivalCoversCompanyAddressingRoutes`
+  and `TestArrivalCoversLegacyThreadRoutes` reproduce all seven cases and pass
+  after reusing resolved routing targets.
+- Publication observation: accepted Slack posts with failed history readback
+  had no words line. `TestStopwatchAcceptedPublishWithoutReadback` now verifies
+  the original Slack timestamp and deduplication on a cached retry.
+
+The targeted regression invocation was
+`go test . -run 'TestArrivalUsesDMFamilyAdmissionPolicy|TestArrivalCovers|TestStopwatchAcceptedPublishWithoutReadback' -count=1`.
+It failed all four test functions before the fixes and exited 0 afterward.
+
+WhatsApp's complete suite ran from its test directory with
+`pnpm exec node --test --test-concurrency=2` on Node v24.21.0: 265 tests,
+265 passed, zero failed or cancelled. Earlier runs had intermittent acceptance
+and media crash-recovery timeouts; their cause is not established. The crash
+tests now fail explicitly if publishing returns before the intended killpoint.
+
+Canary checks (values omitted): both Go adapters ran
+`go test ./internal/ack -run '^TestChoiceEndpointAndCanary$' -count=1 -v`.
+Each printed `--- PASS: TestChoiceEndpointAndCanary` and `PASS`, exit 0.
+The complete WhatsApp run passed
+`canary key is absent from errors and log output; empty text and missing key never call`.
