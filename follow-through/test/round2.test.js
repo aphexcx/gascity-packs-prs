@@ -7,7 +7,7 @@ import { withState, readState } from '../src/state.js';
 import { consent, hours, addItem, setReminder, closeItem } from '../src/model.js';
 import { tick, status, doctor } from '../src/engine.js';
 import { statusText } from '../src/cli.js';
-import { HOUR, MINUTE, DAY, wakesForDay, wakeAllowed } from '../src/schedule.js';
+import { HOUR, MINUTE, DAY, wakesForDay, wakeAllowed, nextWake, recentWakes } from '../src/schedule.js';
 import { parseHours, spanIntervals, wallClock } from '../src/zoned.js';
 
 const at = Date.parse;
@@ -119,7 +119,10 @@ test('round2 hours class: generated short, split and midnight spans contain ever
       const inside = now => spanIntervals(parseHours(recorded), tz, now, now).some(s => s.start <= now && now < s.end);
       const wakes = wakesForDay(owner, date);
       assert.ok(wakes.length > 0);
-      for (const wake of wakes) assert.ok(inside(wake), `wake outside hours: ${new Date(wake).toISOString()}`);
+      for (const wake of wakes) {
+        assert.ok(inside(wake), `wake outside hours: ${new Date(wake).toISOString()}`);
+        assert.ok(recentWakes(owner, wake).includes(wake), 'returned wake must be reachable by tick');
+      }
       for (const wake of wakes) for (let minute = 0; minute <= 120; minute++) {
         const now = wake + minute * MINUTE;
         if (!inside(now)) assert.equal(wakeAllowed(owner, wake, now), false, 'gate outside hours');
@@ -153,7 +156,7 @@ test('round2 hours class: a due item cannot be sent at a nominal wake outside it
   }
 });
 
-test('round2 night cap: wakes remain on the local day between 08:00 and 20:00', () => {
+test('round2 night cap: wakes stay between 08:00 and 20:00 on their actual local date', () => {
   for (const tz of ['UTC', 'America/Chicago', 'Asia/Tokyo']) {
     for (const hours of ['daily 00:00-07:59', 'daily 20:00-06:00', 'daily 18:00-02:00', 'daily 01:00-18:00', 'daily 07:00-08:01']) {
       for (const date of [{ year: 2026, month: 3, day: 8 }, { year: 2026, month: 11, day: 1 }]) {
@@ -162,7 +165,7 @@ test('round2 night cap: wakes remain on the local day between 08:00 and 20:00', 
         for (const wake of wakes) {
           const wall = wallClock(wake, tz);
           assert.ok(wall.hour >= 8 && wall.hour < 20);
-          assert.equal(wall.day, date.day);
+          assert.ok(wall.day === date.day || wall.day === date.day + 1);
         }
       }
     }
@@ -176,6 +179,26 @@ test('round2 night-only spans still determine nominal wakes before projection', 
     ['Tue 09:00-12:00, 21:00-23:00', ['09:00', '11:59']],
     ['Tue 01:00-03:00, 18:00-18:30', ['18:00']],
   ]) assert.deepEqual(wakesForDay({ tz: 'UTC', hours }, date).map(n => new Date(n).toISOString().slice(11, 16)), expected);
+});
+
+test('round2 overnight class: preserve valid wakes after midnight on their actual date', async t => {
+  for (const end of ['09:00', '10:00', '12:00']) {
+    const owner = { consent: true, tz: 'UTC', hours: `Tue 21:00-${end}` };
+    const expected = at(`2026-11-11T${String(Number(end.slice(0, 2)) - 1).padStart(2, '0')}:00Z`);
+    assert.equal(nextWake(owner, at('2026-11-10T00:00Z')), expected);
+    const h = harness(t);
+    await h.edit(s => { s.owners['slack/invented'] = owner; addItem(s, 'slack/invented', 'Invented task', opened); });
+    await tick({ dir: h.dir, now: expected, send: h.send });
+    assert.equal(h.mails.size, 1);
+  }
+});
+
+test('round2 wake consistency: no backward-day wake from a short midnight span', () => {
+  const owner = { consent: true, tz: 'UTC', hours: 'Tue 09:00-12:00, Wed 00:30-00:45' };
+  assert.deepEqual(wakesForDay(owner, { year: 2026, month: 11, day: 11 }), []);
+  for (const day of [10, 11]) for (const wake of wakesForDay(owner, { year: 2026, month: 11, day })) {
+    assert.ok(recentWakes(owner, wake).includes(wake));
+  }
 });
 
 test('round2 night cap: status and doctor name owners with no daytime hours', async t => {

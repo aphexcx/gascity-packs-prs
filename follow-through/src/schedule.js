@@ -11,20 +11,26 @@ export function wakesForDay(owner, date) {
     if ([0, 6].includes(weekday(date))) return [];
     return [9, 17].map(h => zonedToInstant(date, h * 60, owner.tz));
   }
-  const start = zonedToInstant(date, 8 * 60, owner.tz);
-  const end = zonedToInstant(date, 20 * 60, owner.tz);
   const hours = parseHours(owner.hours);
   const spans = daySpans(hours, owner.tz, date);
   if (!spans.length) return [];
-  const allowed = spanIntervals(hours, owner.tz, start, end - 1)
-    .map(s => ({ start: Math.max(start, s.start), end: Math.min(end, s.end) }))
-    .filter(s => s.start < s.end);
-  if (!allowed.length) return [];
   // Hours have minute precision. Move either nominal wake to the nearest
-  // allowed minute, preferring the earlier minute on a tie; coalesce twins.
-  const nearest = target => allowed.map(s => Math.max(s.start, Math.min(target, s.end - MINUTE)))
-    .sort((a, b) => Math.abs(a - target) - Math.abs(b - target) || a - b)[0];
-  return [...new Set([nearest(spans[0].start), nearest(spans.at(-1).end - HOUR)])].sort((a, b) => a - b);
+  // allowed minute on that instant's local day (possibly after midnight),
+  // preferring the earlier minute on a tie; coalesce twins.
+  const nearest = target => {
+    const targetDay = localDay(target, owner.tz);
+    const start = zonedToInstant(targetDay, 8 * 60, owner.tz);
+    const end = zonedToInstant(targetDay, 20 * 60, owner.tz);
+    const allowed = spanIntervals(hours, owner.tz, start, end - 1)
+      .map(s => ({ start: Math.max(start, s.start), end: Math.min(end, s.end) }))
+      .filter(s => s.start < s.end);
+    return allowed.map(s => Math.max(s.start, Math.min(target, s.end - MINUTE)))
+      .sort((a, b) => Math.abs(a - target) - Math.abs(b - target) || a - b)[0];
+  };
+  const last = spans.at(-1);
+  const second = Math.max(last.start, last.end - HOUR);
+  return [...new Set([nearest(spans[0].start), nearest(second)])]
+    .filter(at => at !== undefined).sort((a, b) => a - b);
 }
 
 export function hasDaytimeHours(owner) {
@@ -49,7 +55,7 @@ export function wakeAllowed(owner, scheduled, now, onTimeMs = ON_TIME_MS) {
 export function recentWakes(owner, now) {
   if (!owner.tz) return [];
   const date = localDay(now, owner.tz);
-  return [-1, 0].flatMap(n => wakesForDay(owner, addDays(date, n)))
+  return [...new Set([-1, 0].flatMap(n => wakesForDay(owner, addDays(date, n))))]
     .filter(at => wakeAllowed(owner, at, now)).sort((a, b) => a - b);
 }
 

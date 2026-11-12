@@ -102,9 +102,10 @@ body cap (`MAX_MAIL_BODY_BYTES`) and conversation cap
 
 With hours, nominal wakes are the start of the day's first opening span and
 60 minutes before the end of its last opening span, including overnight closes.
-Move each nominal wake to the nearest minute inside both the recorded hours and 08:00–20:00 on that local day, prefer the earlier minute on a tie, and coalesce duplicates; no overlap means no wake that day.
-The last eligible minute before the night cap is 19:59. The local day here is
-the spans' opening day; a day with no opening span has no scheduled wake.
+For a final span under an hour, use its start as the second nominal wake, then move each nominal wake to the nearest minute inside both the recorded hours and 08:00–20:00 on that wake's actual local date, prefer the earlier minute on a tie, and coalesce duplicates; no overlap means no wake that day.
+The last eligible minute before the night cap is 19:59. An overnight span's
+second wake can fall on the following date; for example Tuesday 21:00–09:00
+retains its Wednesday 08:00 wake.
 Without hours, wakes are 09:00 and 17:00
 Monday to Friday. No zone is guessed. DST folds use the earlier occurrence;
 nonexistent wall times move forward by the gap, as in the window-keeper.
