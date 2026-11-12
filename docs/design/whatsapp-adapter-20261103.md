@@ -163,11 +163,12 @@ The rules for each answer:
 
 A `no_route` answer to the marked copy is probed once more, then dead-lettered
 (`redelivery_no_route`), since gc answers a suppressed duplicate and an empty route with the same
-bytes. So a crash loses nothing the gateway still holds, and the adapter marks only the in-doubt copy
-and that copy's own reposts: a repost after a `failed` or `partial` verdict, and a repost on the
-ladder after a refused connection or an HTTP 5xx, 404, 408 or 429, otherwise go out unmarked under
-the first post's request id, and whether the mayor's session then shows the text once is gc's rule
-for a repeated request id, which lives in gc, outside this repository.
+bytes. So a crash loses nothing the gateway still holds, and the only copy the adapter marks is the
+one of step 5, with that copy's own reposts: a repost after a `failed` or `partial` verdict, and a
+repost on the ladder after a refused connection or an HTTP 5xx, 404, 408 or 429, otherwise go out
+unmarked with the first post's `provider_message_id` and request id, and whether the mayor's session
+then shows the text once is gc's rule for a repeated `provider_message_id`, which lives in gc,
+outside this repository.
 
 **The restore rule.** The journal keeps each conversation's watermark, the highest accepted
 transcript sequence and its message id, through every compaction. The journal's record that gc took
@@ -222,8 +223,8 @@ business, or, with no hours set, at `WHATSAPP_KEEPER_UPDATE_HOUR` in the owner's
 `WHATSAPP_CITY_TZ`), and a close ladder at 60, 30, 15 and 5 minutes before the window closes, kept
 inside the business's hours (`gc whatsapp hours`). With no hours set the marks run before the window
 closes, at any hour; with hours set a mark that falls outside every span is dropped, and the marks
-run before the window closes when the close falls inside a span or a span reaches into its last 60
-minutes, else before the close of business, the end of the last span that ends before the window
+run before the window closes when the close falls inside a span or a span reaches into the window's
+last 60 minutes, else before the close of business, the end of the last span that ends before the window
 closes (a close at 02:00 under Mon-Fri 09:00-18:00 fires at 17:00, 17:30, 17:45 and 17:55 the day
 before), and not at all when no span is left before the close.
 No nudge fires after the close; the daily update
