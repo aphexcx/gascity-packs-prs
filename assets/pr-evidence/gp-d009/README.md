@@ -130,7 +130,8 @@ Red before green: all six new compact-format cases failed on the old renderer
 test failed because mention-only rules were absent. Both pass after the change.
 The new context/attachment test passes with both renderers, verifying retention.
 
-Only expected rendering strings in three existing delivery assertions changed.
+Only expected rendering strings in existing delivery assertions and fake
+interceptors changed.
 Routing selection, acknowledgments, retries, journals, redaction and attachment
 handling have no production changes. The original reminder-type header remains
 so the company-room fake dispatcher recognizes the same deliveries.

@@ -385,8 +385,8 @@ func TestMentionOnly_HandleRoutingHonoured(t *testing.T) {
 	if len(injections) != 1 {
 		t.Fatalf("injections = %d, want 1 (binding handle addressed)", len(injections))
 	}
-	if !strings.Contains(injections[0].body, "@mayor addressed you") {
-		t.Errorf("injection reason line missing:\n%s", injections[0].body)
+	if !strings.Contains(injections[0].body, "ts=100.000800; thread=100.000800") {
+		t.Errorf("injection timestamps missing:\n%s", injections[0].body)
 	}
 
 	// Alias registered to the same session: the alias leg delivers and
