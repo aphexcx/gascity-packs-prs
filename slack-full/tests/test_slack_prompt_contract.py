@@ -41,11 +41,22 @@ def test_reaction_vocabulary_contract() -> None:
     section = prompt[reactions:reply]
     for name in ("eyes", "mag", "+1", "white_check_mark", "alarm_clock"):
         assert f"| `{name}` |" in section, name
-    assert "gc slack react [--emoji NAME] [--session SID]" in section
     assert (
-        "gc slack react --conversation-id Cxxx --message-id 1234.5678 [--emoji NAME]"
+        "gc slack react --conversation-id Cxxx --message-id 1234.5678 --emoji NAME"
         in section
     )
+    assert "--session SID" not in section
+    assert "latest message routed to your session" not in section
+    assert (
+        "Take both values from the reminder of the message you are answering: "
+        "the channel id, and that message's own timestamp (`origin_ts`, "
+        "`Slack ts`, `Message id` or `ts=`), never its thread root. Never react "
+        "without them: the command then reacts to the latest message it can "
+        "find for your session, which may be another one, and it never finds a "
+        "company turn (a company room, DM or group DM). Its receipt can still "
+        "say delivered. When the reminder does not show both values, do not "
+        "react: say the same thing in words."
+    ) in " ".join(section.split())
 
     assert (
         "a message to you that only confirms, thanks, agrees or closes a topic "
