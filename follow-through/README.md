@@ -5,6 +5,11 @@ owner requested. This pack sends factual mail to the city's own agent. It
 never writes to an owner. No listener, socket, API, service, model call or
 package installation is involved: it runs on Node.js 20 or newer.
 
+Use the `follow-through` import binding for the commands shown here and in
+overflow mail. If imported under a custom alias, substitute that alias in
+the printed `gc follow-through list --wake ...` command; automatic alias
+selection in mail is deferred.
+
 The mayor reads the follow-through skill before acting. That skill is shipped
 separately (spec 4b); do not install this mechanism on an owner's box before
 that skill is available. WhatsApp's window and update-template restrictions

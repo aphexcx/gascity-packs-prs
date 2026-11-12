@@ -12,8 +12,8 @@ their exit codes are retained in `checks.tsv`. The initial directory-operand
 run was a harness error, not accepted as red-first evidence; the next run
 correctly failed on the missing state and scheduling implementations.
 
-From the repository root, `pnpm exec make test`: **2695 passed, 130 skipped,
-10689 subtests passed, 2 warnings** (`12-make-test.log`, `make-check.tsv`).
+From the repository root, `pnpm exec make test`: **2696 passed, 130 skipped,
+10689 subtests passed, 2 warnings** (`20-make-test.log`, `final-make-check.tsv`).
 The warnings are Python's existing os.fork-in-a-thread deprecation in the
 Slack tests. The Makefile now includes `follow-through/tests`, whose five
 tests run the Node behavior suite and the shipped wrappers, check Make/CI
@@ -25,7 +25,7 @@ Live-gc command/doctor registration and the doctor canary:
 GC_TEST_BIN="$(command -v gc)" pnpm exec uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k 'follow-through or the_doctor_delta_can_surface_a_finding'
 ```
 
-**3 passed, 2 skipped, 434 deselected** (`13-live-gc.log`, `live-check.tsv`).
+**3 passed, 2 skipped, 434 deselected** (`21-live-gc.log`, `final-live-check.tsv`).
 The skipped checks are formulas and named agents, which this pack does not
 ship. Tests use scratch cities; no test sends mail to the actual mayor.
 
@@ -131,4 +131,16 @@ Reviewed `0c4a3de13655216142b8c01a20dce666033b7e68`. Verdict BLOCK:
 
 The immutable native record is retained outside the branch at
 `/Users/tailor512/city/assets/ops/pr-evidence/gp-91f7/codex-deep-r1.md`.
-Native round 2 reviews this complete set of fixes.
+## Native DEEP round 2
+
+Reviewed `4ec8499a7191667c9efa812c2a72c395b5ed2735`. Verdict CLEAN:
+0 CRITICAL, 0 MAJOR, 1 MINOR. Immutable record:
+`/Users/tailor512/city/assets/ops/pr-evidence/gp-91f7/codex-deep-r2.md`.
+
+- MINOR deferred (DOES NOT MATTER for the contracted `follow-through`
+  binding): overflow mail prints the canonical command. A custom import
+  alias requires substituting that alias in the printed command. README
+  documents this limitation; automatic binding selection is deferred.
+
+The final commit after this reviewed candidate adds only documentation and
+completed verification evidence. No production or test code changed.
