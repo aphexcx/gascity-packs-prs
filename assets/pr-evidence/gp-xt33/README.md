@@ -75,7 +75,7 @@ The searches, as counts:
 | Of them, in documents and evidence outside vendored trees, a real name not listed for review | 3 | 0 |
 | The complete list over path names | 0 | 0 |
 | The 17-pattern list over the whole tree (lines / files) | 186 / 78 | 186 / 78 |
-| The complete list over this round's added lines and commit messages | | 0 |
+| The complete list over this round's added lines and commit messages | | 1: a possible name, marked unsure, that the line already held at round 1's head |
 
 The rest of the complete list's hits are an ordinary English word in skill texts. Hits this round
 does not change are listed for review outside this repository.
