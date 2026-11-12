@@ -67,3 +67,8 @@ test('9,10 ruling: on time for <120s, then late policy; 20:00 always wins', () =
   assert.equal(wakeAllowed(owner, evening, evening), false);
   assert.equal(wakeAllowed(owner, evening, evening + 90000), false);
 });
+
+test('18: next wake is the earliest instant across overlapping opening days', () => {
+  const owner = { consent: true, tz: 'UTC', hours: 'Mon 18:00-03:00, Tue 00:00-02:00' };
+  assert.equal(iso(nextWake(owner, Date.parse('2026-11-09T23:30Z'))), '2026-11-10T00:00:00.000Z');
+});

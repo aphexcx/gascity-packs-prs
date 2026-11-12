@@ -38,10 +38,11 @@ export function recentWakes(owner, now) {
 export function nextWake(owner, now) {
   if (!owner.consent || !owner.tz) return null;
   const date = localDay(now, owner.tz);
+  const candidates = [];
   for (let n = -1; n <= 8; n++) {
     for (const at of wakesForDay(owner, addDays(date, n))) {
-      if (at >= now && wakeAllowed(owner, at, at)) return at;
+      if (at >= now && wakeAllowed(owner, at, at)) candidates.push(at);
     }
   }
-  return null;
+  return candidates.length ? Math.min(...candidates) : null;
 }

@@ -44,7 +44,7 @@ test at cli.test.js:11:1
   AssertionError [ERR_ASSERTION]: node:internal/modules/cjs/loader:1568
     throw err;
     ^
-  
+
   Error: Cannot find module '/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/src/cli.js'
       at Module._resolveFilename (node:internal/modules/cjs/loader:1564:15)
       at wrapResolveFilename (node:internal/modules/cjs/loader:1118:27)
@@ -57,12 +57,12 @@ test at cli.test.js:11:1
     code: 'MODULE_NOT_FOUND',
     requireStack: []
   }
-  
+
   Node.js v24.21.0
-  
-  
+
+
   1 !== 0
-  
+
       at ok (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/cli.test.js:17:60)
       at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/cli.test.js:18:16)
       at Test.runInAsyncScope (node:async_hooks:227:14)

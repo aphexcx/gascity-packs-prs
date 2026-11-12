@@ -45,3 +45,16 @@ test('2: interrupted replacement leaves the previous valid state', async (t) => 
   fs.writeFileSync(path.join(dir, 'state.json'), '{');
   await assert.rejects(withState(dir, async () => {}), /state/);
 });
+
+test('4,17: a stale ticket cannot lock a restarted writer out when its PID was reused', t => {
+  const dir = directory(t);
+  // The PID now belongs to this live test runner, not to the departed
+  // holder. This is the on-disk result of PID reuse after a restart.
+  fs.writeFileSync(path.join(dir, `lock-${process.pid}-00000000-0000-4000-8000-000000000000.json`),
+    JSON.stringify({ pid: process.pid, birth: 'a previous process generation', number: 1 }));
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import {withState} from ${JSON.stringify(new URL('../src/state.js', import.meta.url).href)}; await withState(process.argv[1], async (s, save) => { s.last_tick_at=456; save(); });`, dir],
+    { encoding: 'utf8', timeout: 2000, killSignal: 'SIGKILL' });
+  assert.equal(child.status, 0, child.error?.message || child.stderr);
+  assert.equal(readState(dir).last_tick_at, 456);
+});

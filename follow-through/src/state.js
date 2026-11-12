@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
 export function resolveStateDir(env = process.env) {
@@ -44,9 +45,33 @@ function replace(file, data) {
   }
 }
 
-function alive(pid) {
-  try { process.kill(pid, 0); return true; }
-  catch (e) { if (e.code === 'ESRCH') return false; throw e; }
+let ownBirth;
+function processBirth(pid) {
+  if (pid === process.pid && ownBirth !== undefined) return ownBirth;
+  let birth;
+  try {
+    if (process.platform === 'linux') {
+      // Kernel start ticks plus boot identity distinguish recycled PIDs,
+      // including a reboot. comm may itself contain spaces or parentheses.
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const start = stat.slice(stat.lastIndexOf(')') + 2).split(/\s+/)[19];
+      const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+      birth = `${boot}:${start}`;
+    } else {
+      // macOS ships /bin/ps. Do not inspect command arguments or environments.
+      birth = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'lstart='], {
+        encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
+        env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+      }).trim();
+    }
+  } catch (e) {
+    try { process.kill(pid, 0); }
+    catch (gone) { if (gone.code === 'ESRCH') return null; throw gone; }
+    throw new Error(`cannot verify lock process ${pid}: ${e.code || 'process lookup failed'}`);
+  }
+  if (!birth) return null;
+  if (pid === process.pid) ownBirth = birth;
+  return birth;
 }
 
 function tickets(dir) {
@@ -56,7 +81,7 @@ function tickets(dir) {
     let row;
     try { row = JSON.parse(fs.readFileSync(file, 'utf8')); }
     catch (e) { if (e.code === 'ENOENT') continue; throw e; }
-    if (alive(row.pid)) rows.push({ ...row, name });
+    if (row.birth && processBirth(row.pid) === row.birth) rows.push({ ...row, name });
     else {
       // Every ticket name is unique and never reused. Removing a dead
       // process's ticket cannot unlink a new writer's lock.
@@ -75,11 +100,14 @@ async function lock(dir) {
   fs.chmodSync(dir, 0o700);
   const name = `lock-${process.pid}-${randomUUID()}.json`;
   const file = path.join(dir, name);
-  const release = () => fs.unlinkSync(file);
-  replace(file, { pid: process.pid, number: 0 });
+  const birth = processBirth(process.pid);
+  const release = () => {
+    try { fs.unlinkSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  };
   try {
+    replace(file, { pid: process.pid, birth, number: 0 });
     const number = Math.max(0, ...tickets(dir).map(t => t.number)) + 1;
-    replace(file, { pid: process.pid, number });
+    replace(file, { pid: process.pid, birth, number });
     const deadline = performance.now() + 120_000;
     while (tickets(dir).some(t => t.name !== name &&
       (t.number === 0 || t.number < number || (t.number === number && t.name < name)))) {

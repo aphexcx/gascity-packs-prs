@@ -137,7 +137,7 @@ test('10: recheck the wall clock before each mail when earlier delivery takes ti
     }
   });
   let clock = at('2026-11-10T19:59:00Z');
-  await tick({ dir: h.dir, clock: () => clock, send: async r => {
+  await tick({ dir: h.dir, now: clock, clock: () => clock, send: async r => {
     await h.send(r);
     clock = at('2026-11-10T20:00:00Z');
     return { ok: true };

@@ -9,3 +9,6 @@ cd follow-through && pnpm exec uv run --with pytest --with pyyaml --with jsonsch
 cd follow-through/test && pnpm exec node --test [delivery clock red]	1
 cd follow-through/test && pnpm exec node --test [clock fix and exact status]	0
 cd follow-through/test && FOLLOW_THROUGH_TEST_EVIDENCE_DIR=<evidence> pnpm exec node --test	0
+cd follow-through/test && pnpm exec node --test [RFC3339 precision red]	1
+cd follow-through/test && pnpm exec node --test [self-review regression red]	1
+cd follow-through/test && pnpm exec node --test [self-review fixes]	0

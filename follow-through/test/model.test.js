@@ -46,6 +46,7 @@ test('7: item IDs, length, single lines, conversation form and retained terminal
 test('15: RFC3339 offset and minutes/hours/days; cancellation retains the record', () => {
   const s = fresh();
   assert.equal(parseAt('2026-11-10T12:00:00+02:00'), now + 3600000);
+  assert.equal(parseAt('2026-11-10T12:00:00.123456+02:00'), now + 3600000 + 123);
   for (const [text, ms] of [['30m', 1800000], ['2 hours', 7200000], ['1 day', 86400000]]) {
     assert.equal(parseDuration(text), ms);
   }

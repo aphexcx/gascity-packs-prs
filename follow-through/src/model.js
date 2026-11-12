@@ -52,12 +52,14 @@ export function closeItem(state, id, outcome, now) {
 }
 
 export function parseAt(text) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/i.exec(text);
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/i.exec(text);
   const ms = Date.parse(text);
   const fail = () => { throw new Error('time must be valid RFC 3339 with an offset (for example 2026-11-12T09:00:00-06:00)'); };
   if (!match || !Number.isFinite(ms)) return fail();
   const [, year, month, day, hour, minute, second, offset] = match;
-  const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(Number(year), Number(month), 0);
+  const days = calendar.getUTCDate();
   if (+month < 1 || +month > 12 || +day < 1 || +day > days || +hour > 23 || +minute > 59 || +second > 59 ||
       offset !== 'Z' && offset !== 'z' && (+offset.slice(1, 3) > 23 || +offset.slice(4) > 59)) return fail();
   return ms;

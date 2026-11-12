@@ -30,9 +30,11 @@ the due text. What the mayor subsequently sends is governed by its skills.
 The directory is mode 0700 and the state file is mode 0600. Writes use a
 private temporary file, fsync, rename, and directory fsync. A local-filesystem
 bakery lock serializes ticks and mutations, including mail attempts. Transient
-lock tickets contain only a PID and a sequence number; dead processes' tickets
-are safely reclaimed by their unique names. A PID that still exists is never
-declared stale by age. Do not share this directory over a network filesystem.
+lock tickets contain a PID, process birth identity and sequence number. Dead
+or recycled processes' tickets are reclaimed by their unique names. Linux
+uses kernel start ticks and boot identity from `/proc`; macOS uses its shipped
+`/bin/ps` start time. A matching live holder is never declared stale by age.
+Do not share this directory over a network filesystem.
 A crash may leave private temporary files, but the atomic state remains valid.
 
 Restarting the box, city, mayor or tick process does not reset anything.

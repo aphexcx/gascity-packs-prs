@@ -28,9 +28,9 @@
 test at schedule.test.js:36:1
 ✖ 6,10: no zone, no consent, grace expiry, closed hours and 20:00 stop wakes (0.615625ms)
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-  
+
   false !== true
-  
+
       at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/schedule.test.js:46:10)
       at Test.runInAsyncScope (node:async_hooks:227:14)
       at Test.run (node:internal/test_runner/test:1402:25)
@@ -49,9 +49,9 @@ test at schedule.test.js:36:1
 test at schedule.test.js:50:1
 ✖ 9,10 ruling: on time for <120s, then late policy; 20:00 always wins (0.121083ms)
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-  
+
   false !== true
-  
+
       at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b/follow-through/test/schedule.test.js:54:52)
       at Test.runInAsyncScope (node:async_hooks:227:14)
       at Test.run (node:internal/test_runner/test:1402:25)
