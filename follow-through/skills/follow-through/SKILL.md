@@ -6,8 +6,9 @@ description: Coming back once to what the owner left open, and keeping the remin
 # Follow-through
 
 Read this before you open an item, before you write any follow-up, and
-whenever a mail with the subject "follow-through: follow-up due" or
-"follow-through: reminder due" reaches you.
+whenever a mail with the subject "follow-through: follow-up due",
+"follow-through: reminder due" or "follow-through: no daytime hours" reaches
+you.
 
 The follow-through pack keeps two lists for you: the things the owner
 started and left waiting on them, and the reminders the owner asked for. It
@@ -148,6 +149,24 @@ night, none come at all, and `gc follow-through status` shows that owner with
 no next wake and says why. Tell such an owner, when they give you those
 hours, that you will not come back to things they leave open, because you
 send no follow-ups at night.
+
+## No daytime hours
+
+A mail with the subject "follow-through: no daytime hours" names one
+conversation whose recorded hours leave no time between 08:00 and 20:00. No
+follow-up will come in that conversation, and the owner's reminders are not
+affected. The mail can come at any hour, whether the owner's consent is on,
+off or never recorded. It comes from the pack, not from the owner, and you
+never reply to it.
+
+Never write to the owner because of this mail, and bring it up only the next
+time they write to you. When they do, look in the conversation the mail
+names. If it shows you already told them what the section Consent, hours and
+zone says to tell such an owner, there is nothing more to say. Otherwise
+tell them that, once.
+
+This mail can reach you twice for one conversation, and the second is the
+same notice arriving a second time. Send nothing for it.
 
 ## Reminders
 
