@@ -56,6 +56,7 @@ def samples(values):
 def report(directory, since=None, until=None, now=None):
     now = now or datetime.now(timezone.utc)
     inbound, reactions, words = {}, {}, defaultdict(list)
+    thread_roots, raw_words = {}, []
     for file in sorted(directory.glob("stopwatch-*.jsonl")):
         with file.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
@@ -65,6 +66,8 @@ def report(directory, since=None, until=None, now=None):
                     conversation = (event["channel"], event["conversation"])
                     key = (*conversation, event.get("message", ""))
                     kind = event["event"]
+                    if event["channel"] == "slack" and event.get("message") and kind in ("inbound", "words"):
+                        thread_roots[key] = event.get("thread") or event["message"]
                     if kind == "inbound":
                         stamp = instant(event["message_at"])
                         if (since is None or stamp >= since) and (until is None or stamp <= until):
@@ -72,9 +75,23 @@ def report(directory, since=None, until=None, now=None):
                     elif kind == "reaction":
                         reactions[key] = min(at, reactions.get(key, at))
                     elif kind == "words":
-                        words[(*conversation, event.get("thread", ""))].append(at)
+                        raw_words.append(((*conversation, event.get("thread", "")), at))
                 except (ValueError, KeyError, TypeError):
                     continue
+    def canonical_thread(key):
+        seen = set()
+        while key[2] and key not in seen:
+            seen.add(key)
+            root = thread_roots.get(key)
+            if not root or root == key[2]:
+                break
+            key = (*key[:2], root)
+        return key
+
+    # Resolve after loading all lines, even coordinates outside the time cut.
+    # This also handles a words append that raced ahead of its inbound append.
+    for key, at in raw_words:
+        words[canonical_thread(key)].append(at)
     for stamps in words.values():
         stamps.sort()
     groups = {}
@@ -86,7 +103,7 @@ def report(directory, since=None, until=None, now=None):
         if key in reactions and reactions[key] >= stamp:
             group["reaction"].append((reactions[key] - stamp).total_seconds())
         thread = event.get("thread", "")
-        replies = words[(*key[:2], thread)]
+        replies = words[canonical_thread((*key[:2], thread))]
         # Slack's root post has no thread_ts. A subsequent reply can be
         # top-level, or explicitly in the thread rooted at that post.
         if event["channel"] == "slack" and not thread:

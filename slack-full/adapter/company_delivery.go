@@ -666,6 +666,9 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 			return true
 		}
 		w.WriteHeader(http.StatusOK)
+		// Resume owed delivery without treating the duplicate as a new arrival,
+		// including when the first process exited before creating an ack marker.
+		env.replayed = true
 		g.mentionOnlyForCompanyRoom(env, ev, room)
 		return true
 	}

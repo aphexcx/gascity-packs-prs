@@ -127,3 +127,23 @@ Canary checks (values omitted): both Go adapters ran
 Each printed `--- PASS: TestChoiceEndpointAndCanary` and `PASS`, exit 0.
 The complete WhatsApp run passed
 `canary key is absent from errors and log output; empty text and missing key never call`.
+
+The second DEEP round returned BLOCK with one major and one minor finding.
+Both were reproduced before fixing their classes:
+
+- Canonical Slack threads (major): a reply addressed to a child message was
+  recorded under that child instead of its root. The writer now resolves known
+  message coordinates across restarts, and fresh publishes use Slack's canonical
+  response thread when supplied. The report also resolves aliases across all
+  journal lines before applying inbound time cuts. `TestStopwatchPublishToCanonicalThreadReport`
+  covers fresh/cached publishes, session acts, restart, and response-provided
+  roots; `test_stopwatch_normalizes_reply_targets_before_time_cuts` covers
+  out-of-order lines and reference messages outside the selected interval.
+- Replay provenance (minor): recovery could enter the live arrival observer
+  when the first process stopped before creating an attempt marker. The same
+  failure reproduced for duplicate admission. `TestArrivalExcludesRecoveredCompanyMentionOnlyTurn`
+  covers both: owed delivery proceeds, with no arrival record or reaction.
+
+The targeted second-round integration checks pass all ten test/subtest outcomes.
+The report/parity suite passes all five tests. See [VALIDATION.md](VALIDATION.md)
+for complete-suite results and limitations.

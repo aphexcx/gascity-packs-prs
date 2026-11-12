@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -140,6 +141,107 @@ func TestArrivalCoversLegacyThreadRoutes(t *testing.T) {
 			env := plainRoomEnvelope(t, "event-example", "C1", slackTimestamp(now), root, "synthetic follow-up")
 			processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, sticky, env, func() {})
 			requireArrivalInput(t, inputs, true)
+		})
+	}
+}
+
+func TestArrivalExcludesRecoveredCompanyMentionOnlyTurn(t *testing.T) {
+	for _, path := range []string{"startup recovery", "redelivery"} {
+		t.Run(path, func(t *testing.T) {
+			gc := newFakeGC(t)
+			df, bf := baseDirectoryFile(), baseBindingsFile()
+			h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+			h.openBarrier()
+			withMentionOnlyLane(t, h, outsiderBinding())
+			h.gw.mentionOnlyLaneStart = func() bool { return false }
+			ev := humanMessage(slackTimestamp(time.Now()), "<@"+companyMOBotUserID+"> synthetic turn")
+			admitCompanyRoomMessage(t, h, ev)
+			h.wait()
+			// A restart has no arrival marker when the live lane never ran. Recovery
+			// still delivers its owed reminder, but must not time or acknowledge it.
+			inputs := captureArrivalInputs(t, &h.gw.cfg)
+			h.gw.mentionOnlyLaneStart = nil
+			h.gw.cfg.channelClaims = newEventDedupCache(time.Minute)
+			if path == "startup recovery" {
+				h.gw.replayMentionOnlyPending()
+			} else {
+				admitCompanyRoomMessage(t, h, ev)
+			}
+			h.wait()
+			if outsiderPostCount(gc) != 1 {
+				t.Fatal("recovery did not deliver its owed turn")
+			}
+			requireArrivalInput(t, inputs, false)
+		})
+	}
+}
+
+func TestStopwatchPublishToCanonicalThreadReport(t *testing.T) {
+	fastReadbackTimings(t)
+	for _, route := range []string{"fresh", "cached", "session act", "restart", "response thread"} {
+		t.Run(route, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/chat.postMessage" {
+					if route == "response thread" {
+						fmt.Fprint(w, `{"ok":true,"ts":"1700000022.000001","message":{"thread_ts":"1700000000.000001"}}`)
+					} else {
+						fmt.Fprint(w, `{"ok":true,"ts":"1700000022.000001"}`)
+					}
+				} else {
+					http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				}
+			}))
+			defer server.Close()
+			withSlackAPIStub(t, server)
+			dir := t.TempDir()
+			watch := stopwatch.New(dir, "slack", "release-example", nil)
+			watch.Record(stopwatch.Event{Event: "inbound", Conversation: "CEXAMPLE", Message: "1700000020.000001", Thread: "1700000000.000001", At: time.Unix(1700000020, 1000), MessageAt: time.Unix(1700000020, 1000)})
+			if route == "restart" {
+				watch = stopwatch.New(dir, "slack", "release-example", nil)
+			}
+			cfg := config{slackBotToken: "test-credential", inboundJournal: &inboundJournal{watch: watch}}
+			if route == "session act" {
+				cfg.inboundJournal.recordSessionAct(ingestionSessionAct{Kind: "reply", Source: "session_publish", Channel: "CEXAMPLE", MessageTS: "1700000022.000001", ThreadTS: "1700000020.000001", SessionID: "session-example", Timestamp: time.Unix(1700000022, 1000)})
+			} else {
+				dedup := newPublishDedupCache(publishDedupTTL)
+				if route == "cached" {
+					dedup.Put("request-example", publishReceipt{Delivered: true, MessageID: "1700000022.000001", readbackTarget: slackReadbackTarget{channel: "CEXAMPLE", threadTS: "1700000020.000001", messageTS: "1700000022.000001"}})
+				}
+				replyTo := "1700000020.000001"
+				if route == "response thread" {
+					replyTo = "1700000015.000001"
+				}
+				body := fmt.Sprintf(`{"idempotency_key":"request-example","session_id":"session-example","conversation":{"conversation_id":"CEXAMPLE"},"reply_to_message_id":%q,"text":"synthetic reply"}`, replyTo)
+				w := httptest.NewRecorder()
+				handlePublish(cfg, nil, nil, dedup)(w, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(body)))
+			}
+			files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
+			for _, file := range files {
+				data, _ := os.ReadFile(file)
+				for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+					var event stopwatch.Event
+					if json.Unmarshal([]byte(line), &event) != nil {
+						t.Fatal("invalid timing record")
+					}
+					if event.Event == "words" && event.Thread != "1700000000.000001" {
+						t.Fatalf("words thread = %s, want canonical root", event.Thread)
+					}
+				}
+			}
+			output, err := exec.Command("python3", "../commands/stopwatch.py", "--state-dir", dir, "--json").CombinedOutput()
+			if err != nil {
+				t.Fatalf("report: %v: %s", err, output)
+			}
+			var reports []struct {
+				Words struct {
+					Count  int
+					Median float64 `json:"median_seconds"`
+				}
+				Unanswered int `json:"without_words_over_hour"`
+			}
+			if json.Unmarshal(output, &reports) != nil || len(reports) != 1 || reports[0].Words.Count != 1 || reports[0].Words.Median != 2 || reports[0].Unanswered != 0 {
+				t.Fatalf("accepted threaded reply was not measured: %s", output)
+			}
 		})
 	}
 }

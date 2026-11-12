@@ -70,3 +70,18 @@ def test_stopwatch_pack_identity_survives_install_directory_name(tmp_path):
     result = subprocess.run(["python3", str(installed / "commands/stopwatch.py"), "--json"], env=env, text=True, capture_output=True)
     assert result.returncode == 0
     assert len(json.loads(result.stdout)) == 2
+
+
+def test_stopwatch_normalizes_reply_targets_before_time_cuts(tmp_path):
+    common = {"channel": "slack", "conversation": "conversation-example"}
+    records = [
+        dict(common, event="words", message="reply", thread="child", at="2020-01-01T00:00:03Z"),
+        dict(common, event="inbound", message="child", thread="root", release="release-example", at="2020-01-01T00:00:00Z", message_at="2020-01-01T00:00:00Z"),
+        dict(common, event="inbound", message="later", thread="root", release="release-example", at="2020-01-01T00:00:01Z", message_at="2020-01-01T00:00:01Z"),
+    ]
+    (tmp_path / "stopwatch-2020-01.jsonl").write_text("\n".join(json.dumps(row) for row in records) + "\n")
+    for script in SCRIPTS:
+        result = json.loads(subprocess.check_output(["python3", str(script), "--state-dir", str(tmp_path), "--json", "--since", "2020-01-01T00:00:01Z"], text=True))
+        assert result[0]["messages"] == 1
+        assert result[0]["words"] == {"count": 1, "median_seconds": 2.0, "p90_seconds": 2.0}
+        assert result[0]["without_words_over_hour"] == 0

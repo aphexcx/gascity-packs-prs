@@ -481,7 +481,7 @@ func (g *companyGateway) replayMentionOnlyLane(r *IngressReceipt, ev slackMessag
 		g.settleMentionOnlyIntent(r.Origin)
 		return
 	}
-	env := slackEventEnvelope{Type: "event_callback", TeamID: r.Origin.TeamID, APIAppID: r.APIAppID, EventID: r.EventID}
+	env := slackEventEnvelope{Type: "event_callback", TeamID: r.Origin.TeamID, APIAppID: r.APIAppID, EventID: r.EventID, replayed: true}
 	if r.MentionOnlyLane.AppID != "" {
 		env.APIAppID = r.MentionOnlyLane.AppID
 	}

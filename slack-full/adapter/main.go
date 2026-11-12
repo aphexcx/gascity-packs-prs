@@ -1428,6 +1428,9 @@ type slackPostMessageResp struct {
 	TS      string `json:"ts,omitempty"`
 	Channel string `json:"channel,omitempty"`
 	Error   string `json:"error,omitempty"`
+	Message struct {
+		ThreadTS string `json:"thread_ts,omitempty"`
+	} `json:"message,omitempty"`
 	// Slack reports non-fatal problems here instead of failing the call. The
 	// one that matters to us is "message_truncated": Slack truncates text past
 	// slackMaxMessageLength rather than rejecting it, and returns ok:true, so
@@ -2764,7 +2767,10 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			}
 		default:
 			receipt.MessageID = slackResp.TS
-			recordAcceptedSlackWords(cfg, req.Conversation.ConversationID, req.ReplyToMessageID, slackResp.TS)
+			if slackResp.Message.ThreadTS != "" {
+				target.threadTS = slackResp.Message.ThreadTS
+			}
+			recordAcceptedSlackWords(cfg, req.Conversation.ConversationID, target.threadTS, slackResp.TS)
 			// Keep Slack's truncation warning on the receipt even if readback fails.
 			for _, warning := range slackResp.ResponseMetadata.Warnings {
 				if warning != "message_truncated" {

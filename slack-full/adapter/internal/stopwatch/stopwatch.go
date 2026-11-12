@@ -29,12 +29,13 @@ type Writer struct {
 	mu                    sync.Mutex
 	dir, channel, release string
 	seen                  map[string]bool
+	threads               map[string]string
 	log                   func(string)
 	warning               sync.Once
 }
 
 func New(dir, channel, release string, log func(string)) *Writer {
-	w := &Writer{dir: dir, channel: channel, release: release, seen: map[string]bool{}, log: log}
+	w := &Writer{dir: dir, channel: channel, release: release, seen: map[string]bool{}, threads: map[string]string{}, log: log}
 	files, err := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 	if err != nil {
 		w.warn()
@@ -50,9 +51,7 @@ func New(dir, channel, release string, log func(string)) *Writer {
 		for scanner.Scan() {
 			var e Event
 			if json.Unmarshal(scanner.Bytes(), &e) == nil {
-				if key := eventKey(e); key != "" {
-					w.seen[key] = true
-				}
+				w.remember(e)
 			}
 		}
 		if scanner.Err() != nil {
@@ -67,6 +66,19 @@ func eventKey(e Event) string {
 		return e.Event + "\x00" + e.Conversation + "\x00" + e.Message
 	}
 	return ""
+}
+
+func (w *Writer) remember(e Event) {
+	if key := eventKey(e); key != "" {
+		w.seen[key] = true
+	}
+	if w.channel == "slack" && e.Message != "" && (e.Event == "inbound" || e.Event == "words") {
+		root := e.Thread
+		if root == "" {
+			root = e.Message
+		}
+		w.threads[e.Conversation+"\x00"+e.Message] = root
+	}
 }
 func (w *Writer) warn() {
 	w.warning.Do(func() {
@@ -84,6 +96,19 @@ func (w *Writer) Record(e Event) {
 	e.Channel = w.channel
 	if e.Event == "inbound" {
 		e.Release = w.release
+	}
+	if e.Event == "words" && w.channel == "slack" {
+		// A publish may address a child post instead of its canonical root.
+		// Reuse channel coordinates already recorded, including after restart.
+		visited := map[string]bool{}
+		for e.Thread != "" && !visited[e.Thread] {
+			visited[e.Thread] = true
+			root := w.threads[e.Conversation+"\x00"+e.Thread]
+			if root == "" || root == e.Thread {
+				break
+			}
+			e.Thread = root
+		}
 	}
 	key := eventKey(e)
 	if key != "" && w.seen[key] {
@@ -138,9 +163,7 @@ func (w *Writer) Record(e Event) {
 		w.warn()
 		return
 	}
-	if key != "" {
-		w.seen[key] = true
-	}
+	w.remember(e)
 }
 func Release(file string) (string, error) {
 	f, err := os.Open(file)
