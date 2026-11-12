@@ -46,7 +46,7 @@ function assertEnforced(f) {
 }
 
 test('empty active log: every published rotation shape finishes replay without a sentinel', async t => {
-  for (const shape of ['warm', 'cold multiple archives', 'chunked archive', 'pending publication', 'legacy pending publication']) {
+  for (const shape of ['warm', 'cold multiple archives', 'chunked archive', 'pending publication', 'legacy pending publication', 'legacy publication with an older same-second archive']) {
     await t.test(shape, t => {
       const f = fixture(t);
       if (shape === 'cold multiple archives') {
@@ -63,6 +63,15 @@ test('empty active log: every published rotation shape finishes replay without a
         assert.deepEqual(runHook(pre('chunk'), f.o), {});
         assert.ok(f.state().cursor.archive?.offset > 0, 'decoded archive progress is persisted');
         assert.ok(f.state().cursor.seq < 11);
+      } else if (shape === 'legacy publication with an older same-second archive') {
+        archive(f, 1, 1, line(row(1)));
+        runHook(pre('cursor', 'Read'), f.o);
+        fs.appendFileSync(f.log, line(row(2, 'extmsg.inbound')));
+        const rotating = f.log + '.rotating-20260102T120000Z';
+        fs.renameSync(f.log, rotating); fs.writeFileSync(f.log, '');
+        assert.deepEqual(runHook(pre('pending'), f.o), {});
+        assert.equal(command('status', ['--json'], f.o).caught_up, false);
+        archive(f, 2, 2, fs.readFileSync(rotating)); fs.unlinkSync(rotating);
       } else {
         const publish = rotate(f, shape === 'legacy pending publication');
         if (shape !== 'warm') {
@@ -74,6 +83,48 @@ test('empty active log: every published rotation shape finishes replay without a
       }
       assertEnforced(f);
     });
+  }
+});
+
+test('empty active log: legacy publication identity survives checkpoints and timestamp collisions', async t => {
+  for (const cursor of ['warm', 'warm ahead of last archive', 'multiple archives', 'chunked archive']) {
+    for (const message of ['inbound', 'outbound']) {
+      await t.test(`${cursor}, pending ${message}`, t => {
+        const f = fixture(t);
+        const first = row(1, message === 'outbound' ? 'extmsg.inbound' : 'example.padding');
+        let next;
+        if (cursor === 'chunked archive') {
+          const padding = 'x'.repeat(1024 * 1024);
+          archive(f, 1, 10, line(first) + Array.from({ length: 9 }, (_, i) => line(row(i + 2, 'example.padding', { padding }))).join(''));
+          next = 11;
+        } else {
+          archive(f, 1, 1, line(first));
+          next = 2;
+          if (cursor === 'multiple archives') { archive(f, 2, 2, line(row(2))); next = 3; }
+        }
+        runHook(pre('cursor', 'Read'), f.o);
+        if (cursor === 'warm ahead of last archive') {
+          fs.appendFileSync(f.log, line(row(next++)));
+          runHook(pre('advanced-cursor', 'Read'), f.o);
+        }
+        if (cursor === 'chunked archive') assert.ok(f.state().cursor.archive);
+        if (cursor === 'multiple archives') assert.equal(f.state().cursor.seq, 1);
+        const rotating = f.log + '.rotating-20260102T120000Z';
+        fs.appendFileSync(f.log, line(row(next, `extmsg.${message}`, { session: 'session-example' })));
+        fs.renameSync(f.log, rotating); fs.writeFileSync(f.log, '');
+        assert.deepEqual(runHook(pre('pending'), f.o), {}, 'pending replies must not cause false refusals');
+        assert.equal(command('status', ['--json'], f.o).caught_up, false);
+        const rotatingFirst = cursor === 'warm ahead of last archive' ? next - 1 : next;
+        archive(f, rotatingFirst, next, fs.readFileSync(rotating)); fs.unlinkSync(rotating);
+        if (message === 'inbound') assertEnforced(f);
+        else {
+          assert.deepEqual(runHook(pre('answered'), f.o), {});
+          const status = command('status', ['--json'], f.o);
+          assert.equal(status.caught_up, true); assert.deepEqual(status.waiting, []);
+        }
+        assert.equal(fs.statSync(f.log).size, 0);
+      });
+    }
   }
 });
 

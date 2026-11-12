@@ -186,6 +186,10 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
     // replay reaches the published tail (including the saved cursor).
     if (!same && !appended.length) {
       if (stat.size === 0) {
+        // A legacy rotating name has only second precision. An older archive
+        // can share its timestamp, so confirm the actual rotating tail before
+        // adopting an identity that would bypass discovery on the next call.
+        if (eventFence(city) > archivedThrough) return { rows, caughtUp: false, cursor: { ...(cursor || { dev: 0, ino: 0, offset: 0, boundary: '' }), seq, archive: undefined } };
         if (archivedThrough !== seq) throw new Error('event_sequence_gap');
       } else if (cursor) return { rows, caughtUp: false, cursor: { ...cursor, seq, archive: undefined } };
     }
