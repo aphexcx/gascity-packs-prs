@@ -1,0 +1,68 @@
+TAP version 13
+1..0
+# Subtest: bounds.test.cjs
+ok 1 - bounds.test.cjs
+  ---
+  duration_ms: 42.436584
+  type: 'test'
+  ...
+1..0
+# Subtest: decision.test.cjs
+ok 2 - decision.test.cjs
+  ---
+  duration_ms: 40.057292
+  type: 'test'
+  ...
+1..0
+# Subtest: events.test.cjs
+ok 3 - events.test.cjs
+  ---
+  duration_ms: 63.064667
+  type: 'test'
+  ...
+1..0
+# Subtest: pack.test.cjs
+ok 4 - pack.test.cjs
+  ---
+  duration_ms: 36.870625
+  type: 'test'
+  ...
+# Subtest: codex 2: canonical outbound subjects handle empty sessions and caller aliases
+not ok 5 - codex 2: canonical outbound subjects handle empty sessions and caller aliases
+  ---
+  duration_ms: 138.731333
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:203:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(runHook(input('after-worker-send'), f.o).hookSpecificOutput)
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:208:12)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+1..0
+# Subtest: runtime.test.cjs
+ok 6 - runtime.test.cjs
+  ---
+  duration_ms: 79.655416
+  type: 'test'
+  ...
+1..6
+# tests 6
+# suites 0
+# pass 5
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 198.592375

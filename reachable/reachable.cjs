@@ -182,14 +182,18 @@ function readEvents(city, cursor, { now = Date.now(), start = performance.now() 
   } finally { fs.closeSync(fd); }
 }
 
-function reduceEvents(state, rows, { now, agent, session }) {
+function reduceEvents(state, rows, { now, agent, session, sessionName }) {
   if (state.now > now) throw new Error('clock_moved_backwards');
   const own = new Set(state.sessions);
   if (session) own.add(hash(session));
+  if (sessionName) own.add(hash(sessionName));
   // Learn named-session replacements before examining delivered words.
   for (const row of rows) {
     const p = row.payload;
-    if (row.type === 'session.woke' && row.subject === agent && identifier(row.session_id)) own.add(hash(row.session_id));
+    if (row.type === 'session.woke' && (row.subject === agent || row.subject === sessionName) && identifier(row.session_id)) {
+      own.add(hash(row.session_id));
+      if (identifier(row.subject)) own.add(hash(row.subject));
+    }
     if (row.type === 'extmsg.inbound' && p?.target_agent === agent && identifier(p.target_session)) own.add(hash(p.target_session));
   }
   for (const row of rows) {
@@ -213,8 +217,11 @@ function reduceEvents(state, rows, { now, agent, session }) {
       if (row.seq <= (state.seenThrough || 0)) continue;
       state.waiting.push({ provider: p.provider, conversation_id: p.conversation_id, at, seq: row.seq, refusals: 0, released: false });
     } else {
-      if (!identifier(p.session)) throw new Error('invalid_outbound_session');
-      if (own.has(hash(p.session))) {
+      // GC credits the resolved publishing session in subject. The payload
+      // retains the caller's selector, which can be an alias or empty.
+      const publishingSession = identifier(row.subject) ? row.subject : p.session;
+      if (!identifier(publishingSession)) throw new Error('invalid_outbound_session');
+      if (own.has(hash(publishingSession))) {
         state.waiting = state.waiting.filter(w => key(w) !== key(p) || w.at > at);
         for (const call of Object.values(state.calls)) if (call.priorWaiting && row.seq <= call.startThrough) call.priorWaiting = call.priorWaiting.filter(c => c !== key(p));
       }
@@ -402,7 +409,7 @@ function normalized(options) {
   const city = options.city || env.GC_CITY_PATH || env.GC_CITY;
   if (!city || !path.isAbsolute(city)) throw new Error('absolute_city_required');
   const agent = env.REACHABLE_AGENT || 'mayor';
-  return { ...options, env, city, now: options.now ?? Date.now(), agent, session: env.GC_AGENT === agent ? env.GC_SESSION_ID || '' : '', start: options.start ?? performance.now() };
+  return { ...options, env, city, now: options.now ?? Date.now(), agent, session: env.GC_AGENT === agent ? env.GC_SESSION_ID || '' : '', sessionName: env.GC_AGENT === agent ? env.GC_SESSION_NAME || '' : '', start: options.start ?? performance.now() };
 }
 function syncEvents(state, options) {
   const result = readEvents(options.city, state.cursor, options);
@@ -491,7 +498,7 @@ function aliasesFromImports(text, city, env = process.env) {
   for (const line of text.trim().split('\n')) {
     const [alias, source] = line.split('\t');
     if (!alias || alias === '(transitive)' || !source) continue;
-    let dir = path.resolve(city, source);
+    let dir = source.startsWith('//') ? path.join(city, source.slice(2)) : path.resolve(city, source);
     if (/^(git@|ssh:\/\/|https?:\/\/|file:\/\/|github\.com\/)/.test(source)) {
       const commit = commits[source];
       // Bundled non-channel imports may have no lock or use a synthetic

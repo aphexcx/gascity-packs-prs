@@ -37,12 +37,12 @@ not ok 5 - review 2: Stop sees the deployed seq-stamped in-flight rotation
   error: 'event_sequence_gap'
   code: 'ERR_TEST_FAILURE'
   stack: |-
-    parseRows (/private<original-source>:33:43)
-    readEvents (/private<original-source>:82:22)
-    syncEvents (/private<original-source>:302:18)
-    /private<original-source>:490:22
-    withLock (/private<original-source>:275:16)
-    command (/private<original-source>:482:10)
+    parseRows (/private<reviewed-source>)
+    readEvents (/private<reviewed-source>)
+    syncEvents (/private<reviewed-source>)
+    /private<reviewed-source>
+    withLock (/private<reviewed-source>)
+    command (/private<reviewed-source>)
     TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:41:16)
     Test.runInAsyncScope (node:async_hooks:227:14)
     Test.run (node:internal/test_runner/test:1402:25)

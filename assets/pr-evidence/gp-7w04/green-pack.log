@@ -2,389 +2,407 @@ TAP version 13
 # Subtest: 5: an exemption ignores future inbounds until explicitly removed
 ok 1 - 5: an exemption ignores future inbounds until explicitly removed
   ---
-  duration_ms: 12.823208
+  duration_ms: 12.111917
   type: 'test'
   ...
 # Subtest: 11: an expired measurement never refuses and state-lock contention fails open
 ok 2 - 11: an expired measurement never refuses and state-lock contention fails open
   ---
-  duration_ms: 6.645459
+  duration_ms: 5.182958
   type: 'test'
   ...
 # Subtest: 11: malformed hook stdin fails open and records one error using the installed city argument
 ok 3 - 11: malformed hook stdin fails open and records one error using the installed city argument
   ---
-  duration_ms: 35.809042
+  duration_ms: 33.978584
   type: 'test'
   ...
 # Subtest: 3,4: a historical mayor wake identifies an old session reply after handoff
 ok 4 - 3,4: a historical mayor wake identifies an old session reply after handoff
   ---
-  duration_ms: 0.152958
+  duration_ms: 0.151292
   type: 'test'
   ...
 # Subtest: 4: age expiry and an unrelated reaction do not stand in for words
 ok 5 - 4: age expiry and an unrelated reaction do not stand in for words
   ---
-  duration_ms: 0.087125
+  duration_ms: 0.086833
   type: 'test'
   ...
 # Subtest: 13: duplicate Stop without a prompt ID cannot clear an intervening inbound
 ok 6 - 13: duplicate Stop without a prompt ID cannot clear an intervening inbound
   ---
-  duration_ms: 0.145708
+  duration_ms: 0.136792
   type: 'test'
   ...
 # Subtest: 15: first install always starts observe; reinstall preserves an explicit mode
 ok 7 - 15: first install always starts observe; reinstall preserves an explicit mode
   ---
-  duration_ms: 9.072709
+  duration_ms: 8.28275
   type: 'test'
   ...
 # Subtest: 16: uninstall preserves a later hook added to the same matcher and rejects symlinked settings
 ok 8 - 16: uninstall preserves a later hook added to the same matcher and rejects symlinked settings
   ---
-  duration_ms: 4.828833
+  duration_ms: 5.365625
   type: 'test'
   ...
 # Subtest: 9: aliases come from all four pack rows, including a locally renamed directory
 ok 9 - 9: aliases come from all four pack rows, including a locally renamed directory
   ---
-  duration_ms: 2.48975
+  duration_ms: 2.59725
   type: 'test'
   ...
 # Subtest: 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
 ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
   ---
-  duration_ms: 1673.439291
+  duration_ms: 1500.400125
   type: 'test'
   ...
-# 256 MiB, 100 warm decisions: p95=1.820ms
-# 256 MiB, 20 complete hook processes: p95=38.739ms
+# 256 MiB, 100 warm decisions: p95=1.397ms
+# 256 MiB, 20 complete hook processes: p95=34.386ms
 # Subtest: 8: exact refusal, one line per conversation in oldest-first order
 ok 11 - 8: exact refusal, one line per conversation in oldest-first order
   ---
-  duration_ms: 1.060166
+  duration_ms: 1.20575
   type: 'test'
   ...
 # Subtest: 10,13: at most three refusals per message; duplicate call is identical and counted once
 ok 12 - 10,13: at most three refusals per message; duplicate call is identical and counted once
   ---
-  duration_ms: 1.079458
+  duration_ms: 0.506459
   type: 'test'
   ...
 # Subtest: 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
 ok 13 - 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
   ---
-  duration_ms: 0.142709
+  duration_ms: 0.120875
   type: 'test'
   ...
 # Subtest: 12: long calls record tool name and waiting at start or while running, never the command
 ok 14 - 12: long calls record tool name and waiting at start or while running, never the command
   ---
-  duration_ms: 0.8815
+  duration_ms: 3.688334
   type: 'test'
   ...
 # Subtest: 15: observe records would refuse, off and incomplete catch-up never refuse
 ok 15 - 15: observe records would refuse, off and incomplete catch-up never refuse
   ---
-  duration_ms: 0.14175
+  duration_ms: 0.159208
   type: 'test'
   ...
 # Subtest: 9: exact measured read-only tool names each pass
 ok 16 - 9: exact measured read-only tool names each pass
   ---
-  duration_ms: 0.065167
+  duration_ms: 0.067041
   type: 'test'
   ...
 # Subtest: 9 table row: Read is allowed during a wait
 ok 17 - 9 table row: Read is allowed during a wait
   ---
-  duration_ms: 0.084417
+  duration_ms: 0.080667
   type: 'test'
   ...
 # Subtest: 9 table row: Glob is allowed during a wait
 ok 18 - 9 table row: Glob is allowed during a wait
   ---
-  duration_ms: 0.050084
+  duration_ms: 0.062541
   type: 'test'
   ...
 # Subtest: 9 table row: Grep is allowed during a wait
 ok 19 - 9 table row: Grep is allowed during a wait
   ---
-  duration_ms: 0.074375
+  duration_ms: 0.053625
   type: 'test'
   ...
 # Subtest: 9 table row: WebFetch is allowed during a wait
 ok 20 - 9 table row: WebFetch is allowed during a wait
   ---
-  duration_ms: 0.092334
+  duration_ms: 0.090292
   type: 'test'
   ...
 # Subtest: 9 table row: WebSearch is allowed during a wait
 ok 21 - 9 table row: WebSearch is allowed during a wait
   ---
-  duration_ms: 0.054542
+  duration_ms: 0.053209
   type: 'test'
   ...
 # Subtest: 9 table row: ListMcpResources is allowed during a wait
 ok 22 - 9 table row: ListMcpResources is allowed during a wait
   ---
-  duration_ms: 0.055083
+  duration_ms: 0.057917
   type: 'test'
   ...
 # Subtest: 9 table row: ReadMcpResource is allowed during a wait
 ok 23 - 9 table row: ReadMcpResource is allowed during a wait
   ---
-  duration_ms: 0.03725
+  duration_ms: 0.035417
   type: 'test'
   ...
 # Subtest: 9 table row: ToolSearch is allowed during a wait
 ok 24 - 9 table row: ToolSearch is allowed during a wait
   ---
-  duration_ms: 0.036458
+  duration_ms: 0.032792
   type: 'test'
   ...
 # Subtest: 9 table row: TaskGet is allowed during a wait
 ok 25 - 9 table row: TaskGet is allowed during a wait
   ---
-  duration_ms: 0.042583
+  duration_ms: 0.039958
   type: 'test'
   ...
 # Subtest: 9 table row: TaskList is allowed during a wait
 ok 26 - 9 table row: TaskList is allowed during a wait
   ---
-  duration_ms: 0.053292
+  duration_ms: 0.03375
   type: 'test'
   ...
 # Subtest: 9 table row: TaskOutput is allowed during a wait
 ok 27 - 9 table row: TaskOutput is allowed during a wait
   ---
-  duration_ms: 0.042417
+  duration_ms: 0.04225
   type: 'test'
   ...
 # Subtest: 9: imported channel aliases, own verbs and handoff pass; shell composition is work
 ok 28 - 9: imported channel aliases, own verbs and handoff pass; shell composition is work
   ---
-  duration_ms: 0.225
+  duration_ms: 0.1235
   type: 'test'
   ...
 # Subtest: 13: cursor reads appended complete rows once and preserves partial rows
 ok 29 - 13: cursor reads appended complete rows once and preserves partial rows
   ---
-  duration_ms: 3.8675
+  duration_ms: 6.923416
   type: 'test'
   ...
 # Subtest: 13: rotation recovers an unread archived row without repeating the cursor row
 ok 30 - 13: rotation recovers an unread archived row without repeating the cursor row
   ---
-  duration_ms: 39.199084
+  duration_ms: 34.351917
   type: 'test'
   ...
 # Subtest: 11: malformed rows and sequence gaps fail measurement
 ok 31 - 11: malformed rows and sequence gaps fail measurement
   ---
-  duration_ms: 1.743375
+  duration_ms: 1.306917
   type: 'test'
   ...
 # Subtest: 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
 ok 32 - 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
   ---
-  duration_ms: 0.347875
+  duration_ms: 0.341541
   type: 'test'
   ...
 # Subtest: 4: only the mayor outbound in the same conversation clears a wait
 ok 33 - 4: only the mayor outbound in the same conversation clears a wait
   ---
-  duration_ms: 0.239625
+  duration_ms: 0.152833
   type: 'test'
   ...
 # Subtest: 1: pack has no service or dependencies and six explicit commands
 ok 34 - 1: pack has no service or dependencies and six explicit commands
   ---
-  duration_ms: 3.7935
+  duration_ms: 3.902292
   type: 'test'
   ...
 # Subtest: 18: fragment is byte for byte the specified standing rule
 ok 35 - 18: fragment is byte for byte the specified standing rule
   ---
-  duration_ms: 0.132958
+  duration_ms: 0.331792
   type: 'test'
   ...
 # Subtest: 19: README documents both prompt options, modes, limitations and verification
 ok 36 - 19: README documents both prompt options, modes, limitations and verification
   ---
-  duration_ms: 0.139667
+  duration_ms: 0.319875
   type: 'test'
   ...
 # Subtest: review 1: an empty replacement cannot hide a subsequently published archive
 ok 37 - review 1: an empty replacement cannot hide a subsequently published archive
   ---
-  duration_ms: 43.097542
+  duration_ms: 39.98275
   type: 'test'
   ...
 # Subtest: review 1: fresh cursors wait for archives still being published
 ok 38 - review 1: fresh cursors wait for archives still being published
   ---
-  duration_ms: 34.545083
+  duration_ms: 32.730667
   type: 'test'
   ...
 # Subtest: review 2: Stop sees the deployed seq-stamped in-flight rotation
 ok 39 - review 2: Stop sees the deployed seq-stamped in-flight rotation
   ---
-  duration_ms: 41.409125
+  duration_ms: 38.749
   type: 'test'
   ...
 # Subtest: review 2: Stop fences unread messages; Post keeps arrivals while catching up
 ok 40 - review 2: Stop fences unread messages; Post keeps arrivals while catching up
   ---
-  duration_ms: 58.765
+  duration_ms: 65.441833
   type: 'test'
   ...
 # Subtest: review 3: every interrupted lock stage is recoverable
 ok 41 - review 3: every interrupted lock stage is recoverable
   ---
-  duration_ms: 4.296625
+  duration_ms: 4.0545
   type: 'test'
   ...
 # Subtest: review 2: deferred call history includes a preexisting unread wait
 ok 42 - review 2: deferred call history includes a preexisting unread wait
   ---
-  duration_ms: 21.499042
+  duration_ms: 21.796208
   type: 'test'
   ...
 # Subtest: review 2: deferred call history respects the Stop fence at call start
 ok 43 - review 2: deferred call history respects the Stop fence at call start
   ---
-  duration_ms: 39.506833
+  duration_ms: 39.281208
   type: 'test'
   ...
 # Subtest: review 4: archive replay advances in bounded chunks without dropping rows
 ok 44 - review 4: archive replay advances in bounded chunks without dropping rows
   ---
-  duration_ms: 6013.026625
+  duration_ms: 5317.881
   type: 'test'
   ...
 # Subtest: review 4: archive transport handles partial pipe writes
 ok 45 - review 4: archive transport handles partial pipe writes
   ---
-  duration_ms: 34.728666
+  duration_ms: 36.108625
   type: 'test'
   ...
 # Subtest: review 5: retained historical pack caches do not mask a new pack roll
 ok 46 - review 5: retained historical pack caches do not mask a new pack roll
   ---
-  duration_ms: 5.688042
+  duration_ms: 5.843084
   type: 'test'
   ...
 # Subtest: codex 1: first install preserves valid hooks without matcher properties
 ok 47 - codex 1: first install preserves valid hooks without matcher properties
   ---
-  duration_ms: 4.739625
+  duration_ms: 4.894209
   type: 'test'
   ...
 # Subtest: codex 1: maintenance callers cannot teach the worker identity as a mayor
 ok 48 - codex 1: maintenance callers cannot teach the worker identity as a mayor
   ---
-  duration_ms: 5.308375
+  duration_ms: 4.977083
   type: 'test'
   ...
 # Subtest: codex 1: an empty caller session cannot match an unrouted message
 ok 49 - codex 1: an empty caller session cannot match an unrouted message
   ---
-  duration_ms: 3.608542
+  duration_ms: 4.036834
   type: 'test'
   ...
 # Subtest: codex 1: worker status preserves established legacy mayor sessions
 ok 50 - codex 1: worker status preserves established legacy mayor sessions
   ---
-  duration_ms: 3.103
+  duration_ms: 3.467709
   type: 'test'
   ...
 # Subtest: codex 1: unknown legacy routing is not consumed by an unbound operator
 ok 51 - codex 1: unknown legacy routing is not consumed by an unbound operator
   ---
-  duration_ms: 3.572666
+  duration_ms: 2.63525
   type: 'test'
   ...
 # Subtest: codex 1: distinct tool-free turns and duplicate Stop use genuine transcript identities
 ok 52 - codex 1: distinct tool-free turns and duplicate Stop use genuine transcript identities
   ---
-  duration_ms: 7.665417
+  duration_ms: 7.067542
   type: 'test'
   ...
 # Subtest: codex 1: lifecycle snapshots retry a rotation during directory discovery
 ok 53 - codex 1: lifecycle snapshots retry a rotation during directory discovery
   ---
-  duration_ms: 79.784583
+  duration_ms: 74.868333
+  type: 'test'
+  ...
+# Subtest: codex 2: canonical outbound subjects handle empty sessions and caller aliases
+ok 54 - codex 2: canonical outbound subjects handle empty sessions and caller aliases
+  ---
+  duration_ms: 13.727208
+  type: 'test'
+  ...
+# Subtest: codex 2: mayor names match inbound and outbound without learning worker names
+ok 55 - codex 2: mayor names match inbound and outbound without learning worker names
+  ---
+  duration_ms: 5.900458
+  type: 'test'
+  ...
+# Subtest: codex 2: city-relative local imports resolve channels and unrelated packs
+ok 56 - codex 2: city-relative local imports resolve channels and unrelated packs
+  ---
+  duration_ms: 4.7745
   type: 'test'
   ...
 # Subtest: review 6: resolved manifests determine aliases for every supported source form
-ok 54 - review 6: resolved manifests determine aliases for every supported source form
+ok 57 - review 6: resolved manifests determine aliases for every supported source form
   ---
-  duration_ms: 6.122167
+  duration_ms: 5.4455
   type: 'test'
   ...
 # Subtest: review 6: bundled unrelated imports do not prevent local channel resolution
-ok 55 - review 6: bundled unrelated imports do not prevent local channel resolution
+ok 58 - review 6: bundled unrelated imports do not prevent local channel resolution
   ---
-  duration_ms: 1.510958
+  duration_ms: 0.970083
   type: 'test'
   ...
 # Subtest: review 7: a save exceeding the deadline cannot leave a cached refusal
-ok 56 - review 7: a save exceeding the deadline cannot leave a cached refusal
+ok 59 - review 7: a save exceeding the deadline cannot leave a cached refusal
   ---
-  duration_ms: 2011.758125
+  duration_ms: 2010.588542
   type: 'test'
   ...
 # Subtest: review 8: concurrent error publication retains both records
-ok 57 - review 8: concurrent error publication retains both records
+ok 60 - review 8: concurrent error publication retains both records
   ---
-  duration_ms: 3.249
+  duration_ms: 3.560667
   type: 'test'
   ...
 # Subtest: review 7: installed outer deadline leaves time to persist fail-open rollback
-ok 58 - review 7: installed outer deadline leaves time to persist fail-open rollback
+ok 61 - review 7: installed outer deadline leaves time to persist fail-open rollback
   ---
-  duration_ms: 2152.711417
+  duration_ms: 2110.528208
   type: 'test'
   ...
 # Subtest: 6,15: workers and subagents do no I/O; an uninstalled city stays off
-ok 59 - 6,15: workers and subagents do no I/O; an uninstalled city stays off
+ok 62 - 6,15: workers and subagents do no I/O; an uninstalled city stays off
   ---
-  duration_ms: 4.410583
+  duration_ms: 6.257125
   type: 'test'
   ...
 # Subtest: 2,14,15: modes, pass, exemptions and private atomic state
-ok 60 - 2,14,15: modes, pass, exemptions and private atomic state
+ok 63 - 2,14,15: modes, pass, exemptions and private atomic state
   ---
-  duration_ms: 17.158917
+  duration_ms: 15.288458
   type: 'test'
   ...
 # Subtest: 11: unreadable log, invalid state and backwards clock fail open and log one error
-ok 61 - 11: unreadable log, invalid state and backwards clock fail open and log one error
+ok 64 - 11: unreadable log, invalid state and backwards clock fail open and log one error
   ---
-  duration_ms: 7.129875
+  duration_ms: 6.75875
   type: 'test'
   ...
 # Subtest: 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
-ok 62 - 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
+ok 65 - 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
   ---
-  duration_ms: 8.470667
+  duration_ms: 8.756833
   type: 'test'
   ...
 # Subtest: 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
-ok 63 - 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
+ok 66 - 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
   ---
-  duration_ms: 5.95625
+  duration_ms: 6.686084
   type: 'test'
   ...
-1..63
-# tests 63
+1..66
+# tests 66
 # suites 0
-# pass 63
+# pass 66
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 10642.455
+# duration_ms 9922.418959

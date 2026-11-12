@@ -28,3 +28,9 @@ cd reachable/test && node --test --test-reporter=tap (Codex 1 fixes): 0
 DEEP Codex round 1: 1
 Codex 1 full class reproductions: 1
 cd reachable/test && node --test --test-reporter=tap (Codex 1 complete fixes): 0
+Codex 2 canonical outbound reproduction: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 2 outbound fix): 0
+DEEP Codex round 2: 1
+Codex 2 named-session and city-path reproductions: 1
+Codex 2 canonical named outbound at reviewed revision: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 2 complete fixes): 0

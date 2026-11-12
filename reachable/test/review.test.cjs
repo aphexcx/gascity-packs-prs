@@ -200,6 +200,42 @@ test('codex 1: lifecycle snapshots retry a rotation during directory discovery',
     else assert.equal(status.history.find(r => r.type === 'long_call').waiting, true);
   }
 });
+test('codex 2: canonical outbound subjects handle empty sessions and caller aliases', t => {
+  for (const session of ['worker-example', '', undefined]) {
+    const f = fixture(t); command('mode', ['enforce'], f.o);
+    fs.appendFileSync(f.log, line({ ...row(2, 'extmsg.outbound', { session }), subject: 'worker-example' }));
+    fs.appendFileSync(f.log, line(row(3)));
+    assert.ok(runHook(input('after-worker-send'), f.o).hookSpecificOutput);
+    const state = JSON.parse(fs.readFileSync(path.join(f.stateDir, 'state.json')));
+    assert.equal(state.cursor.seq, 3); assert.equal(state.waiting.length, 2);
+    fs.appendFileSync(f.log, line({ ...row(4, 'extmsg.outbound', { session: 'mayor' }), subject: 'session-example' }));
+    assert.equal(command('status', ['--json'], f.o).waiting.length, 0);
+    fs.appendFileSync(f.log, line(row(5)));
+    fs.appendFileSync(f.log, line({ ...row(6, 'extmsg.outbound', { session: session === 'worker-example' ? 'mayor' : session }), subject: 'session-example' }));
+    assert.equal(command('status', ['--json'], f.o).waiting.length, 0);
+  }
+});
+test('codex 2: mayor names match inbound and outbound without learning worker names', t => {
+  const f = fixture(t); f.o.env.GC_SESSION_NAME = 'mayor-name-example';
+  command('mode', ['enforce'], f.o);
+  fs.writeFileSync(f.log, line(row(1, 'extmsg.inbound', { target_agent: '', target_session: 'mayor-name-example' })));
+  assert.ok(runHook(input('named-mayor'), f.o).hookSpecificOutput);
+  command('status', [], { ...f.o, env: { GC_AGENT: 'worker', GC_SESSION_ID: 'worker-example', GC_SESSION_NAME: 'worker-name-example' } });
+  fs.appendFileSync(f.log, line(row(2, 'extmsg.outbound', { session: 'worker-name-example' })));
+  assert.equal(command('status', ['--json'], f.o).waiting.length, 1);
+  fs.appendFileSync(f.log, line(row(3, 'extmsg.outbound', { session: 'mayor-name-example' })));
+  assert.equal(command('status', ['--json'], f.o).waiting.length, 0);
+});
+test('codex 2: city-relative local imports resolve channels and unrelated packs', t => {
+  const f = fixture(t);
+  for (const [dir, name] of [['talk', 'gchat'], ['other', 'unrelated']]) {
+    const root = path.join(f.city, 'packs', dir); fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'pack.toml'), `[pack]\nname = "${name}"\n`);
+  }
+  const imports = 'talk\t//packs/talk\t\t(path)\nother\t//packs/other\t\t(path)';
+  assert.deepEqual(aliasesFromImports(imports, f.city), ['talk']);
+  assert.equal(install({ ...f.o, imports }).installed, true);
+});
 test('review 6: resolved manifests determine aliases for every supported source form', t => {
   const f = fixture(t); const gcHome = path.join(f.city, 'home');
   const sources = [
