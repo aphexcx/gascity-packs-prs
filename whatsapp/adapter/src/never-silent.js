@@ -95,7 +95,7 @@ export function createNeverSilent({ enabled = false, stateDir, healthFile = '', 
   }
   function forget(id) { if (enabled && state.messages[id]) change((s) => { s.messages[id].removed = true; }); }
   function act(conversation, session, at = clock()) {
-    if (enabled && session) change((s) => { s.acts.push({ conversation, session, at }); });
+    if (enabled && session && !state.acts.some((a) => a.conversation === conversation && a.session === session && a.at === at)) change((s) => { s.acts.push({ conversation, session, at }); });
   }
   function answered(m) { return state.acts.some((a) => a.conversation === m.conversation && a.at >= m.created && (!m.targets.length || m.targets.includes(a.session))); }
   function cause(m, health, now) {

@@ -9,7 +9,7 @@ live adapter, customer conversation or deployed configuration was changed.
 | Item | Result and verification |
 | --- | --- |
 | 1 | DONE: only newly admitted, addressed human messages are tracked. Adapter integration tests exclude replay, ambient, bot and edit traffic; WhatsApp excludes keeper/status/reaction events. |
-| 2 | DONE: definite failures and transport failures have separate continuous waits; pending resets them. Stopped unknown deliveries wait for a session act before posting. Fake adapter tests and durable-engine tests exercise these paths. |
+| 2 | DONE: definite failures and transport failures have separate continuous waits; pending resets them. Stopped unknown deliveries wait three minutes without a session act before posting. Fake adapter tests and durable-engine tests exercise these paths. |
 | 3 | DONE: all four health states and missing/malformed/stale/unknown evidence are tested; whole-paste pending requires conclusion. Session activity suppresses health notices. |
 | 4 | DONE: three-minute failure/delivery waits, five-minute freshness, six-hour cooldown and mail retry bounds are named constants. Tests advance fake clocks. |
 | 5 | DONE: fixed owner strings use the same conversation/thread and reply identity. Channel senders are separate from normal publishes. |
@@ -135,20 +135,20 @@ These are observation rules; the existing delivery/retry policy remains in
 charge of retrying customer traffic.
 
 - Google Chat: `internal/inbound/inbound.go:301` reconciles unresolved stops,
-  committed `no_route`, and resolved/delivered records. `outcome` at line 1236
+  committed `no_route`, and resolved/delivered records. `outcome` at line 1259
   observes failed and nonfragment held outcomes; exhausted fragmented retries
-  stop uncertain at line 1293. `unresolved` at line 1319 excludes withdrawal
+  stop uncertain at line 1316. `unresolved` at line 1342 excludes withdrawal
   and recognizes rejected POSTs and retry causes with no fragment as definite.
-  The transport branch at line 1138 recognizes dial errors, city-not-found
+  The transport branch at line 1161 recognizes dial errors, city-not-found
   and 5xx, while 408/429 reset the failure streak.
-- Slack: `never_silent.go:111` separates vouched delivery, concluded whole-paste
+- Slack: `never_silent.go:135` separates vouched delivery, concluded whole-paste
   pending, definite failed members and narrow unreachable transport.
-  `stopNeverSilent` at line 168 covers normal and alias dead letters and the
+  `stopNeverSilent` at line 192 covers normal and alias dead letters and the
   receipt-follow-up stop paths. `never_silent_recovery.go:26` reconciles company
   receipts; all eligible failed targets stop, with uncertainty unless all have
   definite failure evidence. `companyNoticeTransport` at line 105 distinguishes
   dial/5xx/city-not-found from timeout, missing session and rate limiting.
-  Primary dead-letter replay at line 267 never revives a newer resolution.
+  Primary dead-letter replay at line 287 never revives a newer resolution.
 - WhatsApp: `src/inbound.js:653` treats failed/no-route with no pasted bytes
   as definite; concluded pending with every whole payload pasted is delivered.
   Terminal holds at line 670 stop uncertain except for that delivered case.
@@ -176,14 +176,19 @@ Toolchains: Go 1.27.3 on darwin/arm64; Node v24.21.0 from
   warnings concern `os.fork()` from a multithreaded test.
 - `make test PYTEST_DIRS=whatsapp/tests`: 57 passed.
 - WhatsApp `pnpm test` (the package script runs
-  `node --test --test-concurrency=2 'test/*.test.js'`): 269 passed, no skips or
+  `node --test --test-concurrency=2 'test/*.test.js'`): 271 passed, no skips or
   failures, with no competing suite running.
-- Slack `go test ./... -count=1 -json`: 1,513 top-level tests and 13,170 total
+- Slack `go test ./... -count=1 -json`: 1,516 top-level tests and 13,178 total
   test events passed across three packages.
-- Google Chat `go test ./... -p 1 -count=1 -timeout=30m -json`: 675 top-level
-  tests and 1,882 total test events passed across 22 packages. After the final
-  outage-log timing adjustment, `go test ./internal/neversilent -count=1 -json`
-  passed all 14 top-level / 34 total engine test events.
+- Google Chat `go test ./... -p 1 -count=1 -timeout=30m -json`: 678 top-level
+  tests and 1,886 test events passed; 21 packages passed and the server package
+  failed only unchanged `TestCommandPreparationFailureSettlesExistingIntent/send-lock`.
+  Its 200 ms deadline starts before durable intent preparation and expired
+  before the intended send-lock branch. The entire server package rerun,
+  `go test ./internal/server -count=1 -json`, passed all 93 top-level / 217
+  test events, including that case. The earlier R2 changed-package run passed
+  249 top-level / 617 events across four packages. Before R2, the full suite
+  passed 675 top-level / 1,882 events across all 22 packages.
 - `go vet ./...` passed in both Go modules. Google Chat `gofmt -l .` was clean.
   Slack's same check reports only unchanged `company_thread_ambient.go`; its
   indentation difference was independently confirmed at the base commit.
@@ -194,6 +199,8 @@ session field on the Google Chat reaction command. Both were corrected before
 the passing repository run. Earlier Google Chat and WhatsApp runs under
 competing load had readiness/pipeline timeouts; isolated runs passed. No
 production retry or test timing was changed to obtain the passing results.
+The repository and WhatsApp Python checks preceded the R2 Go/JavaScript fixes;
+R2 changed no Python code.
 
 ## Review
 
@@ -242,6 +249,37 @@ polling, company synthesis/result activity, Google `no_route` and successful
 publish recovery, and WhatsApp terminal whole-paste pending. These were fixed
 within the same classes and covered by focused tests. It was an uncommitted
 working-tree read, not a verdict on a pinned commit.
+
+Native Codex DEEP round 2 reviewed `22ae627abb1de07e6c6330043e078607b0b8bd48`
+and returned BLOCK with five MAJOR findings. Each class was reproduced before
+its production fix:
+
+1. FIXED — Successful Slack words were coupled to readback and optional proof
+   recording. Text posts now record activity immediately on acceptance;
+   captioned uploads do likewise. Original session/time also survive in primary
+   text receipts. `TestNeverSilentSuccessfulWordsBeforeReadbackAndRecovery`
+   covers failed readback, captioned and captionless uploads, and restart.
+2. FIXED — WhatsApp primary success could precede the activity observation.
+   Chunk progress, media receipts and the template journal now retain original
+   attributed activity, reconstructed before polling. The captioned-receipt
+   SIGKILL integration test restarts without replay; the text, partial-text and
+   template recovery test also checks that retries under another session do
+   not answer a newer request.
+3. FIXED — Terminal Google whole-paste pending receipts were treated as
+   undelivered. A durable positive observation now coexists with the existing
+   primary hold. `TestNeverSilentTerminalWholePasteIsDeliveredAcrossRestart`
+   covers delivery-level and member-level terminal flags, unknown health and
+   health eligibility after restart.
+4. FIXED — A new pending attempt retained an old stopped marker. Both Go
+   engines clear superseded terminal and positive evidence on newer results.
+   `TestNewPendingSupersedesStoppedAndDeliveredEvidence` reproduces the class;
+   the company recovery test includes the primary redrive path.
+5. FIXED — Notice eligibility became stale during dispatch preparation. Both
+   Go engines revalidate the current fixed line; senders check again after
+   space lookup, rate waiting or identity selection, just before the request.
+   `TestHealthChangeDuringOwnerSendDoesNotPostStaleLine` and
+   `TestNeverSilentSessionActDuringSpaceLookupCancelsNotice` reproduce both
+   stale copy and intervening session activity.
 
 ## Source research and limits
 

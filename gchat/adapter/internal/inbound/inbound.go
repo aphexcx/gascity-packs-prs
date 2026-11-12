@@ -300,6 +300,8 @@ func (p *Processor) Pass(ctx context.Context) error {
 		switch {
 		case c.NoticeResolved || c.Reason == "operator accepted" || c.Reason == "operator replay" || c.Reason == reasonWithdrawn:
 			noticeErr = p.opts.NeverSilent.Forget(id)
+		case c.NoticeDelivered:
+			noticeErr = p.opts.NeverSilent.ResultAt(id, "delivered", nil, c.NoticeAt)
 		case c.Status == "unresolved":
 			noticeErr = p.opts.NeverSilent.StopAt(id, strings.HasPrefix(c.Reason, "gc rejected the POST:"), c.NoticeAt)
 		case c.Status == "committed" && c.Reason == "no_route":
@@ -501,6 +503,18 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 		terminal = terminal || m.Terminal
 	}
 	if terminal {
+		if noticeWholePaste(d) {
+			at := p.opts.Now()
+			if err := p.update(func(l *ledger.Ledger) {
+				if c := l.Changes[id]; c != nil {
+					c.NoticeDelivered = true
+					markUnresolved(l, id, c, reasonHeld, at)
+				}
+			}); err != nil {
+				return err
+			}
+			return p.opts.NeverSilent.ResultAt(id, "delivered", deliverySessions(d), at)
+		}
 		return p.unresolved(id, reasonHeld)
 	}
 	if !landedWhole(d) {
@@ -529,7 +543,16 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 
 func landedWhole(d wire.Delivery) bool {
 	for _, m := range d.Members {
-		if m.Terminal || (m.Status != "delivered" && (m.Status != "pending" || m.ExpectedBytes <= 0 || m.DeliveredBytes != m.ExpectedBytes)) {
+		if m.Terminal {
+			return false
+		}
+	}
+	return noticeWholePaste(d)
+}
+
+func noticeWholePaste(d wire.Delivery) bool {
+	for _, m := range d.Members {
+		if m.Status != "delivered" && (m.Status != "pending" || m.ExpectedBytes <= 0 || m.DeliveredBytes != m.ExpectedBytes) {
 			return false
 		}
 	}

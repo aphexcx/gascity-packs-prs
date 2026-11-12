@@ -764,7 +764,7 @@ func (s *Server) PostNotice(ctx context.Context, m neversilent.Message, line str
 		return err
 	}
 	c, _ := s.clients()
-	_, _, err = c.CreateNotice(ctx, m.Conversation, line, m.Thread, named)
+	_, _, err = c.CreateNotice(ctx, m.Conversation, line, m.Thread, named, m.CanPost)
 	return err
 }
 

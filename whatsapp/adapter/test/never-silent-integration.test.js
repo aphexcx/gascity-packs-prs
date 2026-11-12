@@ -6,6 +6,29 @@ import { rig, adapterRequest, waitFor } from './fakes.js';
 import { OWNER_LINES } from '../src/never-silent.js';
 import { openJournal } from '../src/journal.js';
 
+test('never-silent integration: captioned reply activity survives primary receipt SIGKILL without replay', { timeout: 30000 }, async (t) => {
+  const r = await setup(t);
+  r.gc.recordOutbounds = true;
+  const first = r.start({ ...r.options, WHATSAPP_TEST_KILL_AT: 'after-media-receipt' });
+  r.gw.addText('example-owner', 'example-media-inbound', 'fixture request');
+  await waitFor(() => r.journal().some((line) => line.t === 'accepted' && line.verdict === 'delivered'));
+  r.clock.advance(120000);
+  const file = path.join(r.dir, 'example.jpg');
+  fs.writeFileSync(file, Buffer.from('ffd8ffe000104a46494600010100000100010000ffd9', 'hex'));
+  const body = { session_id: 's-mayor', conversation: { conversation_id: 'example-owner' }, file, caption: 'fixture reply words', idempotency_key: 'example-caption', metadata: { origin: 'cli' } };
+  const pending = adapterRequest(r.socket, 'POST', '/publish', body).catch(() => null);
+  assert.equal((await first.exited).signal, 'SIGKILL');
+  await pending;
+  await r.restart(r.options);
+  await waitFor(async () => { try { return (await adapterRequest(r.socket, 'GET', '/healthz')).status === 200; } catch { return false; } });
+  r.health('session_down');
+  await r.pump(70000, { stepMs: 10000 });
+  assert.equal(r.gw.sends.length, 1, 'startup must recover words before a retry');
+  const replay = await adapterRequest(r.socket, 'POST', '/publish', { ...body, session_id: 'different-retry-session' });
+  assert.equal(replay.json.delivered, true);
+  assert.equal(r.gw.sends.length, 1, 'cached receipt must not send again');
+});
+
 test('never-silent integration: primary delivered resolution clears a stale sidecar stop after restart', async (t) => {
   for (const via of ['operator', 'probe']) {
     const r = await setup(t);

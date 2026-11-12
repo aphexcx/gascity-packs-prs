@@ -72,3 +72,41 @@ func TestSessionActDuringOwnerSendSuppressesNextConversation(t *testing.T) {
 		t.Fatal("posted after session answered")
 	}
 }
+
+func TestNewPendingSupersedesStoppedAndDeliveredEvidence(t *testing.T) {
+	f := setup(t)
+	f.track("example", "conversation")
+	f.check(f.e.Result("example", "delivered", []string{"mayor"}))
+	f.check(f.e.Stop("example", false))
+	f.now = f.now.Add(time.Minute)
+	f.check(f.e.ResultAt("example", "pending", []string{"mayor"}, f.now))
+	f.restart()
+	f.now = f.now.Add(FailureWait)
+	f.health("session_down")
+	f.poll()
+	if len(f.posts) != 0 || len(f.mails) != 0 {
+		t.Fatal("new pending attempt retained obsolete failure/delivery evidence")
+	}
+}
+
+func TestHealthChangeDuringOwnerSendDoesNotPostStaleLine(t *testing.T) {
+	f := setup(t)
+	f.opts.Post = func(_ context.Context, m Message, text string) error {
+		f.posts = append(f.posts, text)
+		if m.ID == "a" {
+			f.health("seat_at_cap")
+		}
+		return nil
+	}
+	f.restart()
+	for _, id := range []string{"a", "b"} {
+		f.track(id, id)
+		f.check(f.e.Result(id, "delivered", []string{"mayor"}))
+	}
+	f.now = f.now.Add(FailureWait)
+	f.health("no_seat")
+	f.poll()
+	if len(f.posts) != 1 {
+		t.Fatalf("posted stale no-seat line after health changed: %v", f.posts)
+	}
+}

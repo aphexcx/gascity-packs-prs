@@ -2764,7 +2764,11 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			// Slack accepted this timestamp even if it truncated the body.
 			// Preserve the warning and report readback separately; re-posting
 			// would only create another partial message.
+			receipt.sourceSessionID = identitySessionID
 			cfg.publishReceipts.recordPosted(req.IdempotencyKey, &receipt, post)
+			if at, ok := ingestionPublishTime(slackResp.TS); ok {
+				cfg.recordNeverSilentWords(req.Conversation.ConversationID, req.ReplyToMessageID, identitySessionID, slackResp.TS, post.Text, at)
+			}
 			target.messageTS = slackResp.TS
 			receipt.readbackTarget = target
 			receipt.sourceSessionID = identitySessionID
@@ -2956,6 +2960,7 @@ func handlePublishFile(cfg config, reg *identityRegistry) http.HandlerFunc {
 
 		receipt.Delivered = true
 		receipt.FileID = urlResp.FileID
+		cfg.recordNeverSilentWords(req.Conversation.ConversationID, req.ReplyToMessageID, identitySessionID, urlResp.FileID, req.InitialComment, time.Now())
 		// Busy-reaction lifecycle, remove side: a threaded file upload
 		// may be the agent's entire reply — it must clear the pending
 		// busy mark exactly like a text publish (hw-94w5k codex r1).

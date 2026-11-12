@@ -134,6 +134,26 @@ func (cfg config) reconcileNeverSilent() error {
 	if !cfg.neverSilent.Enabled() {
 		return nil
 	}
+	if cfg.publishReceipts != nil {
+		entries, err := os.ReadDir(cfg.publishReceipts.dir)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".json") {
+				continue
+			}
+			r, err := cfg.publishReceipts.read(filepath.Join(cfg.publishReceipts.dir, entry.Name()))
+			if err != nil {
+				continue
+			}
+			if r.Delivered && r.NoticeSession != "" && !r.NoticeAt.IsZero() {
+				if err = cfg.neverSilent.Act(r.ConversationID, r.ThreadTS, r.NoticeSession, r.NoticeAt); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if cfg.companyGateway != nil && cfg.companyGateway.store() != nil {
 		receipts, err := cfg.companyGateway.store().List()
 		if err != nil {

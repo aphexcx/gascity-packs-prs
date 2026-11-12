@@ -54,6 +54,43 @@ test('never-silent health: the four states and every unknown case', (t) => {
   }
 });
 
+test('never-silent text, partial text and template recovery keeps original activity time and session', async (t) => {
+  for (const kind of ['text', 'partial-text', 'update']) {
+    const f = fixture(t);
+    f.e.track({ id: 'old-inbound', conversation: 'example-owner', targets: ['original-session'] });
+    f.e.result('old-inbound', 'delivered', ['original-session']);
+    f.now += 120000;
+    const proofs = new Map();
+    const gateway = { window: async () => ({ windows: [{ conversation_id: 'example-owner' }] }), send: async (request) => {
+      if (!proofs.has(request.idempotency_key)) proofs.set(request.idempotency_key, `proof-${proofs.size}`);
+      return { message_id: proofs.get(request.idempotency_key) };
+    } };
+    const make = (crash) => createPublisher({ stateDir: f.opts.stateDir, gateway, clock: () => f.now, notices: f.e,
+      gc: { recordOutbound: async () => ({ TranscriptEntry: { id: 'example' } }) },
+      ledger: { windowOpen: () => false, noteSend() { if (crash) throw new Error('process stopped after primary success'); } },
+    });
+    const body = { session_id: 'original-session', conversation: { conversation_id: 'example-owner' }, to: 'example-owner', text: kind === 'partial-text' ? 'a'.repeat(5000) : 'reply words', idempotency_key: 'original-key' };
+    const call = (publisher, b) => kind === 'update' ? publisher.handlePublishUpdate(JSON.stringify(b)) : publisher.handlePublish(JSON.stringify(b));
+    assert.equal((await call(make(true), body)).json.delivered, false);
+    assert.equal(proofs.size, 1, `${kind}: first successful chunk preceded the crash`);
+    f.restart();
+    const publisher = make(false);
+    f.now += 70000;
+    fs.writeFileSync(f.opts.healthFile, JSON.stringify({ state: 'session_down', since: new Date(f.now).toISOString(), checked_at: new Date(f.now).toISOString() }));
+    await f.e.poll();
+    assert.equal(f.posts.length, 0, `${kind}: startup recovered reply`);
+    f.now += 1000;
+    f.e.track({ id: 'new-inbound', conversation: 'example-owner', targets: ['retry-session'] });
+    f.e.result('new-inbound', 'delivered', ['retry-session']);
+    assert.equal((await call(publisher, { ...body, session_id: 'retry-session' })).json.delivered, true);
+    assert.equal(proofs.size, kind === 'partial-text' ? 2 : 1, `${kind}: retry only sent outstanding chunks`);
+    f.now += 180000;
+    fs.writeFileSync(f.opts.healthFile, JSON.stringify({ state: 'session_down', since: new Date(f.now).toISOString(), checked_at: new Date(f.now).toISOString() }));
+    await f.e.poll();
+    assert.equal(f.posts.length, 1, `${kind}: replay did not answer a newer request`);
+  }
+});
+
 function fixture(t, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'never-silent-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

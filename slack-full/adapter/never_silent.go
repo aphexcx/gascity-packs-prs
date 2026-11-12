@@ -51,6 +51,9 @@ func newNeverSilent(cfg config, identities *identityRegistry, aliases *handleAli
 				}
 				post.Username, post.IconURL, post.IconEmoji = "", "", ""
 			}
+			if m.CanPost != nil && !m.CanPost() {
+				return context.Canceled
+			}
 			result, err := postToSlack(token, post)
 			if err != nil {
 				return errors.New("Slack notice outcome unavailable")
@@ -81,6 +84,27 @@ func (cfg config) noticeError(err error) {
 	if err != nil {
 		log.Print("never-silent: durable observation failed")
 	}
+}
+
+// Record actual words independently of readback/proof and its optional journal.
+// The activity spool survives a failed sidecar write without retrying the post.
+func (cfg config) recordNeverSilentWords(conversation, thread, session, proof, words string, at time.Time) {
+	if !cfg.neverSilent.Enabled() || strings.TrimSpace(session) == "" || strings.TrimSpace(words) == "" || at.IsZero() {
+		return
+	}
+	a := struct {
+		Conversation string    `json:"conversation"`
+		Thread       string    `json:"thread"`
+		Session      string    `json:"session"`
+		At           time.Time `json:"at"`
+	}{conversation, thread, session, at}
+	body, err := json.Marshal(a)
+	if err == nil {
+		key := fmt.Sprintf("%x.json", sha256.Sum256([]byte(conversation+"\x00"+session+"\x00"+proof+"\x00"+at.UTC().Format(time.RFC3339Nano))))
+		err = companyWriteFileAtomic(filepath.Join(companyStateDirDefault(cfg.cityPath, "never-silent-acts"), key), body)
+	}
+	cfg.noticeError(err)
+	cfg.noticeError(cfg.neverSilent.Act(conversation, thread, session, at))
 }
 
 func (cfg config) trackNeverSilent(m externalInboundMessage, eventID string, addressed bool) {

@@ -66,6 +66,8 @@ type publishReceiptStore struct {
 }
 
 type storedPublishReceipt struct {
+	NoticeSession    string    `json:"notice_session,omitempty"`
+	NoticeAt         time.Time `json:"notice_at,omitempty"`
 	Delivered        bool      `json:"delivered"`
 	ConversationID   string    `json:"conversation_id"`
 	MessageID        string    `json:"message_id"`
@@ -176,7 +178,15 @@ func (s *publishReceiptStore) RecordPosted(key string, receipt publishReceipt, p
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	var noticeAt time.Time
+	noticeSession := ""
+	if strings.TrimSpace(post.Text) != "" && receipt.sourceSessionID != "" {
+		if at, ok := ingestionPublishTime(receipt.MessageID); ok {
+			noticeAt, noticeSession = at, receipt.sourceSessionID
+		}
+	}
 	return s.write(s.path(key), storedPublishReceipt{
+		NoticeAt: noticeAt, NoticeSession: noticeSession,
 		Delivered: true, ConversationID: receipt.Conversation.ConversationID,
 		MessageID: receipt.MessageID, ThreadTS: post.ThreadTS, ReplyToMessageID: post.ThreadTS,
 		PostedTextSHA256: publishReceiptDigest(post.Text), PostedAt: s.now().UTC(), Readback: "pending",

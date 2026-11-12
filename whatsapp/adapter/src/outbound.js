@@ -191,6 +191,7 @@ function createProgressStore({ file, clock, log, cap = 1024, ttlMs = 7 * DAY_MS 
 
   return {
     get: (key) => entries.get(key),
+    values: () => [...entries.values()],
     save(key, entry) {
       entry.updated_at = clock();
       entries.set(key, entry);
@@ -240,6 +241,34 @@ export function createPublisher({
   const progress = createProgressStore({ file: path.join(stateDir, PROGRESS_FILE), clock, log });
   const updatesFile = path.join(stateDir, UPDATES_FILE);
   const inflight = new Map(); // key -> { promise, conversationId, textSha, endpoint }
+
+  // Successful primary evidence retains its original sender and time. Recovery
+  // precedes notice polling and never attributes old words to a retry caller.
+  const activityByProof = new Map();
+  function restoreActivity(activity) {
+    if (!activity?.conversation || !activity.session || !activity.proof || !Number.isFinite(activity.at)) return;
+    const key = `${activity.conversation}\0${activity.proof}`;
+    const original = activityByProof.get(key) ?? activity;
+    activityByProof.set(key, original);
+    notices?.act(original.conversation, original.session, original.at);
+  }
+  function successfulActivity(conversation, session, proof) {
+    return activityByProof.get(`${conversation}\0${proof}`) ?? { conversation, session, proof, at: clock() };
+  }
+  const recoverActivity = notices?.status ? notices.status().enabled : Boolean(notices?.act);
+  if (recoverActivity) {
+    for (const entry of progress.values()) {
+      for (const activity of entry.activities ?? []) restoreActivity(activity);
+      restoreActivity(entry.activity);
+    }
+    try {
+      for (const line of fs.readFileSync(updatesFile, 'utf8').split('\n')) {
+        try { restoreActivity(JSON.parse(line).notice_activity); } catch (err) {
+          if (!(err instanceof SyntaxError)) throw err;
+        }
+      }
+    } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  }
 
   // Per-conversation serialization: two publishes to one owner never
   // interleave their chunks; different owners stay concurrent.
@@ -397,7 +426,7 @@ export function createPublisher({
     let entry = progress.get(key);
     if (entry?.receipt) return { status: 200, json: entry.receipt };
     if (!entry) {
-      entry = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [] };
+      entry = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [], session_id: sessionId };
     }
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer;
@@ -415,9 +444,12 @@ export function createPublisher({
       const messageId = str(answer.message_id);
       entry.message_ids[i] = messageId;
       entry.delivered = i + 1;
-      ledger?.noteSend?.(conversationId, { type: 'text', message_id: messageId, at: clock() });
-      notices?.act(conversationId, sessionId);
-      if (entry.delivered < chunks.length) progress.save(key, entry);
+      const activity = successfulActivity(conversationId, entry.session_id ?? sessionId, messageId);
+      entry.activities ??= [];
+      entry.activities.push(activity);
+      progress.save(key, entry);
+      ledger?.noteSend?.(conversationId, { type: 'text', message_id: messageId, at: activity.at });
+      restoreActivity(activity);
     }
     entry.receipt = {
       message_id: entry.message_ids[chunks.length - 1],
@@ -496,7 +528,7 @@ export function createPublisher({
         let entry = progress.get(key);
         if (!entry) {
           entry = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
-            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [] };
+            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [], session_id: sessionId };
         }
         const operation = sha256Hex(JSON.stringify([key, conversationId, textSha]));
         let uploading = false;
@@ -532,10 +564,11 @@ export function createPublisher({
           entry.message_ids = [sent.message_id];
           entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
             metadata: { chunks: '1', message_ids: sent.message_id, file_name: file.name, file_bytes: String(file.size), file_sha256: file.sha256 } };
+          if (caption.trim()) entry.activity = successfulActivity(conversationId, entry.session_id ?? sessionId, sent.message_id);
           progress.save(key, entry);
           killPoint('after-media-receipt', key);
           ledger?.noteSend?.(conversationId, { type: file.kind, message_id: sent.message_id, at: clock() });
-          if (caption.trim()) notices?.act(conversationId, sessionId);
+          restoreActivity(entry.activity);
           return { status: 200, json: entry.receipt };
         } catch (err) {
           if (err?.status === 422 && err.json?.error === 'window_closed') ledger?.noteWindowClosed?.(conversationId, clock());
@@ -629,6 +662,7 @@ export function createPublisher({
     }
     const messageId = str(answer.message_id);
     const at = clock();
+    const activity = successfulActivity(to, sessionId, messageId);
     let journaled = true;
     try {
       appendLine(updatesFile, {
@@ -639,6 +673,7 @@ export function createPublisher({
         message_id: messageId,
         template: UPDATE_TEMPLATE,
         language: updateLanguage,
+        notice_activity: activity,
       });
     } catch (err) {
       journaled = false;
@@ -646,7 +681,7 @@ export function createPublisher({
     }
     // The send ledger only: a template never opens or extends the window.
     ledger?.noteSend?.(to, { type: 'template', message_id: messageId, at });
-    notices?.act(to, sessionId);
+    restoreActivity(activity);
     const entry = {
       endpoint: 'update',
       conversation_id: to,
@@ -654,6 +689,7 @@ export function createPublisher({
       transcript_sha256: sha256Hex(updateTranscriptText(text)),
       chunks: 1,
       delivered: 1,
+      activity,
       message_ids: [messageId],
       receipt: {
         message_id: messageId,

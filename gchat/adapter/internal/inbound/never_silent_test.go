@@ -199,6 +199,68 @@ func TestNeverSilentLandedPendingAndBusyPending(t *testing.T) {
 	}
 }
 
+func TestNeverSilentTerminalWholePasteIsDeliveredAcrossRestart(t *testing.T) {
+	for _, memberTerminal := range []bool{false, true} {
+		t.Run(map[bool]string{false: "delivery terminal", true: "member terminal"}[memberTerminal], func(t *testing.T) {
+			rf := retrySetup(t)
+			dir := t.TempDir()
+			posts, mails := 0, 0
+			opts := neversilent.Options{Enabled: true, Path: filepath.Join(dir, "state.json"), HealthFile: filepath.Join(dir, "health.json"), OperatorContext: "example", Now: rf.clock.Now,
+				Post: func(context.Context, neversilent.Message, string) error { posts++; return nil }, Send: func(context.Context, neversilent.Mail) error { mails++; return nil }}
+			ns, err := neversilent.New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rf.opts.NeverSilent = ns
+			rf.rebuild(t)
+			m := message()
+			m.Space.SpaceType = "DIRECT_MESSAGE"
+			rf.google.Configure(func(s *fakegoogle.Server) { s.Spaces[space] = &api.Space{Name: space, SpaceType: "DIRECT_MESSAGE"} })
+			rf.script(wire.Delivery{Status: "pending", ReceiptID: "example-receipt"})
+			handle(t, rf.fixture, event("example-event", "message.created", m))
+			d := wire.Delivery{Status: "pending", Terminal: !memberTerminal, Members: []wire.DeliveryMember{{Status: "pending", Terminal: memberTerminal, ExpectedBytes: 100, DeliveredBytes: 100, SessionID: "mayor"}}}
+			if err = rf.p.concludedPending(messageName, d); err != nil {
+				t.Fatal(err)
+			}
+			if rf.change(t, messageName).Status != "unresolved" {
+				t.Fatal("primary operator hold changed")
+			}
+			if err = ns.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if mails != 0 {
+				t.Fatal("whole paste opened not-delivered outage")
+			}
+			ns, err = neversilent.New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rf.opts.NeverSilent = ns
+			rf.rebuild(t)
+			if err = rf.p.Pass(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			rf.clock.Add(3 * time.Minute)
+			if err = ns.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if posts != 0 || mails != 0 {
+				t.Fatal("restart restored a false stop")
+			}
+			stamp := rf.clock.Now().Format(time.RFC3339)
+			if err = os.WriteFile(opts.HealthFile, []byte(`{"state":"session_down","since":"`+stamp+`","checked_at":"`+stamp+`"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = ns.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if posts != 1 {
+				t.Fatal("whole paste did not preserve delivered health eligibility")
+			}
+		})
+	}
+}
+
 func TestNeverSilentWithdrawalAfterDelivery(t *testing.T) {
 	rf := retrySetup(t)
 	dir := t.TempDir()

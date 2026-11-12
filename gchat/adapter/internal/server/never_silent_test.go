@@ -129,3 +129,53 @@ func TestNeverSilentFirstNoticeResolvesUncachedSpaceType(t *testing.T) {
 		t.Fatal("notice missing")
 	}
 }
+
+func TestNeverSilentSessionActDuringSpaceLookupCancelsNotice(t *testing.T) {
+	f := setup(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	c, err := chat.New(context.Background(), &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/spaces") {
+			close(entered)
+			<-release
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})}, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetClients(c, f.options.GC)
+	now := time.Now()
+	e, err := neversilent.New(neversilent.Options{Enabled: true, Path: filepath.Join(t.TempDir(), "state.json"), Now: func() time.Time { return now }, Post: f.s.PostNotice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Track(neversilent.Message{ID: "example", Conversation: "spaces/room", Created: now.Add(-4 * time.Minute), Targets: []string{"mayor"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.StopAt("example", false, now.Add(-4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- e.Poll(context.Background()) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("notice did not reach space lookup")
+	}
+	if err = e.Act("spaces/room", "", "mayor", now); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	close(release)
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	f.g.Configure(func(g *fakegoogle.Server) {
+		for _, m := range g.Messages {
+			if m.Text == neversilent.DownLine {
+				t.Fatal("notice posted after session act during lookup")
+			}
+		}
+	})
+}

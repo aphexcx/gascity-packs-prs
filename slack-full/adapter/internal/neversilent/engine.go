@@ -30,21 +30,23 @@ var meanings = map[string]string{
 }
 
 type Message struct {
-	ID           string    `json:"id"`
-	Conversation string    `json:"conversation"`
-	Thread       string    `json:"thread,omitempty"`
-	Created      time.Time `json:"created"`
-	Targets      []string  `json:"targets,omitempty"`
-	OwnerAgent   string    `json:"owner_agent,omitempty"`
-	Observed     time.Time `json:"observed,omitempty"`
-	ObservedKind string    `json:"observed_kind,omitempty"`
-	Delivered    time.Time `json:"delivered,omitempty"`
-	FailureSince time.Time `json:"failure_since,omitempty"`
-	FailureKind  string    `json:"failure_kind,omitempty"`
-	Stopped      time.Time `json:"stopped,omitempty"`
-	Uncertain    bool      `json:"uncertain,omitempty"`
-	Removed      bool      `json:"removed,omitempty"`
-	Notified     bool      `json:"notified,omitempty"`
+	// CanPost is a live dispatch guard, never part of durable state.
+	CanPost      func() bool `json:"-"`
+	ID           string      `json:"id"`
+	Conversation string      `json:"conversation"`
+	Thread       string      `json:"thread,omitempty"`
+	Created      time.Time   `json:"created"`
+	Targets      []string    `json:"targets,omitempty"`
+	OwnerAgent   string      `json:"owner_agent,omitempty"`
+	Observed     time.Time   `json:"observed,omitempty"`
+	ObservedKind string      `json:"observed_kind,omitempty"`
+	Delivered    time.Time   `json:"delivered,omitempty"`
+	FailureSince time.Time   `json:"failure_since,omitempty"`
+	FailureKind  string      `json:"failure_kind,omitempty"`
+	Stopped      time.Time   `json:"stopped,omitempty"`
+	Uncertain    bool        `json:"uncertain,omitempty"`
+	Removed      bool        `json:"removed,omitempty"`
+	Notified     bool        `json:"notified,omitempty"`
 }
 
 type act struct {
@@ -260,6 +262,13 @@ func (e *Engine) ResultAt(id, kind string, targets []string, at time.Time) error
 	}
 	m.Observed = now
 	m.ObservedKind = kind
+	// A newer delivery attempt supersedes terminal and positive evidence from
+	// the previous attempt. Replayed identical observations return above.
+	m.Stopped = time.Time{}
+	m.Uncertain = false
+	if kind != "delivered" {
+		m.Delivered = time.Time{}
+	}
 	if len(targets) > 0 {
 		m.Targets = slices.Clone(targets)
 	}
@@ -496,8 +505,15 @@ func (e *Engine) Poll(ctx context.Context) error {
 			return ctx.Err()
 		}
 		cause, ready := e.cause(e.state.Messages[p.message.ID], ReadHealth(e.opts.HealthFile, e.opts.Now(), HealthMaxAge), e.opts.Now())
-		if cause == "" || !ready {
+		if cause == "" || !ready || line(cause) != p.line {
 			continue
+		}
+		p.message.CanPost = func() bool {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			now := e.opts.Now()
+			cause, ready := e.cause(e.state.Messages[p.message.ID], ReadHealth(e.opts.HealthFile, now, HealthMaxAge), now)
+			return ready && cause != "" && line(cause) == p.line
 		}
 		if err := e.effect(func() error { return e.opts.Post(ctx, p.message, p.line) }); err != nil {
 			e.opts.Log("never-silent: owner post refused or uncertain; reserved mark retained")

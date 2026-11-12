@@ -151,7 +151,7 @@ func (c *Client) CreateMessage(ctx context.Context, space, text, thread, request
 
 // CreateNotice attempts an adapter-authored notice once. Its caller has already
 // reserved a durable cooldown mark; even a rate limit must not start a retry loop.
-func (c *Client) CreateNotice(ctx context.Context, space, text, thread string, named bool) (string, string, error) {
+func (c *Client) CreateNotice(ctx context.Context, space, text, thread string, named bool, allowed ...func() bool) (string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	m := &googlechat.Message{Text: text}
@@ -164,6 +164,9 @@ func (c *Client) CreateNotice(ctx context.Context, space, text, thread string, n
 	}
 	if err := c.limits.WaitWrite(ctx, space); err != nil {
 		return "", "", err
+	}
+	if len(allowed) > 0 && allowed[0] != nil && !allowed[0]() {
+		return "", "", context.Canceled
 	}
 	result, err := call.Context(ctx).Do()
 	if err != nil {

@@ -175,7 +175,7 @@ func TestNeverSilentReconcilesDeadLettersWithoutResurrectingDelivery(t *testing.
 }
 
 func TestNeverSilentCompanyRecoveryAndSessionActivity(t *testing.T) {
-	for _, mode := range []string{"primary-only", "old", "other-agent", "foreign-city", "reaction", "other-thread", "activity-spool", "published-intent", "journal-act", "corrupt-history"} {
+	for _, mode := range []string{"primary-only", "old", "other-agent", "foreign-city", "reaction", "other-thread", "activity-spool", "published-intent", "journal-act", "redrive", "corrupt-history"} {
 		t.Run(mode, func(t *testing.T) {
 			h, _, _, _ := setupMpim(t)
 			now := time.Now()
@@ -192,6 +192,9 @@ func TestNeverSilentCompanyRecoveryAndSessionActivity(t *testing.T) {
 			}
 			origin := baseOrigin()
 			td := TargetDelivery{Agent: "ollie", Session: "mayor", Kind: wakeKindTargeted, Status: companyTargetDelivered, NoticeKind: "delivered", UpdatedAt: now.Add(-4 * time.Minute)}
+			if mode == "redrive" {
+				td.Status, td.NoticeKind = companyTargetFailed, "pending"
+			}
 			if mode == "other-agent" {
 				td.Session = "other"
 			}
@@ -209,6 +212,14 @@ func TestNeverSilentCompanyRecoveryAndSessionActivity(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch mode {
+			case "redrive":
+				var current *IngressReceipt
+				current, err = h.receipts.Get(origin)
+				if err == nil {
+					td.Status, td.NoticeKind, td.UpdatedAt = companyTargetPending, "pending", now
+					current.Targets["target"] = td
+					err = h.receipts.Update(current)
+				}
 			case "reaction":
 				err = e.Reaction(neverSilentID(origin.ChannelID, origin.TS), "mayor", now)
 			case "other-thread":
