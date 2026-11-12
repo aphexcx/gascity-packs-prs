@@ -1,5 +1,8 @@
 # WhatsApp env-file resolution: round 2
 
+The [round 2c delivery results](#round-2c-delivery) below supersede the earlier
+round 2b stop. Earlier measurements are retained as history.
+
 This round restores the city fallback in the shared resolver. A pack command
 receives `GC_CITY_PATH`, while the supervised adapter also receives
 `GC_SERVICE_SECRETS_DIR`; both now select the same file for this pack.
@@ -180,3 +183,85 @@ the real-time deadline before any clock pumping. The media case has a separate
 proved root cause. The measured 1/5/15-minute host load averages were
 10.36/8.38/9.03 before the serial run and 8.23/7.57/8.15 after it on 32 logical
 CPUs; CPU saturation was not measured. No adapter JavaScript or test was changed.
+
+## Round 2c delivery
+
+The saved fix was committed as
+`a7e3d16aa6339d68c1e1716aa99e65e931be74ec`. Its diff from
+`2c22dbc5f70b66a8add375e12b86486dae6c273d` over `whatsapp/` exactly matches
+the saved round 2 patch. The only later change to that fix is documentation:
+the pack README now includes the city fallback and the shared path semantics,
+addressing the STANDARD review's minor finding. No resolver production code
+or pack test was changed after the saved patch.
+
+Main `dce538c80df3fa7731bec3d65c3d12b685530ce8` was merged once, as
+`deff8424ab9ddfea51caba10bcb0f9d57b0c55ff`, with no conflicts or manual
+resolutions. The merge imported main's changelog, gateway fixture, reactions,
+and skill changes unchanged. The resolver fix and its tests remained identical.
+There was no merge resolution delta requiring another review round.
+
+From `whatsapp/`, with the Node toolchain first on PATH:
+
+```text
+env -u GC_TEMPLATE uv run --with pytest python3 -m pytest tests -q -s
+Fix commit: 76 passed in 45.85s
+Merged commit: 76 passed in 35.50s
+```
+
+`pnpm exec node --version` reported **v24.21.0**. Python was **3.13**;
+pytest was supplied by `uv run --with pytest`. No unsupported-engine warning
+occurred. All 16 matrix observations at the merged commit match the saved
+round 2 results: eight combinations, each with absolute and relative paths.
+The triples below are enroll / run / doctor; the marked row is the behavior
+change from round 1.
+
+| C | E | S | Round 2 | Merged commit |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | 0 | home / home / home | home / home / home |
+| 0 | 0 | 1 | service / service / service | service / service / service |
+| 0 | 1 | 0 | override / override / override | override / override / override |
+| 0 | 1 | 1 | override / override / override | override / override / override |
+| **1** | **0** | **0** | **city / city / city** | **city / city / city** |
+| 1 | 0 | 1 | service / service / service | service / service / service |
+| 1 | 1 | 0 | override / override / override | override / override / override |
+| 1 | 1 | 1 | override / override / override | override / override / override |
+
+The adapter identity check at the merged commit produced empty output
+(zero bytes, exit 0):
+
+```text
+git diff dce538c80df3fa7731bec3d65c3d12b685530ce8 HEAD -- whatsapp/adapter/src whatsapp/adapter/test
+```
+
+Only case (6b) was selected in three runs on a scratch `git archive` extract
+of the original PR base, `c546802da5d42fb5d073b7d0bab6716b2e48b6f5`.
+From that extract's `whatsapp/adapter/test/`, each invocation was:
+
+```sh
+pnpm exec node --test --test-concurrency=1 \
+  --test-name-pattern='^\(6b\)\ the\ receipt\ read\ back\ as\ unknown\ \(gc\ restarted,\ transcript\ kept\):\ the\ record\ is\ found,\ one\ marked\ copy,\ acked\ on\ its\ delivered\ receipt$'
+```
+
+| Attempt | Selected case | Exit | Case duration |
+| --- | --- | --- | --- |
+| 1 | PASS | 0 | 372.491708 ms |
+| 2 | PASS | 0 | 379.855916 ms |
+| 3 | PASS | 0 | 337.219959 ms |
+
+Each filtered directory run also reports 15 empty-file/harness successes;
+these are not additional case coverage. The selected case executed in every
+run. These adapter observations are non-gating; no full adapter suite ran in
+this round, and no adapter JavaScript or test changed.
+
+The one STANDARD self-review of the fix commit returned **CLEAN**:
+**0 BLOCKER / 0 MAJOR / 1 MINOR / 0 NIT**. Its minor documentation finding
+was confirmed by the merged matrix selecting the city file while the README
+still listed service then home. **FIXED:** the README now lists the city
+fallback. The earlier round 1 gate and finding check's major issue (different
+command and supervisor environments) is **FIXED** by the saved fix and its
+class-level test. The earlier round 1 self-review's guidance minor was already
+**FIXED** in `2c22dbc5f70b66a8add375e12b86486dae6c273d`; the guidance now
+also includes the restored city fallback.
+
+Public-repository check: done, 0 sensitive-content changes needed. Fixture
+values are invented; raw test logs and reviewer transcripts remain private.
