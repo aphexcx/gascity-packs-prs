@@ -241,8 +241,8 @@ sandbox) and read the transcripts here.
 
 ## Public repository
 
-Before the push I read the round's whole delta, its six commit messages,
-and PR 91's title and body against the public-repository rule. The pattern
+Before the push I read the round's whole delta, every commit message of
+the round, and PR 91's title and body against the public-repository rule. The pattern
 covered home and temp paths, the customer names on the rule's list, Slack,
 phone, user and message ids, email addresses, keys and tokens, hosts and
 ports, and the gate tool's account line.
