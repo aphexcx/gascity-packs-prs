@@ -585,7 +585,7 @@ func fetchThreadRepliesPage(ctx context.Context, token string, q url.Values) (sl
 
 // Ownership is an existence query over all pages, not a retained context
 // window. Stop as soon as an own post is found, without losing early replies.
-func fetchThreadHasOwnBotPost(ctx context.Context, token, channel, threadTS, botUserID, currentTS string) (bool, error) {
+func fetchThreadHasOwnBotPost(ctx context.Context, token, channel, threadTS, botUserID, currentTS string, ignore ...func(string) bool) (bool, error) {
 	q := url.Values{"channel": {channel}, "ts": {threadTS}, "limit": {strconv.Itoa(ownThreadScanLimit)}}
 	if currentTS != "" {
 		q.Set("latest", currentTS)
@@ -597,7 +597,7 @@ func fetchThreadHasOwnBotPost(ctx context.Context, token, channel, threadTS, bot
 		if err != nil {
 			return false, err
 		}
-		if threadHasOwnBotPost(sr.Messages, botUserID, currentTS) {
+		if threadHasOwnBotPost(sr.Messages, botUserID, currentTS, ignore...) {
 			return true, nil
 		}
 		cursor := strings.TrimSpace(sr.ResponseMetadata.NextCursor)

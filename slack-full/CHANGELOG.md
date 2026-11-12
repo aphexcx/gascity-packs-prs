@@ -10,6 +10,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Inbound HOLD review corrections** (gp-k1vn, PR 85 round 2): alias replay
+  restores provisional reply routing and resolves the current handle; vouches
+  and follower rungs wake ordered retries, including a final attempt at the
+  bound. Pending receipts have their own 5s/30s clock. Unpollable and refused
+  records remain visible without blocking later messages. Notices have durable
+  failure backoff, close at retirement, ignore reactions and do not create own
+  threads. Automatic and bare-command replay have a configurable 24h maximum
+  age; `inbound-redrive --include-older` previews its count before explicitly
+  replaying older history, including 30-day records. History is never deleted. An acknowledge form
+  records hand checks. Counts deduplicate human lines, recovery restores busy
+  marks only while unanswered, and damaged state/history no longer prevents startup.
+  Alias 408/429 use bounded retries and a final attempt before dead-lettering;
+  permanent alias 4xx remain excluded from replay. Lost pending aliases refresh
+  their destination and FIFO before replacement. Incomplete history scans keep
+  unresolved records for a hand check instead of risking duplicate replay, and
+  HOLD preserves an unanswered predecessor's busy mark, including suppressed
+  alias routes and duplicate Slack event twins. Reaction ownership transfers
+  under the channel delivery lock and retains a durable mirror until piggyback
+  completion. Mixed-fanout paste evidence prevents replay; pending reaction
+  receipts carry an optional generation so delayed history writes stay obsolete.
+  Returned reactions do not count toward solo overflow wakes, and late pending
+  receipts preserve a concurrent acknowledgement.
+  Explicit replay permission is saved before queue acceptance and survives FIFO
+  waits; recovered hourglasses wait for the original HOLD cleanup to finish.
+  A later held line cannot shorten a rearmed history replay's cooldown.
+  Immediately failed reactions retain durable no-wake ownership across crashes
+  and shutdown spooling. Redrive acceptance uses a persisted request generation
+  to preserve newer permission without waiting for recovery HTTP calls,
+  and every alias retarget removes the departing destination's routing record.
+  Delayed reaction handoffs recheck current ownership and receipt generation
+  after acquiring the channel lock, preserving newer outcomes and one side copy.
+  Permanent reaction refusals settle the durable mirror too; legacy refusal
+  imports use the same classifier as live delivery.
+  Acknowledgements persist independently of recovery HTTP calls and fence
+  replacement sends after a pending receipt resolves. HOLD cleanup waits for
+  all registered twin reaction adds before removing their merged busy mark.
+  Acknowledgement releases the state lock before history I/O and merges only its
+  terminal marker afterward, avoiding history-import lock inversion and stale outcomes.
+  Queued recovery rechecks acknowledgement after acquiring the channel lock, before
+  any routing record or replacement POST, including retargeted aliases.
+  Optional fields
+  and rollback decoder compatibility are documented in the README.
+
+- **Durable inbound holds and ordered redrive** (gp-b06o): an unvouched
+  channel/DM, peer-bot or alias delivery backs off over minutes, with a configurable 30-minute
+  deadline. One adapter thread reply surfaces the incident and is edited on
+  recovery. Dead letters retain history, replay with a late marker and original
+  receipt provenance, and can be queued with `gc slack inbound-redrive`.
+  Liveness counts held and dead-lettered lines as missed. The gc gf-52ym `held`
+  receipt permits retries and supplies composer state for the notice; `pending`
+  remains polling-only until definite loss. Polled batch completions preserve
+  the submitted journal identity, including across restart.
+  Peer rendering parts survive recovery, completed payloads compact away, and
+  large histories or torn append tails no longer disable adapter startup.
+  Incomplete liveness dead letters remain missed for manual recovery from Slack.
+
 - **Session-proven inbound ingestion receipts** (gp-41p6): local deliveries
   receive `ingested` only after the complete payload appears in a rendered
   Claude or Codex session record. After three minutes without proof, the journal

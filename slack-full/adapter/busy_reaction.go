@@ -382,6 +382,13 @@ func (r *busyReactionRegistry) markWithDone(channel, threadKey, messageTS string
 // a woken redelivery cannot re-mark the timestamp while the old
 // attempt's cancellation is still in flight.
 func (r *busyReactionRegistry) cancelBoth(channel, threadTS, messageTS string, addDone chan struct{}, restore []busyDisplaced) (blocked []busyTaken) {
+	blocked, _ = r.cancelBothTaken(channel, threadTS, messageTS, addDone, restore)
+	return blocked
+}
+
+// HOLD cleanup also needs the removed marks' merged completion channels:
+// concurrent Slack twins may have registered more than this event's add.
+func (r *busyReactionRegistry) cancelBothTaken(channel, threadTS, messageTS string, addDone chan struct{}, restore []busyDisplaced) (blocked, cancelled []busyTaken) {
 	if r != nil && channel != "" && messageTS != "" {
 		r.mu.Lock()
 		now := r.clock()
@@ -400,6 +407,7 @@ func (r *busyReactionRegistry) cancelBoth(channel, threadTS, messageTS string, a
 		for _, k := range keys {
 			key := busyReactionKey{channel: channel, threadKey: k}
 			if m, ok := r.entries[key]; ok && m.messageTS == messageTS {
+				cancelled = append(cancelled, busyTaken{messageTS: m.messageTS, addDone: m.addDone})
 				delete(r.entries, key)
 				perKey[k] = append(perKey[k], m.stale...)
 			}
@@ -410,7 +418,7 @@ func (r *busyReactionRegistry) cancelBoth(channel, threadTS, messageTS string, a
 	if addDone != nil {
 		close(addDone)
 	}
-	return blocked
+	return blocked, cancelled
 }
 
 // restoreLocked re-parks per-key mark pools: an unowned key gets the

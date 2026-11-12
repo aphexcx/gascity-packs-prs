@@ -170,6 +170,17 @@ absence of proof is not a claim that
 the message was definitely lost. The existing dead-letter file continues to
 represent failed transport handoffs.
 
+Transport recovery is separate from this observer: the durable HOLD queue
+retries only definite non-delivery, polls outstanding receipts, and excludes
+unpollable or refused records from automatic sends. Its status posts are
+adapter-authored, never session acts or own-thread evidence. A terminal handoff
+notice does not prove submission or reading. Dead letters older than the
+configured 24h replay limit remain recorded and are skipped by automatic replay
+and bare redrive. Explicit `--include-older` previews the eligible count before
+requesting older replay. An operator can acknowledge a hand-checked line without
+deleting its history. See the README's held-delivery section for clocks, notice bounds,
+counts, additive state fields and acknowledgement syntax.
+
 The observer starts with the adapter by default. Set
 `SLACK_INGESTION_OBSERVER_DISABLED=1` before starting the adapter to disable
 transcript polling and observer alerts; inbound journaling remains enabled
