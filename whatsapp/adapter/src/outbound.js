@@ -245,18 +245,37 @@ export function createPublisher({
   // Successful primary evidence retains its original sender and time. Recovery
   // precedes notice polling and never attributes old words to a retry caller.
   const activityByProof = new Map();
-  function restoreActivity(activity) {
-    if (!activity?.conversation || !activity.session || !activity.proof || !Number.isFinite(activity.at)) return;
+  const recoverActivity = notices?.status ? notices.status().enabled : Boolean(notices?.act);
+  // This history is independent of the seven-day/count-bounded progress cache.
+  // A gateway may still replay a proof after that cache has discarded its key.
+  const activityFile = path.join(stateDir, 'never-silent-outbound.json');
+  const validActivity = (a) => a?.conversation && a.proof && typeof a.session === 'string' && Number.isFinite(a.at);
+  if (recoverActivity) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(activityFile, 'utf8'));
+      for (const a of saved.activities ?? []) {
+        if (validActivity(a)) activityByProof.set(`${a.conversation}\0${a.proof}`, a);
+      }
+    } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  }
+  function rememberActivity(activity) {
     const key = `${activity.conversation}\0${activity.proof}`;
-    const original = activityByProof.get(key) ?? activity;
-    activityByProof.set(key, original);
+    const original = activityByProof.get(key);
+    if (original) return original;
+    if (recoverActivity) writeFileAtomic(activityFile, `${JSON.stringify({ activities: [...activityByProof.values(), activity] })}\n`);
+    activityByProof.set(key, activity);
+    return activity;
+  }
+  function restoreActivity(activity) {
+    if (!validActivity(activity)) return;
+    const original = rememberActivity(activity);
     notices?.act(original.conversation, original.session, original.at);
   }
   function successfulActivity(conversation, session, proof) {
-    return activityByProof.get(`${conversation}\0${proof}`) ?? { conversation, session, proof, at: clock() };
+    return rememberActivity({ conversation, session, proof, at: clock() });
   }
-  const recoverActivity = notices?.status ? notices.status().enabled : Boolean(notices?.act);
   if (recoverActivity) {
+    for (const activity of activityByProof.values()) restoreActivity(activity);
     for (const entry of progress.values()) {
       for (const activity of entry.activities ?? []) restoreActivity(activity);
       restoreActivity(entry.activity);

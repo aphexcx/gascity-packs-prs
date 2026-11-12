@@ -3286,7 +3286,9 @@ func handleReact(cfg config) http.HandlerFunc {
 		default:
 			receipt.Delivered = true
 		}
-		if receipt.Delivered && !req.Remove {
+		// already_reacted is successful delivery of the requested state, but
+		// it is not a new session action and must not answer a newer request.
+		if err == nil && slackResp.OK && !req.Remove {
 			cfg.noticeError(cfg.neverSilent.Act(req.Conversation.ConversationID, "", strings.TrimSpace(req.SessionID), time.Now()))
 			cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 				Kind: "reaction", Source: "session_react", Channel: req.Conversation.ConversationID,

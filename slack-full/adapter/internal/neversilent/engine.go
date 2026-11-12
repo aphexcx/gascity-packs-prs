@@ -337,15 +337,18 @@ func (e *Engine) StopAt(id string, definite bool, at time.Time) error {
 func (e *Engine) Enabled() bool { return e != nil && e.opts.Enabled }
 
 func (e *Engine) Forget(id string) error {
-	if e == nil || !e.opts.Enabled {
+	if e == nil || !e.opts.Enabled || id == "" {
 		return nil
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	m, ok := e.state.Messages[id]
-	if !ok || m.Removed {
+	m := e.state.Messages[id]
+	if m.Removed {
 		return nil
 	}
+	// Deletion can precede asynchronous target resolution and admission. Keep
+	// its tombstone so a later Track (including recovery) cannot revive it.
+	m.ID = id
 	m.Removed = true
 	return e.change(func(s *state) { s.Messages[id] = m })
 }

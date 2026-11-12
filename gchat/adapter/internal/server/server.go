@@ -657,14 +657,13 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		if i == 0 && send.Upload != nil {
 			attachments = []*api.Attachment{{AttachmentDataRef: &api.AttachmentDataRef{ResourceName: send.Upload.ResourceName, AttachmentUploadToken: send.Upload.UploadToken}}}
 		}
-		name, thread, e := c.CreateMessageWithAttachments(ctx, send.Space, part.Text, send.Thread, part.RequestID, named, attachments)
+		name, thread, sentAt, e := c.CreateMessageWithAttachmentsAndTime(ctx, send.Space, part.Text, send.Thread, part.RequestID, named, attachments)
 		if e != nil {
 			return s.failure(p, e), e
 		}
 		send.Parts[i].MessageName = name
-		sentAt := time.Now().UTC()
 		send.Thread = thread
-		if strings.TrimSpace(part.Text) != "" {
+		if strings.TrimSpace(part.Text) != "" && !sentAt.IsZero() {
 			actThread := thread
 			if p.ReplyToMessageID == "" {
 				actThread = ""

@@ -15,6 +15,76 @@ import (
 	"github.com/sjarmak/gc-slack-adapter/internal/neversilent"
 )
 
+func TestNeverSilentRepeatedReactionIsNotNewActivity(t *testing.T) {
+	for _, repeat := range []bool{true, false} {
+		t.Run(fmt.Sprintf("repeat=%t", repeat), func(t *testing.T) {
+			now := time.Now()
+			dir := t.TempDir()
+			posts := 0
+			health := filepath.Join(dir, "health.json")
+			opts := neversilent.Options{Enabled: true, Path: filepath.Join(dir, "notices.json"), HealthFile: health, Now: func() time.Time { return now }, Post: func(context.Context, neversilent.Message, string) error { posts++; return nil }}
+			e, err := neversilent.New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if repeat && calls > 1 {
+					_, _ = w.Write([]byte(`{"ok":false,"error":"already_reacted"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			defer fake.Close()
+			base := slackAPIBase
+			slackAPIBase = fake.URL
+			defer func() { slackAPIBase = base }()
+			cfg := config{cityPath: dir, neverSilent: e, inboundJournal: &inboundJournal{dir: filepath.Join(dir, "journal")}}
+			react := func() {
+				w := httptest.NewRecorder()
+				handleReact(cfg)(w, httptest.NewRequest(http.MethodPost, "/react", strings.NewReader(`{"conversation":{"conversation_id":"example-channel"},"message_id":"old-message","emoji":"eyes","session_id":"example-session"}`)))
+				var receipt reactReceipt
+				if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil || !receipt.Delivered {
+					t.Fatalf("reaction was not delivered: %s", w.Body.String())
+				}
+			}
+			react()
+			now = time.Now()
+			if err = e.Track(neversilent.Message{ID: "new-request", Conversation: "example-channel", Created: now}); err != nil {
+				t.Fatal(err)
+			}
+			if err = e.Result("new-request", "delivered", []string{"example-session"}); err != nil {
+				t.Fatal(err)
+			}
+			react()
+			e, err = neversilent.New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.neverSilent = e
+			if err = cfg.reconcileNeverSilent(); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(3 * time.Minute)
+			stamp := now.Format(time.RFC3339)
+			if err = os.WriteFile(health, []byte(`{"state":"session_down","since":"`+stamp+`","checked_at":"`+stamp+`"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = e.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if repeat {
+				want = 1
+			}
+			if posts != want {
+				t.Fatalf("posts=%d want=%d; provider no-op became fresh activity", posts, want)
+			}
+		})
+	}
+}
+
 func TestNeverSilentSuccessfulWordsBeforeReadbackAndRecovery(t *testing.T) {
 	for _, mode := range []string{"accepted-text", "caption", "empty-caption", "receipt-recovery"} {
 		t.Run(mode, func(t *testing.T) {

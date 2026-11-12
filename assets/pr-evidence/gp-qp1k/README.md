@@ -176,11 +176,11 @@ Toolchains: Go 1.27.3 on darwin/arm64; Node v24.21.0 from
   warnings concern `os.fork()` from a multithreaded test.
 - `make test PYTEST_DIRS=whatsapp/tests`: 57 passed.
 - WhatsApp `pnpm test` (the package script runs
-  `node --test --test-concurrency=2 'test/*.test.js'`): 271 passed, no skips or
+  `node --test --test-concurrency=2 'test/*.test.js'`): 274 passed, no skips or
   failures, with no competing suite running.
-- Slack `go test ./... -count=1 -json`: 1,516 top-level tests and 13,178 total
+- Slack at the round 2 revision, `go test ./... -count=1 -json`: 1,516 top-level tests and 13,178 total
   test events passed across three packages.
-- Google Chat `go test ./... -p 1 -count=1 -timeout=30m -json`: 678 top-level
+- Google Chat at the round 2 revision, `go test ./... -p 1 -count=1 -timeout=30m -json`: 678 top-level
   tests and 1,886 test events passed; 21 packages passed and the server package
   failed only unchanged `TestCommandPreparationFailureSettlesExistingIntent/send-lock`.
   Its 200 ms deadline starts before durable intent preparation and expired
@@ -280,6 +280,35 @@ its production fix:
    `TestHealthChangeDuringOwnerSendDoesNotPostStaleLine` and
    `TestNeverSilentSessionActDuringSpaceLookupCancelsNotice` reproduce both
    stale copy and intervening session activity.
+
+Native Codex DEEP round 3 reviewed `eb338e4ee2db32f51fda47a3b1102f1068e7ec3d`
+and returned BLOCK with two MAJOR classes. Both were reproduced before fixing:
+
+1. FIXED — Provider replays could make old actions look current. Google text
+   and captioned-file creates now preserve the provider's original creation
+   time, including acceptance followed by a failed local receipt write.
+   `TestNeverSilentReplayedCreateRetainsOriginalActivityTime` reproduces both
+   cases. WhatsApp retains original proof/session/time separately from prunable
+   outbound progress; its replay test covers the seven-day age and 1,024-entry
+   count bounds. The gateway returns only a message ID, so this local history
+   supplies the original evidence. Slack keeps `already_reacted` successful
+   for the reaction API, but it creates no fresh activity or journal entry.
+   `TestNeverSilentRepeatedReactionIsNotNewActivity` includes a fresh reaction
+   control and restart reconciliation.
+2. FIXED — A withdrawal received before asynchronous enrollment was lost.
+   Both Go engines now persist a removed-message record even for an unknown
+   ID. Later tracking and primary recovery respect that record.
+   `TestWithdrawalBeforeEnrollmentSurvivesRestart` reproduced the shared fault.
+   `TestNeverSilentCompanyHumanRoutes` also reproduced it for rooms, DMs and
+   MPIMs with occupied dispatch slots, deletion, observer restart and receipt
+   sweep; all three pass after the fix.
+
+After these fixes, Google `go test ./internal/neversilent ./internal/chat
+./internal/server -count=1 -json` passed 144 top-level / 320 test events.
+Slack `go test . ./internal/neversilent -run
+'TestNeverSilent|TestWithdrawalBeforeEnrollment|TestHandleReact' -count=1 -json`
+passed 15 top-level / 70 events. The full-suite results above are labeled by
+their prior stage where applicable; later full checks are recorded in READY.
 
 ## Source research and limits
 

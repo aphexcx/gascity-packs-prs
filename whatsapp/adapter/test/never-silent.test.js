@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readHealth, createNeverSilent } from '../src/never-silent.js';
-import { createPublisher } from '../src/outbound.js';
+import { createPublisher, PROGRESS_FILE } from '../src/outbound.js';
 
 test('never-silent rechecks eligibility inside the publisher queue after session words', async (t) => {
   const f = fixture(t);
@@ -89,6 +89,40 @@ test('never-silent text, partial text and template recovery keeps original activ
     await f.e.poll();
     assert.equal(f.posts.length, 1, `${kind}: replay did not answer a newer request`);
   }
+});
+
+test('never-silent provider replay after progress expiry does not answer a newer request', async (t) => {
+  for (const pruning of ['age', 'count']) await t.test(pruning, async (t) => {
+  const f = fixture(t);
+  const proofs = new Map();
+  const gateway = { window: async () => ({ windows: [{ conversation_id: 'example-owner' }, { conversation_id: 'other-owner' }] }), send: async (request) => {
+    if (!proofs.has(request.idempotency_key)) proofs.set(request.idempotency_key, `proof-${proofs.size}`);
+    return { message_id: proofs.get(request.idempotency_key) };
+  } };
+  const make = () => createPublisher({ stateDir: f.opts.stateDir, gateway, clock: () => f.now, notices: f.e });
+  const body = { session_id: 'original-session', conversation: { conversation_id: 'example-owner' }, text: 'old reply', idempotency_key: 'original-key' };
+  let publisher = make();
+  assert.equal((await publisher.handlePublish(JSON.stringify(body))).json.delivered, true);
+  if (pruning === 'age') f.now += 8 * 86400000;
+  for (let i = 0; i < (pruning === 'count' ? 1025 : 1); i++) {
+    f.now++;
+    assert.equal((await publisher.handlePublish(JSON.stringify({ ...body, idempotency_key: `unrelated-${i}`, conversation: { conversation_id: 'other-owner' } }))).json.delivered, true);
+  }
+  const progress = JSON.parse(fs.readFileSync(path.join(f.opts.stateDir, PROGRESS_FILE)));
+  assert.equal(Object.hasOwn(progress.entries, body.idempotency_key), false, 'primary progress was pruned');
+  f.restart();
+  publisher = make();
+  f.e.track({ id: 'new-inbound', conversation: 'example-owner', targets: ['original-session'] });
+  f.e.result('new-inbound', 'delivered', ['original-session']);
+  const sends = proofs.size;
+  assert.equal((await publisher.handlePublish(JSON.stringify(body))).json.delivered, true);
+  assert.equal(proofs.size, sends, 'provider returned its old proof without posting');
+  f.now += 180000;
+  fs.writeFileSync(f.opts.healthFile, JSON.stringify({ state: 'session_down', since: new Date(f.now).toISOString(), checked_at: new Date(f.now).toISOString() }));
+  await f.e.poll();
+  assert.equal(f.posts.length, 1, 'old provider proof suppressed the newer request');
+  assert.equal(f.mails.length, 1);
+  });
 });
 
 function fixture(t, overrides = {}) {

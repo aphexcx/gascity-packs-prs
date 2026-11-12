@@ -89,6 +89,23 @@ func TestNewPendingSupersedesStoppedAndDeliveredEvidence(t *testing.T) {
 	}
 }
 
+func TestWithdrawalBeforeEnrollmentSurvivesRestart(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		f := setup(t)
+		f.check(f.e.Forget("withdrawn"))
+		if restart {
+			f.restart()
+		}
+		f.track("withdrawn", "conversation")
+		f.check(f.e.Result("withdrawn", "failed", []string{"mayor"}))
+		f.check(f.e.Stop("withdrawn", true))
+		f.poll()
+		if len(f.posts) != 0 || len(f.mails) != 0 {
+			t.Fatalf("withdrawal lost before enrollment (restart=%v)", restart)
+		}
+	}
+}
+
 func TestHealthChangeDuringOwnerSendDoesNotPostStaleLine(t *testing.T) {
 	f := setup(t)
 	f.opts.Post = func(_ context.Context, m Message, text string) error {

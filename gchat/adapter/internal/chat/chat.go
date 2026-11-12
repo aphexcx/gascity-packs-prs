@@ -181,6 +181,14 @@ func (c *Client) CreateNotice(ctx context.Context, space, text, thread string, n
 // CreateMessageWithAttachments posts previously uploaded attachment references.
 // The same requestID must be reused on retries, including retries after restart.
 func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, thread, requestID string, named bool, attachments []*googlechat.Attachment) (name, threadName string, err error) {
+	name, threadName, _, err = c.CreateMessageWithAttachmentsAndTime(ctx, space, text, thread, requestID, named, attachments)
+	return name, threadName, err
+}
+
+// CreateMessageWithAttachmentsAndTime retains the provider's original creation
+// time, including a replay after Google accepted a request but local state was
+// not saved. An absent timestamp is unknown; the retry time is not evidence.
+func (c *Client) CreateMessageWithAttachmentsAndTime(ctx context.Context, space, text, thread, requestID string, named bool, attachments []*googlechat.Attachment) (name, threadName string, createdAt time.Time, err error) {
 	message := &googlechat.Message{Text: text, Attachment: attachments}
 	if thread != "" {
 		message.Thread = &googlechat.Thread{Name: thread}
@@ -205,7 +213,7 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 		return err
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", time.Time{}, err
 	}
 	if result.Thread != nil {
 		threadName = result.Thread.Name
@@ -214,7 +222,8 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 	if result.Sender != nil && result.Sender.Name != "" {
 		c.learnIdentityUserID(result.Sender.Name)
 	}
-	return result.Name, threadName, nil
+	createdAt, _ = time.Parse(time.RFC3339Nano, result.CreateTime)
+	return result.Name, threadName, createdAt, nil
 }
 
 func (c *Client) ListMessages(ctx context.Context, space string, since time.Time, thread string, page func([]*googlechat.Message) error) error {

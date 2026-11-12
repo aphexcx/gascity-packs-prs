@@ -15,9 +15,13 @@ import (
 )
 
 func TestNeverSilentCompanyHumanRoutes(t *testing.T) {
-	for _, route := range []string{"room", "dm", "mpim"} {
-		t.Run(route, func(t *testing.T) {
-			h, _, _, _ := setupMpim(t)
+	for _, scenario := range []struct {
+		route     string
+		withdrawn bool
+	}{{"room", false}, {"dm", false}, {"mpim", false}, {"room", true}, {"dm", true}, {"mpim", true}} {
+		route := scenario.route
+		t.Run(fmt.Sprintf("%s/withdrawn=%t", route, scenario.withdrawn), func(t *testing.T) {
+			h, fakeGC, _, _ := setupMpim(t)
 			defer h.wait()
 			bf := baseBindingsFile()
 			bf.Bindings[0].Session = "mayor"
@@ -32,17 +36,24 @@ func TestNeverSilentCompanyHumanRoutes(t *testing.T) {
 			dir := t.TempDir()
 			posts := []neversilent.Message{}
 			health := filepath.Join(dir, "health.json")
-			e, err := neversilent.New(neversilent.Options{Enabled: true, Path: filepath.Join(dir, "state.json"), HealthFile: health, Now: func() time.Time { return now }, Post: func(_ context.Context, m neversilent.Message, line string) error {
+			opts := neversilent.Options{Enabled: true, Path: filepath.Join(dir, "state.json"), HealthFile: health, Now: func() time.Time { return now }, Post: func(_ context.Context, m neversilent.Message, line string) error {
 				posts = append(posts, m)
 				if line != neversilent.DownLine {
 					t.Errorf("line=%q", line)
 				}
 				return nil
-			}})
+			}}
+			e, err := neversilent.New(opts)
 			if err != nil {
 				t.Fatal(err)
 			}
 			h.gw.cfg.neverSilent = e
+			if scenario.withdrawn {
+				fakeGC.respStatus = func(int) int { return http.StatusBadRequest }
+				for i := 0; i < cap(h.gw.cfg.dispatchSem); i++ {
+					h.gw.cfg.dispatchSem <- struct{}{}
+				}
+			}
 			switch route {
 			case "dm":
 				admitDMViaHandler(t, h, dmMessage("U0HUMAN01", "1700000000.000100", "example request"), ollieAppID, 0)
@@ -50,6 +61,30 @@ func TestNeverSilentCompanyHumanRoutes(t *testing.T) {
 				admitMpimViaHandler(t, h, mpimMessage("U0HUMAN01", "1700000000.000100", "<@U0AAAAAA1> example request"), ollieAppID, 0)
 			default:
 				h.admitViaHandler(t, humanMessage("1700000000.000100", "<@U0AAAAAA1> example request"), 0)
+			}
+			if scenario.withdrawn {
+				deleted := slackMessageEvent{Subtype: "message_deleted", DeletedTS: "1700000000.000100", TS: "1700000000.000200", Channel: testChannelID}
+				switch route {
+				case "dm":
+					deleted.Channel = dmMessage("U0HUMAN01", "", "").Channel
+					admitDMViaHandler(t, h, deleted, ollieAppID, 0)
+				case "mpim":
+					deleted.Channel = testMpimChannel
+					admitMpimViaHandler(t, h, deleted, ollieAppID, 0)
+				default:
+					h.admitViaHandler(t, deleted, 0)
+				}
+				// Restart the notice observer after deletion but before target
+				// resolution and enrollment by the durable receipt sweep.
+				e, err = neversilent.New(opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				h.gw.cfg.neverSilent = e
+				for len(h.gw.cfg.dispatchSem) > 0 {
+					<-h.gw.cfg.dispatchSem
+				}
+				h.gw.sweepOnce()
 			}
 			h.wait()
 			now = now.Add(3 * time.Minute)
@@ -59,6 +94,12 @@ func TestNeverSilentCompanyHumanRoutes(t *testing.T) {
 			}
 			if err = e.Poll(context.Background()); err != nil {
 				t.Fatal(err)
+			}
+			if scenario.withdrawn {
+				if len(posts) != 0 || len(e.Status().Outages) != 0 {
+					t.Fatalf("withdrawn request enrolled: posts=%d outages=%d", len(posts), len(e.Status().Outages))
+				}
+				return
 			}
 			if len(posts) != 1 {
 				t.Fatalf("owner posts=%d", len(posts))
