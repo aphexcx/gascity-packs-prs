@@ -33,7 +33,10 @@ lane's default Python had no pytest. No dependency was added to the adapter.
 | Shutdown ruling before implementation | 2 failed, 299 excluded by the name filter |
 | Adapter final: `pnpm test` | 269 passed, 0 failed; includes all 252 original tests |
 | Pack final: `env -u GC_TEMPLATE python3 -m pytest whatsapp/tests -q` | 59 passed |
-| Gateway final: `pnpm test` | 303 passed, 0 failed; includes all 273 original tests |
+| Gateway final: `pnpm test` | 306 passed, 0 failed; includes all 273 original tests |
+| Stalled failure accounting before fix | Three failed: webhook, adopted-status send, rollback inbox |
+| Deadline regressions after fix: `pnpm exec vitest run test -t bounds` | Seven passed, 299 excluded by the name filter |
+| Held-row proof: `pnpm exec node --test --test-name-pattern='wake, reconnect and safety'` in adapter/test | Named case passed; Node also reports 17 other discovery entries as passes |
 | `pnpm typecheck` | Passed |
 | `pnpm build` | Dry run passed; `CITY_WAKE (CityWake)` is present in the binding output and Wrangler exits with `--dry-run: exiting now.` |
 
@@ -102,12 +105,40 @@ file entries passed. No mutation survived.
 
 ## Merge checks
 
-Pending committed-head merge-tree outputs for PR 98 and PR 101.
+At implementation commit `5a014a703465b05c9de02a2d264270d85cbfe577`:
+
+| Other head | Result | Output |
+| --- | --- | --- |
+| PR 98: `0b790454653fe4d6de64c057c0ae295b8d4a0057` | Exit 1; six pre-existing conflicts | [merge-pr98.txt](merge-pr98.txt) |
+| PR 101: `674a09062c16b5c110c6dc59bf33dd97f077c7e2` | Exit 0; clean | [merge-pr101.txt](merge-pr101.txt) |
+
+Merging the untouched base with PR 98 produces the same six conflicts
+([merge-pr98-base.txt](merge-pr98-base.txt)): the gchat and slack-full
+changelogs, three slack-full adapter files, and the older WhatsApp changelog
+entry under `Unreleased (gp-g02t, PR 76 round 2)` (reaction catalog versus
+owner-notice text). The new WhatsApp implementation hunks, including the
+import and shutdown call permitted by ruling 1, merge without conflict.
+The conflicts are recorded and left untouched as item 21 requires.
 
 ## Self-review and Codex review
 
-Pending review of the committed implementation. Findings, outcomes and
-reviewed commit ids will be recorded before the draft PR handoff.
+Fresh self-review at `5a014a703465b05c9de02a2d264270d85cbfe577` inspected
+all 25 changed files: 0 BLOCKER, 1 MAJOR, 1 MINOR, 0 NIT.
+
+- MAJOR, failure accounting outside the wake deadline: FIXED. The class is
+  unbounded work after a bounded best-effort operation. A parameterized test
+  stalled only the failure-counter write and reproduced pending responses
+  for webhook, adopted-status send, and rollback inbox. The shared helper
+  now reserves 100 ms of the two-second budget for accounting and bounds that
+  write by the remaining budget. All seven deadline cases pass, including
+  normal counter increments after a rejected or stalled notification.
+- MINOR, dedup test supposedly acknowledged the held row too early: WRONG.
+  `whatsapp/adapter/test/fakes.js:88-91` repeats the last behavior, so `[500]`
+  keeps failing every acknowledgement. Strengthened the test with held-row
+  assertions across reconnect and safety reads, then allowed acknowledgement
+  and verified the post count remained one. The proof passes.
+
+The required Codex DEEP round follows on the committed fix.
 
 ## Public repository check
 

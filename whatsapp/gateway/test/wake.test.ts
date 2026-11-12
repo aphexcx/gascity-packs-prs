@@ -190,6 +190,40 @@ describe("held connection", () => {
     expect(h.logs.filter((line) => line.event === "wake_failed")).toEqual([{ event: "wake_failed", count: 1 }]);
   });
 
+  it.each(["webhook", "adopted status", "rollback inbox"])("bounds stalled failure accounting on %s", async (site) => {
+    const { h, city, ids } = await joined();
+    let counterAttempts = 0;
+    h.deps.db = {
+      prepare: (query: string) => {
+        if (query.includes("VALUES ('wake_failed',")) return {
+          bind: () => ({ run: () => { counterAttempts += 1; return new Promise(() => {}); } }),
+        } as unknown as D1PreparedStatement;
+        return env.DB.prepare(query);
+      },
+      batch: (statements: D1PreparedStatement[]) => env.DB.batch(statements),
+      exec: (query: string) => env.DB.exec(query),
+    } as unknown as D1Database;
+    h.deps.wake = {
+      enabled: site !== "rollback inbox", open: () => { throw new Error("unused"); },
+      notify: () => Promise.reject(new Error("invented notify failure")),
+    };
+    if (site === "adopted status") h.graph.hooks.onSend = async (wamid) => {
+      expect((await h.webhook(statusAs(wamid, "delivered", ids, h.clock.now))).status).toBe(200);
+    };
+    const response = site === "webhook" ? h.sayAs(ids, "invented accounting failure").then(({ res }) => res)
+      : site === "adopted status" ? h.send(city, { to: ids.user, type: "text", text: "invented reply", idempotency_key: uniq() })
+      : h.inbox(city);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([response, new Promise<undefined>((resolve) => { timer = setTimeout(resolve, 2300); })]);
+      expect(result?.status).toBe(200);
+      expect(counterAttempts).toBe(1);
+      expect(h.logs.filter((line) => line.event === "wake_failed")).toEqual([{ event: "wake_failed", count: 1 }]);
+      h.deps.wake = undefined;
+      expect((await h.inbox(city)).body.deliveries).toHaveLength(site === "rollback inbox" ? 1 : 2);
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+  });
+
   it("closes the oldest of five sockets and accepts only ping frames", async () => {
     const city = await setup().enrollCity();
     const oldest = await open(city);

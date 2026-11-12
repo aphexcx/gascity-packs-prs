@@ -42,6 +42,7 @@ export async function closeCity(deps: Deps, city: string): Promise<void> {
 type Target = { city_id: string; token_sha256: string | null };
 
 async function dispatchHints(deps: Deps, targets: () => Promise<Target[]>): Promise<void> {
+  const deadline = performance.now() + 2000;
   let expired = false;
   let outstanding = 0;
   let failed = 0;
@@ -65,7 +66,8 @@ async function dispatchHints(deps: Deps, targets: () => Promise<Target[]>): Prom
     await Promise.race([
       dispatch(),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => { expired = true; reject(new Error("wake_deadline")); }, 2000);
+        // Reserve the last 100 ms of the total budget for best-effort failure accounting.
+        timer = setTimeout(() => { expired = true; reject(new Error("wake_deadline")); }, 1900);
       }),
     ]);
   } catch {
@@ -76,8 +78,12 @@ async function dispatchHints(deps: Deps, targets: () => Promise<Target[]>): Prom
   if (failed) {
     deps.log({ event: "wake_failed", count: failed });
     try {
-      await deps.db.prepare("INSERT INTO stats (name, value) VALUES ('wake_failed', ?) ON CONFLICT (name) DO UPDATE SET value = value + excluded.value")
-        .bind(failed).run();
+      await Promise.race([
+        deps.db.prepare("INSERT INTO stats (name, value) VALUES ('wake_failed', ?) ON CONFLICT (name) DO UPDATE SET value = value + excluded.value")
+          .bind(failed).run(),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, Math.max(0, deadline - performance.now())); }),
+      ]);
     } catch { /* The delivery already committed; accounting must not change its answer. */ }
+    finally { if (timer !== undefined) clearTimeout(timer); }
   }
 }

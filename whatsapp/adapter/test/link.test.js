@@ -167,15 +167,24 @@ test('held: wake, reconnect and safety reads of a held row cause one post', asyn
   r.gw.ackBehaviour = [500];
   r.start();
   await up(r);
-  add(r, 'dedup');
+  const id = add(r, 'dedup');
   r.gw.link.wake();
   await waitFor(() => r.gc.count('wamid.test-dedup') === 1);
+  assert.equal(r.gw.held(id), true);
   r.gw.link.drop();
   await waitFor(async () => (await status(r)).link.mode === 'poll');
   await sleep(100);
   await r.pump(1000);
   await up(r);
+  assert.equal(r.gw.held(id), true);
+  const beforeSafetyRead = polls(r);
   await r.pump(10000);
+  assert.ok(polls(r) > beforeSafetyRead);
+  assert.equal(r.gw.held(id), true);
+  assert.ok(r.gw.ackCalls.filter((call) => call.ids.includes(id)).every((call) => call.behaviour === 500));
+  r.gw.ackBehaviour = ['ok'];
+  await r.pump(10000);
+  await acked(r, id);
   assert.equal(r.gc.count('wamid.test-dedup'), 1);
 });
 
