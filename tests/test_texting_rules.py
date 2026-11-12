@@ -1,11 +1,16 @@
-"""The texting rules: one vocabulary of five reactions in the three channel texts.
+"""The texting rules: one catalog of reactions in the three channel texts.
 
 The Google Chat skill, the WhatsApp skill and the Slack prompt fragment each
-carry the same table of five reactions and the same four rules about them
-(gp-adh3). A change to one text that is not made in the other two fails here.
+carry the same tables of reactions and the same four rules about them
+(gp-adh3). The tables are the catalog, reactions.json, row for row and word
+for word (gp-bis1; the catalog's own tests are tests/test_reaction_catalog.py).
+A change to one text that is not made in the other two, or in the catalog,
+fails here.
 """
 
+import json
 import re
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -19,22 +24,27 @@ TEXTS = {
     "whatsapp": REPO / "whatsapp" / "skills" / "whatsapp" / "SKILL.md",
 }
 
-INTRO = "Five reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp:"
+# The catalog's source. Its copies in the other packs equal it byte for byte
+# (tests/test_reaction_catalog.py).
+CATALOG = REPO / "gchat" / "reactions.json"
+
+INTRO = "These reactions have fixed meanings, the same on Slack, Google Chat and WhatsApp."
+
+# The sentence before each table: the first holds the rows an adapter may
+# place, the second the rows that claim a finished fact.
+TABLE_LEADS = (
+    "Each one in the first table is true the moment a message arrives, so "
+    "you or the adapter may place it:",
+    "Each one in the second table states a finished fact, so it is yours to "
+    "place, and only once the fact is true:",
+)
 
 TABLE_HEADER = "| Reaction | Slack name | What the owner reads it as |"
-
-FIVE = [
-    ("👀", "`eyes`"),
-    ("🔍", "`mag`"),
-    ("👍", "`+1`"),
-    ("✅", "`white_check_mark`"),
-    ("⏰", "`alarm_clock`"),
-]
 
 RULE_LEADS = [
     "- **A reaction comes first.**",
     "- **A reaction alone.**",
-    "- **✅ and ⏰ are yours, and never a promise.**",
+    "- **The second table is yours, and never a promise.**",
     "- **Fixed means fixed.**",
 ]
 
@@ -47,17 +57,37 @@ def normalized(text: str) -> str:
     return " ".join(text.split())
 
 
-def table_rows(text: str) -> list[str]:
-    """The table's lines, header first, exactly as the file has them."""
+def catalog() -> list[dict]:
+    return json.loads(CATALOG.read_text(encoding="utf-8"))["reactions"]
+
+
+def table_line(row: dict) -> str:
+    """A catalog row as a text's table shows it."""
+    return f'| {row["emoji"]} | `{row["slack_name"]}` | "{row["meaning"]}" |'
+
+
+def tables(text: str) -> list[list[str]]:
+    """Each table under TABLE_HEADER, header first, exactly as the file has it."""
     lines = text.splitlines()
-    starts = [i for i, line in enumerate(lines) if line == TABLE_HEADER]
-    assert len(starts) == 1, f"expected the table header once, found {len(starts)}"
-    rows = []
-    for line in lines[starts[0] :]:
-        if not line.startswith("|"):
-            break
-        rows.append(line)
-    return rows
+    found = []
+    for start in (i for i, line in enumerate(lines) if line == TABLE_HEADER):
+        rows = []
+        for line in lines[start:]:
+            if not line.startswith("|"):
+                break
+            rows.append(line)
+        found.append(rows)
+    return found
+
+
+def reactions_shown(text: str) -> list[str]:
+    """Every emoji the text shows: a pictographic symbol, with the emoji
+    presentation selector when the text has one after it."""
+    shown = []
+    for i, ch in enumerate(text):
+        if unicodedata.category(ch) == "So" and ord(ch) >= 0x2190:
+            shown.append(ch + ("️" if text[i + 1 : i + 2] == "️" else ""))
+    return shown
 
 
 # The other bullets of the section the rules sit in, before the rules and
@@ -269,21 +299,70 @@ def react_uses(text: str) -> list[str]:
 
 
 @pytest.mark.parametrize("name", sorted(TEXTS))
-def test_each_text_carries_the_five_in_order(name: str) -> None:
-    rows = table_rows(read(name))
-    assert rows[1] == "| --- | --- | --- |"
-    body = rows[2:]
-    assert len(body) == 5, body
-    for row, (emoji, slack_name) in zip(body, FIVE):
-        cells = [cell.strip() for cell in row.strip("|").split("|")]
-        assert cells[:2] == [emoji, slack_name], row
-        assert cells[2].startswith('"') and cells[2].endswith('"'), row
+def test_each_text_carries_the_whole_catalog_in_its_two_tables(name: str) -> None:
+    """The first table is every row an adapter may place, the second every
+    claim, each in the catalog's order, word for word (gp-bis1)."""
+    found = tables(read(name))
+    assert len(found) == 2, f"{name}: expected two tables, found {len(found)}"
+    rows = catalog()
+    for table, may_place in zip(found, (True, False)):
+        assert table[1] == "| --- | --- | --- |", table
+        assert table[2:] == [table_line(row) for row in rows if row["adapter_may_place"] is may_place]
 
 
-def test_the_five_rows_are_the_same_in_every_text() -> None:
-    gchat = table_rows(read("gchat"))
+def test_the_tables_are_the_same_in_every_text() -> None:
+    gchat = tables(read("gchat"))
     for name in ("slack", "whatsapp"):
-        assert table_rows(read(name)) == gchat, f"{name} differs from gchat"
+        assert tables(read(name)) == gchat, f"{name} differs from gchat"
+
+
+@pytest.mark.parametrize("name", sorted(TEXTS))
+def test_every_reaction_a_text_shows_is_a_catalog_row(name: str) -> None:
+    """A reaction in a rule, an example or a table is one of the catalog's,
+    in the catalog's own form (with the emoji presentation selector or without)."""
+    emoji = {row["emoji"] for row in catalog()}
+    stray = sorted(set(reactions_shown(read(name))) - emoji)
+    assert not stray, f"{name} shows reactions that are not catalog rows: {stray}"
+
+
+@pytest.mark.parametrize("name", sorted(TEXTS))
+def test_the_intro_and_the_two_table_leads_come_in_order(name: str) -> None:
+    text = read(name)
+    flat = normalized(text)
+    marks = [flat.index(INTRO), *(flat.index(lead) for lead in TABLE_LEADS)]
+    assert marks == sorted(marks)
+    lines = text.splitlines()
+    headers = [i for i, line in enumerate(lines) if line == TABLE_HEADER]
+    first_rule = next(i for i, line in enumerate(lines) if line.startswith(RULE_LEADS[0]))
+    for lead, header in zip(TABLE_LEADS, headers):
+        # The lead is the paragraph straight above its table.
+        above = []
+        for line in reversed(lines[: header - 1]):
+            if not line.strip():
+                break
+            above.insert(0, line)
+        assert lines[header - 1] == "" and normalized("\n".join(above)).endswith(lead), (name, lead)
+    assert headers[-1] < first_rule
+
+
+@pytest.mark.parametrize("name", sorted(TEXTS))
+def test_no_text_counts_the_reactions(name: str) -> None:
+    """The texts stop saying five (gp-bis1): a count goes stale with the catalog."""
+    assert not re.search(r"\b(five|the first three)\b", read(name), re.IGNORECASE)
+
+
+@pytest.mark.parametrize(
+    ("probe", "stray"),
+    [
+        ("React with 🙏 when they thank you.\n", ["🙏"]),
+        ("React with ❤ when they thank you.\n", ["❤"]),
+        ("React with ❤️ when they thank you.\n", []),
+        ("Copyright ™ and © are not reactions.\n", []),
+    ],
+)
+def test_the_scan_finds_a_reaction_outside_the_catalog(probe: str, stray: list[str]) -> None:
+    emoji = {row["emoji"] for row in catalog()}
+    assert sorted(set(reactions_shown(probe)) - emoji) == stray
 
 
 @pytest.mark.parametrize("name", sorted(TEXTS))
@@ -457,7 +536,7 @@ def test_google_chat_skill_has_the_table_and_no_free_choice() -> None:
 def test_whatsapp_skill_says_the_mayor_cannot_react_there_yet() -> None:
     flat = normalized(read("whatsapp"))
     assert "You cannot place a reaction on WhatsApp yet." in flat
-    assert "The adapter may place one of the first three when a message arrives." in flat
+    assert "The adapter may place one from the first table when a message arrives." in flat
     assert "the user" not in flat.lower()
 
 

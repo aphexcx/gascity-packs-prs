@@ -64,7 +64,8 @@ def test_reaction_vocabulary_contract() -> None:
 
     assert (
         "a message to you that only confirms, thanks, agrees or closes a topic "
-        "gets 👍 as the whole answer. No text follows it."
+        "gets the reaction from the first table that fits it as the whole "
+        "answer. No text follows it."
     ) in normalized
     assert (
         "On an `ambient` or `thread_ambient` turn, the rules under When to respond "
