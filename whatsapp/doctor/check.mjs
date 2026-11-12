@@ -6,10 +6,12 @@
 // adapter's own code (../adapter/src/journal.js), so the row and the adapter
 // can never disagree about what a line means.
 
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { entryState, foldLines, readLines, JOURNAL_FILE, PROBE_RETENTION_MS } from '../adapter/src/journal.js';
 
@@ -33,10 +35,8 @@ function stateDir() {
 }
 
 function envFile() {
-  const e = process.env;
-  if (e.GC_WHATSAPP_ADAPTER_ENV) return e.GC_WHATSAPP_ADAPTER_ENV;
-  const secrets = e.GC_SERVICE_SECRETS_DIR || (e.GC_CITY_PATH && path.join(e.GC_CITY_PATH, '.gc/services/whatsapp/secrets'));
-  return secrets ? path.join(secrets, 'env') : path.join(e.HOME || '', '.config/gc-whatsapp-adapter/env');
+  // Execute only the pack's resolver, never the selected env file.
+  return execFileSync('sh', [fileURLToPath(new URL('../adapter/env-file.sh', import.meta.url))], { encoding: 'utf8' });
 }
 
 // Literal assignments only: an expansion or a command is reported, never run.
