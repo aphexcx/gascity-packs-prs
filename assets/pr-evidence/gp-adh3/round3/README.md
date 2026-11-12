@@ -17,7 +17,8 @@ No text, test or command changes.
     `e84b685a`. It is the code head: the commits after it touch only
     `assets/pr-evidence/gp-adh3/`.
   - `c1046555` round 1's codex record copy
-  - this directory
+  - `dcce81fb` this directory
+  - the commit after it: the self-review's findings, folded here
 
 ## The merge
 
@@ -103,9 +104,10 @@ arrive with the merge and are main's. It looked for a home path, a temp
 path, and any sentence about the gate tool's setup, keys or tokens.
 
 - No home path is left.
-- The words key and token stand on ten lines in four files. Each line is
-  about the Slack tokens the pack itself uses, or is round 2's list of what
-  its check covered. That is how the pack works, so they stay.
+- Outside this README, the words key and token stand on ten lines in four
+  files, as at the round's start. Each line is about the Slack tokens the
+  pack itself uses, or is round 2's list of what its check covered. That is
+  how the pack works, so they stay.
 - `../suite-make-test-7a7faffd.txt:45` carries the path of a temp clone. It
   names no user and is not a home path, so it stays.
 - The test transcripts of this round write the clone's path as `<clone>`.
@@ -113,8 +115,9 @@ path, and any sentence about the gate tool's setup, keys or tokens.
 ## Tests
 
 At M, from a fresh clone, under `env -i HOME PATH`, as round 2 ran them.
-Each transcript holds the commit, the command, pytest's output and the
-exit code.
+Each transcript of a run holds the commit, the command, pytest's output and
+the exit code. The A/B transcript below keeps one line per run, pytest's
+last.
 
 - `uv run --offline --with pytest python -m pytest -p no:cacheprovider tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -q -rA`:
   **54 passed**, exit 0 (`green-at-e385cffb.txt`).
@@ -152,20 +155,37 @@ fault in the merge.
   this round.
 - Each run of the test alone was: `uv run --offline --with pytest --with pyyaml --with jsonschema python3 -m pytest -p no:cacheprovider -q <the test id>`,
   from each fresh clone, under `env -i HOME PATH`.
+- The whole of one failing run at main (`flake-main-fail-e84b685a.txt`):
+  the test alone, run in a loop until it failed, failed on the 17th run
+  with the same assertion as run 1. One caller installed, one waited, and
+  one printed nothing.
 - No text, test or command was changed. Run 2 is the whole suite again
   from the same clone.
 
 In the transcripts, the clone's path is written `<clone>` and pytest's
 random temp directory is written `<tmp>`. Trailing spaces are trimmed from
-two lines of run 1's traceback, so `git diff --check` passes.
+two lines of each traceback (run 1, and the failing run at main), so
+`git diff --check` passes.
 
 ## Review
 
 ### Self-review
 
-A fresh reviewer on the same model reads the round's whole delta against
-the bead's contract and the public-repository rule. Its counts and each
-finding's outcome are added after it reports.
+A fresh reviewer on the same model read the round's whole delta against
+the bead's contract and the public-repository rule: the merge against both
+parents, the evidence-line commit and this directory. It checked each claim
+here from git: BLOCKER 0, MAJOR 0, MINOR 1, NIT 2. Each outcome:
+
+| Finding | Outcome |
+| --- | --- |
+| MINOR 1: the A/B transcript keeps only pytest's last line per run, so it cannot show that main's miss is run 1's assertion, and "each transcript holds the command and the exit code" was not true of it | FIXED in the commit that adds this table: `flake-main-fail-e84b685a.txt` keeps the whole of one failing run at main, and the Tests section says what the A/B keeps |
+| NIT 2: "ten lines in four files" was the count at the round's start; this README adds its own | FIXED in the same commit: "Outside this README" |
+| NIT 3: the self-review's counts and the public-repository result were still to be filled in | FIXED in the same commit |
+
+The reviewer judged the run-1 failure against the contract's stop line and
+found it is not one. The test passes at M with nothing changed. It ran the
+test alone five times at each clone: 5 of 5 passed at M, and one of 5
+failed at main with the same assertion.
 
 No codex round ran in the lane. The mayor's gate reads the whole delta
 against main.
@@ -180,4 +200,20 @@ main's. The pattern covered home and temp paths, the customer names on the
 rule's list, Slack, phone, user and message ids, email addresses, keys and
 tokens, hosts and ports, and the gate tool's setup.
 
-The result is added after the self-review.
+Four things were changed in the evidence for the rule, all named above
+under "Round 1's codex record copy":
+
+1. Round 1's codex record copy, line 2: a detail of the gate tool's own
+   setup.
+2. The same copy, line 3: a local path.
+3. Round 2's README, line 248: a reference to that line by what it was
+   about.
+4. Round 2's README, lines 258 to 259: a description of that line's
+   content.
+
+This round's transcripts write the clone's path as `<clone>` and pytest's
+temp directory as `<tmp>`. The final read found nothing more:
+
+- The round's own lines carry only placeholders (`spaces/A/messages/B` in
+  a test's name).
+- The commit authors are the noreply addresses already on main.
