@@ -66,8 +66,8 @@ For each item, decide whether one line from you still helps the owner:
 - If you are unsure, it stays out.
 
 When at least one item goes in, send one short message in that conversation
-that covers every item that goes in, the way that channel's skill says. Never
-write about those items again. When no item goes in, send nothing.
+that covers every item that goes in, the way that channel's skill says.
+When no item goes in, send nothing.
 
 There is no second follow-up, ever. The pack will not ask again about an
 item it raised. If a mail names an item you already handled, with a
@@ -127,8 +127,8 @@ gc follow-through consent CONVERSATION --on
 gc follow-through consent CONVERSATION --off
 ```
 
-When the owner says stop, record off at once, before anything else in that
-turn.
+When the owner says stop, record off at once for every conversation you have
+with them, before anything else in that turn.
 
 Record the owner's hours and time zone when they give them:
 
@@ -197,9 +197,10 @@ reminder there after the time it was due, naming that time, it is the same
 reminder arriving a second time, even if this mail says it is late. Send
 nothing for it, as for a cancelled reminder. Otherwise tell the owner now,
 in your own words, in that conversation. Name the time the reminder was for,
-because two reminders can have the same words and you give both. If the
-mail says the reminder is late, say so plainly with the time they asked for,
-then give the reminder. Do not explain why it is late unless they ask.
+because two reminders can have the same words. They are still two
+reminders, and you give each one at its own time. If the mail says the
+reminder is late, say so plainly with the time they asked for, then give the
+reminder. Do not explain why it is late unless they ask.
 
 When the owner cancels a reminder, cancel it:
 
@@ -224,7 +225,13 @@ that window has closed is not sent there as free text. It is never sent as
 the update template either: by Afik's rule that template is only for an
 actual update, and a follow-up or a reminder is not one. Say it on another
 channel the owner uses with you, or hold it and say it when the owner next
-writes.
+writes. On another channel, a follow-up goes only to a conversation where
+the owner's consent is on.
+
+When you set a reminder on WhatsApp for a time after the owner's current
+window closes, say in the short line that tells them it is set how it will
+reach them if they have not written again by then: on the other channel you
+will use, or when they next write.
 
 ## News about yourself
 
