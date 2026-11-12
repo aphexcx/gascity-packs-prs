@@ -104,6 +104,8 @@ Company rooms and agent DMs use their frozen local mayor target: the directory a
 
 The adapter knows `not_delivered` when it stops trying, or observes three continuous minutes of definite delivery failures or connection/dial errors, city-not-found responses or server errors. A successful HTTP response saying pending resets the failure wait. An uncertain stopped delivery raises operator mail immediately but waits three minutes without a session reply or reaction before telling the owner.
 
+A line the adapter holds and re-posts is not a stop, and gc's held answer does not start the three-minute wait. A dead letter stays stopped until gc accepts a replay; the adapter's separate held notice after one minute counts as no session act.
+
 The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
 
 Nothing in these packs writes that file yet. Its writer must run independently of gc's supervisor so evidence remains fresh when the supervisor fails. It must never call an asleep, drained or suspended session down: gc wakes those sessions for incoming messages. Until a writer exists, only not_delivered can fire.

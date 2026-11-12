@@ -185,6 +185,12 @@ func (cfg config) observeNeverSilent(m externalInboundMessage, r deliveryReceipt
 		}
 	}
 	for _, id := range neverSilentMembers(m) {
+		// A dead-letter replay is still the same stopped delivery until gc
+		// accepts it. Keep its original time and certainty on every other
+		// answer; held entries that have not stopped keep the live-path rules.
+		if cfg.recoveryReplay && kind != "delivered" && kind != "pending" && cfg.neverSilent.IsStopped(id) {
+			continue
+		}
 		cfg.noticeError(cfg.neverSilent.Result(id, kind, targets))
 	}
 }

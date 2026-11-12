@@ -134,7 +134,13 @@ test('never-silent integration: whole-paste pending uses health; attributed word
   r.gw.addText('example-unanswered', 'example-pending', 'fixture words');
   r.gw.addText('example-answered', 'example-replied', 'fixture words');
   await waitFor(() => r.gc.pastes.length === 2);
-  await r.pump(10000);
+  const sidecar = path.join(r.dir, '.gc', 'whatsapp', 'never-silent.json');
+  await r.pumpUntil(() => {
+    if (!fs.existsSync(sidecar)) return false;
+    const { messages } = JSON.parse(fs.readFileSync(sidecar));
+    return ['example-unanswered', 'example-answered'].every((conversation) =>
+      Object.values(messages).some((m) => m.conversation === conversation && m.delivered !== undefined));
+  }, { what: 'both whole-paste deliveries recorded before advancing the notice clock' });
   const answer = await adapterRequest(r.socket, 'POST', '/publish', { session_id: 's-mayor', conversation: { conversation_id: 'example-answered' }, text: 'A fixture reply', idempotency_key: 'fixture-reply' });
   assert.equal(answer.json.delivered, true);
   r.clock.advance(180000);

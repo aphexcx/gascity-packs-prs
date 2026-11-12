@@ -53,6 +53,52 @@ func (f *fixture) health(state string) {
 	f.check(os.WriteFile(f.opts.HealthFile, []byte(fmt.Sprintf(`{"state":%q,"since":%q,"checked_at":%q}`, state, f.now.Format(time.RFC3339), f.now.Format(time.RFC3339))), 0600))
 }
 
+func TestIsStoppedReadsOnlyActiveStops(t *testing.T) {
+	f := setup(t)
+	var absent *Engine
+	if absent.IsStopped("example") || f.e.IsStopped("missing") {
+		t.Fatal("nil or missing engine reported a stop")
+	}
+	f.track("example", "example-conversation")
+	if f.e.IsStopped("example") {
+		t.Fatal("new message reported a stop")
+	}
+	f.check(f.e.Stop("example", false))
+	before, err := os.ReadFile(f.opts.Path)
+	f.check(err)
+	for i := 0; i < 3; i++ {
+		if !f.e.IsStopped("example") {
+			t.Fatal("uncertain stop was missed")
+		}
+	}
+	after, err := os.ReadFile(f.opts.Path)
+	f.check(err)
+	if string(before) != string(after) {
+		t.Fatal("read changed durable state")
+	}
+	f.restart()
+	if !f.e.IsStopped("example") {
+		t.Fatal("restart lost stop")
+	}
+	f.check(f.e.Result("example", "delivered", nil))
+	if f.e.IsStopped("example") {
+		t.Fatal("delivered message stayed stopped")
+	}
+	f.check(f.e.Stop("example", true))
+	if !f.e.IsStopped("example") {
+		t.Fatal("definite stop was missed")
+	}
+	f.check(f.e.Forget("example"))
+	if f.e.IsStopped("example") {
+		t.Fatal("withdrawn message reported a stop")
+	}
+	f.opts.Enabled = false
+	f.restart()
+	if f.e.IsStopped("example") {
+		t.Fatal("disabled engine reported a stop")
+	}
+}
+
 func TestEpisodesPersistAndAggregateByCause(t *testing.T) {
 	f := setup(t)
 	for i := 0; i < 12; i++ {

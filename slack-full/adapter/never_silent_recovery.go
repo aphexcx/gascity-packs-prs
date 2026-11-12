@@ -191,7 +191,7 @@ func (cfg config) reconcileNeverSilent() error {
 					return nil
 				}
 				a := row.SessionAct
-				if a.Channel == "" || a.SessionID == "" || a.MessageTS == "" || a.Timestamp.IsZero() {
+				if a.Channel == "" || a.SessionID == "" || a.MessageTS == "" || a.Timestamp.IsZero() || a.NoticeNoActivity {
 					return nil
 				}
 				if (a.Kind == "reply" && a.Source == "session_publish") || (a.Kind == "reaction" && a.Source == "session_react" && a.Emoji != "") {
@@ -291,7 +291,11 @@ func (cfg config) reconcileNeverSilentDeadFile(path string) error {
 			return nil
 		}
 		for _, id := range neverSilentMembers(r.Inbound) {
-			if err := cfg.neverSilent.StopAt(id, r.NoticeDefinite || cfg.neverSilent.DefinitelyFailed(id), r.DeadLetteredAt); err != nil {
+			// Recovery writes its refusal in the history record. A refusal
+			// that first stops a held message is definite, but a later refused
+			// replay must not alter an already stopped message's certainty.
+			refused := !cfg.neverSilent.IsStopped(id) && legacyPayloadRefusal(r.ReplayBlockedReason, r.AliasSessionID != "")
+			if err := cfg.neverSilent.StopAt(id, r.NoticeDefinite || refused || cfg.neverSilent.DefinitelyFailed(id), r.DeadLetteredAt); err != nil {
 				return err
 			}
 		}

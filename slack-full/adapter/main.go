@@ -3282,12 +3282,19 @@ func handleReact(cfg config) http.HandlerFunc {
 		}
 		// already_reacted is successful delivery of the requested state, but
 		// it is not a new session action and must not answer a newer request.
-		if err == nil && slackResp.OK && !req.Remove {
-			cfg.noticeError(cfg.neverSilent.Act(req.Conversation.ConversationID, "", strings.TrimSpace(req.SessionID), time.Now()))
-			cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
+		if receipt.Delivered && !req.Remove {
+			act := ingestionSessionAct{
 				Kind: "reaction", Source: "session_react", Channel: req.Conversation.ConversationID,
 				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
-			})
+			}
+			if cfg.neverSilent.Enabled() {
+				act.Timestamp = time.Now()
+				act.NoticeNoActivity = err != nil || !slackResp.OK
+				if !act.NoticeNoActivity {
+					cfg.noticeError(cfg.neverSilent.Act(act.Channel, "", act.SessionID, act.Timestamp))
+				}
+			}
+			cfg.inboundJournal.recordSessionAct(act)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(receipt)

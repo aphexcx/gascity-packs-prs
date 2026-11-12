@@ -300,6 +300,18 @@ func (e *Engine) DefinitelyFailed(id string) bool {
 	return e.state.Messages[id].FailureKind == "failed"
 }
 
+// IsStopped reports a tracked, active stop without changing its evidence.
+// Slack recovery uses this to keep unsuccessful replays from ending an outage.
+func (e *Engine) IsStopped(id string) bool {
+	if e == nil || !e.opts.Enabled {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	m, ok := e.state.Messages[id]
+	return ok && !m.Removed && !m.Stopped.IsZero()
+}
+
 func (e *Engine) Stop(id string, definite bool) error {
 	return e.StopAt(id, definite, time.Time{})
 }
