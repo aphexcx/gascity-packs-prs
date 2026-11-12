@@ -89,17 +89,19 @@ type MessageState struct {
 }
 
 type ChangeState struct {
-	ID        string    `json:"id"`
-	Space     string    `json:"space"`
-	Message   string    `json:"message"`
-	Kind      string    `json:"kind"`
-	Status    string    `json:"status"` // intent | pending | committed | unresolved
-	ReceiptID string    `json:"receipt_id"`
-	Attempts  int       `json:"attempts"`
-	Created   time.Time `json:"created"`
-	Event     string    `json:"event"`
-	Reason    string    `json:"reason"`
-	CatchUp   bool      `json:"catch_up,omitempty"` // adapter added the delivery header
+	ID             string    `json:"id"`
+	Space          string    `json:"space"`
+	Message        string    `json:"message"`
+	Kind           string    `json:"kind"`
+	Status         string    `json:"status"` // intent | pending | committed | unresolved
+	ReceiptID      string    `json:"receipt_id"`
+	Attempts       int       `json:"attempts"`
+	Created        time.Time `json:"created"`
+	Event          string    `json:"event"`
+	Reason         string    `json:"reason"`
+	CatchUp        bool      `json:"catch_up,omitempty"`        // adapter added the delivery header
+	NoticeResolved bool      `json:"notice_resolved,omitempty"` // operator accepted/replayed; never enroll the replay
+	NoticeAt       time.Time `json:"notice_at,omitzero"`
 	// ProvenanceFramed marks adapter-authored frames; legacy records default
 	// to false so user text resembling a frame is never trusted or stripped.
 	ProvenanceFramed bool `json:"provenance_framed,omitempty"`
@@ -156,9 +158,10 @@ type SendUpload struct {
 }
 
 type SendPart struct {
-	RequestID   string `json:"request_id"`
-	Text        string `json:"text"`
-	MessageName string `json:"message_name"`
+	RequestID   string    `json:"request_id"`
+	Text        string    `json:"text"`
+	MessageName string    `json:"message_name"`
+	SentAt      time.Time `json:"sent_at,omitzero"`
 }
 
 type QuarantinedEvent struct {

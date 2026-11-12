@@ -441,7 +441,7 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
       if (plan.panePaste) f.panes.set(sessionId, pasteText({ conversationId, text: message.text, pmid }));
       const verdict = plan.verdict ?? 'delivered';
       const bytes = Buffer.byteLength(message.text ?? '');
-      const member = { session_id: sessionId, status: verdict, delivered_bytes: verdict === 'failed' ? 0 : bytes, expected_bytes: bytes };
+      const member = { session_id: sessionId, status: verdict, delivered_bytes: plan.deliveredBytes ?? (verdict === 'failed' ? 0 : bytes), expected_bytes: bytes };
       if (plan.terminal) member.terminal = true;
       const delivery = { status: verdict, delivered_bytes: member.delivered_bytes, expected_bytes: bytes, members: [member] };
       if (plan.terminal) delivery.terminal = true;

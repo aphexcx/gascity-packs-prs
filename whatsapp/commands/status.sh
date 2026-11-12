@@ -24,7 +24,16 @@ esac
 
 wa_call GET /status
 [ "$WA_STATUS" = 200 ] || wa_die "adapter answered HTTP $WA_STATUS to /status"
-if [ "$json" = true ]; then printf '%s\n' "$WA_BODY" | jq .; exit 0; fi
+if [ "$json" = true ]; then
+  printf '%s\n' "$WA_BODY" | jq '
+    def last4: tostring | gsub("[^0-9A-Za-z]"; "") | .[-4:];
+    def windows: to_entries | map({conversation_last4: (.key | last4)} +
+      (.value | {window_closes_at, consent, update_day, marks_fired, lapses_7d}));
+    .keeper.conversations = ((.keeper.conversations // {}) | windows) |
+    .ledger.conversations = ((.ledger.conversations // {}) | windows) |
+    .inbound.gaps = [.inbound.gaps[]? | {conversation_last4: (.conversation_id | last4), watermark_sequence, head_sequence}]'
+  exit 0
+fi
 printf '%s' "$WA_BODY" | jq -r '
   def t: if . == null then "-" elif type == "number" then (. / 1000 | floor | todate) else (tostring | sub("\\.[0-9]+Z$"; "Z")) end;
   def last4: tostring | gsub("[^0-9A-Za-z]"; "") | .[-4:];

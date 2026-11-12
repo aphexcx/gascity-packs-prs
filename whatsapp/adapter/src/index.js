@@ -273,7 +273,7 @@ export async function main() {
     enabled: cfg.neverSilent, stateDir: cfg.stateDir, healthFile: cfg.mayorHealthFile,
     city: cfg.cityName, operatorContext: cfg.operatorContext, operatorAgent: cfg.operatorAgent,
     localAgent: cfg.routeAgent, gcBin: cfg.gcBin, clock, log,
-    post: (message, line) => publisher.notice(message.conversation, line, `never-silent:${message.id}:${message.created}`),
+    post: (message, line, canPost) => publisher.notice(message.conversation, line, `never-silent:${message.id}:${message.created}`, canPost),
   });
   const publisher = createPublisher({
     stateDir: cfg.stateDir,

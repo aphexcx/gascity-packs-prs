@@ -625,6 +625,10 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     assert ('Window read:   last good 2026-11-05T15:20:00Z; failing since 2026-11-05T15:21:00Z (3 attempt(s)): '
             'HTTP 503 from https://gw.invalid/v1/window') in out
     assert '5511900001234' not in out
+    encoded = verb('status.sh', '--json', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert encoded.returncode == 0, encoded.stderr
+    assert '5511900001234' not in encoded.stdout
+    assert json.loads(encoded.stdout)['keeper']['conversations'][0]['conversation_last4'] == '1234'
 
 
 def test_enroll_writes_the_credential_0600_and_prints_nothing_secret(tmp_path):

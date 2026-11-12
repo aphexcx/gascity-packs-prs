@@ -8,11 +8,92 @@ import (
 	"time"
 
 	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 )
+
+func TestNeverSilentReconcilesPrimaryTerminalTransitions(t *testing.T) {
+	for _, reason := range []string{reasonExhausted, "no_route", "operator accepted", "operator replay", "delivered", reasonLanded} {
+		t.Run(reason, func(t *testing.T) {
+			rf := retrySetup(t)
+			dir := t.TempDir()
+			posts := 0
+			opts := neversilent.Options{Enabled: true, Path: filepath.Join(dir, "state.json"), HealthFile: filepath.Join(dir, "health.json"), Now: rf.clock.Now, Post: func(context.Context, neversilent.Message, string) error { posts++; return nil }}
+			ns, err := neversilent.New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := "example-crash"
+			if err = ns.Track(neversilent.Message{ID: id, Conversation: space, Created: rf.clock.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			if reason != reasonExhausted {
+				if err = ns.Stop(id, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Primary write succeeds; the process dies before its sidecar observation.
+			status := "committed"
+			if reason == reasonExhausted {
+				status = "unresolved"
+			}
+			rf.l.Changes[id] = &ledger.ChangeState{ID: id, Space: space, Status: status, Reason: reason, Created: rf.clock.Now()}
+			ns, err = neversilent.New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rf.opts.NeverSilent = ns
+			rf.rebuild(t)
+			if err = rf.p.Pass(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			rf.clock.Add(3 * time.Minute)
+			if err = ns.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			want := 0
+			if reason == reasonExhausted || reason == "no_route" {
+				want = 1
+			}
+			if posts != want {
+				t.Fatalf("posts=%d want=%d", posts, want)
+			}
+		})
+	}
+}
+
+func TestNeverSilentRepairsSuccessfulPublishActivityFromLedger(t *testing.T) {
+	rf := retrySetup(t)
+	dir := t.TempDir()
+	posts := 0
+	ns, err := neversilent.New(neversilent.Options{Enabled: true, Path: filepath.Join(dir, "state.json"), Now: rf.clock.Now, Post: func(context.Context, neversilent.Message, string) error { posts++; return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ns.Track(neversilent.Message{ID: "example", Conversation: space, Thread: "original", Targets: []string{"example-session"}, Created: rf.clock.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err = ns.Stop("example", false); err != nil {
+		t.Fatal(err)
+	}
+	rf.clock.Add(time.Minute)
+	rf.l.Sends["example-reply"] = &ledger.SendState{Space: space, Request: &wire.PublishRequest{SessionID: "example-session"}, Parts: []ledger.SendPart{{Text: "example reply", MessageName: "example-message", SentAt: rf.clock.Now()}}}
+	rf.opts.NeverSilent = ns
+	rf.rebuild(t)
+	if err = rf.p.Pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rf.clock.Add(3 * time.Minute)
+	if err = ns.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if posts != 0 {
+		t.Fatal("lost durable session reply")
+	}
+}
 
 func TestNeverSilentNewAddressedMessagesOnly(t *testing.T) {
 	for _, tc := range []struct {

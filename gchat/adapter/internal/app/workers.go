@@ -88,13 +88,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 			return a.raiseDelivery(ctx, inbound.Raise{ID: "never-silent:" + m.ID, Space: m.Conversation, Thread: m.Thread, Message: m.ID, Recorded: m.Created,
 				Body: fmt.Sprintf("The adapter told the owner: %q\nSpace: %s\nThread: %s\nMessage: %s\nRead: gc gchat read --space %s\nStatus: gc gchat status\n", line, m.Conversation, m.Thread, m.ID, m.Conversation)})
 		},
-		Post: func(ctx context.Context, m neversilent.Message, line string) error {
-			a.mu.Lock()
-			named := a.l.Spaces[m.Conversation] != nil && a.l.Spaces[m.Conversation].ChatType == "SPACE"
-			a.mu.Unlock()
-			_, _, err := c.CreateNotice(ctx, m.Conversation, line, m.Thread, named)
-			return err
-		},
+		Post: a.s.PostNotice,
 	})
 	if err != nil {
 		return err

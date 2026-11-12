@@ -42,7 +42,16 @@ func newNeverSilent(cfg config, identities *identityRegistry, aliases *handleAli
 					}
 				}
 			}
-			result, err := postToSlack(cfg.slackBotToken, post)
+			token := cfg.slackBotToken
+			if m.OwnerAgent != "" {
+				var err error
+				token, err = loadOwnerBotToken(cfg.companySecretsDir, m.OwnerAgent)
+				if err != nil {
+					return errors.New("Slack notice owner identity unavailable")
+				}
+				post.Username, post.IconURL, post.IconEmoji = "", "", ""
+			}
+			result, err := postToSlack(token, post)
 			if err != nil {
 				return errors.New("Slack notice outcome unavailable")
 			}
@@ -76,6 +85,9 @@ func (cfg config) noticeError(err error) {
 
 func (cfg config) trackNeverSilent(m externalInboundMessage, eventID string, addressed bool) {
 	if cfg.neverSilent == nil || !addressed || m.Actor.IsBot || strings.HasPrefix(eventID, "backfill:") {
+		return
+	}
+	if m.ExplicitTarget != "" && m.ExplicitTarget != "mayor" {
 		return
 	}
 	thread := m.ReplyToMessageID
@@ -170,6 +182,10 @@ func (cfg config) runNeverSilent(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			if err := cfg.reconcileNeverSilent(); err != nil {
+				cfg.noticeError(err)
+				continue
+			}
 			cfg.noticeError(cfg.neverSilent.Poll(ctx))
 		}
 	}

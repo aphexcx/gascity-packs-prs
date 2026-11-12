@@ -726,12 +726,14 @@ export function createPublisher({
 
   // Owner notices deliberately bypass publish, transcript and reply bookkeeping.
   // A refusal never becomes an update template or an automatic retry.
-  async function notice(conversationId, text, key) {
+  async function notice(conversationId, text, key, canPost = () => true) {
     return chain(conversationId, async () => {
       const recipient = await recipientFor(conversationId);
       if (recipient.refused) throw new Error('never-silent recipient unavailable');
+      if (!canPost()) return false;
       const answer = await gateway.send({ to: recipient.to, idempotency_key: key, type: 'text', text });
       if (!str(answer?.message_id)) throw new Error('never-silent send uncertain');
+      return true;
     });
   }
 

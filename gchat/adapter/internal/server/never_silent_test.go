@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"gchat-adapter/internal/chat"
+	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/wire"
 )
 
 func TestNeverSilentSessionPublishAndReactionSuppressHealthLine(t *testing.T) {
-	for _, action := range []string{"publish", "partial publish", "reaction", "unattributed", "notice"} {
+	for _, action := range []string{"publish", "top-level publish", "partial publish", "reaction", "unattributed", "notice"} {
 		t.Run(action, func(t *testing.T) {
 			f := setup(t)
 			now := time.Now()
@@ -39,6 +41,8 @@ func TestNeverSilentSessionPublishAndReactionSuppressHealthLine(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch action {
+			case "top-level publish":
+				f.send(t, wire.PublishRequest{SessionID: "example-session", Conversation: conversation("spaces/room"), Text: "example top-level reply", IdempotencyKey: "example-top-level"})
 			case "partial publish":
 				httpClient := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
 					if strings.HasSuffix(r.URL.Query().Get("requestId"), "-2") {
@@ -81,7 +85,7 @@ func TestNeverSilentSessionPublishAndReactionSuppressHealthLine(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := 1
-			if action == "publish" || action == "partial publish" || action == "reaction" {
+			if action == "publish" || action == "top-level publish" || action == "partial publish" || action == "reaction" {
 				want = 0
 			}
 			if posts != want {
@@ -97,5 +101,31 @@ func TestNeverSilentSessionPublishAndReactionSuppressHealthLine(t *testing.T) {
 				t.Fatal(view)
 			}
 		})
+	}
+}
+
+func TestNeverSilentFirstNoticeResolvesUncachedSpaceType(t *testing.T) {
+	f := setup(t)
+	seed := f.send(t, wire.PublishRequest{Conversation: conversation("spaces/room"), Text: "example seed", IdempotencyKey: "example-seed"})
+	thread := seed.Metadata["thread"]
+	if err := f.s.update(context.Background(), func(l *ledger.Ledger) error { l.Spaces["spaces/room"].ChatType = ""; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.PostNotice(context.Background(), neversilent.Message{Conversation: "spaces/room", Thread: thread}, neversilent.DownLine); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	f.g.Configure(func(g *fakegoogle.Server) {
+		for _, m := range g.Messages {
+			if m.Text == neversilent.DownLine {
+				found = true
+				if m.Thread == nil || m.Thread.Name != thread {
+					t.Fatal("notice left the owner thread")
+				}
+			}
+		}
+	})
+	if !found {
+		t.Fatal("notice missing")
 	}
 }

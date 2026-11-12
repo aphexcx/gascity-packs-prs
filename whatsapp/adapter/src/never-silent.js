@@ -53,7 +53,6 @@ export function createNeverSilent({ enabled = false, stateDir, healthFile = '', 
       if (!state.messages || !state.owners || !Array.isArray(state.outages) || !Array.isArray(state.acts) || !Array.isArray(state.posted)) throw new Error('invalid state');
       state.messages = dictionary(state.messages); state.owners = dictionary(state.owners);
     } catch (err) { if (err.code !== 'ENOENT') throw new Error('never-silent state cannot be read; preserve it for recovery'); }
-    if (!operatorContext) log('never-silent: operator context unset; no operator mail will be sent');
   }
   const mailCommand = async (args) => { await exec(gcBin || 'gc', ['mail', 'send', ...args], { timeout: 10000, maxBuffer: 16384 }); };
   send ??= (mail) => mailCommand(['--context', operatorContext, operatorAgent || 'mayor', '--dedup', mail.key, '-s', mail.subject, '-m', mail.body]);
@@ -76,10 +75,12 @@ export function createNeverSilent({ enabled = false, stateDir, healthFile = '', 
     if (!message.id || !message.conversation) throw new Error('never-silent: missing message coordinates');
     change((s) => { s.messages[message.id] = { ...message, created: message.created ?? clock(), targets: message.targets ?? [] }; });
   }
-  function result(id, kind, targets = []) {
+  function result(id, kind, targets = [], at = clock()) {
     if (!enabled || !state.messages[id] || state.messages[id].removed) return;
     change((s) => {
-      const m = s.messages[id]; const now = clock();
+      const m = s.messages[id]; const now = at;
+      if (m.observed !== undefined && at < m.observed) return;
+      m.observed = at;
       if (targets.length) m.targets = [...targets];
       if (['failed', 'unreachable'].includes(kind)) {
         if (m.failureKind !== kind || m.failureSince === undefined) m.failureSince = now;
@@ -90,7 +91,7 @@ export function createNeverSilent({ enabled = false, stateDir, healthFile = '', 
   }
   function stop(id, definite, at = clock()) {
     if (!enabled || !state.messages[id] || state.messages[id].removed) return;
-    change((s) => { const m = s.messages[id]; if (m.stopped === undefined) { m.stopped = at; m.uncertain = !definite; } });
+    change((s) => { const m = s.messages[id]; if (m.observed !== undefined && at < m.observed) return; m.observed = at; if (m.stopped === undefined) { m.stopped = at; m.uncertain = !definite; } });
   }
   function forget(id) { if (enabled && state.messages[id]) change((s) => { s.messages[id].removed = true; }); }
   function act(conversation, session, at = clock()) {
@@ -126,11 +127,12 @@ export function createNeverSilent({ enabled = false, stateDir, healthFile = '', 
         groups.get(found.cause).push(m); if (found.post) ready.add(m.id);
       }
       for (const messages of groups.values()) messages.sort((a, b) => a.created - b.created || a.id.localeCompare(b.id));
+      let newOutages = 0;
       change((s) => {
         for (const o of s.outages) if (o.end === undefined && !groups.has(o.cause)) o.end = now;
         for (const [kind, messages] of groups) {
           let outage = s.outages.find((o) => o.cause === kind && o.end === undefined);
-          if (!outage) { outage = { id: randomUUID(), cause: kind, start: now, mail: {}, clearedMail: {}, localMail: {}, sample: messages[0] }; s.outages.push(outage); }
+          if (!outage) { outage = { id: randomUUID(), cause: kind, start: now, mail: {}, clearedMail: {}, localMail: {}, sample: messages[0] }; s.outages.push(outage); newOutages++; }
           Object.assign(outage, { messages: messages.length, conversations: new Set(messages.map((m) => m.conversation)).size, oldest: messages[0].created, health });
           for (const message of messages) {
             const m = s.messages[message.id]; const mark = s.owners[m.conversation];
@@ -144,9 +146,14 @@ export function createNeverSilent({ enabled = false, stateDir, healthFile = '', 
           }
         }
       });
+      if (!operatorContext) for (let i = 0; i < newOutages; i++) log('never-silent: operator context unset; no operator mail will be sent');
       for (const p of posts) {
-        if (!cause(state.messages[p.message.id], readHealth(healthFile, clock()), clock())) continue;
-        try { await post(p.message, p.line); }
+        const canPost = () => {
+          const current = cause(state.messages[p.message.id], readHealth(healthFile, clock()), clock());
+          return Boolean(current?.post && OWNER_LINES[current.cause] === p.line);
+        };
+        if (!canPost()) continue;
+        try { if (await post(p.message, p.line, canPost) === false) continue; }
         catch { log('never-silent: owner post refused or uncertain; reserved mark retained'); continue; }
         change((s) => { s.owners[p.message.conversation].posted = true; s.posted.push(clock()); });
       }

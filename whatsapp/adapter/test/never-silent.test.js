@@ -4,6 +4,36 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readHealth, createNeverSilent } from '../src/never-silent.js';
+import { createPublisher } from '../src/outbound.js';
+
+test('never-silent rechecks eligibility inside the publisher queue after session words', async (t) => {
+  const f = fixture(t);
+  let release;
+  let started;
+  const sending = new Promise((resolve) => { started = resolve; });
+  const sends = [];
+  const publisher = createPublisher({ stateDir: f.opts.stateDir, notices: f.e, clock: () => f.now,
+    gateway: { window: async () => ({ windows: [{ conversation_id: 'example-owner' }] }),
+      send: async (body) => { sends.push(body); if (sends.length === 1) { started(); await new Promise((resolve) => { release = resolve; }); } return { message_id: 'example-post' }; } },
+  });
+  f.opts.post = (m, line, canPost) => publisher.notice(m.conversation, line, 'example-notice', canPost);
+  // Keep the engine used by publisher and inject the callback through a closure.
+  const original = f.e;
+  f.restart();
+  original.act = (...args) => f.e.act(...args);
+  f.e.track({ id: 'example-message', conversation: 'example-owner', targets: ['example-session'] });
+  f.e.stop('example-message', false);
+  f.now += 180000;
+  const reply = publisher.handlePublish(JSON.stringify({ session_id: 'example-session', conversation: { conversation_id: 'example-owner' }, text: 'example reply', idempotency_key: 'example-reply' }));
+  await sending;
+  const polling = f.e.poll();
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  assert.equal((await reply).json.delivered, true);
+  await polling;
+  assert.equal(sends.length, 1);
+  assert.equal(f.e.status().owner_lines_seven_days, 0);
+});
 
 test('never-silent health: the four states and every unknown case', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'never-silent-'));
@@ -105,7 +135,11 @@ test('never-silent mail retry marks survive restart and remote mail has no custo
 
 test('never-silent is off by default and missing context sends no operator mail', async (t) => {
   const f = fixture(t, { enabled: false }); f.e.track({ id: 'example-message', conversation: 'example-conversation' }); f.e.stop('example-message', true); await f.e.poll(); assert.equal(f.posts.length, 0);
-  const g = fixture(t, { operatorContext: '' }); g.e.track({ id: 'example-message', conversation: 'example-conversation' }); g.e.stop('example-message', true); await g.e.poll(); assert.equal(g.mails.length, 0);
+  const logs = [];
+  const g = fixture(t, { operatorContext: '', log: (line) => logs.push(line) });
+  assert.equal(logs.length, 0, 'no outage at startup');
+  g.e.track({ id: 'example-message', conversation: 'example-conversation' }); g.e.stop('example-message', true); await g.e.poll(); assert.equal(g.mails.length, 0);
+  g.restart(); await g.e.poll(); assert.equal(logs.length, 1, 'one log per durable outage');
 });
 
 test('never-silent clear mail survives an expired start mail', async (t) => {

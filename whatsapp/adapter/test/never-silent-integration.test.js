@@ -4,6 +4,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { rig, adapterRequest, waitFor } from './fakes.js';
 import { OWNER_LINES } from '../src/never-silent.js';
+import { openJournal } from '../src/journal.js';
+
+test('never-silent integration: primary delivered resolution clears a stale sidecar stop after restart', async (t) => {
+  for (const via of ['operator', 'probe']) {
+    const r = await setup(t);
+    r.gc.policy = () => ({ verdict: 'pending', terminal: true, deliveredBytes: 0 });
+    r.start(r.options);
+    r.gw.addText('example-owner', 'example-crash-resolution', 'fixture words');
+    await waitFor(() => r.journal().some((line) => line.t === 'held_terminal'));
+    const sidecar = path.join(r.dir, '.gc', 'whatsapp', 'never-silent.json');
+    await waitFor(() => Object.values(JSON.parse(fs.readFileSync(sidecar)).messages).some((m) => m.stopped !== undefined));
+    await r.adapter.kill();
+    r.clock.advance(1000);
+    const journal = openJournal({ stateDir: path.join(r.dir, '.gc', 'whatsapp'), clock: r.clock.now });
+    const rid = r.journal().find((line) => line.t === 'held_terminal').rid;
+    journal.append({ t: 'accepted', rid, verdict: 'delivered', via, at: r.clock.now() });
+    journal.close();
+    await r.restart(r.options);
+    await r.pump(200000, { stepMs: 10000 });
+    assert.equal(r.gw.sends.length, 0, via);
+    await r.close();
+  }
+});
 
 async function setup(t) {
   const r = await rig();
@@ -20,6 +43,23 @@ async function setup(t) {
   return r;
 }
 
+test('never-silent integration: terminal whole-paste pending remains delivered across restart', async (t) => {
+  const r = await setup(t);
+  r.gc.policy = () => ({ verdict: 'pending', terminal: true, concludedPending: true });
+  r.start(r.options);
+  r.gw.addText('example-owner', 'example-terminal-whole', 'fixture words');
+  await waitFor(() => r.journal().some((line) => line.t === 'held_terminal'));
+  await r.restart(r.options);
+  r.health('ok');
+  await r.pump(190000, { stepMs: 10000 });
+  assert.equal(r.gw.sends.length, 0);
+  r.health('session_down');
+  await waitFor(() => r.gw.sends.length === 1);
+  assert.equal(r.gw.sends[0].text, OWNER_LINES.session_down);
+  const status = await adapterRequest(r.socket, 'GET', '/status');
+  assert.deepEqual(status.json.never_silent.outages.map((o) => o.cause), ['session_down']);
+});
+
 test('never-silent integration: refused message posts once without reply bookkeeping and mails fake gc', async (t) => {
   const r = await setup(t);
   r.gc.policy = () => ({ status: 400 });
@@ -34,6 +74,7 @@ test('never-silent integration: refused message posts once without reply bookkee
   assert.ok(remote.includes('example-operator'));
   assert.ok(remote.includes('--dedup'));
   assert.doesNotMatch(JSON.stringify(remote), /CANARY_CUSTOMER_TEXT|example-owner|example-message/);
+  t.diagnostic(JSON.stringify(remote));
   const status = await adapterRequest(r.socket, 'GET', '/status');
   assert.equal(status.json.never_silent.owner_lines_seven_days, 1);
   await r.restart(r.options);
@@ -61,7 +102,7 @@ test('never-silent integration: whole-paste pending uses health; attributed word
 test('never-silent integration: crash after admission or terminal acceptance retains notice eligibility', async (t) => {
   for (const boundary of ['after-received', 'after-accepted']) {
     const r = await setup(t);
-    r.gc.policy = () => boundary === 'after-received' ? { status: 400 } : { verdict: 'pending', terminal: true };
+    r.gc.policy = () => boundary === 'after-received' ? { status: 400 } : { verdict: 'pending', terminal: true, deliveredBytes: 0 };
     r.gw.addText('example-owner', 'example-crash', 'fixture words');
     const first = r.start({ ...r.options, WHATSAPP_TEST_KILL_AT: boundary });
     assert.equal((await first.exited).signal, 'SIGKILL');

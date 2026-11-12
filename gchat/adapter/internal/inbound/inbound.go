@@ -281,7 +281,35 @@ func (p *Processor) Pass(ctx context.Context) error {
 		return err
 	}
 	ids := make([]string, 0)
+	for _, send := range l.Sends {
+		if send.Request == nil || send.Request.SessionID == "" {
+			continue
+		}
+		for _, part := range send.Parts {
+			if part.MessageName != "" && strings.TrimSpace(part.Text) != "" && !part.SentAt.IsZero() {
+				if err := p.opts.NeverSilent.Act(send.Space, "", send.Request.SessionID, part.SentAt); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	for id, c := range l.Changes {
+		// Repair a crash after the authoritative ledger write but before the
+		// sidecar write. These calls never enroll an untracked/replayed message.
+		var noticeErr error
+		switch {
+		case c.NoticeResolved || c.Reason == "operator accepted" || c.Reason == "operator replay" || c.Reason == reasonWithdrawn:
+			noticeErr = p.opts.NeverSilent.Forget(id)
+		case c.Status == "unresolved":
+			noticeErr = p.opts.NeverSilent.StopAt(id, strings.HasPrefix(c.Reason, "gc rejected the POST:"), c.NoticeAt)
+		case c.Status == "committed" && c.Reason == "no_route":
+			noticeErr = p.opts.NeverSilent.StopAt(id, true, c.NoticeAt)
+		case c.Status == "committed" && (c.Reason == "delivered" || c.Reason == reasonLanded):
+			noticeErr = p.opts.NeverSilent.ResultAt(id, "delivered", nil, c.NoticeAt)
+		}
+		if noticeErr != nil {
+			return noticeErr
+		}
 		if c.Status == "pending" || c.Status == "intent" {
 			ids = append(ids, id)
 		}
@@ -490,6 +518,7 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 		l.Counters["turns:"+c.Space]++
 		l.Counters["unconfirmed:"+c.Space]++
 		c.Status, c.Reason, c.Cause = "committed", reasonLanded, ""
+		c.NoticeAt = p.opts.Now()
 		committed = true
 	})
 	if err == nil && committed {
@@ -1230,6 +1259,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 		if d.ReceiptID != "" {
 			c.ReceiptID = d.ReceiptID
 		}
+		c.NoticeAt = p.opts.Now()
 		switch status {
 		case "delivered", "no_route":
 			if c.Status != "committed" {
@@ -1248,7 +1278,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 			c.Fragment = c.Fragment || fragment(d)
 			if c.Fragment && c.Attempts >= firstPOSTs {
 				// One save: an intent record with four POSTs would read as due.
-				markUnresolved(l, id, c, reasonExhausted)
+				markUnresolved(l, id, c, reasonExhausted, p.opts.Now())
 				exhausted = true
 				return
 			}
@@ -1261,6 +1291,9 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 	if err == nil && exhausted {
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reasonExhausted)
 		err = p.opts.NeverSilent.Stop(id, false)
+	}
+	if err == nil && status == "no_route" {
+		err = p.opts.NeverSilent.Stop(id, true)
 	}
 	return err
 }
@@ -1308,7 +1341,7 @@ func (p *Processor) unresolved(id, reason string) error {
 		if c == nil {
 			return
 		}
-		markUnresolved(l, id, c, reason)
+		markUnresolved(l, id, c, reason, p.opts.Now())
 		recorded = true
 	})
 	if err == nil && recorded {
@@ -1318,7 +1351,8 @@ func (p *Processor) unresolved(id, reason string) error {
 }
 
 // markUnresolved runs inside an update; Changes and Unresolved hold the record.
-func markUnresolved(l *ledger.Ledger, id string, c *ledger.ChangeState, reason string) {
+func markUnresolved(l *ledger.Ledger, id string, c *ledger.ChangeState, reason string, at time.Time) {
+	c.NoticeAt = at
 	c.Status = "unresolved"
 	c.Reason = reason
 	c.Cause = unresolvedCause(reason, c.Cause)

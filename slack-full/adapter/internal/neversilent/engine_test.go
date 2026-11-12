@@ -84,6 +84,9 @@ func TestEpisodesPersistAndAggregateByCause(t *testing.T) {
 	if f.e.Status().OwnerLinesSevenDays != 4 || len(f.e.Status().Outages) != 0 {
 		t.Fatalf("status=%+v", f.e.Status())
 	}
+	for _, mail := range f.mails {
+		t.Log(mail.Subject + "\n" + mail.Body)
+	}
 }
 
 func TestPendingResetsFailureAndNeverMeansDown(t *testing.T) {
@@ -141,6 +144,11 @@ func TestStoppedUnknownWaitsAndSessionActSuppressesOwnerLine(t *testing.T) {
 }
 
 func TestHealthRequiresDeliveredAndNoSessionAct(t *testing.T) {
+	expected := map[string]string{
+		"no_seat":      "I can't answer yet because no Claude account is signed in for me. The team that runs me has been told.",
+		"seat_at_cap":  "I've reached my usage limit for now and can't answer until it resets. The team that runs me has been told.",
+		"session_down": "I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.",
+	}
 	for _, state := range []string{"ok", "no_seat", "seat_at_cap", "session_down"} {
 		for _, acted := range []bool{false, true} {
 			t.Run(fmt.Sprint(state, "/", acted), func(t *testing.T) {
@@ -160,6 +168,12 @@ func TestHealthRequiresDeliveredAndNoSessionAct(t *testing.T) {
 				}
 				if len(f.posts) != want {
 					t.Fatalf("posts=%v", f.posts)
+				}
+				if want == 1 {
+					if f.posts[0] != "example-conversation|example-thread|"+expected[state] {
+						t.Fatalf("unexpected owner line: %q", f.posts[0])
+					}
+					t.Log(expected[state])
 				}
 			})
 		}
@@ -214,10 +228,20 @@ func TestMailRetriesPersistAndDoNotRepeatSuccessfulSend(t *testing.T) {
 func TestNoOperatorContextAndOff(t *testing.T) {
 	f := setup(t)
 	f.opts.OperatorContext = ""
+	logs := 0
+	f.opts.Log = func(string) { logs++ }
 	f.restart()
+	if logs != 0 {
+		t.Fatal("missing context logged before an outage")
+	}
 	f.track("example-message", "example-conversation")
 	f.check(f.e.Stop("example-message", true))
 	f.poll()
+	f.restart()
+	f.poll()
+	if logs != 1 {
+		t.Fatalf("missing context logged %d times for one outage", logs)
+	}
 	if len(f.mails) != 0 {
 		t.Fatal("operator mail without context")
 	}

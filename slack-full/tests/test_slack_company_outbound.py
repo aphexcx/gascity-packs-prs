@@ -1066,6 +1066,33 @@ def test_dm_reply_posts_with_owner_token(env, tmp_path) -> None:
     assert p["metadata"]["event_payload"]["nonce"] == result["nonce"]
 
 
+@pytest.mark.parametrize("route", ["room", "dm", "mpim"])
+def test_never_silent_company_replies_spool_attributed_activity(env, tmp_path, route):
+    state = tmp_path / ".gc" / "slack"
+    (state / "never-silent.json").write_text('{}')
+    captured = []
+    env._slack_web_post = _mock_ok(captured, ["1700000000.001000"])
+    if route == "room":
+        _write_turn(env, "ollie-main")
+        reply = env.post_company_root_reply(body="example reply", origin_ts="", session_name="ollie-main")
+    else:
+        _write_dm_bindings(tmp_path)
+        writer = _write_dm_turn if route == "dm" else _write_mpim_turn
+        writer(env, "ollie-dm")
+        post = env.post_company_dm_reply if route == "dm" else env.post_company_mpim_reply
+        reply = post(body="example reply", origin_ts="", session_name="ollie-dm")
+        # Reusing a confirmed intent retains the original Slack timestamp.
+        assert post(body="example reply", origin_ts="", session_name="ollie-dm")["posted_ts"] == reply["posted_ts"]
+    assert reply["status"] == "posted"
+    records = list((state / "never-silent-acts").glob("*.json"))
+    assert len(records) == 1
+    activity = json.loads(records[0].read_text())
+    assert activity["session"] == ("ollie-main" if route == "room" else "ollie-dm")
+    assert activity["thread"] == ("1700000000.000100" if route == "room" else "")
+    assert activity["at"] == "2023-11-14T22:13:20.001000+00:00"
+    assert "example reply" not in records[0].read_text()
+
+
 def test_dm_reply_threads_only_when_human_threaded(env, tmp_path) -> None:
     _write_dm_bindings(tmp_path)
     # The human replied INSIDE a thread: the turn's own ts differs from its

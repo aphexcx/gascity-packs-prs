@@ -35,6 +35,9 @@ type Message struct {
 	Thread       string    `json:"thread,omitempty"`
 	Created      time.Time `json:"created"`
 	Targets      []string  `json:"targets,omitempty"`
+	OwnerAgent   string    `json:"owner_agent,omitempty"`
+	Observed     time.Time `json:"observed,omitempty"`
+	ObservedKind string    `json:"observed_kind,omitempty"`
 	Delivered    time.Time `json:"delivered,omitempty"`
 	FailureSince time.Time `json:"failure_since,omitempty"`
 	FailureKind  string    `json:"failure_kind,omitempty"`
@@ -140,9 +143,6 @@ func New(opts Options) (*Engine, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("never-silent state cannot be read")
 	}
-	if opts.OperatorContext == "" {
-		opts.Log("never-silent: operator context unset; no operator mail will be sent")
-	}
 	if e.opts.Send == nil {
 		e.opts.Send = func(ctx context.Context, m Mail) error {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -236,6 +236,12 @@ func (e *Engine) Track(m Message) error {
 // Result records an observed answer, never the age of a missing reply.
 // pending (including an HTTP 200 pending) breaks both failure streaks.
 func (e *Engine) Result(id, kind string, targets []string) error {
+	return e.ResultAt(id, kind, targets, time.Time{})
+}
+
+// ResultAt replays a primary journal observation without advancing its clock.
+// Older records cannot resurrect a stop after a newer delivery.
+func (e *Engine) ResultAt(id, kind string, targets []string, at time.Time) error {
 	if e == nil || !e.opts.Enabled {
 		return nil
 	}
@@ -245,7 +251,15 @@ func (e *Engine) Result(id, kind string, targets []string) error {
 	if !ok || m.Removed {
 		return nil
 	}
-	now := e.opts.Now()
+	now := at
+	if now.IsZero() {
+		now = e.opts.Now()
+	}
+	if !at.IsZero() && (now.Before(m.Observed) || (now.Equal(m.Observed) && kind == m.ObservedKind && (len(targets) == 0 || slices.Equal(targets, m.Targets)))) {
+		return nil
+	}
+	m.Observed = now
+	m.ObservedKind = kind
 	if len(targets) > 0 {
 		m.Targets = slices.Clone(targets)
 	}
@@ -278,6 +292,10 @@ func (e *Engine) DefinitelyFailed(id string) bool {
 }
 
 func (e *Engine) Stop(id string, definite bool) error {
+	return e.StopAt(id, definite, time.Time{})
+}
+
+func (e *Engine) StopAt(id string, definite bool, at time.Time) error {
 	if e == nil || !e.opts.Enabled {
 		return nil
 	}
@@ -287,12 +305,27 @@ func (e *Engine) Stop(id string, definite bool) error {
 	if !ok || m.Removed {
 		return nil
 	}
+	if at.IsZero() {
+		at = e.opts.Now()
+	}
+	if at.Before(m.Observed) {
+		return nil
+	}
+	if !m.Stopped.IsZero() && (!definite || !m.Uncertain) {
+		return nil
+	}
+	m.Observed = at
 	if m.Stopped.IsZero() {
-		m.Stopped = e.opts.Now()
+		m.Stopped = at
 		m.Uncertain = !definite
+	}
+	if definite {
+		m.Uncertain = false
 	}
 	return e.change(func(s *state) { s.Messages[id] = m })
 }
+
+func (e *Engine) Enabled() bool { return e != nil && e.opts.Enabled }
 
 func (e *Engine) Forget(id string) error {
 	if e == nil || !e.opts.Enabled {
@@ -301,7 +334,7 @@ func (e *Engine) Forget(id string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	m, ok := e.state.Messages[id]
-	if !ok {
+	if !ok || m.Removed {
 		return nil
 	}
 	m.Removed = true
@@ -314,6 +347,11 @@ func (e *Engine) Act(conversation, thread, session string, at time.Time) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	for _, a := range e.state.Acts {
+		if a.Conversation == conversation && a.Session == session && a.At.Equal(at) {
+			return nil
+		}
+	}
 	return e.change(func(s *state) { s.Acts = append(s.Acts, act{conversation, thread, session, at}) })
 }
 
@@ -332,7 +370,7 @@ func (e *Engine) Reaction(id, session string, at time.Time) error {
 
 func (e *Engine) answered(m Message) bool {
 	for _, a := range e.state.Acts {
-		if a.Conversation == m.Conversation && (m.Thread == "" || a.Thread == "" || a.Thread == m.Thread) && !a.At.Before(m.Created) && (len(m.Targets) == 0 || slices.Contains(m.Targets, a.Session)) {
+		if a.Conversation == m.Conversation && !a.At.Before(m.Created) && (len(m.Targets) == 0 || slices.Contains(m.Targets, a.Session)) {
 			return true
 		}
 	}
@@ -399,6 +437,7 @@ func (e *Engine) Poll(ctx context.Context) error {
 		line    string
 	}
 	var posts []ownerPost
+	newOutages := 0
 	err := e.change(func(s *state) {
 		for i := range s.Outages {
 			o := &s.Outages[i]
@@ -421,6 +460,7 @@ func (e *Engine) Poll(ctx context.Context) error {
 			if index < 0 {
 				s.Outages = append(s.Outages, Outage{ID: randomID(), Cause: cause, Start: now})
 				index = len(s.Outages) - 1
+				newOutages++
 			}
 			o := &s.Outages[index]
 			o.Messages = len(messages)
@@ -445,6 +485,11 @@ func (e *Engine) Poll(ctx context.Context) error {
 	})
 	if err != nil {
 		return err
+	}
+	if e.opts.OperatorContext == "" {
+		for i := 0; i < newOutages; i++ {
+			e.opts.Log("never-silent: operator context unset; no operator mail will be sent")
+		}
 	}
 	for _, p := range posts {
 		if ctx.Err() != nil {

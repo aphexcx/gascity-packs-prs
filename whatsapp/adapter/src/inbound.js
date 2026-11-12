@@ -194,8 +194,15 @@ export function createInbound({
     for (const e of entries().values()) {
       // Only previously enrolled sidecar entries can change here. Replaying
       // the journal never enrolls old traffic when the feature is enabled.
+      if (e.accepted?.via === 'operator' && e.accepted.verdict === 'delivered') notices?.forget(e.rid);
+      else if (e.held?.never_silent_kind === 'delivered') {
+        notices?.result(e.rid, 'delivered', e.held.members ?? [], e.held.at);
+      }
+      else if (e.accepted?.verdict === 'delivered' || e.accepted?.never_silent_kind === 'delivered') {
+        notices?.result(e.rid, 'delivered', e.accepted.members ?? [], e.accepted.at);
+      }
       if (e.dead) notices?.stop(e.rid, definiteStop(e, e.dead.reason), e.dead.at);
-      else if (e.held) notices?.stop(e.rid, false, e.held.at);
+      else if (e.held && e.held.never_silent_kind !== 'delivered' && e.accepted?.never_silent_kind !== 'delivered') notices?.stop(e.rid, false, e.held.at);
       if (ackOwed(e) && e.deliveryId !== undefined) ackOwedIds.set(e.deliveryId, e.rid);
       // Every pending entry is read back at once; the schedule is the fold's.
       if (entryState(e) === 'accepted:pending') nextAt.set(e.rid, 0);
@@ -602,7 +609,7 @@ export function createInbound({
     const e = entries().get(rid);
     const delivery = answer?.delivery;
     const { verdict, terminal } = verdictOf(delivery);
-    observeDelivery(rid, delivery, false);
+    observeDelivery(rid, delivery, terminal);
     const transcriptEntry = answer?.TranscriptEntry;
     const sequence = recordField(transcriptEntry, 'Sequence');
     if (verdict === 'unsupported') {
@@ -624,6 +631,7 @@ export function createInbound({
       provider_message_id: recordField(transcriptEntry, 'ProviderMessageID') ?? pmidOfRid(rid),
       members: membersOf(delivery),
       never_silent_definite_failure: definiteFailure(delivery),
+      never_silent_kind: neverSilentDeliveryKind(delivery, terminal),
       via,
       at: clock(),
     });
@@ -647,19 +655,24 @@ export function createInbound({
     return (verdict === 'failed' || verdict === 'no_route') && !(delivery?.delivered_bytes > 0) && (delivery?.members ?? []).every((m) => !m.delivered_bytes && m.status !== 'partial');
   }
 
-  function observeDelivery(rid, delivery, concluded) {
+  function neverSilentDeliveryKind(delivery, concluded) {
     const members = Array.isArray(delivery?.members) ? delivery.members : [];
     const { verdict } = verdictOf(delivery);
     const wholePaste = concluded && verdict === 'pending' && members.length > 0 && members.every((m) => Number.isSafeInteger(m.expected_bytes) && m.expected_bytes > 0 && m.delivered_bytes >= m.expected_bytes);
-    notices?.result(rid, verdict === 'delivered' || wholePaste ? 'delivered' : definiteFailure(delivery) ? 'failed' : 'pending', members.map((m) => m.session_id).filter(Boolean));
+    return verdict === 'delivered' || wholePaste ? 'delivered' : definiteFailure(delivery) ? 'failed' : 'pending';
+  }
+
+  function observeDelivery(rid, delivery, concluded) {
+    notices?.result(rid, neverSilentDeliveryKind(delivery, concluded), membersOf(delivery));
   }
 
   async function afterVerdict(rid, verdict, terminal, delivery) {
     const e = entries().get(rid);
     if (terminal) {
-      journal.append({ t: 'held_terminal', rid, receipt_id: delivery?.receipt_id ?? e.accepted?.receipt_id ?? '', members: membersOf(delivery) });
+      const noticeKind = neverSilentDeliveryKind(delivery, true);
+      journal.append({ t: 'held_terminal', rid, receipt_id: delivery?.receipt_id ?? e.accepted?.receipt_id ?? '', members: membersOf(delivery), never_silent_kind: noticeKind });
       nextAt.delete(rid);
-      notices?.stop(rid, false);
+      if (noticeKind !== 'delivered') notices?.stop(rid, false);
       log(`${ref(rid)}: TERMINAL HOLD (gc: stop polling, do not redeliver); waiting for gc whatsapp inbound resolve`);
       return;
     }
@@ -911,7 +924,7 @@ export function createInbound({
       log(`${ref(rid)}: concluded receipt without a usable delivery; the in-doubt rule`);
       return resolveInDoubt(rid);
     }
-    journal.append({ t: 'accepted', rid, receipt_id: receiptId, verdict, members: membersOf(answer.delivery), never_silent_definite_failure: definiteFailure(answer.delivery), via: 'readback', at: clock() });
+    journal.append({ t: 'accepted', rid, receipt_id: receiptId, verdict, members: membersOf(answer.delivery), never_silent_definite_failure: definiteFailure(answer.delivery), never_silent_kind: neverSilentDeliveryKind(answer.delivery, true), via: 'readback', at: clock() });
     return afterVerdict(rid, verdict, false, answer.delivery);
   }
 

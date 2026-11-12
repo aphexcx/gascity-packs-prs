@@ -18,7 +18,7 @@ func TestNeverSilentSlackTransportAndEligibility(t *testing.T) {
 		name, status     string
 		eligible, replay bool
 	}{
-		{"failed", "failed", true, false}, {"pending", "pending", true, false}, {"delivered", "delivered", true, false}, {"ambient", "failed", false, false}, {"replay", "failed", true, true},
+		{"failed", "failed", true, false}, {"pending", "pending", true, false}, {"delivered", "delivered", true, false}, {"ambient", "failed", false, false}, {"replay", "failed", true, true}, {"other-agent", "failed", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now()
@@ -37,6 +37,9 @@ func TestNeverSilentSlackTransportAndEligibility(t *testing.T) {
 			defer gc.Close()
 			cfg := config{neverSilent: e, gcAPIBase: gc.URL, cityName: "example-city"}
 			msg := externalInboundMessage{ProviderMessageID: "123.456", Conversation: conversationRef{ConversationID: "EXAMPLE_CHANNEL", Kind: "dm"}, Actor: externalActor{ID: "EXAMPLE_PERSON"}, Text: "CANARY_CUSTOMER_TEXT"}
+			if tc.name == "other-agent" {
+				msg.ExplicitTarget = "worker"
+			}
 			eventID := "example-event"
 			if tc.replay {
 				eventID = "backfill:example-event"

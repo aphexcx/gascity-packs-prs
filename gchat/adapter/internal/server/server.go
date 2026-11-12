@@ -662,15 +662,21 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 			return s.failure(p, e), e
 		}
 		send.Parts[i].MessageName = name
+		sentAt := time.Now().UTC()
 		send.Thread = thread
 		if strings.TrimSpace(part.Text) != "" {
-			if err := s.notices().Act(send.Space, thread, p.SessionID, time.Now()); err != nil {
+			actThread := thread
+			if p.ReplyToMessageID == "" {
+				actThread = ""
+			}
+			if err := s.notices().Act(send.Space, actThread, p.SessionID, sentAt); err != nil {
 				s.opts.Logger.Warn("never-silent: could not record session reply")
 			}
 		}
 		if err = s.update(ctx, func(l *ledger.Ledger) error {
 			current := l.Sends[send.Key]
 			current.Parts[i].MessageName = name
+			current.Parts[i].SentAt = sentAt
 			current.Thread = thread
 			m := l.Messages[name]
 			if m == nil {
@@ -749,6 +755,17 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 		}
 	}
 	return false, &googleapi.Error{Code: http.StatusNotFound, Message: "space not found in identity inventory"}
+}
+
+// PostNotice is separate from publishing and its session/reply bookkeeping.
+func (s *Server) PostNotice(ctx context.Context, m neversilent.Message, line string) error {
+	named, err := s.named(ctx, m.Conversation)
+	if err != nil {
+		return err
+	}
+	c, _ := s.clients()
+	_, _, err = c.CreateNotice(ctx, m.Conversation, line, m.Thread, named)
+	return err
 }
 
 type commandRequest struct {
@@ -1334,10 +1351,9 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !v.Remove && v.SessionID != "" {
-		l, readErr := s.snapshot(r.Context())
-		if readErr == nil && l.Messages[v.Message] != nil {
-			space := strings.Split(v.Message, "/messages/")[0]
-			if err := s.notices().Act(space, l.Messages[v.Message].Thread, v.SessionID, time.Now()); err != nil {
+		space, _, valid := strings.Cut(v.Message, "/messages/")
+		if valid {
+			if err := s.notices().Act(space, "", v.SessionID, time.Now()); err != nil {
 				s.opts.Logger.Warn("never-silent: could not record session reaction")
 			}
 		}
@@ -1726,6 +1742,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 			c.Status = "committed"
 			c.Reason = "operator accepted"
 		}
+		c.NoticeResolved = true
 		l.Changes[v.ID] = c
 		delete(l.Unresolved, v.ID)
 		return nil

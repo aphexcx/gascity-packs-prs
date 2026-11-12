@@ -100,6 +100,8 @@ attachment rejection and spool replay; their provenance stays in adapter state.
 
 Set `NEVER_SILENT=on` to enable notices for newly admitted human messages addressed to the mayor. It is off by default. Edits, deletions, reactions, bots and recovery traffic do not start notices. A busy mayor is never reported just for taking time to reply.
 
+Company rooms and agent DMs use their frozen local mayor target: the directory agent named `mayor`, or an identity bound to the local `mayor` session. Other agents and other cities do not use this city's mayor health. Notices use that target's bot token. Confirmed company replies and recovered published intents count as session activity; admission acknowledgments and notices do not.
+
 The adapter knows `not_delivered` when it stops trying, or observes three continuous minutes of definite delivery failures or connection/dial errors, city-not-found responses or server errors. A successful HTTP response saying pending resets the failure wait. An uncertain stopped delivery raises operator mail immediately but waits three minutes without a session reply or reaction before telling the owner.
 
 The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
@@ -114,7 +116,7 @@ The owner receives one of these exact lines in the same conversation and thread,
 
 A durable reservation permits at most one attempt per conversation in six hours. A refused post is logged once, and restart never repeats that attempt. There are no reminders or recovery messages to owners. Notices do not count as session replies. The local mayor also learns which fixed line was posted.
 
-Set `NEVER_SILENT_OPERATOR_CONTEXT` to the operator city's gc context. `NEVER_SILENT_OPERATOR_AGENT` defaults to mayor; `GC_BIN` defaults to gc. Without a context the adapter logs once at startup and sends no remote mail. Each adapter/cause outage gets a start mail and a cleared mail, with durable sent marks and failed-send retries at most once a minute for 24 hours. Remote gc accepts `--dedup` but the pinned implementation does not forward it; the adapter's durable sent mark provides the guard.
+Set `NEVER_SILENT_OPERATOR_CONTEXT` to the operator city's gc context. `NEVER_SILENT_OPERATOR_AGENT` defaults to mayor; `GC_BIN` defaults to gc. Without a context the adapter logs once when an outage starts and sends no remote mail. Each adapter/cause outage gets a start mail and a cleared mail, with durable sent marks and failed-send retries at most once a minute for 24 hours. Remote gc accepts `--dedup` but the pinned implementation does not forward it; the adapter's durable sent mark provides the guard.
 
 Operator mail contains only city, adapter, cause, times, aggregate counts and age, owner-notice counts, relevant health state/check time and a status command. It contains no customer text, name, address or conversation coordinates. Local state retains the coordinates needed to reply; those never leave the city in operator mail.
 

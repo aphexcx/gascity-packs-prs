@@ -3282,7 +3282,7 @@ func handleReact(cfg config) http.HandlerFunc {
 			receipt.Delivered = true
 		}
 		if receipt.Delivered && !req.Remove {
-			cfg.noticeError(cfg.neverSilent.Reaction(neverSilentID(req.Conversation.ConversationID, req.MessageID), strings.TrimSpace(req.SessionID), time.Now()))
+			cfg.noticeError(cfg.neverSilent.Act(req.Conversation.ConversationID, "", strings.TrimSpace(req.SessionID), time.Now()))
 			cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 				Kind: "reaction", Source: "session_react", Channel: req.Conversation.ConversationID,
 				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
@@ -3309,7 +3309,7 @@ func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sess
 	if at, ok := ingestionPublishTime(messageTS); ok && sessionID != "" {
 		cfg.noticeError(cfg.neverSilent.Act(conversationID, replyTo, sessionID, at))
 	}
-	if at, ok := ingestionPublishTime(messageTS); ok && replyTo != "" && sessionID != "" {
+	if at, ok := ingestionPublishTime(messageTS); ok && sessionID != "" {
 		cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 			Kind: "reply", Source: "session_publish", Channel: conversationID,
 			MessageTS: messageTS, ThreadTS: replyTo, SessionID: sessionID, Timestamp: at,
