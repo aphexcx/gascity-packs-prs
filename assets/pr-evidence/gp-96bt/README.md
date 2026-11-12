@@ -87,6 +87,37 @@ and `whatsapp/adapter/src/` are identical to the base revision. They do not
 execute any changed production file. The raw local logs are kept outside
 the public branch; this document contains only fixture-independent results.
 
+The retry ran the entire directory with serial execution:
+
+```text
+pnpm exec node --test --test-concurrency=1
+252 tests, 252 passed, 0 failed, 0 skipped (199290.881625 ms)
+```
+
+## STANDARD self-review
+
+One Codex review of `a1b54de5890119dd04027ab79e14bd2e93cd3101`
+returned **CLEAN**: 0 BLOCKER, 0 MAJOR, 1 MINOR, 0 NIT.
+The minor finding was stale doctor remediation that still recommended
+creating the old inferred city-local env file. Its fault class was guidance
+that disagrees with path selection. The changed guidance now names the two
+service overrides and the home default, without printing env values.
+
+Before the guidance fix, strengthening `test_env_missing_file_fails_closed`
+to check those options reproduced the finding:
+
+```text
+env -u GC_TEMPLATE uv run --with pytest python3 -m pytest tests -q -k env_missing_file_fails_closed
+1 failed, 72 deselected in 0.26s
+```
+
+After the fix, the full pack suite was rerun with the same command:
+
+```text
+env -u GC_TEMPLATE uv run --with pytest python3 -m pytest tests -q -s
+73 passed in 26.67s
+```
+
 ## Compatibility and scope
 
 All eight startup selections remain the same, including the home default

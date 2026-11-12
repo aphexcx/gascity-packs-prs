@@ -121,9 +121,12 @@ def env_file(tmp_path):
 
 
 def test_env_missing_file_fails_closed(tmp_path):
-    result = doctor('env', HOME=str(tmp_path))
+    result = doctor('env', HOME=str(tmp_path), GC_CITY_PATH=str(tmp_path / 'city'))
     assert result.returncode == 2
     assert 'env file missing' in result.stdout
+    assert 'GC_SERVICE_SECRETS_DIR' in result.stdout
+    assert 'HOME default' in result.stdout
+    assert 'create the per-city' not in result.stdout
 
 
 def test_env_reports_names_only(env_file):
