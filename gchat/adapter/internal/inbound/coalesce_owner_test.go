@@ -261,3 +261,81 @@ func TestOwnerChangeKeepsDeliveryState(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnerChangeDeliveryClass(t *testing.T) {
+	for _, outcome := range []string{"delivered", "unsaved", "partial", "pre_post_crash", "answer_lost", "refused"} {
+		for _, withdrawal := range []string{"owner_deleted", "owner_edited", "member_deleted"} {
+			for _, path := range []string{"record", "resume"} {
+				t.Run(outcome+"/"+withdrawal+"/"+path, func(t *testing.T) {
+					f, posts := ownerExercise(t, outcome, withdrawal, path, false, 3)
+					turnPosts := 0
+					for _, p := range posts {
+						if strings.Contains(p.Message.Text, "body-001") || strings.Contains(p.Message.Text, "body-002") {
+							turnPosts++
+						}
+					}
+					if outcome == "partial" && turnPosts > firstPOSTs {
+						t.Errorf("turn used %d POSTs across all keys", turnPosts)
+					}
+					for _, body := range []string{"body-001", "body-002"} {
+						accepted, count := 0, 0
+						for _, p := range posts {
+							if strings.Contains(p.Message.Text, body) {
+								count++
+								if p.Accepted {
+									accepted++
+								}
+							}
+						}
+						if accepted > 1 {
+							t.Errorf("%s accepted %d times", body, accepted)
+						}
+						if (outcome == "unsaved" || outcome == "pre_post_crash" || outcome == "answer_lost") && count != 1 {
+							t.Errorf("ambiguous %s was automatically POSTed again: %d attempts", body, count)
+						}
+						if outcome == "partial" && count > firstPOSTs {
+							t.Errorf("%s in %d POSTs after a fragment", body, count)
+						}
+					}
+					withdrawn := "body-002"
+					if withdrawal == "member_deleted" {
+						withdrawn = "body-001"
+					}
+					for label, records := range map[string]map[string]*ledger.ChangeState{"changes": f.l.Changes, "unresolved": f.l.Unresolved} {
+						for id, c := range records {
+							if (c.Status == "intent" || c.Status == "pending" || c.Status == "unresolved") && strings.Contains(c.Event, withdrawn) {
+								t.Errorf("%s/%s retains withdrawn text in %s", label, id, c.Status)
+							}
+						}
+					}
+				})
+			}
+		}
+	}
+	t.Run("known_refusal_backoff", func(t *testing.T) {
+		f := windowSetup(t, "8s")
+		f.disk()
+		f.gc.CityNotRunning = true
+		f.send(t, 1, "message.created", nil)
+		f.now = f.now.Add(time.Second)
+		b := f.send(t, 2, "message.created", nil)
+		f.now = f.now.Add(8 * time.Second)
+		_ = f.p.Poll(context.Background())
+		old := f.l.Changes[b.Name]
+		old.Attempts, old.Reason, old.Cause = 5, reasonRetry, causeNotDelivered
+		old.NextAttempt = f.now.Add(5 * time.Minute)
+		want := *old
+		if err := f.l.Save(f.opts.LedgerPath); err != nil {
+			t.Fatal(err)
+		}
+		ownerReload(t, f)
+		f.now = f.now.Add(time.Second)
+		ev := event("backoff-withdraw", "message.deleted", b)
+		ev.Changes[0].PublishTime, ev.Changes[0].EventTime = f.now, f.now
+		_, _ = f.p.Handle(context.Background(), ev)
+		a := f.l.Changes[space+"/messages/m001"]
+		if a.Attempts != want.Attempts || a.Reason != want.Reason || a.Cause != want.Cause || !a.Created.Equal(want.Created) || !a.NextAttempt.Equal(want.NextAttempt) {
+			t.Errorf("promoted retry state=%+v; old=%+v", a, want)
+		}
+	})
+}
