@@ -59,9 +59,16 @@ Dedup suppresses repeats across restarts while the prior notice remains in the
 recipient's mailbox. Startup registers once; a healthy run resets connection
 restart backoff for the next interruption.
 
-A first start begins at its first connection, optionally including up to a week
-with `first_start_history`; older messages stay readable with `gc gchat read`
-but are not turns. A restart with a ledger keeps recovering from its cursors.
+A first start begins at the start of its first successful subscription attempt,
+optionally including up to a week with `first_start_history`. Every act older
+than its space's bound is a non-turn; new acts on old messages still arrive and
+`gc gchat read` still reads the old body. A cursorless space starts at the prior
+inventory, or the first load of a released ledger without an inventory boundary.
+That upgrade needs no operator step: it restarts unfinished cursorless intervals
+and removes their old queued acts, counted in `history_backlog_skipped:<space>`.
+Saved cursors keep their whole outage, including messages in direct messages
+opened since the preceding inventory. Rollback keeps cursors and non-turn
+records, drops the new bounds, and requires removing `first_start_history`.
 Catch-up runs at startup and after subscription recovery. Unfinished intervals
 retry with backoff. Once an hour the adapter performs a full history sweep:
 one paginated spaces inventory plus message and space-event history lists for
@@ -80,8 +87,9 @@ replaced, restart the service: ownership loss permanently revokes the old
 process's saves, even if the path later reappears. The standalone socket
 defaults to `adapter.sock` beside the ledger. Reset takes the same first-start
 bound and warns that earlier messages will not be delivered; restore keeps the
-backup's bound and cursors. The CLI replaces the ledger only while holding the
-lock. Use `gc gchat state` for recovery through the running service's proxy.
+backup's bounds and saved cursors and initializes its cursorless spaces. The CLI
+replaces the ledger only while holding the lock. Use `gc gchat state` for recovery
+through the running service's proxy.
 
 The OAuth listener requests an ephemeral loopback port; bind failure ends that
 auth attempt with an actionable error. It does not retry another port inside

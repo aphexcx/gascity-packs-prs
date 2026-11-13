@@ -25,20 +25,8 @@ func (p *Processor) HandleChanges(ctx context.Context, changes []puller.Change) 
 }
 
 func actTime(c puller.Change, now time.Time) time.Time {
-	stamp := ""
-	if c.Message != nil {
-		if c.Kind == "message.created" {
-			stamp = c.Message.CreateTime
-		}
-		if c.Kind == "message.updated" {
-			stamp = c.Message.LastUpdateTime
-		}
-	}
-	if at, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
+	if at := c.ActTime(); !at.IsZero() {
 		return at.UTC()
-	}
-	if !c.At.IsZero() {
-		return c.At.UTC()
 	}
 	return now.UTC()
 }

@@ -1,0 +1,72 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 15,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+    "go",
+    "test",
+    "./internal/catchup",
+    "-run",
+    "^TestCursorlessMigrationRetiresDetachedAttempts$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.created/intent
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.created/pending
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.created/unresolved
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.updated/intent
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.updated/pending
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.updated/unresolved
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/intent
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/pending
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/unresolved
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/intent
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/pending
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/unresolved
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/intent
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/pending
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/unresolved
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts
+FAIL gchat-adapter/internal/catchup
+
+    history_bound_test.go:183: turns=1 unresolved=0
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=committed reason=delivered text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:180: inbound: receipt lookup failed
+    history_bound_test.go:183: turns=0 unresolved=1
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=unresolved reason= text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:183: turns=1 unresolved=0
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=committed reason=delivered text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:180: inbound: receipt lookup failed
+    history_bound_test.go:183: turns=0 unresolved=1
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=unresolved reason= text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:183: turns=1 unresolved=0
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=committed reason=delivered text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:193: retired old deletion still suppresses new acts
+    history_bound_test.go:180: inbound: receipt lookup failed
+    history_bound_test.go:183: turns=0 unresolved=1
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=unresolved reason= text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:193: retired old deletion still suppresses new acts
+    history_bound_test.go:183: turns=1 unresolved=0
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=committed reason=delivered text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:180: inbound: receipt lookup failed
+    history_bound_test.go:183: turns=0 unresolved=1
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=unresolved reason= text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:183: turns=1 unresolved=0
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=committed reason=delivered text="[from: Reader <users/222> | external]\nold queued body"
+    history_bound_test.go:180: inbound: receipt lookup failed
+    history_bound_test.go:183: turns=0 unresolved=1
+    history_bound_test.go:189: saved attempt survived or lost its frame: status=unresolved reason= text="[from: Reader <users/222> | external]\nold queued body"

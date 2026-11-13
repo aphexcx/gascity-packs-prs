@@ -1,0 +1,21 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 6,
+    "top_level_pass": 3
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/403
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/404
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/403
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/404
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/403
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/404
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn
+PASS gchat-adapter/internal/app

@@ -47,12 +47,12 @@ func TestFloorBoundsEveryNewSpace(t *testing.T) {
 		}
 	}
 	f.pass(t, 2, 0)
-	// A later inventory must apply the original floor to newly discovered spaces.
+	// A later inventory uses the preceding listing, above the original floor.
 	f.addSpace("spaces/later", false)
 	f.addMessage("spaces/later", 1, floor.Add(-time.Hour))
 	f.addMessage("spaces/later", 2, floor.Add(time.Second))
 	f.freeze(t)
-	f.pass(t, 1, 0)
+	f.pass(t, 0, 0)
 	for name, count := range f.opts.Ledger.Counters {
 		if strings.HasPrefix(name, "unrecoverable:") && count != 0 {
 			t.Fatalf("history loss reported: %s=%d", name, count)
@@ -87,14 +87,17 @@ func TestJoinTimeAndFirstStartAreOneRule(t *testing.T) {
 }
 
 func TestHistoryFloorSurvivesRetentionFallback(t *testing.T) {
-	for _, joined := range []bool{false, true} {
+	for _, boundKind := range []string{"floor", "floor-and-join", "join-only"} {
+		joined := boundKind != "floor"
 		for _, kind := range []string{"message.updated", "message.deleted", "reaction.created", "reaction.deleted"} {
 			for _, batch := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/batch=%v/joined=%v", kind, batch, joined), func(t *testing.T) {
+				t.Run(fmt.Sprintf("%s/batch=%v/bound=%s", kind, batch, boundKind), func(t *testing.T) {
 					f := setup(t)
 					f.pageSize = 1 // The rejected page must not stop pagination.
 					floor := frozen.Add(-28*24*time.Hour + 2*time.Minute)
-					setHistoryFloor(t, f.opts.Ledger, floor)
+					if boundKind != "join-only" {
+						setHistoryFloor(t, f.opts.Ledger, floor)
+					}
 					f.opts.Ledger.Subscription.Name = "subscriptions/existing"
 					f.addSpace("spaces/room", true)
 					s := f.opts.Ledger.Spaces["spaces/room"]

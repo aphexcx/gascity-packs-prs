@@ -1,0 +1,1022 @@
+diff --git a/gchat/CHANGELOG.md b/gchat/CHANGELOG.md
+index 9647f231..8f1e4291 100644
+--- a/gchat/CHANGELOG.md
++++ b/gchat/CHANGELOG.md
+@@ -71,11 +71,14 @@
+ - Docs only: the README's sample owners line uses an invented given name. No
+   code change.
+
+-- First start and state reset begin history at the first connection, with an
+-  optional `first_start_history` window of up to 168 hours. Earlier messages
+-  remain readable with `gc gchat read` and do not become turns or queued rows.
+-  Status shows the saved `history_floor`; restarts with a ledger keep recovering
+-  from their cursors. Old ledgers retain their existing behavior.
++- First start and state reset begin history at the first successful subscription
++  attempt, with an optional `first_start_history` window of up to 168 hours.
++  Every older act stays out of turns on live delivery, redelivery and recovery;
++  new acts on old messages still arrive, and `gc gchat read` keeps reading history.
++  Cursorless spaces start at the preceding inventory, or first load on a released
++  ledger without that boundary. Old queued acts leave those spaces as non-turn
++  records. Saved cursors retain their outage, and never-read spaces report no
++  false history loss. Rollback keeps cursors and recognizes the skipped records.
+
+ ## 0.5.0 — 2026-11-09
+
+diff --git a/gchat/README.md b/gchat/README.md
+index 53143088..96befea4 100644
+--- a/gchat/README.md
++++ b/gchat/README.md
+@@ -205,10 +205,11 @@ so a full store needs a decision, not a background sweep. The root-level `catchu
+ The root-level `first_start_history` setting optionally includes a short history
+ window on first start or reset. It is a Go duration string, from `"0s"` to
+ `"168h"` inclusive; write `"24h"` for a day, not `"1d"`. Omit it to start at
+-the current time. Set it before the first connection; changing it after a
+-subscription has been recorded does not change the saved history bound.
++the first successful subscription attempt. Set it before connecting; changing
++it after a subscription has been recorded does not change the saved history bound.
+ Remove this key before rolling back to 0.5.0, whose settings loader refuses
+-unknown keys. The older ledger reader ignores the floor and keeps saved cursors.
++unknown keys. The older ledger reader drops the floor, per-space starts and
++inventory boundary, keeps saved cursors, and recognizes skipped acts as non-turns.
+
+ Optional endpoint/path overrides for tests and private deployments:
+ `GCHAT_CHAT_API_BASE`, `GCHAT_EVENTS_API_BASE`, `GCHAT_PUBSUB_ENDPOINT`,
+@@ -442,13 +443,39 @@ turn; check the default route or binding. Quarantine holds malformed events.
+
+ ### Catch-up and restart recovery
+
+-A first start with no ledger and no established marker begins at the current
+-time. The bound moves to the first connection if sign-in was delayed. Older
+-messages in rooms and direct messages are not turns, queued rows or delivery
+-mails; `gc gchat read` still reads them. `first_start_history` can include up to
+-a week before that start. Status names the saved bound. A restart with a ledger
+-still recovers everything since its last cursor, with the existing overlap and
+-event-retention limits. Existing ledgers gain no new bound.
++A first start with no ledger and no established marker begins at the start of
++the first successful subscription attempt. Failed setup attempts keep moving
++that bound until a subscription is recorded. `first_start_history` can include
++up to a week before it. Status names the saved bound.
++
++Each create, edit, deletion or reaction is judged by when that act happened.
++An act before its space's bound is never a turn, queued delivery or delivery
++mail, on the live stream or during recovery. A new edit or reaction on an old
++message still arrives. `gc gchat read` keeps reading the old message's body.
++An act with no usable resource or event time uses its Pub/Sub publish time;
++with no usable time at all it is skipped, counted as
++`history_time_missing:<space>` and logged without message text.
++
++A space first encountered without a cursor or observed join starts at the
++previous completed spaces inventory. On a running adapter this includes at
++most the preceding hourly sweep. A direct message opened during an outage
++keeps messages since the inventory before that outage. On a fresh install's
++first inventory the start is the first-start bound, including its configured
++window. A known membership still supplies its join bound.
++
++At its first load under this version, a released 0.5.0 ledger establishes an
++inventory boundary at load time, with no operator step and no global floor.
++Its cursorless spaces start there. A space with a saved cursor stays unchanged
++and recovers its whole outage, with the existing overlap and event-retention
++limits. An unfinished cursorless interval restarts from its new bound; queued
++older acts leave the queue as committed non-turn records. Their count appears
++in status as `history_backlog_skipped:<space>`. They remain readable from Chat.
++A space never read reports no lost history merely because its start is old.
++
++A rollback keeps the saved cursors and skipped acts as non-turn records. It
++drops the new history bounds and inventory boundary, so spaces first found
++after rollback return to the released adapter's history behavior. Remove
++`first_start_history` from settings before rolling back.
+
+ Catch-up runs on startup and subscription recovery, retries unfinished work
+ with backoff, and stops when caught up. A recovered message that gc keeps
+@@ -516,7 +543,7 @@ Use `gc gchat state restore /absolute/path/backup.json` to request recovery
+ through the service to keep its saved history bound and recovery cursors, or
+ explicitly choose `gc gchat state reset`. Reset starts at the current time,
+ minus the optional `first_start_history` window, and moves that bound to its
+-first connection. Messages before the bound will not be delivered;
++first successful subscription attempt. Acts before the bound will not be delivered;
+ `gc gchat read` still reads them. Use restore to retain recovery of the gap.
+ These proxy commands are
+ accepted only in `recovery-required` and refuse while delivery is in flight.
+diff --git a/gchat/adapter/README.md b/gchat/adapter/README.md
+index 913fec2e..5bf46d89 100644
+--- a/gchat/adapter/README.md
++++ b/gchat/adapter/README.md
+@@ -59,9 +59,16 @@ Dedup suppresses repeats across restarts while the prior notice remains in the
+ recipient's mailbox. Startup registers once; a healthy run resets connection
+ restart backoff for the next interruption.
+
+-A first start begins at its first connection, optionally including up to a week
+-with `first_start_history`; older messages stay readable with `gc gchat read`
+-but are not turns. A restart with a ledger keeps recovering from its cursors.
++A first start begins at the start of its first successful subscription attempt,
++optionally including up to a week with `first_start_history`. Every act older
++than its space's bound is a non-turn; new acts on old messages still arrive and
++`gc gchat read` still reads the old body. A cursorless space starts at the prior
++inventory, or the first load of a released ledger without an inventory boundary.
++That upgrade needs no operator step: it restarts unfinished cursorless intervals
++and removes their old queued acts, counted in `history_backlog_skipped:<space>`.
++Saved cursors keep their whole outage, including messages in direct messages
++opened since the preceding inventory. Rollback keeps cursors and non-turn
++records, drops the new bounds, and requires removing `first_start_history`.
+ Catch-up runs at startup and after subscription recovery. Unfinished intervals
+ retry with backoff. Once an hour the adapter performs a full history sweep:
+ one paginated spaces inventory plus message and space-event history lists for
+@@ -80,8 +87,9 @@ replaced, restart the service: ownership loss permanently revokes the old
+ process's saves, even if the path later reappears. The standalone socket
+ defaults to `adapter.sock` beside the ledger. Reset takes the same first-start
+ bound and warns that earlier messages will not be delivered; restore keeps the
+-backup's bound and cursors. The CLI replaces the ledger only while holding the
+-lock. Use `gc gchat state` for recovery through the running service's proxy.
++backup's bounds and saved cursors and initializes its cursorless spaces. The CLI
++replaces the ledger only while holding the lock. Use `gc gchat state` for recovery
++through the running service's proxy.
+
+ The OAuth listener requests an ephemeral loopback port; bind failure ends that
+ auth attempt with an actionable error. It does not retry another port inside
+diff --git a/gchat/adapter/internal/app/app.go b/gchat/adapter/internal/app/app.go
+index c2769447..4374b9e6 100644
+--- a/gchat/adapter/internal/app/app.go
++++ b/gchat/adapter/internal/app/app.go
+@@ -18,6 +18,7 @@ import (
+    "syscall"
+    "time"
+
++   "gchat-adapter/internal/catchup"
+    "gchat-adapter/internal/chat"
+    "gchat-adapter/internal/config"
+    "gchat-adapter/internal/events"
+@@ -272,6 +273,9 @@ func (a *application) run(ctx context.Context) error {
+        a.l.SetSaveGuard(a.checkStateLock)
+        if fresh {
+            a.l.HistoryFloor = time.Now().UTC().Add(-a.cfg.FirstStartWindow())
++       } else if err = catchup.InitializeHistory(a.l, a.cfg, time.Now(), a.log); err != nil {
++           a.mu.Unlock()
++           return err
+        }
+        err = a.l.Save(a.cfg.Endpoints.StateFile)
+        a.mu.Unlock()
+diff --git a/gchat/adapter/internal/app/workers.go b/gchat/adapter/internal/app/workers.go
+index f10c75cd..2c10926b 100644
+--- a/gchat/adapter/internal/app/workers.go
++++ b/gchat/adapter/internal/app/workers.go
+@@ -88,12 +88,12 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
+    // resolve --replay answers a request: it runs the pass, not the raise.
+    a.s.SetPoll(proc.Pass)
+    defer a.s.SetPoll(nil)
+-   // A first sign-in may arrive long after process startup. Persist its bound
+-   // before reconciliation can record or adopt the first subscription.
+-   if err = a.advanceHistoryFloor(); err != nil {
+-       return err
+-   }
+    if err = a.retry(ctx, "subscription", func() error {
++       // Every attempt owns its bound. Save it before the manager can record
++       // the first subscription, so a crash cannot pair it with an older floor.
++       if e := a.advanceHistoryFloor(); e != nil {
++           return e
++       }
+        var e error
+        if reloaded {
+            _, e = m.TokenReloaded(ctx)
+diff --git a/gchat/adapter/internal/catchup/catchup.go b/gchat/adapter/internal/catchup/catchup.go
+index 71f02f20..e25d5fe4 100644
+--- a/gchat/adapter/internal/catchup/catchup.go
++++ b/gchat/adapter/internal/catchup/catchup.go
+@@ -130,7 +130,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
+            listed[space.Name] = true
+            s := l.Spaces[space.Name]
+            if s == nil {
+-               s = &ledger.SpaceState{Wake: string(r.opts.Config.Wake(space.Name)), MessageCursor: l.HistoryFloor, EventCursor: l.HistoryFloor}
++               s = &ledger.SpaceState{Wake: string(r.opts.Config.Wake(space.Name))}
+                l.Spaces[space.Name] = s
+            }
+            if s.Wake == "" {
+@@ -146,6 +146,9 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
+            if s == nil {
+                continue
+            }
++           if err := startSpace(l, r.opts.Config, name, s, now, r.opts.Logger); err != nil {
++               return err
++           }
+            if !s.FrozenUpper.IsZero() {
+                p, err := decodeProgress(s.PageToken)
+                if err != nil {
+@@ -173,6 +176,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
+                reported = append(reported, name)
+            }
+        }
++       l.SpacesListedAt = now.UTC()
+        return nil
+    })
+    if err == nil {
+@@ -188,12 +192,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
+
+ func (r *Runner) begin(s *ledger.SpaceState, upper, floor time.Time) progress {
+    p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
+-   if p.MessageLower.Before(s.JoinedAt) {
+-       p.MessageLower = s.JoinedAt
+-   }
+-   if p.EventLower.Before(s.JoinedAt) {
+-       p.EventLower = s.JoinedAt
+-   }
++   floor = ledger.HistoryBound(s, floor)
+    if p.MessageLower.Before(floor) {
+        p.MessageLower = floor
+    }
+@@ -205,7 +204,7 @@ func (r *Runner) begin(s *ledger.SpaceState, upper, floor time.Time) progress {
+    earliest := r.opts.Now().UTC().Add(-28 * 24 * time.Hour)
+    if p.EventLower.Before(earliest) {
+        p.EventLower = earliest
+-       p.Reported = !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
++       p.Reported = s.HistoryRead(floor) && s.EventCursor.Before(earliest)
+    }
+    s.FrozenUpper, s.PageToken = upper.UTC(), encode(p)
+    return p
+@@ -322,7 +321,9 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
+        var next string
+        if p.Phase == "messages" {
+            var messages []*api.Message
+-           messages, next, err = r.opts.Chat.ListMessagesPage(ctx, name, p.MessageLower, s.FrozenUpper, "", p.Token)
++           if p.MessageLower.Before(s.FrozenUpper) {
++               messages, next, err = r.opts.Chat.ListMessagesPage(ctx, name, p.MessageLower, s.FrozenUpper, "", p.Token)
++           }
+            for _, message := range messages {
+                at := time.Time{}
+                if message != nil {
+@@ -338,7 +339,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
+            }
+            if p.EventLower.Before(earliest) {
+                p.EventLower, p.Token = earliest, ""
+-               lost := !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
++               lost := s.HistoryRead(l.HistoryFloor) && s.EventCursor.Before(earliest)
+                if err := r.saveProgress(name, p, lost); err != nil {
+                    return err
+                }
+@@ -355,19 +356,14 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
+                }
+                events, next, err = r.opts.Chat.ListSpaceEventsPage(ctx, name, lower, s.FrozenUpper, eventTypes, p.Token)
+                for _, event := range events {
+-                   // The retention fallback widens the provider query, never
+-                   // the installation's hard bound. Filter before expanding a
+-                   // batch or retaining any of its items in the backlog.
+-                   if event != nil && !l.HistoryFloor.IsZero() {
+-                       bound := l.HistoryFloor
+-                       if s.JoinedAt.After(bound) {
+-                           bound = s.JoinedAt
+-                       }
+-                       if at, parseErr := time.Parse(time.RFC3339Nano, event.EventTime); parseErr == nil && at.Before(bound) {
++                   // A widened provider query cannot widen the bound. Judge
++                   // each batch item by its own act, not the batch envelope.
++                   for _, item := range expandEvent(name, event, !ledger.HistoryBound(s, l.HistoryFloor).IsZero()) {
++                       if item.Malformed == "" && inbound.HistorySkipCause(l, item.Change) == "before_history_floor" {
+                            continue
+                        }
++                       page = append(page, item)
+                    }
+-                   page = append(page, expandEvent(name, event)...)
+                }
+            }
+        }
+@@ -517,6 +513,9 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
+            }
+            outcome := puller.Quarantine
+            if item.Malformed == "" {
++               if item.Change.EventTime.IsZero() {
++                   item.Change.EventTime = item.At
++               }
+                outcome, err = r.opts.Processor.HandleChange(ctx, item.Change)
+            }
+            if outcome == puller.Quarantine {
+@@ -647,14 +646,14 @@ func related(c puller.Change, state *ledger.ChangeState) bool {
+    return false
+ }
+
+-func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
++func expandEvent(space string, event *api.SpaceEvent, bounded bool) []queuedChange {
+    raw := encode(event)
+    bad := func() []queuedChange { return []queuedChange{{Malformed: raw}} }
+    if event == nil {
+        return bad()
+    }
+    at, err := time.Parse(time.RFC3339Nano, event.EventTime)
+-   if err != nil {
++   if err != nil && !bounded {
+        return bad()
+    }
+    parts := strings.Split(strings.TrimPrefix(event.EventType, "google.workspace.chat."), ".v1.")
+@@ -666,7 +665,7 @@ func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
+        return bad()
+    }
+    key := parts[0] + strings.ToUpper(parts[1][:1]) + parts[1][1:] + "EventData"
+-   ev, err := puller.Decode(&pubsub.Message{Attributes: map[string]string{"ce-type": event.EventType}, Data: fields[key]})
++   ev, err := puller.Decode(&pubsub.Message{Attributes: map[string]string{"ce-type": event.EventType, "ce-time": event.EventTime}, Data: fields[key]})
+    if err != nil || len(ev.Changes) == 0 {
+        return bad()
+    }
+@@ -675,7 +674,11 @@ func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
+        if c.Space != space {
+            return bad()
+        }
+-       items = append(items, queuedChange{Change: c, At: at})
++       order := c.ActTime()
++       if order.IsZero() {
++           order = at
++       }
++       items = append(items, queuedChange{Change: c, At: order})
+    }
+    return items
+ }
+@@ -814,7 +817,13 @@ func unavailableID(item queuedChange) string {
+    } else if item.Change.Reaction != nil {
+        resource = item.Change.Reaction.Name
+    }
+-   key := encode([]string{item.Change.Kind, resource, item.At.UTC().Format(time.RFC3339Nano)})
++   // The released key used the envelope time. At may now be the resource's
++   // time for ordering, while old queued rows still have only At.
++   at := item.Change.EventTime
++   if at.IsZero() {
++       at = item.At
++   }
++   key := encode([]string{item.Change.Kind, resource, at.UTC().Format(time.RFC3339Nano)})
+    return fmt.Sprintf("catchup:unavailable:%x", sha256.Sum256([]byte(key)))
+ }
+
+diff --git a/gchat/adapter/internal/catchup/history.go b/gchat/adapter/internal/catchup/history.go
+new file mode 100644
+index 00000000..110a0ceb
+--- /dev/null
++++ b/gchat/adapter/internal/catchup/history.go
+@@ -0,0 +1,74 @@
++package catchup
++
++import (
++   "encoding/json"
++   "fmt"
++   "time"
++
++   "gchat-adapter/internal/config"
++   "gchat-adapter/internal/inbound"
++   "gchat-adapter/internal/ledger"
++   "gchat-adapter/internal/puller"
++)
++
++// InitializeHistory upgrades the saved inventory before any workers or polls
++// can read it. It never gives an existing installation a global floor.
++func InitializeHistory(l *ledger.Ledger, cfg *config.Config, now time.Time, log puller.Logger) error {
++   if l.SpacesListedAt.IsZero() && l.HistoryFloor.IsZero() {
++       l.SpacesListedAt = now.UTC()
++   }
++   for _, c := range l.Changes {
++       if c.Reason == "before_history_floor" {
++           c.Reason, c.Cause = "local", "before_history_floor"
++       }
++   }
++   for name, s := range l.Spaces {
++       if err := startSpace(l, cfg, name, s, now, log); err != nil {
++           return err
++       }
++   }
++   return nil
++}
++
++func startSpace(l *ledger.Ledger, cfg *config.Config, name string, s *ledger.SpaceState, now time.Time, log puller.Logger) error {
++   if !l.StartSpace(s, now) {
++       return nil
++   }
++   bound := ledger.HistoryBound(s, l.HistoryFloor)
++   if !s.FrozenUpper.IsZero() {
++       p, err := decodeProgress(s.PageToken)
++       if err != nil {
++           return err
++       }
++       p.Phase, p.Token = "messages", ""
++       p.MessageLower, p.EventLower = bound, bound
++       p.Reported = false
++       if s.FrozenUpper.Before(bound) {
++           s.FrozenUpper = bound
++       }
++       s.PageToken = encode(p)
++   }
++   kept := s.Backlog[:0]
++   for _, raw := range s.Backlog {
++       var item queuedChange
++       if err := json.Unmarshal([]byte(raw), &item); err != nil {
++           return fmt.Errorf("catchup: invalid durable backlog for %s", name)
++       }
++       if item.Change.EventTime.IsZero() {
++           item.Change.EventTime = item.At
++       }
++       if item.Malformed == "" && inbound.HistorySkipCause(l, item.Change) != "" {
++           inbound.RetireQueuedHistory(l, item.Change)
++           added := inbound.RetainHistorySkip(l, cfg, item.Change, now, inbound.HistorySpeaker(l, cfg, item.Change), true, l.IdentityUserID)
++           if added && item.Change.ActTime().IsZero() && log != nil {
++               log.Warn("inbound act has no usable history time", "space", name, "kind", item.Change.Kind)
++           }
++           l.Counters["history_backlog_skipped:"+name]++
++           continue
++       }
++       kept = append(kept, raw)
++   }
++   s.Backlog = kept
++   inbound.RetireSpaceHistory(l, cfg, name, log)
++   return nil
++}
+diff --git a/gchat/adapter/internal/inbound/history.go b/gchat/adapter/internal/inbound/history.go
+new file mode 100644
+index 00000000..835e97d6
+--- /dev/null
++++ b/gchat/adapter/internal/inbound/history.go
+@@ -0,0 +1,296 @@
++package inbound
++
++import (
++   "context"
++   "encoding/json"
++   "strings"
++   "time"
++
++   "gchat-adapter/internal/config"
++   "gchat-adapter/internal/ledger"
++   "gchat-adapter/internal/principal"
++   "gchat-adapter/internal/provenance"
++   "gchat-adapter/internal/puller"
++   "gchat-adapter/internal/wire"
++   api "google.golang.org/api/chat/v1"
++)
++
++// HistorySkipCause is empty for unbounded spaces and current acts.
++func HistorySkipCause(l *ledger.Ledger, c puller.Change) string {
++   bound := ledger.HistoryBound(l.Spaces[c.Space], l.HistoryFloor)
++   if bound.IsZero() {
++       return ""
++   }
++   at := c.ActTime()
++   if at.IsZero() {
++       return "history_time_missing"
++   }
++   if at.Before(bound) {
++       return "before_history_floor"
++   }
++   return ""
++}
++
++func historyID(c puller.Change) string {
++   name := ""
++   if c.Message != nil {
++       name = c.Message.Name
++       if c.Kind == "message.created" && !c.ActTime().IsZero() {
++           return name
++       }
++   }
++   if c.Reaction != nil {
++       name = c.Reaction.Name
++   }
++   return name + "#history#" + c.Kind + "#" + c.ActTime().UTC().Format(time.RFC3339Nano)
++}
++
++// Use the selected fallback in message revision IDs as well as in the bound.
++// An absent resource time must not consume a later act with another publish time.
++func historyTime(c puller.Change) puller.Change {
++   if c.Message == nil || c.ActTime().IsZero() {
++       return c
++   }
++   raw := c.Message.CreateTime
++   if c.Kind == "message.updated" {
++       raw = c.Message.LastUpdateTime
++   }
++   if _, err := time.Parse(time.RFC3339Nano, raw); err == nil {
++       return c
++   }
++   m := *c.Message
++   if c.Kind == "message.created" {
++       m.CreateTime = c.ActTime().UTC().Format(time.RFC3339Nano)
++   }
++   if c.Kind == "message.updated" {
++       m.LastUpdateTime = c.ActTime().UTC().Format(time.RFC3339Nano)
++   }
++   c.Message = &m
++   return c
++}
++
++func historyUser(c puller.Change) *api.User {
++   if c.Message != nil {
++       return c.Message.Sender
++   }
++   if c.Reaction != nil {
++       return c.Reaction.User
++   }
++   return nil
++}
++
++// RetireQueuedHistory removes the delivery state of one old queued act before
++// load-time migration retains its frame-only skip. A handled queue row can
++// still have an intent, receipt or unresolved record that Poll would resume.
++// Never erase an already committed delivery or another revision of the item.
++func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
++   if HistorySkipCause(l, c) == "" {
++       return
++   }
++   id := ""
++   if c.Message != nil {
++       id = c.Message.Name
++       switch c.Kind {
++       case "message.updated":
++           baseID := id
++           id += "#updated#" + c.Message.LastUpdateTime
++           if l.Changes[id] == nil {
++               if base := l.Changes[baseID]; base != nil && base.Kind == c.Kind && base.Created.Before(ledger.HistoryBound(l.Spaces[c.Space], l.HistoryFloor)) {
++                   id = baseID
++               }
++           }
++       case "message.deleted":
++           id += "#deleted"
++       }
++   } else if c.Reaction != nil {
++       id = c.Reaction.Name + "#" + strings.TrimPrefix(c.Kind, "reaction.")
++   }
++   if old := l.Changes[id]; old != nil && old.Kind == c.Kind && old.Status != "committed" {
++       delete(l.Changes, id)
++       delete(l.Unresolved, id)
++       if c.Kind == "message.deleted" {
++           if state := l.Messages[c.Message.Name]; state != nil {
++               state.Deleted = false
++           }
++       }
++   }
++}
++
++// RetireSpaceHistory handles attempts that outlived their catch-up queue row.
++// An attempt recorded before a newly installed bound necessarily predates it;
++// its Created time is an upper bound on the act, not a replacement event time.
++// Existing cursors never call this migration, and committed deliveries survive.
++func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) {
++   bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
++   if bound.IsZero() {
++       return
++   }
++   for id, old := range l.Changes {
++       if old.Space != space || old.Status == "committed" || (!old.Created.IsZero() && !old.Created.Before(bound)) ||
++           (!strings.HasPrefix(old.Kind, "message.") && !strings.HasPrefix(old.Kind, "reaction.")) {
++           continue
++       }
++       var w wire.InboundMessage
++       _ = json.Unmarshal([]byte(old.Event), &w)
++       frame, framed := provenance.FrameOf(w.Text)
++       if !old.ProvenanceFramed || !framed {
++           user := &api.User{Name: w.Actor.ID, DisplayName: w.Actor.DisplayName}
++           frame = provenance.Frame(HistorySpeaker(l, cfg, puller.Change{Message: &api.Message{Sender: user}}))
++       }
++       w.Text, w.Attachments = frame, nil
++       if old.CatchUp {
++           w.Text = "[catch-up]\n" + w.Text
++       }
++       retained := *old
++       if old.Kind != "message.created" {
++           retained.ID += "#history#" + old.Kind + "#" + old.Created.UTC().Format(time.RFC3339Nano)
++       }
++       w.ProviderMessageID = retained.ID
++       raw, _ := json.Marshal(w)
++       retained.Event = string(raw)
++       retained.Status, retained.Reason, retained.Cause = "committed", "local", "before_history_floor"
++       retained.ReceiptID, retained.NextAttempt = "", time.Time{}
++       retained.ProvenanceFramed = true
++       if old.Created.IsZero() {
++           retained.Cause = "history_time_missing"
++           l.Counters["history_time_missing:"+space]++
++           if log != nil {
++               log.Warn("inbound act has no usable history time", "space", space, "kind", old.Kind)
++           }
++       }
++       delete(l.Changes, id)
++       delete(l.Unresolved, id)
++       l.Changes[retained.ID] = &retained
++       if old.Kind == "message.deleted" {
++           if state := l.Messages[old.Message]; state != nil {
++               state.Deleted = false
++           }
++       }
++   }
++}
++
++// RetainHistorySkip is also used while migrating a saved queue, before network
++// clients start. It retains only the ordinary envelope and attribution frame.
++// Reason local is understood by released readers; Cause is diagnostic only.
++// It returns true only when a new record was added, so retries do not recount.
++func RetainHistorySkip(l *ledger.Ledger, cfg *config.Config, c puller.Change, now time.Time, speaker provenance.Speaker, catchUp bool, identity string) bool {
++   cause := HistorySkipCause(l, c)
++   if cause == "" {
++       return false
++   }
++   id := historyID(c)
++   if l.Changes[id] != nil {
++       return false
++   }
++   name, thread := "", ""
++   var state *ledger.MessageState
++   if c.Message != nil {
++       m := c.Message
++       name = m.Name
++       state = &ledger.MessageState{}
++       if previous := l.Messages[name]; previous != nil {
++           *state = *previous
++       }
++       if m.Thread != nil {
++           state.Thread = m.Thread.Name
++       }
++       if m.Sender != nil {
++           state.Mine = m.Sender.Name == identity
++       }
++       thread = state.Thread
++       speaker.Item = provenance.ChatItem(name)
++   } else if c.Reaction != nil {
++       name = strings.Split(c.Reaction.Name, "/reactions/")[0]
++       if previous := l.Messages[name]; previous != nil {
++           thread = previous.Thread
++       }
++   }
++   user := historyUser(c)
++   actor := wire.Actor{}
++   if user != nil {
++       actor = wire.Actor{ID: user.Name, DisplayName: user.DisplayName, IsBot: user.Type == "BOT"}
++       if actor.DisplayName == "" {
++           actor.DisplayName = actor.ID
++       }
++   }
++   kind := ""
++   if s := l.Spaces[c.Space]; s != nil {
++       kind = s.Kind
++   }
++   w := wire.InboundMessage{ProviderMessageID: id, Conversation: wire.Conversation{ScopeID: cfg.Secrets.CityName, Provider: "gchat", AccountID: cfg.Identity().Name, ConversationID: c.Space, Kind: kind}, Actor: actor, ReplyToMessageID: thread, ReceivedAt: now.UTC(), Text: provenance.Frame(speaker)}
++   if user == nil {
++       if base := l.Changes[name]; base != nil {
++           var original wire.InboundMessage
++           if json.Unmarshal([]byte(base.Event), &original) == nil {
++               w.Actor = original.Actor
++               if frame, ok := provenance.FrameOf(original.Text); base.ProvenanceFramed && ok {
++                   w.Text = frame
++               }
++           }
++       }
++   }
++   if catchUp {
++       w.Text = "[catch-up]\n" + w.Text
++   }
++   raw, _ := json.Marshal(w)
++   l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: "committed", Created: now.UTC(), Event: string(raw), Reason: "local", Cause: cause, CatchUp: catchUp, ProvenanceFramed: true}
++   if state != nil {
++       l.Messages[name] = state
++   }
++   if cause == "history_time_missing" {
++       l.Counters["history_time_missing:"+c.Space]++
++   }
++   return true
++}
++
++// HistorySpeaker needs no network at load. Live callers use their cached
++// directory resolver before entering the shared ledger update.
++func HistorySpeaker(l *ledger.Ledger, cfg *config.Config, c puller.Change) provenance.Speaker {
++   r := principal.New(principal.Options{Owners: cfg.Secrets.Owners, OrganizationDomain: cfg.Secrets.OrganizationDomain})
++   return r.Speaker(context.Background(), historyUser(c), l.IdentityDomainID)
++}
++
++func (p *Processor) history(ctx context.Context, c puller.Change, catchUp bool) (bool, error) {
++   l, err := p.snapshot()
++   if err != nil {
++       return false, err
++   }
++   s := l.Spaces[c.Space]
++   if s == nil {
++       s = &ledger.SpaceState{Wake: string(p.opts.Config.Wake(c.Space))}
++       if c.Message != nil && c.Message.Space != nil {
++           s.Kind = spaceKind(c.Message.Space)
++       }
++   }
++   if l.StartSpace(s, p.opts.Now()) || l.Spaces[c.Space] == nil {
++       if err := p.update(func(current *ledger.Ledger) {
++           if current.Spaces[c.Space] == nil {
++               current.Spaces[c.Space] = s
++           } else {
++               current.StartSpace(current.Spaces[c.Space], p.opts.Now())
++           }
++       }); err != nil {
++           return false, err
++       }
++       l, err = p.snapshot()
++       if err != nil {
++           return false, err
++       }
++   }
++   cause := HistorySkipCause(l, c)
++   if cause == "" {
++       return false, nil
++   }
++   if l.Changes[historyID(c)] != nil {
++       return true, nil
++   }
++   speaker := p.opts.Principals.Speaker(ctx, historyUser(c), l.IdentityDomainID)
++   added := false
++   err = p.update(func(current *ledger.Ledger) {
++       added = RetainHistorySkip(current, p.opts.Config, c, p.opts.Now(), speaker, catchUp, p.identity())
++   })
++   if err == nil && added && cause == "history_time_missing" {
++       p.opts.Logger.Warn("inbound act has no usable history time", "space", c.Space, "kind", c.Kind)
++   }
++   return true, err
++}
+diff --git a/gchat/adapter/internal/inbound/inbound.go b/gchat/adapter/internal/inbound/inbound.go
+index c383fa0a..a7dc4943 100644
+--- a/gchat/adapter/internal/inbound/inbound.go
++++ b/gchat/adapter/internal/inbound/inbound.go
+@@ -218,15 +218,20 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool)
+    }
+    // Validate the whole batch before accepting any changes. The puller preserves
+    // the raw event when Quarantine is returned.
+-   for _, c := range ev.Changes {
+-       if err := validate(c); err != nil {
++   changes := make([]puller.Change, len(ev.Changes))
++   for i, c := range ev.Changes {
++       c = historyTime(c)
++       s := l.Spaces[c.Space]
++       bounded := !ledger.HistoryBound(s, l.HistoryFloor).IsZero() || s == nil || (s.MessageCursor.IsZero() && s.JoinedAt.IsZero())
++       if err := validate(c, bounded); err != nil {
+            return puller.Quarantine, err
+        }
++       changes[i] = c
+    }
+    if len(ev.Changes) > 0 && p.identity() == "" {
+        return puller.Nack, errors.New("inbound: identity user ID unavailable")
+    }
+-   for _, c := range ev.Changes {
++   for _, c := range changes {
+        if err := ctx.Err(); err != nil {
+            return puller.Nack, err
+        }
+@@ -540,7 +545,7 @@ func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
+    return l.Clone(), nil
+ }
+
+-func validate(c puller.Change) error {
++func validate(c puller.Change, bounded bool) error {
+    var name, resource string
+    switch c.Kind {
+    case "message.created", "message.updated", "message.deleted":
+@@ -552,11 +557,11 @@ func validate(c puller.Change) error {
+            if c.Message == nil || c.Message.Sender == nil || c.Message.Sender.Name == "" {
+                return errors.New("inbound: message sender missing")
+            }
+-           if c.Kind == "message.updated" && c.Message.LastUpdateTime == "" {
++           if !bounded && c.Kind == "message.updated" && c.Message.LastUpdateTime == "" {
+                return errors.New("inbound: update time missing")
+            }
+            for _, value := range []string{c.Message.CreateTime, c.Message.LastUpdateTime} {
+-               if value != "" {
++               if !bounded && value != "" {
+                    if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+                        return errors.New("inbound: invalid message timestamp")
+                    }
+@@ -596,6 +601,11 @@ func validate(c puller.Change) error {
+ }
+
+ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) error {
++   if !strings.HasPrefix(c.Kind, "membership.") {
++       if handled, err := p.history(ctx, c, catchUp); handled || err != nil {
++           return err
++       }
++   }
+    switch {
+    case strings.HasPrefix(c.Kind, "membership."):
+        m := c.Membership
+@@ -782,29 +792,6 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool)
+    // The message's own name is the item the key holder can verify at the
+    // source when the agent acts on it (boxboxbox-google mail --for).
+    speaker.Item = provenance.ChatItem(m.Name)
+-   if c.Kind == "message.created" && !l.HistoryFloor.IsZero() {
+-       created, err := time.Parse(time.RFC3339Nano, m.CreateTime)
+-       if err == nil && created.Before(l.HistoryFloor) {
+-           // Consume the create ID without claiming to have retained its
+-           // content revision. This leaves later edits deliverable and lets
+-           // older readers reject the frame-only record as cached content.
+-           state.Revision = time.Time{}
+-           if previous != nil {
+-               state.Revision = previous.Revision
+-           }
+-           kind := ""
+-           if s := l.Spaces[c.Space]; s != nil {
+-               kind = s.Kind
+-           } else if m.Space != nil {
+-               kind = spaceKind(m.Space)
+-           }
+-           w := p.envelope(id, c.Space, kind, m.Sender, state.Thread)
+-           // Later deletion events omit the sender. Retain its existing frame
+-           // for attribution, without storing the old body or downloading it.
+-           w.Text = provenance.Frame(speaker)
+-           return p.record(c, id, w, &state, nil, "before_history_floor", catchUp, "")
+-       }
+-   }
+    // Deleting a never-observed message still needs a tombstone, but no turn.
+    if c.Kind == "message.deleted" && previous == nil {
+        return p.record(c, id, wire.InboundMessage{}, &state, nil, "local", catchUp, learnedDomain)
+@@ -917,12 +904,25 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
+    w := p.envelope(id, c.Space, s.Kind, r.User, state.Thread)
+    w.Text = provenance.Render(speaker, reactionText(r, action, parent))
+    if action == "deleted" && r.User == nil {
+-       if created := l.Changes[r.Name+"#created"]; created != nil {
++       created := l.Changes[r.Name+"#created"]
++       if created == nil {
++           for _, old := range l.Changes {
++               if strings.HasPrefix(old.ID, r.Name+"#history#reaction.created#") && (created == nil || earlier(created, old)) {
++                   created = old
++               }
++           }
++       }
++       if created != nil {
+            var original wire.InboundMessage
+            if json.Unmarshal([]byte(created.Event), &original) == nil {
+                w.Actor = original.Actor
+                if created.ProvenanceFramed {
+                    w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
++                   if created.Cause == "before_history_floor" || created.Cause == "history_time_missing" {
++                       if frame, ok := provenance.FrameOf(original.Text); ok {
++                           w.Text = frame + "\n" + reactionText(r, action, parent)
++                       }
++                   }
+                }
+            }
+        }
+@@ -1181,7 +1181,7 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
+        return err == nil && state.Revision.After(revision)
+    }
+    for _, other := range l.Changes {
+-       if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID {
++       if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID && other.Cause != "before_history_floor" && other.Cause != "history_time_missing" {
+            return true
+        }
+    }
+diff --git a/gchat/adapter/internal/ledger/ledger.go b/gchat/adapter/internal/ledger/ledger.go
+index 0beba290..9fda7808 100644
+--- a/gchat/adapter/internal/ledger/ledger.go
++++ b/gchat/adapter/internal/ledger/ledger.go
+@@ -47,17 +47,20 @@ type Ledger struct {
+    // reports it on the identity's own messages; senders in it are the organization.
+    IdentityDomainID string `json:"identity_domain_id,omitempty"`
+    // HistoryFloor bounds automatic history on a new installation or reset.
+-   // Old ledgers omit it and retain their existing recovery behavior.
+-   HistoryFloor time.Time                `json:"history_floor,omitzero"`
+-   Subscription SubscriptionState        `json:"subscription"`
+-   Spaces       map[string]*SpaceState   `json:"spaces"`
+-   Transport    TransportDedup           `json:"transport"`
+-   Messages     map[string]*MessageState `json:"messages"`
+-   Changes      map[string]*ChangeState  `json:"changes"`
+-   Sends        map[string]*SendState    `json:"sends"`
+-   Unresolved   map[string]*ChangeState  `json:"unresolved"`
+-   Quarantine   []QuarantinedEvent       `json:"quarantine"`
+-   Counters     map[string]int64         `json:"counters"`
++   // Old ledgers omit it; spaces with saved cursors retain their outage.
++   HistoryFloor time.Time `json:"history_floor,omitzero"`
++   // SpacesListedAt is the last completed inventory boundary. On upgrade,
++   // the saved local inventory establishes its first boundary at load time.
++   SpacesListedAt time.Time                `json:"spaces_listed_at,omitzero"`
++   Subscription   SubscriptionState        `json:"subscription"`
++   Spaces         map[string]*SpaceState   `json:"spaces"`
++   Transport      TransportDedup           `json:"transport"`
++   Messages       map[string]*MessageState `json:"messages"`
++   Changes        map[string]*ChangeState  `json:"changes"`
++   Sends          map[string]*SendState    `json:"sends"`
++   Unresolved     map[string]*ChangeState  `json:"unresolved"`
++   Quarantine     []QuarantinedEvent       `json:"quarantine"`
++   Counters       map[string]int64         `json:"counters"`
+ }
+
+ type SubscriptionState struct {
+@@ -73,6 +76,8 @@ type SpaceState struct {
+    // JoinedAt is the earliest history allowed by an observed membership. Old
+    // ledgers have no known join bound; never infer one from a moving cursor.
+    JoinedAt time.Time `json:"joined_at,omitzero"`
++   // HistoryStart bounds a space first encountered without a cursor or join.
++   HistoryStart time.Time `json:"history_start,omitzero"`
+    // ChatType distinguishes named SPACE from GROUP_CHAT; both have gc kind room.
+    ChatType      string    `json:"chat_type,omitempty"`
+    Wake          string    `json:"wake"`
+@@ -257,6 +262,43 @@ func New() *Ledger {
+    }
+ }
+
++// HistoryBound is shared by live delivery, history queries and queue recovery.
++func HistoryBound(s *SpaceState, floor time.Time) time.Time {
++   if s != nil {
++       if s.JoinedAt.After(floor) {
++           floor = s.JoinedAt
++       }
++       if s.HistoryStart.After(floor) {
++           floor = s.HistoryStart
++       }
++   }
++   return floor
++}
++
++// StartSpace leaves every established cursor and observed join untouched.
++// The preceding inventory includes messages from spaces opened during outage.
++func (l *Ledger) StartSpace(s *SpaceState, now time.Time) bool {
++   if !s.MessageCursor.IsZero() || !s.JoinedAt.IsZero() || !s.HistoryStart.IsZero() {
++       return false
++   }
++   start := l.SpacesListedAt
++   if start.IsZero() {
++       start = l.HistoryFloor
++   }
++   if start.IsZero() {
++       start = now.UTC()
++   }
++   s.HistoryStart = start
++   bound := HistoryBound(s, l.HistoryFloor)
++   s.MessageCursor, s.EventCursor = bound, bound
++   return true
++}
++
++// HistoryRead distinguishes a recovery cursor from its initial lower bound.
++func (s *SpaceState) HistoryRead(floor time.Time) bool {
++   return !s.EventCursor.IsZero() && s.EventCursor.After(HistoryBound(s, floor))
++}
++
+ // Load never repairs or overwrites the source file. A leftover .tmp file is
+ // uncommitted and ignored. Only an absent file on a fresh install starts empty.
+ func Load(path string, established bool) (*Ledger, error) {
+diff --git a/gchat/adapter/internal/puller/puller.go b/gchat/adapter/internal/puller/puller.go
+index 451c3621..511b9cd8 100644
+--- a/gchat/adapter/internal/puller/puller.go
++++ b/gchat/adapter/internal/puller/puller.go
+@@ -40,6 +40,35 @@ type Change struct {
+    Membership   *chat.Membership
+    Subscription *events.Subscription
+    Space        string
++   EventTime    time.Time `json:",omitzero"`
++   PublishTime  time.Time `json:",omitzero"`
++   Batch        bool      `json:",omitempty"`
++}
++
++// ActTime judges each resource independently, including within a batch.
++func (c Change) ActTime() time.Time {
++   var raw string
++   switch c.Kind {
++   case "message.created":
++       if c.Message != nil {
++           raw = c.Message.CreateTime
++       }
++   case "message.updated":
++       if c.Message != nil {
++           raw = c.Message.LastUpdateTime
++       }
++   default:
++       if !c.EventTime.IsZero() {
++           return c.EventTime
++       }
++   }
++   if at, err := time.Parse(time.RFC3339Nano, raw); err == nil {
++       return at
++   }
++   if c.Batch && !c.EventTime.IsZero() {
++       return c.EventTime
++   }
++   return c.PublishTime
+ }
+
+ type Outcome uint8
+@@ -134,6 +163,8 @@ func Decode(msg *pubsub.Message) (*Event, error) {
+        if err != nil {
+            return ev, fmt.Errorf("decode %s change %d: %w", ev.Type, i, err)
+        }
++       change.EventTime, _ = time.Parse(time.RFC3339Nano, msg.Attributes["ce-time"])
++       change.PublishTime, change.Batch = msg.PublishTime, batch
+        changes = append(changes, change)
+    }
+    ev.Changes = changes
+diff --git a/gchat/adapter/internal/server/server.go b/gchat/adapter/internal/server/server.go
+index 9b0f0de9..5af82e25 100644
+--- a/gchat/adapter/internal/server/server.go
++++ b/gchat/adapter/internal/server/server.go
+@@ -23,6 +23,7 @@ import (
+    "syscall"
+    "time"
+
++   "gchat-adapter/internal/catchup"
+    "gchat-adapter/internal/chat"
+    "gchat-adapter/internal/config"
+    "gchat-adapter/internal/gcclient"
+@@ -720,6 +721,7 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
+                    v = &ledger.SpaceState{}
+                    l.Spaces[space] = v
+                }
++               l.StartSpace(v, time.Now())
+                v.ChatType = kind
+                v.DisplayName = displayName
+                v.Kind = "room"
+@@ -1771,6 +1773,10 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
+                problem(w, 400, err)
+                return
+            }
++           if err = catchup.InitializeHistory(l, &cfg, time.Now(), s.opts.Logger); err != nil {
++               problem(w, 400, err)
++               return
++           }
+        }
+        err = s.update(r.Context(), func(current *ledger.Ledger) error { current.Replace(l); return nil })
+        if err != nil {

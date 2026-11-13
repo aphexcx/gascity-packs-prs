@@ -47,17 +47,20 @@ type Ledger struct {
 	// reports it on the identity's own messages; senders in it are the organization.
 	IdentityDomainID string `json:"identity_domain_id,omitempty"`
 	// HistoryFloor bounds automatic history on a new installation or reset.
-	// Old ledgers omit it and retain their existing recovery behavior.
-	HistoryFloor time.Time                `json:"history_floor,omitzero"`
-	Subscription SubscriptionState        `json:"subscription"`
-	Spaces       map[string]*SpaceState   `json:"spaces"`
-	Transport    TransportDedup           `json:"transport"`
-	Messages     map[string]*MessageState `json:"messages"`
-	Changes      map[string]*ChangeState  `json:"changes"`
-	Sends        map[string]*SendState    `json:"sends"`
-	Unresolved   map[string]*ChangeState  `json:"unresolved"`
-	Quarantine   []QuarantinedEvent       `json:"quarantine"`
-	Counters     map[string]int64         `json:"counters"`
+	// Old ledgers omit it; spaces with saved cursors retain their outage.
+	HistoryFloor time.Time `json:"history_floor,omitzero"`
+	// SpacesListedAt is the last completed inventory boundary. On upgrade,
+	// the saved local inventory establishes its first boundary at load time.
+	SpacesListedAt time.Time                `json:"spaces_listed_at,omitzero"`
+	Subscription   SubscriptionState        `json:"subscription"`
+	Spaces         map[string]*SpaceState   `json:"spaces"`
+	Transport      TransportDedup           `json:"transport"`
+	Messages       map[string]*MessageState `json:"messages"`
+	Changes        map[string]*ChangeState  `json:"changes"`
+	Sends          map[string]*SendState    `json:"sends"`
+	Unresolved     map[string]*ChangeState  `json:"unresolved"`
+	Quarantine     []QuarantinedEvent       `json:"quarantine"`
+	Counters       map[string]int64         `json:"counters"`
 }
 
 type SubscriptionState struct {
@@ -73,6 +76,8 @@ type SpaceState struct {
 	// JoinedAt is the earliest history allowed by an observed membership. Old
 	// ledgers have no known join bound; never infer one from a moving cursor.
 	JoinedAt time.Time `json:"joined_at,omitzero"`
+	// HistoryStart bounds a space first encountered without a cursor or join.
+	HistoryStart time.Time `json:"history_start,omitzero"`
 	// ChatType distinguishes named SPACE from GROUP_CHAT; both have gc kind room.
 	ChatType      string    `json:"chat_type,omitempty"`
 	Wake          string    `json:"wake"`
@@ -295,6 +300,43 @@ func New() *Ledger {
 		Quarantine: []QuarantinedEvent{},
 		Counters:   make(map[string]int64),
 	}
+}
+
+// HistoryBound is shared by live delivery, history queries and queue recovery.
+func HistoryBound(s *SpaceState, floor time.Time) time.Time {
+	if s != nil {
+		if s.JoinedAt.After(floor) {
+			floor = s.JoinedAt
+		}
+		if s.HistoryStart.After(floor) {
+			floor = s.HistoryStart
+		}
+	}
+	return floor
+}
+
+// StartSpace leaves every established cursor and observed join untouched.
+// The preceding inventory includes messages from spaces opened during outage.
+func (l *Ledger) StartSpace(s *SpaceState, now time.Time) bool {
+	if !s.MessageCursor.IsZero() || !s.JoinedAt.IsZero() || !s.HistoryStart.IsZero() {
+		return false
+	}
+	start := l.SpacesListedAt
+	if start.IsZero() {
+		start = l.HistoryFloor
+	}
+	if start.IsZero() {
+		start = now.UTC()
+	}
+	s.HistoryStart = start
+	bound := HistoryBound(s, l.HistoryFloor)
+	s.MessageCursor, s.EventCursor = bound, bound
+	return true
+}
+
+// HistoryRead distinguishes a recovery cursor from its initial lower bound.
+func (s *SpaceState) HistoryRead(floor time.Time) bool {
+	return !s.EventCursor.IsZero() && s.EventCursor.After(HistoryBound(s, floor))
 }
 
 // Load never repairs or overwrites the source file. A leftover .tmp file is

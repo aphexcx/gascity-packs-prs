@@ -1,0 +1,33 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 5,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/inbound",
+    "-run",
+    "^TestSkippedActReadsAsNotDeliveredAfterRollback$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/message.created
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/message.updated
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/message.deleted
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/reaction.created
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/reaction.deleted
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback
+PASS gchat-adapter/internal/inbound

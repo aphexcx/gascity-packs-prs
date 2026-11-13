@@ -45,13 +45,15 @@ func (r *Runner) prepareMerged(ctx context.Context, name string, budget *int) (i
 			if retained := before.Changes[unavailableID(item)]; retained != nil && retained.Status == "committed" {
 				continue
 			}
-			if item.Malformed != "" || inbound.ValidateChange(item.Change) != nil {
+			if item.Change.EventTime.IsZero() {
+				item.Change.EventTime = item.At
+			}
+			if item.Malformed != "" || inbound.ValidateChange(before, item.Change) != nil {
 				if err := r.quarantine(name, item); err != nil {
 					return delivered, err
 				}
 				indexes = append(indexes, i)
 			} else {
-				item.Change.At = item.At
 				indexes = append(indexes, i)
 				changes = append(changes, item.Change)
 			}

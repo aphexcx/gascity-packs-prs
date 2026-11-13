@@ -1,0 +1,30 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+    "go",
+    "test",
+    "./internal/ledger",
+    "-run",
+    "^TestHistoryFloorLedgerCompatibility$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/ledger TestHistoryFloorLedgerCompatibility
+FAIL gchat-adapter/internal/ledger
+
+    history_floor_test.go:90: inventory boundary did not persist

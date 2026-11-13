@@ -1,0 +1,30 @@
+[
+  {
+    "command": [
+      "gofmt",
+      "-l",
+      "."
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "vet",
+      "./..."
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "go",
+      "version"
+    ],
+    "exit": 0
+  }
+]

@@ -1,0 +1,211 @@
+[
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestNoOldActIsEverATurn$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestFloorFollowsTheFirstSuccessfulConnection$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedLedgerCursorlessSpacesStartAtLoad$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestLiveActsBeforeTheFloorAreNotTurns$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestSkippedActReadsAsNotDeliveredAfterRollback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewActsOnOldMessagesKeepTheirFrame$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestBoundedActWithoutTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestRollbackSkippedCreateDoesNotWake$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessSpaceStartsWhereItWasFirstSeen$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestNeverReadSpaceReportsNoLoss$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestSavedCursorStillDeliversItsOutage$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "exit": 0
+  }
+]

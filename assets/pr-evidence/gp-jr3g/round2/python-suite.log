@@ -1,0 +1,4 @@
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) gchat/tests -q
+................................ [ 65%]
+.................       [100%]
+49 passed, 89 subtests passed in 19.59s

@@ -1,0 +1,36 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 3,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+    "go",
+    "test",
+    "./internal/catchup",
+    "-run",
+    "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresEveryUpdateRevision/intent
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresEveryUpdateRevision/pending
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved
+FAIL gchat-adapter/internal/catchup TestCursorlessMigrationRetiresEveryUpdateRevision
+FAIL gchat-adapter/internal/catchup
+
+    history_bound_test.go:233: old updates survived: turns=1 unresolved=1
+    history_bound_test.go:230: inbound: receipt lookup failed
+    history_bound_test.go:233: old updates survived: turns=0 unresolved=2

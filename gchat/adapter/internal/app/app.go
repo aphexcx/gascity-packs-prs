@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"gchat-adapter/internal/catchup"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/events"
@@ -272,6 +273,9 @@ func (a *application) run(ctx context.Context) error {
 		a.l.SetSaveGuard(a.checkStateLock)
 		if fresh {
 			a.l.HistoryFloor = time.Now().UTC().Add(-a.cfg.FirstStartWindow())
+		} else if err = catchup.InitializeHistory(a.l, a.cfg, time.Now(), a.log); err != nil {
+			a.mu.Unlock()
+			return err
 		}
 		err = a.l.Save(a.cfg.Endpoints.StateFile)
 		a.mu.Unlock()

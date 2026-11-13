@@ -1,0 +1,14 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "top_level_pass": 1
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestHistoryRollbackExchange
+PASS gchat-adapter/internal/inbound
+
+    history_exchange_test.go:53: wrote five skipped-act records for the released reader

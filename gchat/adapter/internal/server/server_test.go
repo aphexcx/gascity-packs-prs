@@ -69,6 +69,8 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	l := ledger.New()
+	// Content fixtures belong to an inventory preceding their messages.
+	l.SpacesListedAt = time.Unix(0, 0).UTC()
 	mu := new(sync.Mutex)
 	opts := Options{Config: cfg, Ledger: l, LedgerMu: mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: filepath.Join(dir, "config.toml"), Chat: c, GC: gcclient.New(gc.URL(), "examplecity")}
 	s, err := New(opts)

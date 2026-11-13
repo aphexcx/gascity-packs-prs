@@ -60,7 +60,7 @@ func TestHistoryFloorRollbackReadKeepsContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Changes[m.Name].Reason != "before_history_floor" || len(f.gc.Inbound()) != 0 {
+	if saved.Changes[m.Name].Reason != "local" || saved.Changes[m.Name].Cause != "before_history_floor" || len(f.gc.Inbound()) != 0 {
 		t.Fatal("old create did not stay a committed non-turn")
 	}
 	f.l.Replace(saved)

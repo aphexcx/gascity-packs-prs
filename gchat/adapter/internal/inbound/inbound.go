@@ -233,15 +233,20 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 	}
 	// Validate the whole batch before accepting any changes. The puller preserves
 	// the raw event when Quarantine is returned.
-	for _, c := range ev.Changes {
-		if err := validate(c); err != nil {
+	changes := make([]puller.Change, len(ev.Changes))
+	for i, c := range ev.Changes {
+		c = historyTime(c)
+		s := l.Spaces[c.Space]
+		bounded := !ledger.HistoryBound(s, l.HistoryFloor).IsZero() || s == nil || (s.MessageCursor.IsZero() && s.JoinedAt.IsZero())
+		if err := validate(c, bounded); err != nil {
 			return puller.Quarantine, err
 		}
+		changes[i] = c
 	}
 	if len(ev.Changes) > 0 && p.identity() == "" {
 		return puller.Nack, errors.New("inbound: identity user ID unavailable")
 	}
-	for _, c := range ev.Changes {
+	for _, c := range changes {
 		if err := ctx.Err(); err != nil {
 			return puller.Nack, err
 		}
@@ -567,9 +572,14 @@ func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
 
 // ValidateChange lets catch-up quarantine malformed individual acts before
 // submitting the valid part of its pass as one batch.
-func ValidateChange(c puller.Change) error { return validate(c) }
+func ValidateChange(l *ledger.Ledger, c puller.Change) error {
+	c = historyTime(c)
+	s := l.Spaces[c.Space]
+	bounded := !ledger.HistoryBound(s, l.HistoryFloor).IsZero() || s == nil || (s.MessageCursor.IsZero() && s.JoinedAt.IsZero())
+	return validate(c, bounded)
+}
 
-func validate(c puller.Change) error {
+func validate(c puller.Change, bounded bool) error {
 	var name, resource string
 	switch c.Kind {
 	case "message.created", "message.updated", "message.deleted":
@@ -581,11 +591,11 @@ func validate(c puller.Change) error {
 			if c.Message == nil || c.Message.Sender == nil || c.Message.Sender.Name == "" {
 				return errors.New("inbound: message sender missing")
 			}
-			if c.Kind == "message.updated" && c.Message.LastUpdateTime == "" {
+			if !bounded && c.Kind == "message.updated" && c.Message.LastUpdateTime == "" {
 				return errors.New("inbound: update time missing")
 			}
 			for _, value := range []string{c.Message.CreateTime, c.Message.LastUpdateTime} {
-				if value != "" {
+				if !bounded && value != "" {
 					if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
 						return errors.New("inbound: invalid message timestamp")
 					}
@@ -625,6 +635,11 @@ func validate(c puller.Change) error {
 }
 
 func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) error {
+	if !strings.HasPrefix(c.Kind, "membership.") {
+		if handled, err := p.history(ctx, c, catchUp); handled || err != nil {
+			return err
+		}
+	}
 	switch {
 	case strings.HasPrefix(c.Kind, "membership."):
 		m := c.Membership
@@ -811,29 +826,6 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	// The message's own name is the item the key holder can verify at the
 	// source when the agent acts on it (boxboxbox-google mail --for).
 	speaker.Item = provenance.ChatItem(m.Name)
-	if c.Kind == "message.created" && !l.HistoryFloor.IsZero() {
-		created, err := time.Parse(time.RFC3339Nano, m.CreateTime)
-		if err == nil && created.Before(l.HistoryFloor) {
-			// Consume the create ID without claiming to have retained its
-			// content revision. This leaves later edits deliverable and lets
-			// older readers reject the frame-only record as cached content.
-			state.Revision = time.Time{}
-			if previous != nil {
-				state.Revision = previous.Revision
-			}
-			kind := ""
-			if s := l.Spaces[c.Space]; s != nil {
-				kind = s.Kind
-			} else if m.Space != nil {
-				kind = spaceKind(m.Space)
-			}
-			w := p.envelope(id, c.Space, kind, m.Sender, state.Thread)
-			// Later deletion events omit the sender. Retain its existing frame
-			// for attribution, without storing the old body or downloading it.
-			w.Text = provenance.Frame(speaker)
-			return p.record(c, id, w, &state, nil, "before_history_floor", catchUp, "")
-		}
-	}
 	// Deleting a never-observed message still needs a tombstone, but no turn.
 	if c.Kind == "message.deleted" && previous == nil {
 		return p.record(c, id, wire.InboundMessage{}, &state, nil, "local", catchUp, learnedDomain)
@@ -946,12 +938,25 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	w := p.envelope(id, c.Space, s.Kind, r.User, state.Thread)
 	w.Text = provenance.Render(speaker, reactionText(r, action, parent))
 	if action == "deleted" && r.User == nil {
-		if created := l.Changes[r.Name+"#created"]; created != nil {
+		created := l.Changes[r.Name+"#created"]
+		if created == nil {
+			for _, old := range l.Changes {
+				if strings.HasPrefix(old.ID, r.Name+"#history#reaction.created#") && (created == nil || earlier(created, old)) {
+					created = old
+				}
+			}
+		}
+		if created != nil {
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(created.OriginalEvent()), &original) == nil {
 				w.Actor = original.Actor
 				if created.ProvenanceFramed {
 					w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
+					if created.Cause == "before_history_floor" || created.Cause == "history_time_missing" {
+						if frame, ok := provenance.FrameOf(original.Text); ok {
+							w.Text = frame + "\n" + reactionText(r, action, parent)
+						}
+					}
 				}
 			}
 		}
@@ -1217,7 +1222,7 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 		return err == nil && state.Revision.After(revision)
 	}
 	for _, other := range l.Changes {
-		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID {
+		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID && other.Cause != "before_history_floor" && other.Cause != "history_time_missing" {
 			return true
 		}
 	}
