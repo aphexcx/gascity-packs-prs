@@ -83,7 +83,9 @@ func TestWithdrawalReaderCompatibility(t *testing.T) {
 					t.Fatal(err)
 				}
 				owner.ReceiptID = answer.Delivery.ReceiptID
-				f.gc.SetReceipt(owner.ReceiptID, wire.ReceiptResponse{State: "concluded", Delivery: wire.Delivery{Status: "failed"}})
+				receipt := wire.ReceiptResponse{State: "concluded"}
+				receipt.Delivery.Status = "failed"
+				f.gc.SetReceipt(owner.ReceiptID, receipt)
 				baseline = len(f.gc.Inbound())
 			}
 			ids := make([]string, 0, len(f.l.Unresolved))
