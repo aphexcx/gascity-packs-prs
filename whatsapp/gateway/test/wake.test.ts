@@ -349,4 +349,30 @@ describe("held connection", () => {
     expect(await h.stat("wake_failed")).toBe(before + 1);
     expect(h.logs.filter((line) => line.event === "wake_failed")).toEqual([{ event: "wake_failed", count: 1 }]);
   });
+
+  // gp-urx1 item 2: off in any case and with spaces; absent and empty stay on;
+  // false, 0 and no stay on (ruling B: one word, the contract's).
+  it.each([
+    [undefined, "on"], ["", "on"], ["   ", "on"], ["on", "on"], ["ON", "on"], [" On ", "on"],
+    ["off", "off"], ["OFF", "off"], ["Off", "off"], [" off", "off"], ["off ", "off"], ["\tOFF\n", "off"],
+    ["false", "on"], ["0", "on"], ["no", "on"],
+  ] as const)("WAKE %j reads %s through the worker and the real object (gp-urx1)", async (value, reads) => {
+    const city = await setup().enrollCity();
+    const settings = { ...env, WAKE: value };
+    const route = await worker.fetch(request(city.token, false), settings);
+    expect(route.status).toBe(reads === "on" ? 426 : 404);
+    const peer = await open(city);
+    const closed = new Promise<CloseEvent>((resolve) => peer.socket.addEventListener("close", resolve, { once: true }));
+    const inbox = await worker.fetch(new Request("https://gateway.test/v1/inbox", {
+      headers: { authorization: `Bearer ${city.token}` },
+    }), settings);
+    expect(inbox.status).toBe(200);
+    if (reads === "off") {
+      expect((await closed).code).toBe(4503);
+      expect(peer.received).toEqual([]);
+    } else {
+      await barrier(peer.socket);
+      expect(peer.received).toEqual(["pong"]);
+    }
+  });
 });

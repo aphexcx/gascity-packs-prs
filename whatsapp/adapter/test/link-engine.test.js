@@ -7,6 +7,7 @@ import { createGatewayClient } from '../src/gateway.js';
 import { createGcClient } from '../src/gc.js';
 import { openJournal } from '../src/journal.js';
 import { createDeadLetters } from '../src/deadletter.js';
+import { loadConfig } from '../src/index.js';
 import { CITY, CREDENTIAL, rig, sleep, waitFor } from './fakes.js';
 
 async function engine(t, { keeper, WebSocketImpl = globalThis.WebSocket } = {}) {
@@ -72,5 +73,67 @@ test('held: URL conversion strips query and credentials, with no subprotocol', (
     link.tick();
     assert.deepEqual(seen, { url: output, options: { headers: { Authorization: 'Bearer invented-token' } } });
     link.stop();
+  }
+});
+
+// gp-urx1 item 4: a socket that opens and is closed at once is a failure like
+// any other; only a link that stayed up (its first pong) restarts the ladder.
+test('held: only a pong restarts the reconnect ladder; an open alone does not (gp-urx1)', () => {
+  let now = 0;
+  const sockets = [];
+  class Socket extends EventTarget {
+    constructor() { super(); sockets.push(this); this.answers = false; }
+    send(data) { if (data === 'ping' && this.answers) this.dispatchEvent(new MessageEvent('message', { data: 'pong' })); }
+    close() {}
+  }
+  const link = createLink({ gatewayURL: 'https://invented.invalid', credential: 'invented-token', clock: () => now, WebSocketImpl: Socket });
+  const reconnectsAfter = (ms) => {
+    const count = sockets.length;
+    now += ms - 1;
+    link.tick();
+    assert.equal(sockets.length, count, `no reconnect before ${ms} ms`);
+    now += 1;
+    link.tick();
+    assert.equal(sockets.length, count + 1, `a reconnect at ${ms} ms`);
+  };
+  link.tick();
+  assert.equal(sockets.length, 1);
+  for (const rung of [1000, 5000, 15000]) {
+    sockets.at(-1).dispatchEvent(new Event('open'));
+    assert.equal(link.status().state, 'up');
+    sockets.at(-1).dispatchEvent(new Event('close'));
+    reconnectsAfter(rung);
+  }
+  // This socket stays up and answers its first ping; then it drops.
+  const steady = sockets.at(-1);
+  steady.answers = true;
+  steady.dispatchEvent(new Event('open'));
+  now += 30000;
+  link.tick();
+  assert.equal(link.status().state, 'up');
+  steady.dispatchEvent(new Event('close'));
+  reconnectsAfter(1000);
+  link.stop();
+});
+
+// gp-urx1 item 2: one parse of the box's switch, through the adapter's config.
+// [value, link on, value known]; false, 0 and no stay on (ruling B).
+test('held: WHATSAPP_HELD_CONNECTION is off in any case and with spaces; absent and empty are on (gp-urx1)', () => {
+  const table = [
+    [undefined, true, true], ['', true, true], ['   ', true, true], ['on', true, true], ['ON', true, true], [' On ', true, true],
+    ['off', false, true], ['OFF', false, true], ['Off', false, true], [' off', false, true], ['off ', false, true], ['\tOFF\n', false, true],
+    ['false', true, false], ['0', true, false], ['no', true, false], ['disabled', true, false],
+  ];
+  const saved = process.env;
+  try {
+    const seen = table.map(([value]) => {
+      process.env = { GC_CITY_NAME: CITY, GC_API_BASE_URL: 'http://127.0.0.1:9', WHATSAPP_GATEWAY_URL: 'https://invented.invalid' };
+      if (value !== undefined) process.env.WHATSAPP_HELD_CONNECTION = value;
+      const cfg = loadConfig();
+      return [value, cfg.heldConnection, cfg.heldConnectionUnknown === ''];
+    });
+    assert.deepEqual(seen, table);
+  } finally {
+    process.env = saved;
   }
 });
