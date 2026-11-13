@@ -403,6 +403,7 @@ type config struct {
 	arrivalChoice       *ack.Choice
 	arrivalState        string
 	arrivalStarted      time.Time
+	stopArrival         func() // drains the stopwatch writer; set by startArrival
 	publicListen        string
 	internalListen      string // unused when serviceSocket is set
 	serviceSocket       string // when set, bind a UDS here for /publish instead of internalListen
@@ -2334,6 +2335,10 @@ func main() {
 	//    post-seal straggler degrades to the loud LOSS log instead of a
 	//    corrupt spool.
 	cfg.inboundSpool.seal()
+	// The stopwatch writer drains last, bounded (stopwatch.CloseTimeout).
+	if cfg.stopArrival != nil {
+		cfg.stopArrival()
+	}
 	if exitCode != 0 {
 		// Past the seal nothing else in this process can touch the spool
 		// or the liveness state; exit with the self-restart's code so the
@@ -2768,10 +2773,13 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			}
 		default:
 			receipt.MessageID = slackResp.TS
+			// The words line carries Slack's canonical thread; the readback and
+			// the stored receipt keep the requested target, as at the base.
+			wordsThread := target.threadTS
 			if slackResp.Message.ThreadTS != "" {
-				target.threadTS = slackResp.Message.ThreadTS
+				wordsThread = slackResp.Message.ThreadTS
 			}
-			recordAcceptedSlackWords(cfg, req.Conversation.ConversationID, target.threadTS, slackResp.TS)
+			recordAcceptedSlackWords(cfg, req.Conversation.ConversationID, wordsThread, slackResp.TS)
 			// Keep Slack's truncation warning on the receipt even if readback fails.
 			for _, warning := range slackResp.ResponseMetadata.Warnings {
 				if warning != "message_truncated" {
@@ -3332,7 +3340,7 @@ func handleReact(cfg config) http.HandlerFunc {
 // own ts (messageTS). Either way, replies in that thread now reach the
 // posting session even when it is bound mention-only.
 func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sessionID string) {
-	if at, ok := ingestionPublishTime(messageTS); ok && sessionID != "" {
+	if at, ok := ingestionPublishTime(messageTS); ok && replyTo != "" && sessionID != "" {
 		cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 			Kind: "reply", Source: "session_publish", Channel: conversationID,
 			MessageTS: messageTS, ThreadTS: replyTo, SessionID: sessionID, Timestamp: at,

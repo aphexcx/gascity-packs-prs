@@ -122,6 +122,7 @@ func TestArrivalSlackTwinsAndSessionActs(t *testing.T) {
 	j := &inboundJournal{dir: filepath.Join(dir, "journal"), watch: watch}
 	j.recordSessionAct(ingestionSessionAct{Kind: "reaction", Channel: msg.Channel, MessageTS: msg.TS, Source: "session_react", Timestamp: now.Add(time.Second)})
 	j.recordSessionAct(ingestionSessionAct{Kind: "reply", Channel: msg.Channel, MessageTS: slackTimestamp(now.Add(2 * time.Second)), ThreadTS: msg.TS, Source: "session_publish", Timestamp: now.Add(2 * time.Second)})
+	watch.Flush()
 	files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 	b, _ := os.ReadFile(files[0])
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
@@ -152,6 +153,7 @@ func TestStopwatchFileSharesUseSlackTime(t *testing.T) {
 	if !recordFileShares(cfg, "conversation-example", response.Files) {
 		t.Fatal("share timestamp missing")
 	}
+	watch.Flush()
 	files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 	if len(files) != 1 {
 		t.Fatal("no journal")
@@ -199,6 +201,7 @@ func TestCompanyConfirmedPostsAreTimed(t *testing.T) {
 				h.admitViaHandler(t, ev, 0)
 			}
 			h.wait()
+			h.gw.cfg.inboundJournal.watch.Flush()
 			files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 			if len(files) != 1 {
 				t.Fatal("confirmed company post has no words event")
@@ -217,6 +220,7 @@ func TestCompanyVisibleReactionTimesWithArrivalOff(t *testing.T) {
 	g := &companyGateway{cfg: config{inboundJournal: &inboundJournal{watch: stopwatch.New(dir, "slack", "release-example", nil)}}, reactHook: func(string, string, string, string) ackOutcome { return ackSuccess }}
 	g.react("", "reactions.add", "conversation-example", "1700000000.000001", "eyes")
 	g.react("", "reactions.remove", "conversation-example", "1700000000.000001", "eyes")
+	g.cfg.inboundJournal.watch.Flush()
 	files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 	if len(files) != 1 {
 		t.Fatal("visible acknowledgement not timed")

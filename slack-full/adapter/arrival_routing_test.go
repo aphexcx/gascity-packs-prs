@@ -245,6 +245,7 @@ func TestStopwatchPublishToCanonicalThreadReport(t *testing.T) {
 			watch := stopwatch.New(dir, "slack", "release-example", nil)
 			watch.Record(stopwatch.Event{Event: "inbound", Conversation: "CEXAMPLE", Message: "1700000020.000001", Thread: "1700000000.000001", At: time.Unix(1700000020, 1000), MessageAt: time.Unix(1700000020, 1000)})
 			if route == "restart" {
+				watch.Flush()
 				watch = stopwatch.New(dir, "slack", "release-example", nil)
 			}
 			cfg := config{slackBotToken: "test-credential", inboundJournal: &inboundJournal{watch: watch}}
@@ -263,6 +264,7 @@ func TestStopwatchPublishToCanonicalThreadReport(t *testing.T) {
 				w := httptest.NewRecorder()
 				handlePublish(cfg, nil, nil, dedup)(w, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(body)))
 			}
+			cfg.inboundJournal.watch.Flush()
 			files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 			for _, file := range files {
 				data, _ := os.ReadFile(file)
@@ -315,6 +317,7 @@ func TestStopwatchAcceptedPublishWithoutReadback(t *testing.T) {
 		if json.Unmarshal(w.Body.Bytes(), &receipt) != nil || !receipt.Delivered {
 			t.Fatalf("publish failed: %s", w.Body)
 		}
+		cfg.inboundJournal.watch.Flush()
 		files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 		if len(files) != 1 {
 			t.Fatal("Slack accepted the reply but stopwatch has no words")

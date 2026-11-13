@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"os"
@@ -36,17 +37,21 @@ func configureArrival(cfg *config, getenv func(string) string) error {
 	return nil
 }
 
+// arrivalExecutable names the running binary for the release id. Tests name
+// a file that cannot be read.
+var arrivalExecutable = os.Executable
+
+// startArrival never refuses the start: a release that cannot be hashed is
+// "unknown" with one warning (item 19). It prunes old attempt markers, starts
+// the daily pass, and leaves cfg.stopArrival for the shutdown.
 func startArrival(cfg *config) error {
 	arrivalKeyStatus.Store(cfg.arrivalChoice.KeyStatus())
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	release, err := stopwatch.Release(executable)
-	if err != nil {
-		return err
-	}
-	watch := stopwatch.New(cfg.arrivalState, "slack", release, func(s string) { log.Print(s) })
+	logf := func(s string) { log.Print(s) }
+	watch := stopwatch.New(cfg.arrivalState, "slack", stopwatch.ReleaseOf(arrivalExecutable, logf), logf)
+	ack.PruneAttempts(cfg.arrivalState, time.Now())
+	ctx, cancel := context.WithCancel(context.Background())
+	go ack.KeepPruned(ctx, cfg.arrivalState)
+	cfg.stopArrival = func() { cancel(); watch.Close() }
 	cfg.inboundJournal.watch = watch
 	cfg.arrivalStarted = time.Now().UTC()
 	cfg.arrival = &ack.Service{Choice: cfg.arrivalChoice, Dir: cfg.arrivalState, Log: func(s string) { log.Print(s) },
@@ -99,6 +104,23 @@ func observeSlackArrival(cfg config, env slackEventEnvelope, msg slackMessageEve
 	}
 }
 
+// observeAdmittedArrival starts the arrival observation for a receipt the
+// delivery worker admitted through the roster-drift overlay, from the
+// receipt alone: first sight is its ReceivedAt, and a receipt admitted before
+// this process's arrival service started is a replay, never a new arrival.
+func (g *companyGateway) observeAdmittedArrival(r *IngressReceipt, body json.RawMessage) {
+	if g == nil || g.cfg.arrival == nil || r == nil {
+		return
+	}
+	var ev slackMessageEvent
+	if json.Unmarshal(body, &ev) != nil {
+		return
+	}
+	env := slackEventEnvelope{Type: "event_callback", TeamID: r.Origin.TeamID, APIAppID: r.APIAppID, EventID: r.EventID, Event: body,
+		receivedAt: r.ReceivedAt, replayed: g.cfg.arrivalStarted.IsZero() || r.ReceivedAt.Before(g.cfg.arrivalStarted)}
+	g.observeArrival(env, ev, r)
+}
+
 // Company admission owns its route and its sender. Recovered receipts never
 // enter here; the durable attempt registry also absorbs paired event copies.
 func (g *companyGateway) observeArrival(env slackEventEnvelope, ev slackMessageEvent, r *IngressReceipt) {
@@ -128,8 +150,13 @@ func (g *companyGateway) observeArrival(env slackEventEnvelope, ev slackMessageE
 				return
 			}
 			decision = g.addThreadAmbientWakes(dir, decision.Room, &receipt, msg, decision)
-			if len(decision.Wakes) == 0 {
-				decision.Wakes = g.admitRosterDriftWakes(dir, decision.Room, decision, msg)
+			if len(decision.Wakes) == 0 && len(decision.OverlayCandidates) > 0 {
+				// Never the worker's counter, operator line or membership
+				// probe: a fresh cache entry or nothing. On a cold cache the
+				// worker starts this observation once it admits the wake.
+				if members, ok := g.cachedChannelMembers(msg.ChannelID); ok {
+					decision.Wakes = rosterDriftOverlay(decision, members)
+				}
 			}
 			if len(decision.Wakes) == 0 {
 				return

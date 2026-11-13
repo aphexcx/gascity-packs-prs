@@ -48,6 +48,11 @@ func recordUploadedFile(cfg config, channel, id string, files []stopwatchSlackFi
 	if recordFileShares(cfg, channel, files) {
 		return
 	}
+	// With the acknowledgement off the adapter makes no Slack call the base
+	// does not make: an upload whose answer has no shares gets no words line.
+	if !cfg.arrivalChoice.Enabled() {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, slackAPIBase+"/files.info?file="+url.QueryEscape(id), nil)

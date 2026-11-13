@@ -14,7 +14,10 @@ catalog, only `jev` and `eyes` are available. `ACK_SCOPE=addressed` is the
 default; `all` includes delivered room messages. Own messages, bots, mutations,
 reactions, keeper events, replays, duplicates, and messages over 60 seconds old
 are excluded. A durable attempt marker prevents a second acknowledgement after
-a restart, even if a channel response was lost. Acknowledgements are never removed.
+a restart, even if a channel response was lost; markers older than a day are
+removed at start and once a day. Acknowledgements are never removed.
+`ACK_SCOPE` is read only when `ACK_REACTION` is set; unset, any value starts as
+before this feature.
 
 The adapter env file overrides inherited values; otherwise `JEV_API_KEY` comes
 from the process environment. Key changes require an adapter restart. Status
@@ -27,14 +30,18 @@ two seconds from first sight; channel confirmation can take longer.
 
 Slack rejects an acknowledgement that overlaps `BUSY_REACTION`, and rejects enabling both `ACK_REACTION` and `SLACK_COMPANY_VISIBLE_ACKS`. The busy reaction retains its existing add/remove lifecycle. There is no local reaction pace; a channel refusal is not retried by the arrival path.
 
-Slack words times use Slack post timestamps, including file-share timestamps. Existing session acts and authenticated company self-echo receipts feed the stopwatch; no second session observer is added. Standalone state defaults to the city's `.gc/slack` directory, or `/tmp/gc-slack-adapter` without a city.
+Slack words times use Slack post timestamps, including file-share timestamps. With `ACK_REACTION` unset the stopwatch makes no Slack call of its own, so an upload whose answer carries no shares gets no words line. Existing session acts and authenticated company self-echo receipts feed the stopwatch; no second session observer is added. Standalone state defaults to the city's `.gc/slack` directory, or `/tmp/gc-slack-adapter` without a city.
 
 The stopwatch runs even with acknowledgement off. It writes monthly UTC
 `stopwatch-YYYY-MM.jsonl` files with mode 0600, containing coordinates and
 timestamps only. Inbound lines include the first 12 SHA-256 hex characters of
-the running binary.
+the running binary, or `unknown` with one warning when it cannot be read; the
+adapter starts either way.
 Reaction lines record the first confirmation, actor and adapter choice method;
 words lines record posts. An unwritable journal warns once and delivery continues.
+Lines are written by one background writer with a queue of 1,024 lines, so no
+delivery or post waits on a disk flush; a full queue drops the line with that
+one warning, never a message.
 The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
 timing directory for every adapter.
 

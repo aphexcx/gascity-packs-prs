@@ -1,34 +1,34 @@
 package main
 
-// The off-parity hook at the PR head, 2ce179bd. No seam names the
-// executable there, so offParityStart repeats the head's own start lines,
-// arrival.go:39-62 (startArrival, called at main.go:1702), with the given
-// executable in place of os.Executable. offParityCompany repeats main's copy
-// of the started cfg into the company gateway (main.go:1914).
+// The off-parity hook at the tip: offParityStart is main's own start step,
+// startArrival (main.go, after loadConfig), with the executable seam naming
+// a missing file when the test asks for one; offParityCompany repeats main's
+// copy of the started cfg into the company gateway (main.go, newCompanyGateway).
+// The base's version of this file does nothing.
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
-
-	"github.com/sjarmak/gc-slack-adapter/internal/ack"
-	"github.com/sjarmak/gc-slack-adapter/internal/stopwatch"
 )
 
 func offParityStart(t *testing.T, cfg *config, executable string) error {
-	if executable == "" {
-		return startArrival(cfg)
+	if executable != "" {
+		prev := arrivalExecutable
+		arrivalExecutable = func() (string, error) {
+			if _, err := os.Stat(executable); err == nil {
+				return "", errors.New("the executable must be missing")
+			}
+			return executable, nil
+		}
+		defer func() { arrivalExecutable = prev }()
 	}
-	arrivalKeyStatus.Store(cfg.arrivalChoice.KeyStatus()) // arrival.go:40-48
-	if _, err := os.Stat(executable); err == nil {
-		t.Fatal("the executable must be missing")
+	err := startArrival(cfg)
+	if cfg.stopArrival != nil {
+		t.Cleanup(cfg.stopArrival)
 	}
-	release, err := stopwatch.Release(executable)
-	if err != nil {
-		return err
-	}
-	_ = release
-	return nil
+	return err
 }
 
 func offParityCompany(t *testing.T, gw *companyGateway, started config) {
@@ -40,8 +40,8 @@ func offParityCompany(t *testing.T, gw *companyGateway, started config) {
 }
 
 func offParityWait(t *testing.T, cfg config) {
-	// The arrival tasks and the upload's files.info run detached.
+	// The arrival tasks and an upload's stopwatch record run detached.
 	time.Sleep(500 * time.Millisecond)
 	cfg.arrival.Wait()
-	var _ *ack.Service = cfg.arrival
+	cfg.inboundJournal.watch.Flush()
 }
