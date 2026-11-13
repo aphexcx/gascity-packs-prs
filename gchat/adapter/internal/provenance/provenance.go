@@ -148,12 +148,15 @@ func Render(s Speaker, body string) string {
 	return out
 }
 
-// QuoteMergedHeaders is used only while assembling a merged turn. Single
-// deliveries keep their original bytes, including with coalescing disabled.
+// QuoteMergedHeaders is used only while assembling a merged turn. The first
+// line is the adapter's frame; every subsequent from-line prefix is body,
+// even when words or punctuation follow its bracket. Single deliveries keep
+// their original bytes, including with coalescing disabled.
 func QuoteMergedHeaders(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		if mergedHeader.MatchString(strings.TrimSpace(line)) {
+		trimmed := strings.TrimSpace(line)
+		if mergedHeader.MatchString(trimmed) || (i > 0 && strings.HasPrefix(trimmed, "[from: ")) {
 			lines[i] = "> " + line
 		}
 	}
