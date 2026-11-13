@@ -2,7 +2,7 @@
 
 Round 3 preserves delivery safety when a frozen turn changes owner, invalidates withdrawn payloads in every stopped copy, and quotes body sender/header lines according to their display. A box that sets nothing changes behavior when its adapter updates: coalescing remains on at eight seconds by default.
 
-Product commit: `53b5b8bc5dff5dd19b0650fa7e8674b1c1922a3a`. All endpoints are fakes. Toolchains are Go 1.27.3 (darwin/arm64) and Python 3.15.0. Every Go invocation unsets `GC_BIN` and `NEVER_SILENT`; [checks.json](checks.json) records each command, exit, count and failure. Results marked pending below have not been claimed as passing.
+Product commit: `53b5b8bc5dff5dd19b0650fa7e8674b1c1922a3a`. All endpoints are fakes. Toolchains are Go 1.27.3 (darwin/arm64) and Python 3.15.0. Every Go invocation unsets `GC_BIN` and `NEVER_SILENT`; [checks.json](checks.json) records each command, exit, count and failure. All 40 scheduled app runs are reported below, including every failure. The final 20 used documentation-fix commit `32228ffd052970c40472cfb080a64399b7dc63d7`; runtime code was unchanged from the product commit.
 
 ## Merge and baseline
 
@@ -31,9 +31,9 @@ The logs named `red-*-calibration` above were valid reproductions on their first
 
 ## Delivery state follows the turn
 
-Promotion snapshots the old owner's delivery state before retirement mutates it, and transfers `Attempts`, `Fragment`, `Reason`, `Cause`, `NextAttempt`, `Created` and `Posted` to the new owner. Both record-time and resume-time refresh use this mechanism. The existing interrupted-POST guard stops ambiguous survivors under their new owner; the operator can inspect and replay the sanitized survivors or accept them. A deleted old owner remains retired with an empty replay payload. Known refusal retries retain their schedule, and fragments retain the four-POST bound across every key.
+Promotion snapshots the old owner's delivery state before retirement mutates it, and transfers `Attempts`, `Fragment`, `Reason`, `Cause`, `NextAttempt`, `Created` and `Posted` to the new owner. Both record-time and resume-time refresh use this mechanism. The existing interrupted-POST guard stops survivors of interrupted intent under their new owner; the operator can inspect and replay those sanitized survivors or accept them. A turn already unresolved when its text is withdrawn loses its payload and can only be accepted. A deleted old owner remains retired with an empty replay payload. Known refusal retries retain their schedule, and fragments retain the four-POST bound across every key.
 
-[owner-rows.json](owner-rows.json) records each red/pin verdict, every fake POST and its acceptance, every record's final status/effective delivery status/reason/cause/attempt count/fragment/payload/membership, and mail count. The 36-row matrix covers six first outcomes, three withdrawals and both refresh paths. Its 12 failing matrix rows were owner deletion after unsaved delivery, partial delivery or a pre-POST crash (both paths), plus all six lost-answer withdrawal/path rows. The extra durable known-refusal backoff row also failed. The other 24 rows were pins.
+[owner-rows.json](owner-rows.json) records each red/pin verdict. The four basic rows and 36 matrix rows log every fake POST and its acceptance, every record's final status/effective delivery status/reason/cause/attempt count/fragment/payload/membership, and mail count. The extra durable-backoff pin asserts the promoted fields but does not log every final record or mail count. The 36-row matrix covers six first outcomes, three withdrawals and both refresh paths. Its 12 failing matrix rows were owner deletion after unsaved delivery, partial delivery or a pre-POST crash (both paths), plus all six lost-answer withdrawal/path rows. The extra durable known-refusal backoff row also failed. The other 24 rows were pins.
 
 Acceptance means a POST answered delivered, or received with its answer lost. A partial answer is a fragment, not an acceptance. The exact basic partial-then-failed sequence therefore expects zero accepted survivor POSTs; the unsaved-delivered sequence expects exactly one. Both require at most four total survivor POSTs.
 
@@ -63,7 +63,65 @@ The first fixed run passes all four new tests and 2,577 subtests with no skips. 
 
 The unchanged 14-act window-off script produces identical combined POST/ledger bytes at the product commit and approved parent. Both SHA-256 values are `b66f9b224a75fb8ebdaf9e7605c544b4e243e515af0fdbf448710ce7732853af`; [window-off.json](window-off.json) records both revisions and invocations.
 
-The fresh DEEP self-review and the final 20 isolated app runs are pending. The mayor's round 3 DEEP gate and second-model read happen after handoff and remain pending. Round 2's gate and read were BLOCKED; the reproductions above cover their three blocking classes.
+The one fresh DEEP self-review returned **CLEAN** at `fa7dce6449fef75823d12e1cbaaaa8b998cd0d07`, with no major or critical finding. Its one MINOR wording finding was **FIXED** in `32228ffd052970c40472cfb080a64399b7dc63d7`: interrupted intent can leave replayable sanitized survivors; already-unresolved withdrawn payloads are accept-only. [The original review](self-review.md) and [finding outcome](self-review-results.json) preserve that distinction. The review's statement that final app runs were pending records its historical timing; the completed measurement follows. The mayor's round 3 DEEP gate and second-model read happen after handoff and remain pending. Round 2's gate and read were BLOCKED; the reproductions above cover their three blocking classes.
+
+## All 40 isolated app runs
+
+At M, all 20 runs passed. At `32228ffd052970c40472cfb080a64399b7dc63d7`, 10 of 20 passed and 10 failed: 1,610 top-level passes, 2,835 subtest passes, 0 skips, 11,529.899 seconds of command time. Failed tests are additional to the pass counts. Every run used `env -u GC_BIN -u NEVER_SILENT go test ./internal/app -count=1 -p=1 -timeout=30m -json`, sequentially with no concurrent build or review in this lane. No waits, timeouts or existing fixtures changed; there were no replacement reruns.
+
+| Failing test (most specific) | Failed final runs |
+| --- | ---: |
+| `TestSubscriptionRefusalRetriesWithoutSignIn/404` | 1 |
+| `TestFreshTokenIdentityDeliversFirstDM` | 1 |
+| `TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded` | 4 |
+| `TestMissingTokenReplacementResumes` | 2 |
+| `TestRevokedTokenReplacementResumes` | 1 |
+| `TestManagedSourceLateIdentityReachesRunningClient` | 1 |
+
+[Failure diagnostics and source-path analysis](app-failures.md) distinguish each assertion from its broader startup/shutdown path. The fixtures set `0s`, but running generations still launch `RunWindows`, which enters the inbound gate. These tests therefore include the broader PR path; their snapshots do not establish coalescing as the cause or isolate the delayed phase. [app-summary.json](app-summary.json) includes parent and leaf failure totals.
+
+| Revision | Run | Exit | Top-level passes | Subtest passes | Skips | Seconds | Failed tests (leaf) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| M | 01 | 0 | 81 | 142 | 0 | 498.697 | none |
+| M | 02 | 0 | 81 | 142 | 0 | 585.182 | none |
+| M | 03 | 0 | 81 | 142 | 0 | 560.352 | none |
+| M | 04 | 0 | 81 | 142 | 0 | 550.457 | none |
+| M | 05 | 0 | 81 | 142 | 0 | 520.411 | none |
+| M | 06 | 0 | 81 | 142 | 0 | 534.050 | none |
+| M | 07 | 0 | 81 | 142 | 0 | 566.386 | none |
+| M | 08 | 0 | 81 | 142 | 0 | 570.065 | none |
+| M | 09 | 0 | 81 | 142 | 0 | 593.291 | none |
+| M | 10 | 0 | 81 | 142 | 0 | 578.062 | none |
+| M | 11 | 0 | 81 | 142 | 0 | 603.500 | none |
+| M | 12 | 0 | 81 | 142 | 0 | 529.259 | none |
+| M | 13 | 0 | 81 | 142 | 0 | 527.533 | none |
+| M | 14 | 0 | 81 | 142 | 0 | 513.530 | none |
+| M | 15 | 0 | 81 | 142 | 0 | 495.580 | none |
+| M | 16 | 0 | 81 | 142 | 0 | 492.834 | none |
+| M | 17 | 0 | 81 | 142 | 0 | 492.229 | none |
+| M | 18 | 0 | 81 | 142 | 0 | 582.526 | none |
+| M | 19 | 0 | 81 | 142 | 0 | 540.264 | none |
+| M | 20 | 0 | 81 | 142 | 0 | 506.938 | none |
+| final | 01 | 1 | 80 | 141 | 0 | 532.968 | `TestSubscriptionRefusalRetriesWithoutSignIn/404` |
+| final | 02 | 0 | 81 | 142 | 0 | 552.738 | none |
+| final | 03 | 1 | 80 | 142 | 0 | 551.436 | `TestFreshTokenIdentityDeliversFirstDM` |
+| final | 04 | 1 | 80 | 141 | 0 | 533.204 | `TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded` |
+| final | 05 | 1 | 80 | 141 | 0 | 546.392 | `TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded` |
+| final | 06 | 1 | 80 | 142 | 0 | 555.550 | `TestMissingTokenReplacementResumes` |
+| final | 07 | 0 | 81 | 142 | 0 | 511.700 | none |
+| final | 08 | 0 | 81 | 142 | 0 | 495.926 | none |
+| final | 09 | 0 | 81 | 142 | 0 | 491.057 | none |
+| final | 10 | 1 | 80 | 142 | 0 | 576.474 | `TestMissingTokenReplacementResumes` |
+| final | 11 | 0 | 81 | 142 | 0 | 537.766 | none |
+| final | 12 | 1 | 80 | 141 | 0 | 497.285 | `TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded` |
+| final | 13 | 1 | 80 | 141 | 0 | 577.719 | `TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded` |
+| final | 14 | 1 | 80 | 142 | 0 | 627.084 | `TestRevokedTokenReplacementResumes` |
+| final | 15 | 1 | 80 | 142 | 0 | 660.294 | `TestManagedSourceLateIdentityReachesRunningClient` |
+| final | 16 | 0 | 81 | 142 | 0 | 653.987 | none |
+| final | 17 | 0 | 81 | 142 | 0 | 676.236 | none |
+| final | 18 | 0 | 81 | 142 | 0 | 621.649 | none |
+| final | 19 | 0 | 81 | 142 | 0 | 610.309 | none |
+| final | 20 | 0 | 81 | 142 | 0 | 720.125 | none |
 
 ## Operator strings
 
@@ -82,9 +140,12 @@ New:
 ```text
 the key; when the owner was deleted, the newest survivor owns the replacement,
 including the turn's attempt count, fragment marker and retry schedule.
-Changing the owner never resets the fragment retry bound. After an unknown
-outcome, the surviving turn ends unresolved for the operator to inspect and
-accept or replay; an owner change never makes that turn automatically sendable.
+Changing the owner never resets the fragment retry bound. An interrupted intent
+with an unknown POST outcome becomes an unresolved surviving turn; inspect the
+delivery before accepting it or replaying its sanitized payload. If a turn was
+already unresolved when the withdrawal arrived, its frozen payload is cleared
+and only acceptance is available. An owner change never makes an unknown
+outcome automatically sendable.
 The deleted owner's retired record has no replayable payload and can be accepted.
 ```
 
@@ -134,7 +195,7 @@ New:
 Source references moved with the merge and fixes: `inbound.go`'s `ValidateChange` is now line 626, record refresh line 1115, resume refresh line 1170, interrupted-POST guard line 1188, unavailable-answer branch line 1282, and `unresolved` line 1435. `coalesce_retry.go`'s refresh remains line 17 and its new stored-copy cleanup starts at line 140. In `provenance.go`, the import shifts `IsFrame` to line 125, `Render` to line 133 and `QuoteMergedHeaders` to line 156; the first two bodies are unchanged. `RetireSpaceHistory` now starts at `history.go:136`. The app launch at `workers.go:133`, `RunWindows` at `coalesce.go:362`, and notice reconciliation at `never_silent.go:13` retain their references.
 
 1. Red at M means M's product sources with separately committed tests, before any product edit.
-2. Inheritance was chosen: the sanitized surviving owner becomes unresolved after ambiguity, leaving an explicit replay/accept choice. The deleted owner is non-replayable.
+2. Inheritance was chosen: interrupted intent leaves a sanitized surviving owner unresolved with an explicit replay/accept choice. A previously unresolved turn whose text is withdrawn instead loses its payload and is accept-only. The deleted owner is non-replayable.
 3. Pending and unresolved copies are protected; committed records are left alone. Pending receipts still conclude through the reader's processor.
 4. Partial is not an acceptance; unknown delivery is never automatically repeated. The four-POST bound applies to fragments, not every known refusal.
 5. `NextAttempt` and `Cause` follow promotion; the extra durable-backoff row demonstrates this, beyond a code reading.

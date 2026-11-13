@@ -2,7 +2,7 @@
   {
     "path": "gchat/README.md",
     "old": "the key; when the owner was deleted, the newest survivor owns the replacement.",
-    "new": "the key; when the owner was deleted, the newest survivor owns the replacement,\nincluding the turn's attempt count, fragment marker and retry schedule.\nChanging the owner never resets the fragment retry bound. After an unknown\noutcome, the surviving turn ends unresolved for the operator to inspect and\naccept or replay; an owner change never makes that turn automatically sendable.\nThe deleted owner's retired record has no replayable payload and can be accepted."
+    "new": "the key; when the owner was deleted, the newest survivor owns the replacement,\nincluding the turn's attempt count, fragment marker and retry schedule.\nChanging the owner never resets the fragment retry bound. An interrupted intent\nwith an unknown POST outcome becomes an unresolved surviving turn; inspect the\ndelivery before accepting it or replaying its sanitized payload. If a turn was\nalready unresolved when the withdrawal arrived, its frozen payload is cleared\nand only acceptance is available. An owner change never makes an unknown\noutcome automatically sendable.\nThe deleted owner's retired record has no replayable payload and can be accepted."
   },
   {
     "path": "gchat/README.md",
