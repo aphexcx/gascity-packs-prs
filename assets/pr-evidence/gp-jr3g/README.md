@@ -2,7 +2,7 @@
 
 Base: `4d14c7c5d52a468a2af7e387175ff4fb20366ec5`.
 Tests-first commit: `9061f5be`.
-Implementation and review fixes: `16951dbb`, `ec506890`.
+Implementation and review fixes: `16951dbb`, `ec506890`, `b412ffe1`.
 
 A new ledger records its history floor before the established marker. The floor
 moves until the first subscription is recorded, then stays fixed. Every room and
@@ -94,10 +94,58 @@ The origin result is returned by `LoadWithOrigin`; existing `Load` callers keep
 the same value and error contract. This preserves the unchanged legacy
 `TestLoadMissingFile` equality assertion.
 
+The one Codex DEEP round reviewed `541fa5cb9ce466810519214aea86b5991c26e11b`
+and returned BLOCK: zero critical, one major, one minor, zero nits. It confirmed
+the earlier self-review fixes. Both new findings were reproduced and fixed in
+`b412ffe1e4023634d366cb46b07b5a5efb165068`:
+
+- MAJOR, a widened provider query bypasses a hard history bound. Near the
+  28-day retention boundary, the existing fallback omits the lower query bound.
+  `TestHistoryFloorSurvivesRetentionFallback` failed all 16 subtests before the
+  fix: updates, deletions, and reaction creates/deletes; individual and batch
+  events; floor and join bounds. The fix filters returned events before batch
+  expansion or backlog persistence. One-event pages prove a rejected page does
+  not lose later events. Ledgers without a floor retain their old behavior.
+- MINOR, rollback treats retained attribution as cached message content.
+  `TestHistoryFloorRollbackReadKeepsContent`, compiled with the exact base
+  `server.go` in a read-only overlay, returned a frame instead of the old body.
+  The skipped create now consumes its change ID without advancing the content
+  revision: the prior revision is retained, or zero for an unseen message.
+  The old reader then fetches and normalizes the content. The envelope and
+  attribution remain unchanged, without retaining the body or adding fields.
+
+The three class regressions passed three top-level tests and 18 subtests across
+three packages. The exact base reader also passed its rollback regression:
+
+```sh
+env -u GC_BIN go test ./internal/catchup ./internal/inbound ./internal/server -run 'TestHistoryFloor(SurvivesRetentionFallback|KeepsNewActs|RollbackReadKeepsContent)$' -count=1 -p=1 -timeout=5m -json
+env -u GC_BIN GOFLAGS="-overlay=$ROLLBACK_READER_OVERLAY" go test ./internal/server -run '^TestHistoryFloorRollbackReadKeepsContent$' -count=1 -timeout=5m -json
+```
+
+`ROLLBACK_READER_OVERLAY` maps only `internal/server/server.go` to its exact base
+blob, retaining the current inbound writer and regression test. The first red
+command selected `./internal/catchup` with
+`-run '^TestHistoryFloorSurvivesRetentionFallback$'`; the rollback red run used
+the second command unchanged. No second Codex round was run; its recorded
+verdict remains BLOCK with both findings fixed. The second-model read is part
+of the draft PR handoff.
+
 ## Verification
 
 Go checks ran on `go1.27.3 darwin/arm64`. Python checks ran through the Makefile's
 uv environment: Python 3.13.13 and pytest 9.2.0. No JavaScript checks apply.
+
+The final production-code commit `b412ffe1e4023634d366cb46b07b5a5efb165068`
+passed the complete fake-only suite: 670 top-level tests, 1,197 subtests, all
+21 packages, zero failures. `TestRealGCContract` and `TestRealGCReplyReminder`
+skipped as required. Final vet passed and formatting was clean. The later
+commit only records this evidence. From `gchat/adapter`:
+
+```sh
+env -u GC_BIN go test ./... -p=1 -count=1 -timeout=30m -json
+env -u GC_BIN go vet ./...
+gofmt -l .
+```
 
 The fake-only base suite passed 652 top-level tests and 1,167 subtests across
 all 21 packages, with `TestRealGCContract` and `TestRealGCReplyReminder` skipped.
@@ -110,7 +158,7 @@ nested CLI builds as well as the main test command:
 env -u GC_BIN GOFLAGS="-overlay=$BASE_OVERLAY" go test ./... -p=1 -count=1 -timeout=30m -json
 ```
 
-From `gchat/adapter`, the final production-code commit `ec506890` ran:
+From `gchat/adapter`, the intermediate production-code commit `ec506890` ran:
 
 ```sh
 env -u GC_BIN go test ./... -p=1 -count=1 -timeout=30m -json
@@ -143,8 +191,8 @@ one failing top-level test and one failing subtest; green passed both:
 env -u GC_BIN go test ./test/e2e -run '^TestEndToEnd$/^revoked_token' -count=1 -p=1 -timeout=5m -json
 ```
 
-The draft PR validation and READY record the subsequent complete e2e rerun
-after that fixture adjustment, using:
+The complete e2e rerun at `541fa5cb`, after that fixture adjustment, passed one
+top-level test and all 69 subtests, using:
 
 ```sh
 env -u GC_BIN go test ./test/e2e -p=1 -count=1 -timeout=30m -json
@@ -202,8 +250,10 @@ live stream, the ledger keeps `MessageState` revision/thread/mine/send-key state
 and a committed `ChangeState` with `id`, `space`, `message`, `kind`, `created`,
 `reason=before_history_floor`, `event`, and `provenance_framed`; `event` contains
 the existing sender envelope and provenance frame, without the old message body
-or attachments. This lets later edits, deletions and reactions keep their
-existing behavior.
+or attachments. The revision remains the prior observed revision, or zero for
+an unseen message; the create is deduplicated by its change ID. This lets later
+edits, deletions and reactions keep their existing behavior and lets the older
+reader distinguish attribution from cached content.
 
 Operator-visible wording is recorded in [strings.txt](strings.txt). No pack
 version, token path, outbound path, renderer, skill, deployed box or image is
