@@ -5,6 +5,8 @@ must name the verbs the pack ships and no others, it must have a rule for
 every mail the pack sends, and it must keep each rule the founders made word
 for word, in its own section.
 """
+from datetime import datetime
+import json
 import os
 from pathlib import Path
 import re
@@ -83,6 +85,8 @@ FOUNDERS_RULES = [
          "A note about a new ability goes out only when you were given one for a major feature."),
     Rule("no message on the no-daytime-hours mail", "Afik, 2026-11-12", "No daytime hours",
          "Never write to the owner because of this mail: wait until they next write to you."),
+    Rule("no making up for a stopped follow-up", "contract item 5", "Health",
+         "For a stopped `follow-up`, send nothing, and never make up for it by writing to the owner yourself."),
 ]
 
 # A command runs from "gc follow-through" to the end of its code span or line.
@@ -103,6 +107,33 @@ STOPPED_LINE = re.compile(r"`([^`$:\n]+): \$\{[^`}]*'stopped'")
 # A mail can arrive twice. The skill's rule for that names the second arrival
 # and ends in sending nothing, as the follow-up section's rule does.
 ARRIVING_TWICE = re.compile(r"the same [a-z]+ arriving a second time\b[^.]*\.\s+Send nothing\b")
+# Status names a stopped mail by the raise's own id, never by the reminder it
+# carries, so the Health section's bullet for a stopped reminder says so and
+# takes every reminder that could be the one. These follow the bullet's words.
+STOPPED_REMINDER_UNNAMED = "Status does not say which reminder stopped."
+STOPPED_REMINDER_EVERY = "for every reminder of that conversation still shown as set after its time"
+# The pack's own tick, driven by a fake clock with every send failing: two
+# reminders of one invented conversation, the second due ten minutes after
+# the first, and a tick each minute until the first has stopped and the
+# second is still being tried. Nothing here can reach gc.
+TWO_OVERDUE_REMINDERS = """
+const [src, dir] = process.argv.slice(1);
+const { withState } = await import(new URL('state.js', src));
+const { setReminder } = await import(new URL('model.js', src));
+const { tick } = await import(new URL('engine.js', src));
+const MINUTE = 60_000;
+const first = Date.parse('2026-01-15T15:00:00Z');
+await withState(dir, async (state, save) => {
+  setReminder(state, 'slack/invented', 'Invented reminder A', first, first - 60 * MINUTE);
+  setReminder(state, 'slack/invented', 'Invented reminder B', first + 10 * MINUTE, first - 60 * MINUTE);
+  save();
+});
+const send = async () => ({ ok: false, error: 'invented failure' });
+let lookups = 0;
+const lookup = async () => { lookups += 1; return { ok: false, error: 'invented: no mail history' }; };
+for (let minute = 0; minute <= 18; minute++) await tick({ dir, now: first + minute * MINUTE, send, lookup });
+if (lookups) throw new Error(`the run looked in the mail history ${lookups} times`);
+"""
 
 
 def skill_text() -> str:
@@ -258,6 +289,54 @@ def test_the_health_section_says_what_a_stopped_mail_of_each_kind_means(kind):
     words = stopped_line_words()
     assert words and words[0] in health, f'the Health section never names the status line "{words[0] if words else "?"}"'
     assert f"`{kind}`" in health, f"the Health section never says what a stopped `{kind}` mail means"
+
+
+def test_the_stopped_reminder_rule_takes_every_overdue_reminder_of_its_conversation(tmp_path):
+    """A stopped reminder is still given, so the mayor must find it, and its
+    pages do not say which reminder stopped: status names the raise by its own
+    id, and the reminder list shows a reminder still being tried as set too.
+    With two reminders of one conversation past their time, one stopped and
+    one still being tried, the Health section says that status does not name
+    the stopped one, and takes every reminder of that conversation still shown
+    as set after its time."""
+    node = shutil.which("node")
+    assert node, "follow-through requires Node.js 20 or newer"
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    env = {**os.environ, "GC_PACK_STATE_DIR": str(state_dir), "GC_BIN": "/no-real-gc-allowed"}
+
+    def run(*args: str) -> str:
+        result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=120)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    run(node, "--input-type=module", "-e", TWO_OVERDUE_REMINDERS, (PACK / "src").as_uri() + "/", str(state_dir))
+    status_text = run(str(PACK / "commands/status.sh"))
+    status_json = run(str(PACK / "commands/status.sh"), "--json")
+    reminder_list = run(str(PACK / "commands/remind.sh"), "--list")
+
+    # The pack's half: the pages a mayor has, which the bullet's words rest on.
+    assert stopped_line_words()[0] in status_text, status_text
+    snapshot = json.loads(status_json)
+    ours = [r for r in snapshot["failing_raises"] if r["kind"] == "reminder" and r["conversation"] == "slack/invented"]
+    assert sorted(r["state"] == "stopped" for r in ours) == [False, True], \
+        f"the run should leave one reminder of the conversation stopped and one still being tried: {ours}"
+    listed = re.findall(r"^(reminder-\S+) (\S+) slack/invented: .* \(due (\S+)\)$", reminder_list, flags=re.MULTILINE)
+    last_tick = datetime.fromisoformat(snapshot["last_tick_at"])
+    assert len(listed) == 2 and all(state == "set" and datetime.fromisoformat(due) < last_tick for _, state, due in listed), \
+        f"both reminders should be shown as set after their time:\n{reminder_list}"
+    for reminder_id, _, _ in listed:
+        assert reminder_id not in status_text + status_json, \
+            (f"status now names the reminder {reminder_id}. The Health section's stopped-reminder bullet must then "
+             "find the reminder by that id instead of taking every overdue reminder of the conversation, and this "
+             "test changes with it.")
+
+    # The skill's half: the bullet says what the pages cannot tell, and takes
+    # every reminder that could be the stopped one.
+    health = section_bodies(skill_text()).get("Health")
+    assert health is not None, "the skill has no section headed Health"
+    missing = [phrase for phrase in (STOPPED_REMINDER_UNNAMED, STOPPED_REMINDER_EVERY) if phrase not in health]
+    assert not missing, f"the Health section's stopped-reminder bullet does not say, word for word: {missing}"
 
 
 @pytest.mark.parametrize("subject", mail_subjects())
