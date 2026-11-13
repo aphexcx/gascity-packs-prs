@@ -264,6 +264,8 @@ export function createInbound({
 
   async function poll() {
     polling = true;
+    // A read that a connect or a wake asked for was announced; a timed read was not.
+    const asked = pollWanted;
     pollWanted = false;
     const seq = ++pollSeq;
     try {
@@ -282,7 +284,11 @@ export function createInbound({
         watermarkWanted = true;
         keeper?.noteDelivery?.();
       }
-      nextPollAt = clock() + (link.up ? heldPollMs : pollMs);
+      // A timed read on an up link found a new delivery, and no wake or connect
+      // came while it ran: the gateway cannot wake this box. Read at pollMs until
+      // the next wake or reconnect (link.held turns true again).
+      if (gotDelivery && !asked && !pollWanted) link.unannounced();
+      nextPollAt = clock() + (link.held ? heldPollMs : pollMs);
     } catch (err) {
       stats.lastPollError = err.message;
       if (err.auth) {

@@ -9,13 +9,16 @@ export interface Wake {
 
 export function createWake(namespace?: DurableObjectNamespace<CityWake>, mode?: string): Wake | undefined {
   if (!namespace) return undefined;
+  // The one parse of WAKE: off in any case and with spaces is off; anything else,
+  // absent included, is on (false, 0 and no too: the contract's one word).
+  const off = (mode ?? "").trim().toLowerCase() === "off";
   const object = (city: string) => namespace.get(namespace.idFromName(city));
   return {
-    enabled: mode !== "off",
+    enabled: !off,
     open: (city, hash) => object(city).fetch(new Request("https://wake.internal/", {
       headers: { upgrade: "websocket", "x-wake-credential": hash },
     })),
-    notify: (city, liveHashes) => mode === "off" ? object(city).closeAll() : object(city).wake(liveHashes),
+    notify: (city, liveHashes) => off ? object(city).closeAll() : object(city).wake(liveHashes),
   };
 }
 

@@ -51,7 +51,16 @@ function intEnv(name, fallback) {
   return value;
 }
 
+// The box's one parse of its off switch: off in any case and with spaces is off;
+// absent or empty is on; any other value (false, 0 and no included) stays on and
+// is named once at start, so a mistyped rollback lever is not silent.
+function heldConnectionSwitch(raw = '') {
+  const value = raw.trim().toLowerCase();
+  return { on: value !== 'off', unknown: ['', 'on', 'off'].includes(value) ? '' : raw };
+}
+
 export function loadConfig() {
+  const held = heldConnectionSwitch(process.env.WHATSAPP_HELD_CONNECTION);
   const cityPath = getenv('GC_CITY_PATH', path.join(os.homedir(), 'city'));
   const cfg = {
     cityName: getenv('GC_CITY_NAME'),
@@ -67,7 +76,8 @@ export function loadConfig() {
     gatewayURL: getenv('WHATSAPP_GATEWAY_URL'),
     credential: getenv('WHATSAPP_GATEWAY_CREDENTIAL'),
     pollMs: intEnv('WHATSAPP_POLL_MS', 2000),
-    heldConnection: getenv('WHATSAPP_HELD_CONNECTION', 'on') !== 'off',
+    heldConnection: held.on,
+    heldConnectionUnknown: held.unknown,
     heldPollMs: intEnv('WHATSAPP_HELD_POLL_MS', 300000),
     watermarkCheckMs: intEnv('WHATSAPP_WATERMARK_CHECK_MS', 60000),
     tickMs: intEnv('WHATSAPP_TICK_MS', 250),
@@ -333,6 +343,7 @@ export async function main() {
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGINT', () => stop('SIGINT'));
 
+  if (cfg.heldConnectionUnknown) log(`WHATSAPP_HELD_CONNECTION=${JSON.stringify(cfg.heldConnectionUnknown)} is neither on nor off; the held link stays on (only off, in any case, turns it off)`);
   if (!cfg.credential) log('WHATSAPP_GATEWAY_CREDENTIAL is not set: not enrolled (gc whatsapp enroll); polling will stop on the first 401');
   if (cfg.registerOnStart) void registerUntilDone(gc, cfg, () => stopping);
 
