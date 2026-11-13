@@ -62,6 +62,8 @@ func setup(t *testing.T) *fixture {
 		ChatAPIBase: g.URL(), MediaDir: filepath.Join(dir, "media"), MediaMaxBytes: 1024, StateFile: filepath.Join(dir, "state.json"),
 	}}
 	cfg.Settings.Identities = []config.Identity{{Name: "example", Agent: "mayor"}}
+	off := "0s"
+	cfg.Settings.CoalesceWindow = &off
 	c, err := chat.New(context.Background(), http.DefaultClient, cfg.Endpoints)
 	if err != nil {
 		t.Fatal(err)

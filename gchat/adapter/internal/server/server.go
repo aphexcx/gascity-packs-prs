@@ -1424,7 +1424,7 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 		if change == nil {
 			continue
 		}
-		if id == m.Name && m.LastUpdateTime != "" && change.Kind != "message.updated" {
+		if id == m.Name && m.LastUpdateTime != "" && change.OriginalKind() != "message.updated" {
 			return saved, false
 		}
 		if strings.HasPrefix(change.Reason, "space unavailable") {
@@ -1434,7 +1434,7 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 		case "local", "own", "wake_policy", "before_history_floor":
 			return saved, false
 		}
-		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
+		if json.Unmarshal([]byte(change.OriginalEvent()), &saved) == nil && saved.ProviderMessageID == id {
 			if change.CatchUp {
 				saved.Text = strings.TrimPrefix(saved.Text, "[catch-up]\n")
 			}
@@ -1443,7 +1443,7 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			if line, ok := provenance.FrameOf(saved.Text); change.ProvenanceFramed && ok {
 				saved.Text = strings.TrimPrefix(saved.Text, line+"\n")
 			}
-			if change.Kind == "message.updated" && id != m.Name {
+			if change.OriginalKind() == "message.updated" && id != m.Name {
 				saved.Text = strings.TrimPrefix(saved.Text, "edited: ")
 			}
 			return saved, true
@@ -1608,11 +1608,16 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		Raised      time.Time `json:"raised,omitzero"`
 		RaisedEnd   time.Time `json:"raised_end,omitzero"`
 		Fragment    bool      `json:"fragment,omitempty"`
+		Members     int       `json:"members,omitempty"`
 	}
 	deliveries := make([]delivery, 0)
-	inFlight, stuck := 0, 0
+	inFlight, stuck, held := 0, 0, 0
 	now := time.Now()
 	for _, change := range l.Changes {
+		if change.Status == "intent" && !change.HeldUntil.IsZero() {
+			held++
+			continue
+		}
 		waiting := false
 		switch change.Status {
 		case "intent", "pending":
@@ -1624,6 +1629,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		}
 		row := delivery{ID: change.ID, Status: change.Status, Reason: change.Reason, ReceiptID: change.ReceiptID, Created: change.Created,
 			Cause: change.Cause, Attempts: change.Attempts, NextAttempt: change.NextAttempt, Raised: change.Raised, RaisedEnd: change.RaisedEnd, Fragment: change.Fragment}
+		row.Members = len(change.Members)
 		if !change.Created.IsZero() {
 			age := max(now.Sub(change.Created), 0)
 			seconds := int64(age / time.Second)
@@ -1643,6 +1649,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
 	status["pending"], status["deliveries"], status["stuck"] = inFlight, deliveries, stuck
+	cfg := s.configuration()
+	status["coalesce_window"], status["held_acts"] = cfg.CoalesceWindow().String(), held
 	if !l.HistoryFloor.IsZero() {
 		status["history_floor"] = l.HistoryFloor
 	}

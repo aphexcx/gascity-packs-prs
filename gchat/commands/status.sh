@@ -20,12 +20,14 @@ printf '%s\n' "$result" | jq -r '
     "Expiry: \(.subscription.expiry // "unknown")",
     "Last event: \(.last_event_time // "none")",
     (if .history_floor then "History: first start skipped messages written before \(.history_floor); gc gchat read still reads them" else empty end),
+    (if .coalesce_window then "Coalescing: \(.coalesce_window); held acts: \(.held_acts // 0)" else empty end),
     "Backlog: \(.backlog // 0); pending: \(.pending // 0); unresolved: \(.unresolved // 0); unrecorded: \(.unrecorded // 0); quarantine: \(.quarantine // 0)" +
         (if .stuck != null then "; stuck: \(.stuck)" else "" end),
     (if .subscription_retry then "Subscription retry: \(.subscription_retry | tojson)" else empty end),
     "Counters:", ((.counters // {}) | to_entries | sort_by(.key)[] | "  \(.key): \(.value)"),
     "Deliveries (only unresolved IDs can be resolved):",
     ((.deliveries // [])[] | "  \(.status) \(.id): \(.reason // "")" +
+        (if (.members // 0) > 0 then "; members \(.members)" else "" end) +
         (if .age_seconds != null then "; age \(.age_seconds | age)" else "" end) +
         (if (.cause // "") != "" then "; cause \(.cause)" else "" end) +
         (if waiting and (.next_attempt // "") != "" then "; next attempt \(.next_attempt)" else "" end) +

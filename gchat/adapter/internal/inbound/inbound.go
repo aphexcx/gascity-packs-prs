@@ -135,8 +135,11 @@ type Processor struct {
 	wait func(context.Context, time.Duration) error
 	// raiseMu serializes the raise phase of concurrent polls. raiseTried
 	// throttles a change whose report failed; it is process memory only.
-	raiseMu    sync.Mutex
-	raiseTried map[string]time.Time
+	raiseMu       sync.Mutex
+	raiseTried    map[string]time.Time
+	windowChanged chan struct{}
+	windowWait    func(context.Context, time.Duration, <-chan struct{}) error
+	recoverHeld   map[string]bool
 }
 
 // ErrCredentials identifies a lookup held until Chat credentials or scopes are repaired.
@@ -182,7 +185,16 @@ func New(opts Options) (*Processor, error) {
 	if opts.Save == nil {
 		opts.Save = func(l *ledger.Ledger) error { return l.Save(opts.LedgerPath) }
 	}
-	return &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{}}, nil
+	p := &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{},
+		windowChanged: make(chan struct{}, 1), windowWait: windowWait, recoverHeld: map[string]bool{}}
+	opts.LedgerMu.Lock()
+	for id, c := range opts.Ledger.Changes {
+		if isHeld(c) {
+			p.recoverHeld[id] = true
+		}
+	}
+	opts.LedgerMu.Unlock()
+	return p, nil
 }
 
 // Handle is a puller.Handler. Pending receipts are durable recovery obligations,
@@ -209,6 +221,9 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 	if ev == nil {
 		return puller.Quarantine, errors.New("inbound: missing event")
 	}
+	if err := p.flushWindows(ctx); err != nil {
+		return puller.Nack, err
+	}
 	l, err := p.snapshot()
 	if err != nil {
 		return puller.Nack, err
@@ -232,6 +247,13 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 		}
 		if err := p.change(ctx, c, catchUp); err != nil {
 			return puller.Nack, err
+		}
+	}
+	if catchUp {
+		for _, c := range ev.Changes {
+			if err := p.flushSpace(ctx, c.Space, true, true, ""); err != nil {
+				return puller.Nack, err
+			}
 		}
 	}
 	if ev.PubSubID == "" && ev.CloudEventID == "" {
@@ -271,6 +293,9 @@ func (p *Processor) Pass(ctx context.Context) error {
 		return err
 	}
 	defer p.leave()
+	if err := p.flushWindows(ctx); err != nil {
+		return err
+	}
 	l, err := p.snapshot()
 	if err != nil {
 		return err
@@ -540,6 +565,10 @@ func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
 	return l.Clone(), nil
 }
 
+// ValidateChange lets catch-up quarantine malformed individual acts before
+// submitting the valid part of its pass as one batch.
+func ValidateChange(c puller.Change) error { return validate(c) }
+
 func validate(c puller.Change) error {
 	var name, resource string
 	switch c.Kind {
@@ -746,7 +775,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 		id += "#updated#" + m.LastUpdateTime
 		// An update received before creation owns the base ID, including when
 		// a redelivery resumes its interrupted or transiently failed POST.
-		if base.Kind == "message.updated" && previous != nil && previous.Revision.Equal(updated) {
+		if base.OriginalKind() == "message.updated" && previous != nil && previous.Revision.Equal(updated) {
 			id = m.Name
 		}
 	}
@@ -811,7 +840,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	forwarded := false
 	for _, change := range l.Changes {
-		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "before_history_floor" && !strings.HasPrefix(change.Reason, "space unavailable") {
+		if change.Message == m.Name && strings.HasPrefix(change.OriginalKind(), "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "before_history_floor" && !strings.HasPrefix(change.Reason, "space unavailable") {
 			forwarded = true
 			break
 		}
@@ -844,7 +873,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 		// carries both the actor and the frame.
 		if base != nil {
 			var original wire.InboundMessage
-			if json.Unmarshal([]byte(base.Event), &original) == nil {
+			if json.Unmarshal([]byte(base.OriginalEvent()), &original) == nil {
 				w.Actor = original.Actor
 				if line, ok := provenance.FrameOf(original.Text); base.ProvenanceFramed && ok {
 					w.Text, framed = line+"\ndeleted", true
@@ -869,7 +898,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if err := p.record(c, id, w, &state, s, local, catchUp, learnedDomain); err != nil {
 		return err
 	}
-	return p.resume(ctx, id)
+	return p.admit(ctx, c, id, catchUp)
 }
 
 func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool) error {
@@ -919,7 +948,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	if action == "deleted" && r.User == nil {
 		if created := l.Changes[r.Name+"#created"]; created != nil {
 			var original wire.InboundMessage
-			if json.Unmarshal([]byte(created.Event), &original) == nil {
+			if json.Unmarshal([]byte(created.OriginalEvent()), &original) == nil {
 				w.Actor = original.Actor
 				if created.ProvenanceFramed {
 					w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
@@ -934,7 +963,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	if err := p.record(c, id, w, state, s, local, catchUp, ""); err != nil {
 		return err
 	}
-	return p.resume(ctx, id)
+	return p.admit(ctx, c, id, catchUp)
 }
 
 func reactionText(r *api.Reaction, action, parent string) string {
@@ -987,6 +1016,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 		}
 		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local, CatchUp: catchUp}
 		l.Changes[id].ProvenanceFramed = w.ProviderMessageID != ""
+		p.hold(l, c, id, w)
 		if learnedDomain != "" {
 			l.IdentityDomainID = learnedDomain
 		}
@@ -1017,6 +1047,9 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 	if err == nil && unavailable {
 		p.opts.Logger.Warn("inbound change retained", "space", c.Space, "change", id, "message", name, "cause", local)
 	}
+	if err == nil {
+		p.signalWindow()
+	}
 	return err
 }
 
@@ -1038,6 +1071,9 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		}
 		c := l.Changes[id]
 		if c == nil || c.Status != "intent" {
+			return nil
+		}
+		if isHeld(c) {
 			return nil
 		}
 		if superseded(l, c) {

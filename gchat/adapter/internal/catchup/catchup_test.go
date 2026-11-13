@@ -52,6 +52,8 @@ func setup(t *testing.T) *fixture {
 	dir := t.TempDir()
 	cfg := &config.Config{Secrets: config.Secrets{CityName: "examplecity"}, Endpoints: config.Endpoints{ChatAPIBase: f.google.URL(), StateFile: filepath.Join(dir, "state.json")}}
 	cfg.Settings.Identities = []config.Identity{{Name: "example", Agent: "mayor"}}
+	off := "0s"
+	cfg.Settings.CoalesceWindow = &off
 	h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		f.requests = append(f.requests, r.URL.Path+"?"+r.URL.RawQuery)
 		if f.onRequest != nil {

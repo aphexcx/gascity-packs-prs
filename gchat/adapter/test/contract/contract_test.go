@@ -77,6 +77,8 @@ func TestRealGCContract(t *testing.T) {
 		Endpoints:  config.Endpoints{ChatAPIBase: googleAPI.URL, StateFile: filepath.Join(gc.root, "state.json")},
 	}
 	cfg.Settings.Identities = []config.Identity{{Name: "example", Agent: "example"}}
+	off := "0s"
+	cfg.Settings.CoalesceWindow = &off
 	chatClient, err := chat.New(t.Context(), gc.client, cfg.Endpoints)
 	if err != nil {
 		t.Fatal(err)

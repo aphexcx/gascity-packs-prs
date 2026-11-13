@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCoalesceWindowSettingBounds(t *testing.T) {
@@ -20,9 +21,18 @@ func TestCoalesceWindowSettingBounds(t *testing.T) {
 				body = "coalesce_window = " + row.value
 			}
 			writeFixture(t, settings, body)
-			_, err := Load(env, settings, dir)
+			cfg, err := Load(env, settings, dir)
 			if row.valid && err != nil {
 				t.Fatal(err)
+			}
+			if row.valid {
+				want := 8 * time.Second
+				if row.value != "" {
+					want, _ = time.ParseDuration(strings.Trim(row.value, `"`))
+				}
+				if cfg.CoalesceWindow() != want {
+					t.Fatalf("window=%s want=%s", cfg.CoalesceWindow(), want)
+				}
 			}
 			if !row.valid && (err == nil || !strings.Contains(err.Error(), "coalesce_window") || !strings.Contains(err.Error(), settings)) {
 				t.Fatalf("invalid setting: %v", err)

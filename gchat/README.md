@@ -202,6 +202,13 @@ expires: a path the agent was handed keeps working until someone removes it,
 so a full store needs a decision, not a background sweep. The root-level `catchup_budget` setting defaults to
 50 records per space per pass; it is a budget, not a truncation limit.
 
+The root-level `coalesce_window` setting is a Go duration string from `"0s"`
+to `"60s"`, default `"8s"`. Room chatter waits this long from the first act,
+then arrives as one turn. `coalesce_window = "0s"` restores individual turns
+with their original text and ids. A validated settings replacement reloads it
+with the other settings. Remove this key before rolling back to 0.5.0,
+whose settings loader refuses unknown keys, as with `first_start_history` below.
+
 The root-level `first_start_history` setting optionally includes a short history
 window on first start or reset. It is a Go duration string, from `"0s"` to
 `"168h"` inclusive; write `"24h"` for a day, not `"1d"`. Omit it to start at
@@ -312,6 +319,32 @@ including quota errors, retry with backoff and notify after three consecutive
 failed reconciliation attempts; isolated transient failures stay quiet. Status
 polls do not count as attempts. Notices deduplicate by cause until subscription
 recovery, which clears the failure count and notice deduplication.
+
+### Room message windows
+
+After a hosted box updates this pack and restarts its adapter, room chatter
+arrives up to eight seconds later, with a burst in one turn. Direct messages,
+mentions of the mayor and replies in a thread she wrote in arrive as fast as
+before. A mention or thread reply takes that room's held messages along in
+one turn. Reactions wait out the window, including reactions in DMs. After
+downtime, missed messages arrive in merged turns. Nothing changes before the
+pack update and adapter restart; `coalesce_window = "0s"` turns it off.
+
+Each space has a fixed window, ending early at 50 acts or before adding a
+message would exceed 32,000 bytes. One oversized message goes alone. Each
+message keeps its own sender, class and reply id. Edits inside a window replace
+unseen text, and messages created then deleted are omitted. Status shows the
+window and held act count; held acts are not stuck deliveries.
+
+The ledger saves held messages before acknowledging them and saves a merged
+turn before posting it. A stop leaves them there; the next start delivers them
+before that space's catch-up. A merged turn has one receipt, retry record and
+unresolved id, with its member count in status. Resolve that id once to replay
+the exact merged text or accept every member. History reads still use each
+message's own text. A rollback delivers held messages individually and keeps
+delivered groups completed. A frozen group in flight remains one delivery on
+the older reader: pending receipts are polled, and an interrupted POST becomes
+one unresolved record, requiring the usual explicit replay or acceptance.
 
 ### Delivery uncertainty
 

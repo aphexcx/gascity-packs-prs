@@ -127,6 +127,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	a.health("catching-up", "recovering retained history")
 	workers.Go(func() { m.RenewLoop(ctx) })
 	workers.Go(func() { a.poll(ctx, proc, fatal) })
+	workers.Go(func() { _ = proc.RunWindows(ctx) })
 	workers.Go(func() { fatal <- a.catchup(ctx, r, m, &caught) })
 	monitor := time.NewTicker(time.Second)
 	defer monitor.Stop()

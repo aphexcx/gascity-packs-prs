@@ -79,6 +79,8 @@ func newFixture(t *testing.T, credential bool) *fixture {
 	f.pub = pc.Publisher(topic)
 	t.Cleanup(f.pub.Stop)
 	f.cfg = &config.Config{SecretsDir: dir, Secrets: config.Secrets{ProjectID: "example", Topic: topic, Subscription: sub, CityName: "examplecity", ServiceSocket: filepath.Join(dir, "s.sock"), ServiceURLPrefix: "/svc/gchat", OAuthClientFile: filepath.Join(dir, "client.json"), TokenFile: filepath.Join(dir, "token.json")}, Endpoints: config.Endpoints{PubSubEndpoint: ps.Addr, MediaDir: filepath.Join(dir, "media"), UploadRoot: filepath.Join(dir, "uploads"), StateFile: filepath.Join(dir, "state.json"), MediaMaxBytes: 1 << 20}}
+	off := "0s"
+	f.cfg.Settings.CoalesceWindow = &off
 	f.cfg.Endpoints.ChatAPIBase = f.proxy(t, f.google.URL(), "google")
 	f.cfg.Secrets.ServiceSocket = filepath.Join(socketDir, "s.sock")
 	f.cfg.Endpoints.EventsAPIBase = f.cfg.Endpoints.ChatAPIBase

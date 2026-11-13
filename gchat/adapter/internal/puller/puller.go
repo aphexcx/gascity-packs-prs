@@ -34,6 +34,8 @@ type Event struct {
 }
 
 type Change struct {
+	// At is the provider event time (edits and creates use their resource time).
+	At           time.Time
 	Kind         string
 	Message      *chat.Message
 	Reaction     *chat.Reaction
@@ -134,6 +136,7 @@ func Decode(msg *pubsub.Message) (*Event, error) {
 		if err != nil {
 			return ev, fmt.Errorf("decode %s change %d: %w", ev.Type, i, err)
 		}
+		change.At, _ = time.Parse(time.RFC3339Nano, msg.Attributes["ce-time"])
 		changes = append(changes, change)
 	}
 	ev.Changes = changes

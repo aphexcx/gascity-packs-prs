@@ -37,6 +37,7 @@ var (
 	spaces        = regexp.MustCompile(`\s+`)
 	addressUnsafe = regexp.MustCompile(`[\r\n\[\]<>|\s]`)
 	itemOK        = regexp.MustCompile(`^[a-z]+:[A-Za-z0-9_./-]+$`)
+	mergedHeader  = regexp.MustCompile(`^\[(catch-up: )?[0-9]+ messages( in this room)?, oldest first[.;]`)
 )
 
 // ChatItem is the item id of a Chat message by its resource name.
@@ -145,4 +146,16 @@ func Render(s Speaker, body string) string {
 		out += fmt.Sprintf("\n[%d hidden characters removed]", removed)
 	}
 	return out
+}
+
+// QuoteMergedHeaders is used only while assembling a merged turn. Single
+// deliveries keep their original bytes, including with coalescing disabled.
+func QuoteMergedHeaders(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if mergedHeader.MatchString(strings.TrimSpace(line)) {
+			lines[i] = "> " + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }

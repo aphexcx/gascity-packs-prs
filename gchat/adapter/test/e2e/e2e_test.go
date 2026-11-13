@@ -100,6 +100,8 @@ func newFixture(t *testing.T) *fixture {
 	socket := fmt.Sprintf("/tmp/gchat-e2e-%d-%d.sock", os.Getpid(), socketSequence.Add(1))
 	t.Cleanup(func() { _ = os.Remove(socket) })
 	f.cfg = &config.Config{SecretsDir: dir, Secrets: config.Secrets{ProjectID: "example", Topic: topic, Subscription: sub, CityName: "examplecity", ServiceSocket: socket, ServiceURLPrefix: "/v0/city/examplecity/svc/gchat", OAuthClientFile: filepath.Join(dir, "client.json"), TokenFile: filepath.Join(dir, "token.json")}, Endpoints: config.Endpoints{PubSubEndpoint: f.ps.Addr, MediaDir: filepath.Join(dir, "media"), UploadRoot: filepath.Join(dir, "uploads"), StateFile: filepath.Join(dir, "state.json"), MediaMaxBytes: 1024}}
+	off := "0s"
+	f.cfg.Settings.CoalesceWindow = &off
 	f.client = &http.Client{Timeout: 40 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}}

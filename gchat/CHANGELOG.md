@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Room chatter now waits a per-space window (default eight seconds) and arrives
+  as one turn, with each message's full from line. DMs, mentions and replies in
+  the mayor's threads arrive immediately; reactions wait for the window.
+  Catch-up merges missed messages, and the ledger keeps held messages across
+  stops and crashes. `coalesce_window = "0s"` restores individual turns.
+  This takes effect when a box updates the pack and restarts its adapter.
+  Remove the setting before rolling back to an older adapter.
+
 - The skill gives reactions fixed meanings, with the same tables and rules
   as the Slack fragment and the WhatsApp skill, in place of any emoji that
   fits (gp-adh3). The rows are a catalog, `reactions.json` at the pack's

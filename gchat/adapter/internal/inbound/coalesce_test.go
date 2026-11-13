@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
@@ -30,6 +31,9 @@ func windowSetup(t *testing.T, window string) *windowFixture {
 		t.Fatal(err)
 	}
 	f.opts.Now = func() time.Time { return f.now }
+	// Most clock rows need atomic snapshots, not filesystem timing. Restart
+	// and crash rows below explicitly restore the real durable save.
+	f.opts.Save = func(*ledger.Ledger) error { return nil }
 	f.opts.Raise = func(_ context.Context, r Raise) error { f.mails = append(f.mails, r); return nil }
 	f.opts.Principals = budgetPrincipals()
 	var err error
@@ -68,7 +72,8 @@ func (f *windowFixture) turns(t *testing.T, n int) []wire.InboundMessage {
 	t.Helper()
 	w := f.gc.Inbound()
 	if len(w) != n {
-		t.Fatalf("turns=%d want=%d", len(w), n)
+		data, _ := json.Marshal(f.l.Changes)
+		t.Fatalf("turns=%d want=%d changes=%s", len(w), n, data)
 	}
 	return w
 }
@@ -272,7 +277,7 @@ func TestActsInsideTheWindow(t *testing.T) {
 			f := windowSetup(t, "8s")
 			m := f.send(t, 1, "message.created", func(m *api.Message) {
 				if row == "attachment" {
-					m.Attachment = []*api.Attachment{{ContentName: "notes.txt", Source: "DRIVE_FILE", DriveDataRef: &api.DriveDataRef{DriveFileId: "invented"}}}
+					m.Attachment = []*api.Attachment{{Name: m.Name + "/attachments/notes", ContentName: "notes.txt", ContentType: "text/plain", Source: "DRIVE_FILE", DriveDataRef: &api.DriveDataRef{DriveFileId: "invented"}}}
 				}
 			})
 			initial := 0
@@ -326,6 +331,7 @@ func TestActsInsideTheWindow(t *testing.T) {
 
 func TestHeldActsSurviveARestart(t *testing.T) {
 	f := windowSetup(t, "8s")
+	f.disk()
 	for i := 0; i < 3; i++ {
 		f.send(t, i, "message.created", nil)
 	}
@@ -366,8 +372,16 @@ func TestRedeliveryOfAHeldAct(t *testing.T) {
 
 func TestMergedTurnKeepsEveryFromLine(t *testing.T) {
 	f := windowSetup(t, "8s")
+	f.p.opts.Principals = principal.New(principal.Options{Owners: []string{"users/owner1", "users/owner2"}, OrganizationDomain: "example.com",
+		Lookup: func(_ context.Context, id string) (string, error) {
+			if id == "users/outsider" {
+				return "outside@elsewhere.test", nil
+			}
+			return strings.TrimPrefix(id, "users/") + "@example.com", nil
+		}})
+	users := []string{"users/owner1", "users/owner2", "users/colleague", "users/outsider"}
 	for i := 0; i < 4; i++ {
-		f.send(t, i, "message.created", nil)
+		f.send(t, i, "message.created", func(m *api.Message) { m.Sender.Name = users[i] })
 	}
 	var frames []string
 	for _, c := range f.l.Changes {
@@ -381,6 +395,9 @@ func TestMergedTurnKeepsEveryFromLine(t *testing.T) {
 	}
 	f.advance(t, 8*time.Second)
 	w := f.turns(t, 1)[0]
+	if strings.Count(w.Text, "| owner |") != 2 || strings.Count(w.Text, "| organization |") != 1 || strings.Count(w.Text, "| external |") != 1 {
+		t.Fatal("mixed classes lost")
+	}
 	for _, frame := range frames {
 		if strings.Count(w.Text, frame) != 1 {
 			t.Fatal("frame changed", frame)
@@ -411,6 +428,7 @@ func TestCrashPointsOfAMergedTurn(t *testing.T) {
 	for _, point := range []string{"held", "frozen", "posted"} {
 		t.Run(point, func(t *testing.T) {
 			f := windowSetup(t, "8s")
+			f.disk()
 			for i := 0; i < 3; i++ {
 				f.send(t, i, "message.created", nil)
 			}
@@ -478,7 +496,7 @@ func TestMergedTurnIsOneDelivery(t *testing.T) {
 			case "pending":
 				f.gc.NextDelivery = "pending"
 			case "partial":
-				f.gc.NextDelivery = "partial"
+				f.gc.Script = []wire.Delivery{{Status: "partial"}, {Status: "partial"}, {Status: "partial"}, {Status: "partial"}}
 			}
 			for i := 0; i < 3; i++ {
 				f.send(t, i, "message.created", nil)
@@ -592,5 +610,77 @@ func TestCoalescedLedgerCompatibility(t *testing.T) {
 			}
 			f.turns(t, want)
 		})
+	}
+}
+
+func (f *windowFixture) disk() {
+	f.opts.Save = func(l *ledger.Ledger) error { return l.Save(f.opts.LedgerPath) }
+	f.p.opts.Save = f.opts.Save
+}
+
+func TestWindowTimerOwnsDeadline(t *testing.T) {
+	for _, stop := range []bool{false, true} {
+		t.Run(fmt.Sprint(stop), func(t *testing.T) {
+			f := windowSetup(t, "8s")
+			f.send(t, 1, "message.created", nil)
+			f.turns(t, 0)
+			requests := make(chan time.Duration)
+			ticks := make(chan struct{})
+			f.p.windowWait = func(ctx context.Context, d time.Duration, _ <-chan struct{}) error {
+				select {
+				case requests <- d:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				select {
+				case <-ticks:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- f.p.RunWindows(ctx) }()
+			if d := <-requests; d != 8*time.Second {
+				t.Fatalf("timer=%s", d)
+			}
+			if stop {
+				cancel()
+				<-done
+				f.turns(t, 0)
+				return
+			}
+			f.now = f.now.Add(8 * time.Second)
+			ticks <- struct{}{}
+			<-requests // the POST has finished before the loop waits again
+			f.turns(t, 1)
+			cancel()
+			<-done
+		})
+	}
+}
+
+func TestMergedTurnUsesProviderOrderAndOneAnchor(t *testing.T) {
+	f := windowSetup(t, "8s")
+	for _, n := range []int{3, 1, 2} {
+		f.send(t, n, "message.created", func(m *api.Message) { m.CreateTime = f.now.Add(time.Duration(n) * time.Second).Format(time.RFC3339) })
+	}
+	f.advance(t, 8*time.Second)
+	w := f.turns(t, 1)[0]
+	if strings.Index(w.Text, "body-001") > strings.Index(w.Text, "body-002") || strings.Index(w.Text, "body-002") > strings.Index(w.Text, "body-003") {
+		t.Fatal("arrival order leaked")
+	}
+	if !strings.HasSuffix(w.ProviderMessageID, "m003") {
+		t.Fatal("anchor is not newest create")
+	}
+	// A later edit has its own ID; it never reuses the delivered create anchor.
+	f.send(t, 3, "message.updated", func(m *api.Message) { m.LastUpdateTime = f.now.Format(time.RFC3339); m.Text = "later-edit" })
+	f.send(t, 4, "message.created", nil)
+	f.advance(t, 8*time.Second)
+	got := f.turns(t, 2)
+	if got[0].ProviderMessageID == got[1].ProviderMessageID || strings.Contains(got[1].Text, "body-003") {
+		t.Fatal("reused delivery")
 	}
 }
