@@ -1,74 +1,116 @@
-package inbound
+package server
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 )
 
-// Compiled with the actual released loader and processor by the overlay runner.
+// Compiled against each reader's actual loader, resolve endpoint and processor.
 func TestCoalescedLedgerCompatibility(t *testing.T) {
 	for _, state := range []string{"owner_deleted", "member_deleted", "member_edited", "empty_replayed", "folded_deleted_replayed", "folded_edited_replayed", "edit_owner_replayed"} {
 		t.Run(state, func(t *testing.T) {
 			f := setup(t)
-			l, err := ledger.Load(filepath.Join(os.Getenv("GCHAT_ROLLBACK_FIXTURES"), state+".json"), true)
+			loaded, err := ledger.Load(filepath.Join(os.Getenv("GCHAT_ROLLBACK_FIXTURES"), state+".json"), true)
 			if err != nil {
 				t.Fatal(err)
 			}
-			f.l, f.opts.Ledger = l, l
-			f.opts.Now = func() time.Time { return time.Date(2026, 11, 1, 10, 0, 30, 0, time.UTC) }
-			replay := strings.HasSuffix(state, "_replayed")
-			if replay {
-				// Apply the released resolve handler's replay transition
-				// (server.go:1595-1605), then run its actual loader/processor.
-				for id, c := range l.Unresolved {
-					c.Status, c.Reason, c.Attempts, c.ReceiptID = "intent", "operator replay", 0, ""
-					c.Created = f.opts.Now()
-					l.Changes[id] = c
-					delete(l.Unresolved, id)
+			f.mu.Lock()
+			*f.l = *loaded
+			f.mu.Unlock()
+			p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: f.l, LedgerMu: f.mu,
+				LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: f.options.GC,
+				IdentityUserID: "users/123", Now: func() time.Time { return time.Date(2026, 11, 1, 10, 0, 30, 0, time.UTC) }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetPoll(p.Poll)
+			withdrawn := make(map[string]string)
+			for id, c := range f.l.Unresolved {
+				withdrawn[id] = c.Reason
+				if c.Reason != "message deleted or superseded before retry" {
+					t.Fatalf("unexpected retirement reason: %s", c.Reason)
 				}
 			}
-			f.p, err = New(f.opts)
-			if err != nil {
-				t.Fatal(err)
+			for id := range withdrawn {
+				code, body, _ := f.call(t, "/resolve", map[string]string{"id": id, "action": "replay"})
+				if code != 400 || !strings.Contains(string(body), "stored turn is malformed; cannot replay") {
+					t.Errorf("withdrawn replay: code=%d body=%s", code, body)
+				}
+				if len(f.gc.Inbound()) != 0 {
+					t.Error("withdrawn replay caused a POST")
+				}
 			}
+			checkRetirement := func() {
+				t.Helper()
+				if len(f.l.Unresolved) != len(withdrawn) {
+					t.Errorf("unresolved=%d want=%d", len(f.l.Unresolved), len(withdrawn))
+				}
+				code, body, _ := f.call(t, "/status", nil)
+				var status struct {
+					Unresolved int
+					Deliveries []struct{ ID, Status, Reason string }
+				}
+				if code != 200 || json.Unmarshal(body, &status) != nil || status.Unresolved != len(withdrawn) {
+					t.Fatalf("status lost retirement: code=%d", code)
+				}
+				for id, reason := range withdrawn {
+					c := f.l.Unresolved[id]
+					if c == nil || c.Status != "unresolved" || c.Reason != reason {
+						t.Fatalf("retirement changed: %s", id)
+					}
+					rows := 0
+					for _, row := range status.Deliveries {
+						if row.ID == id && row.Status == "unresolved" && row.Reason == reason {
+							rows++
+						}
+					}
+					if rows != 1 {
+						t.Errorf("status retirement rows=%d want=1 for %s", rows, id)
+					}
+				}
+			}
+			checkRetirement()
 			for i := 0; i < 2; i++ {
-				if err := f.p.Poll(context.Background()); err != nil {
+				if err := p.Poll(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 			}
+			checkRetirement()
 			posts := f.gc.Inbound()
-			if replay {
+			if strings.HasSuffix(state, "_replayed") {
 				want := 1
 				if state == "empty_replayed" {
 					want = 2
 				}
-				if len(posts) != want || len(l.Unresolved) != want {
-					t.Errorf("replay posts=%d unresolved=%d want=%d", len(posts), len(l.Unresolved), want)
+				if len(posts) != want || len(withdrawn) != want {
+					t.Errorf("healthy posts=%d retired=%d want=%d", len(posts), len(withdrawn), want)
 				}
 				for _, post := range posts {
-					withdrawn := strings.Contains(post.Text, "body-00")
+					old := strings.Contains(post.Text, "body-00")
 					if state == "edit_owner_replayed" {
-						withdrawn = strings.Contains(post.Text, "body-001")
+						old = strings.Contains(post.Text, "body-001")
 					}
-					if withdrawn || strings.Contains(post.Text, "folded-text") {
-						t.Errorf("released replay sent withdrawn text: %s", post.Text)
+					if old || strings.Contains(post.Text, "folded-text") {
+						t.Errorf("reader sent withdrawn text: %s", post.Text)
 					}
 				}
 				return
 			}
 			if len(posts) != 2 {
-				t.Fatalf("posts=%d want=2", len(posts))
+				t.Fatalf("healthy posts=%d want=2", len(posts))
 			}
 			text := posts[0].Text + "\n" + posts[1].Text
-			withdrawn, survivor, unresolved := "body-001", "body-002", 1
+			old, survivor, unresolved := "body-001", "body-002", 1
 			if state == "owner_deleted" {
-				withdrawn, survivor = survivor, withdrawn
+				old, survivor = survivor, old
 			}
 			if state == "member_edited" {
 				unresolved = 0
@@ -78,8 +120,8 @@ func TestCoalescedLedgerCompatibility(t *testing.T) {
 			} else if !strings.HasSuffix(posts[1].Text, "\ndeleted") {
 				t.Fatal("deletion must follow survivor")
 			}
-			if strings.Contains(text, withdrawn) || strings.Count(text, survivor) != 1 || len(l.Unresolved) != unresolved {
-				t.Fatalf("withdrawn/duplicate text or wrong unresolved count: %s, %d", text, len(l.Unresolved))
+			if strings.Contains(text, old) || strings.Count(text, survivor) != 1 || len(f.l.Unresolved) != unresolved {
+				t.Fatalf("withdrawn/duplicate text or wrong unresolved count: %s, %d", text, len(f.l.Unresolved))
 			}
 		})
 	}
