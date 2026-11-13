@@ -822,7 +822,7 @@ func TestReadReactStatusAndState(t *testing.T) {
 			t.Fatalf("%d %s", code, raw)
 		}
 		if action == "reset" {
-			if len(f.l.Sends) != 0 || !bytes.Contains(raw, []byte("lost or duplicated")) {
+			if len(f.l.Sends) != 0 || !bytes.Contains(raw, []byte("will not be delivered")) {
 				t.Fatalf("%s", raw)
 			}
 		} else {

@@ -259,7 +259,7 @@ func (a *application) checkStateLock() error {
 func (a *application) run(ctx context.Context) error {
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
-	l, err := ledger.Load(a.cfg.Endpoints.StateFile, ledger.Established(a.cfg.SecretsDir))
+	l, fresh, err := ledger.LoadWithOrigin(a.cfg.Endpoints.StateFile, ledger.Established(a.cfg.SecretsDir))
 	recovery := errors.Is(err, ledger.ErrRecoveryRequired)
 	if err != nil && !recovery {
 		return err
@@ -270,7 +270,7 @@ func (a *application) run(ctx context.Context) error {
 		a.mu.Lock()
 		*a.l = *l
 		a.l.SetSaveGuard(a.checkStateLock)
-		if l.Fresh() {
+		if fresh {
 			a.l.HistoryFloor = time.Now().UTC().Add(-a.cfg.FirstStartWindow())
 		}
 		err = a.l.Save(a.cfg.Endpoints.StateFile)

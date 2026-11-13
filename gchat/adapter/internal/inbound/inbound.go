@@ -772,17 +772,6 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if c.Kind == "message.deleted" {
 		state.Deleted = true
 	}
-	if c.Kind == "message.created" && !l.HistoryFloor.IsZero() {
-		created, err := time.Parse(time.RFC3339Nano, m.CreateTime)
-		if err == nil && created.Before(l.HistoryFloor) {
-			// A create payload may already include a later edit. Only consume
-			// the create here so that edit can still arrive as a new act.
-			if previous == nil {
-				state.Revision = created
-			}
-			return p.record(c, id, wire.InboundMessage{}, &state, nil, "before_history_floor", catchUp, "")
-		}
-	}
 	// The identity's own messages tell which Workspace domain is the
 	// organization; a sender in it is a colleague even without an address.
 	learnedDomain := ""
@@ -793,6 +782,28 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	// The message's own name is the item the key holder can verify at the
 	// source when the agent acts on it (boxboxbox-google mail --for).
 	speaker.Item = provenance.ChatItem(m.Name)
+	if c.Kind == "message.created" && !l.HistoryFloor.IsZero() {
+		created, err := time.Parse(time.RFC3339Nano, m.CreateTime)
+		if err == nil && created.Before(l.HistoryFloor) {
+			// A create payload may already include a later edit. Only consume
+			// the create here so that edit can still arrive as a new act.
+			state.Revision = created
+			if previous != nil && previous.Revision.After(created) {
+				state.Revision = previous.Revision
+			}
+			kind := ""
+			if s := l.Spaces[c.Space]; s != nil {
+				kind = s.Kind
+			} else if m.Space != nil {
+				kind = spaceKind(m.Space)
+			}
+			w := p.envelope(id, c.Space, kind, m.Sender, state.Thread)
+			// Later deletion events omit the sender. Retain its existing frame
+			// for attribution, without storing the old body or downloading it.
+			w.Text = provenance.Frame(speaker)
+			return p.record(c, id, w, &state, nil, "before_history_floor", catchUp, "")
+		}
+	}
 	// Deleting a never-observed message still needs a tombstone, but no turn.
 	if c.Kind == "message.deleted" && previous == nil {
 		return p.record(c, id, wire.InboundMessage{}, &state, nil, "local", catchUp, learnedDomain)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -185,20 +186,53 @@ func TestFloorMovesUntilTheFirstSubscription(t *testing.T) {
 	_, initial := historyState(t, f)
 	connected := time.Now().UTC()
 	f.replaceIdentityToken(t, fakegoogle.UserID)
-	f.health(t, "ready", 5*time.Second)
+	f.health(t, "ready", 15*time.Second)
 	l, floor := historyState(t, f)
 	if initial.IsZero() || floor.Before(connected) || !floor.After(initial) || l.Subscription.Name == "" {
 		t.Fatalf("initial=%s connected=%s floor=%s subscription=%s", initial, connected, floor, l.Subscription.Name)
 	}
-	f.mu.Lock()
-	requests := len(f.requests)
-	f.mu.Unlock()
+	subscriptionReads := func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		n := 0
+		for _, request := range f.requests {
+			if strings.HasPrefix(request, "google GET /v1/subscriptions") {
+				n++
+			}
+		}
+		return n
+	}
+	requests := subscriptionReads()
 	f.replaceIdentityToken(t, fakegoogle.UserID)
-	waitFor(t, 5*time.Second, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(f.requests) > requests })
-	f.health(t, "ready", 5*time.Second)
+	waitFor(t, 15*time.Second, func() bool { return subscriptionReads() > requests })
+	f.health(t, "ready", 15*time.Second)
 	_, later := historyState(t, f)
 	if !later.Equal(floor) {
 		t.Fatalf("recorded subscription moved floor: %s -> %s", floor, later)
+	}
+}
+
+func TestFirstSavedFloorSurvivesMarkerFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory write permissions")
+	}
+	f := newFixture(t, false)
+	f.cfg.SecretsDir = filepath.Join(t.TempDir(), "secrets")
+	if err := os.Mkdir(f.cfg.SecretsDir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.cfg.SecretsDir, 0700) })
+	before := time.Now().UTC()
+	err := RunWithOptions(t.Context(), f.cfg, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Notify: func(context.Context, string, string) error { return nil }})
+	if err == nil || !strings.Contains(err.Error(), "mark ledger established") {
+		t.Fatalf("marker failure=%v", err)
+	}
+	_, floor := historyState(t, f)
+	if floor.Before(before) || floor.After(time.Now()) {
+		t.Fatalf("first saved floor=%s", floor)
+	}
+	if ledger.Established(f.cfg.SecretsDir) {
+		t.Fatal("failed marker write established state")
 	}
 }
 

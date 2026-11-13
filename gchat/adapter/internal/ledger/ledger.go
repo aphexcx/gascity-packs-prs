@@ -39,7 +39,6 @@ func (e *RecoveryError) Unwrap() error        { return e.Err }
 
 type Ledger struct {
 	saveGuard func() error
-	fresh     bool
 
 	Version        int    `json:"version"`
 	IdentityUserID string `json:"identity_user_id,omitempty"`
@@ -261,14 +260,19 @@ func New() *Ledger {
 // Load never repairs or overwrites the source file. A leftover .tmp file is
 // uncommitted and ignored. Only an absent file on a fresh install starts empty.
 func Load(path string, established bool) (*Ledger, error) {
+	l, _, err := LoadWithOrigin(path, established)
+	return l, err
+}
+
+// LoadWithOrigin also reports whether neither a file nor an established marker
+// existed. Existing callers of Load retain the same ledger value and contract.
+func LoadWithOrigin(path string, established bool) (*Ledger, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && !established {
-			l := New()
-			l.fresh = true
-			return l, nil
+			return New(), true, nil
 		}
-		return nil, &RecoveryError{Path: path, Err: err}
+		return nil, false, &RecoveryError{Path: path, Err: err}
 	}
 	var l *Ledger
 	err = json.Unmarshal(data, &l)
@@ -282,14 +286,10 @@ func Load(path string, established bool) (*Ledger, error) {
 	}
 	if err != nil {
 		preserved, copyErr := preserve(path, data)
-		return nil, &RecoveryError{Path: path, PreservedPath: preserved, Err: errors.Join(err, copyErr)}
+		return nil, false, &RecoveryError{Path: path, PreservedPath: preserved, Err: errors.Join(err, copyErr)}
 	}
-	return l, nil
+	return l, false, nil
 }
-
-// Fresh reports that Load found neither a file nor an established marker.
-// It is not inferred from the ledger contents and is never persisted.
-func (l *Ledger) Fresh() bool { return l.fresh }
 
 func (l *Ledger) validate() error {
 	if l == nil || l.Version != 1 {
