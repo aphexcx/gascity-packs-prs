@@ -74,7 +74,7 @@ def test_command_entries_resolve_to_nested_words():
         found[' '.join(manifest.parent.relative_to(PACK / 'commands').parts)] = target.name
     assert found == {
         'publish': 'publish.sh', 'invite': 'invite.sh', 'consent': 'consent.sh', 'hours': 'hours.sh',
-        'enroll': 'enroll.sh', 'status': 'status.sh',
+        'enroll': 'enroll.sh', 'status': 'status.sh', 'react': 'react.sh',
         'inbound resolve': 'resolve.sh', 'inbound clear-gap': 'clear-gap.sh',
     }
 
@@ -416,6 +416,40 @@ def fake():
     yield make
     for server in servers:
         server.close()
+
+
+@pytest.mark.parametrize('emoji', ['👀', ''])
+def test_react_posts_characters_and_cli_session(fake, emoji):
+    adapter = fake({'POST /react': (200, {'message_id': 'wamid.out.1', 'delivered': True})})
+    result = verb('react.sh', '--to', 'example-owner', '--message', 'wamid.example', '--emoji', emoji,
+                  '--idempotency-key', 'reaction-key', '--session', 's-mayor',
+                  WHATSAPP_ADAPTER_URL=adapter.url, GC_CITY_NAME='fixture-city')
+    assert result.returncode == 0, result.stderr
+    assert 'reaction-key' in result.stderr
+    method, route, body = adapter.requests[0]
+    assert (method, route) == ('POST', '/react')
+    assert body == {'conversation': {'scope_id': 'fixture-city', 'provider': 'whatsapp', 'account_id': 'dynasty',
+                                    'conversation_id': 'example-owner', 'kind': 'dm'},
+                    'message_id': 'wamid.example', 'emoji': emoji, 'idempotency_key': 'reaction-key',
+                    'session_id': 's-mayor', 'metadata': {'origin': 'cli'}}
+
+
+@pytest.mark.parametrize('args', [[], ['--to', 'owner'], ['--to', 'owner', '--message', 'id'],
+    ['--message', 'id', '--emoji', '👀'], ['--to', 'owner', '--emoji', '👀'],
+    ['--to'], ['--message'], ['--emoji'], ['--to', 'owner', '--message', '', '--emoji', '👀']])
+def test_react_usage_errors_send_nothing(fake, args):
+    adapter = fake({})
+    assert verb('react.sh', *args, WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
+    assert adapter.requests == []
+
+
+def test_react_refused_receipt_prints_reason_and_hint(fake):
+    adapter = fake({'POST /react': (200, {'delivered': False,
+        'metadata': {'reason': 'window_closed', 'hint': 'wait for the next message'}})})
+    result = verb('react.sh', '--to=example-owner', '--message=wamid.example', '--emoji=👀',
+                  WHATSAPP_ADAPTER_URL=adapter.url, GC_SESSION_ID='s-mayor')
+    assert result.returncode == 1
+    assert 'window_closed' in result.stderr and 'wait for the next message' in result.stderr
 
 
 def test_publish_sends_the_extmsg_shape_with_cli_origin_and_session(fake, tmp_path):

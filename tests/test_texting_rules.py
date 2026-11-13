@@ -122,7 +122,7 @@ OUTSIDE_THE_TABLES = {
     "gchat": ["👍", "✅", "⏰", "👀"],
     # rule 3's two examples
     "slack": ["✅", "⏰"],
-    "whatsapp": ["✅", "⏰"],
+    "whatsapp": ["👀", "✅", "⏰"],
 }
 
 # Backticked words outside the tables that are Slack emoji names but not
@@ -310,10 +310,10 @@ def with_a_fifth_rule(text: str, place: str) -> str:
 
 
 # The react commands of the three texts, and the flags that name one message.
-# WhatsApp has no react verb yet; the bead that adds one adds it here.
 REACT_COMMANDS = {
     "gc slack react": ("--conversation-id", "--message-id"),
     "gc gchat react": ("--message",),
+    "gc whatsapp react": ("--to", "--message"),
 }
 
 # The one sentence form that names a react command without running it.
@@ -604,25 +604,19 @@ def test_a_line_slipped_among_the_rules_fails(name: str, place: str) -> None:
     assert rule_problems(name, probe), f"{place} in {name} passes"
 
 
-WHATSAPP_THANKS = (
-    "Until you can, a message that only thanks, confirms, agrees or closes a "
-    "topic still gets an answer from you in words (a reaction from them still "
-    "rarely needs one)."
-)
-
-
-def test_whatsapp_says_what_a_thanks_gets_until_the_mayor_can_react() -> None:
-    """Rules 1 and 2 hold only where the mayor can react (gp-1v3u, the round-1 read's story 2)."""
+def test_whatsapp_explains_message_ids_removal_and_the_window() -> None:
+    """A hand reaction targets one message and still needs an open window."""
     flat = normalized(read("whatsapp"))
-    cannot = flat.index("You cannot place a reaction on WhatsApp yet.")
-    assert WHATSAPP_THANKS in flat
-    assert cannot < flat.index(WHATSAPP_THANKS) < flat.index(RULE_LEADS[0])
+    assert '"Message id:"' in flat
+    assert '--emoji ""' in flat
+    assert 'A reaction needs the open 24-hour window' in flat
 
 
 @pytest.mark.parametrize(
     ("name", "failure"),
     [
         ("gchat", "When `gc gchat react` fails,"),
+        ("whatsapp", "When `gc whatsapp react` fails,"),
         ("slack", 'The command prints a receipt. When it shows `"delivered": false`,'),
     ],
 )
@@ -645,9 +639,10 @@ def test_google_chat_skill_has_the_table_and_no_free_choice() -> None:
     assert "--emoji 👀" in text
 
 
-def test_whatsapp_skill_says_the_mayor_cannot_react_there_yet() -> None:
+def test_whatsapp_skill_explains_the_react_command() -> None:
     flat = normalized(read("whatsapp"))
-    assert "You cannot place a reaction on WhatsApp yet." in flat
+    assert "You cannot place a reaction on WhatsApp yet." not in flat
+    assert 'gc whatsapp react --to <conversation_id> --message <message_id> --emoji 👀' in flat
     assert "The adapter may place one from the first table when a message arrives." in flat
     assert "the user" not in flat.lower()
 
