@@ -130,7 +130,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 			listed[space.Name] = true
 			s := l.Spaces[space.Name]
 			if s == nil {
-				s = &ledger.SpaceState{Wake: string(r.opts.Config.Wake(space.Name)), MessageCursor: l.HistoryFloor, EventCursor: l.HistoryFloor}
+				s = &ledger.SpaceState{Wake: string(r.opts.Config.Wake(space.Name))}
 				l.Spaces[space.Name] = s
 			}
 			if s.Wake == "" {
@@ -145,6 +145,9 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 		for name, s := range l.Spaces {
 			if s == nil {
 				continue
+			}
+			if err := startSpace(l, r.opts.Config, name, s, now, r.opts.Logger); err != nil {
+				return err
 			}
 			if !s.FrozenUpper.IsZero() {
 				p, err := decodeProgress(s.PageToken)
@@ -173,6 +176,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 				reported = append(reported, name)
 			}
 		}
+		l.SpacesListedAt = now.UTC()
 		return nil
 	})
 	if err == nil {
@@ -188,12 +192,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 
 func (r *Runner) begin(s *ledger.SpaceState, upper, floor time.Time) progress {
 	p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
-	if p.MessageLower.Before(s.JoinedAt) {
-		p.MessageLower = s.JoinedAt
-	}
-	if p.EventLower.Before(s.JoinedAt) {
-		p.EventLower = s.JoinedAt
-	}
+	floor = ledger.HistoryBound(s, floor)
 	if p.MessageLower.Before(floor) {
 		p.MessageLower = floor
 	}
@@ -205,7 +204,7 @@ func (r *Runner) begin(s *ledger.SpaceState, upper, floor time.Time) progress {
 	earliest := r.opts.Now().UTC().Add(-28 * 24 * time.Hour)
 	if p.EventLower.Before(earliest) {
 		p.EventLower = earliest
-		p.Reported = !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
+		p.Reported = s.HistoryRead(floor) && s.EventCursor.Before(earliest)
 	}
 	s.FrozenUpper, s.PageToken = upper.UTC(), encode(p)
 	return p
@@ -322,7 +321,9 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		var next string
 		if p.Phase == "messages" {
 			var messages []*api.Message
-			messages, next, err = r.opts.Chat.ListMessagesPage(ctx, name, p.MessageLower, s.FrozenUpper, "", p.Token)
+			if p.MessageLower.Before(s.FrozenUpper) {
+				messages, next, err = r.opts.Chat.ListMessagesPage(ctx, name, p.MessageLower, s.FrozenUpper, "", p.Token)
+			}
 			for _, message := range messages {
 				at := time.Time{}
 				if message != nil {
@@ -338,7 +339,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 			}
 			if p.EventLower.Before(earliest) {
 				p.EventLower, p.Token = earliest, ""
-				lost := !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
+				lost := s.HistoryRead(l.HistoryFloor) && s.EventCursor.Before(earliest)
 				if err := r.saveProgress(name, p, lost); err != nil {
 					return err
 				}
@@ -355,19 +356,14 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 				}
 				events, next, err = r.opts.Chat.ListSpaceEventsPage(ctx, name, lower, s.FrozenUpper, eventTypes, p.Token)
 				for _, event := range events {
-					// The retention fallback widens the provider query, never
-					// the installation's hard bound. Filter before expanding a
-					// batch or retaining any of its items in the backlog.
-					if event != nil && !l.HistoryFloor.IsZero() {
-						bound := l.HistoryFloor
-						if s.JoinedAt.After(bound) {
-							bound = s.JoinedAt
-						}
-						if at, parseErr := time.Parse(time.RFC3339Nano, event.EventTime); parseErr == nil && at.Before(bound) {
+					// A widened provider query cannot widen the bound. Judge
+					// each batch item by its own act, not the batch envelope.
+					for _, item := range expandEvent(name, event, !ledger.HistoryBound(s, l.HistoryFloor).IsZero()) {
+						if item.Malformed == "" && inbound.HistorySkipCause(l, item.Change) == "before_history_floor" {
 							continue
 						}
+						page = append(page, item)
 					}
-					page = append(page, expandEvent(name, event)...)
 				}
 			}
 		}
@@ -517,6 +513,9 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			}
 			outcome := puller.Quarantine
 			if item.Malformed == "" {
+				if item.Change.EventTime.IsZero() {
+					item.Change.EventTime = item.At
+				}
 				outcome, err = r.opts.Processor.HandleChange(ctx, item.Change)
 			}
 			if outcome == puller.Quarantine {
@@ -647,14 +646,14 @@ func related(c puller.Change, state *ledger.ChangeState) bool {
 	return false
 }
 
-func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
+func expandEvent(space string, event *api.SpaceEvent, bounded bool) []queuedChange {
 	raw := encode(event)
 	bad := func() []queuedChange { return []queuedChange{{Malformed: raw}} }
 	if event == nil {
 		return bad()
 	}
 	at, err := time.Parse(time.RFC3339Nano, event.EventTime)
-	if err != nil {
+	if err != nil && !bounded {
 		return bad()
 	}
 	parts := strings.Split(strings.TrimPrefix(event.EventType, "google.workspace.chat."), ".v1.")
@@ -666,7 +665,7 @@ func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
 		return bad()
 	}
 	key := parts[0] + strings.ToUpper(parts[1][:1]) + parts[1][1:] + "EventData"
-	ev, err := puller.Decode(&pubsub.Message{Attributes: map[string]string{"ce-type": event.EventType}, Data: fields[key]})
+	ev, err := puller.Decode(&pubsub.Message{Attributes: map[string]string{"ce-type": event.EventType, "ce-time": event.EventTime}, Data: fields[key]})
 	if err != nil || len(ev.Changes) == 0 {
 		return bad()
 	}
@@ -675,7 +674,11 @@ func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
 		if c.Space != space {
 			return bad()
 		}
-		items = append(items, queuedChange{Change: c, At: at})
+		order := c.ActTime()
+		if order.IsZero() {
+			order = at
+		}
+		items = append(items, queuedChange{Change: c, At: order})
 	}
 	return items
 }

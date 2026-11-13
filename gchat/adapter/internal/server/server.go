@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"gchat-adapter/internal/catchup"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/gcclient"
@@ -720,6 +721,7 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 					v = &ledger.SpaceState{}
 					l.Spaces[space] = v
 				}
+				l.StartSpace(v, time.Now())
 				v.ChatType = kind
 				v.DisplayName = displayName
 				v.Kind = "room"
@@ -1768,6 +1770,10 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		if v.Action == "restore" {
 			l, err = ledger.Load(v.File, true)
 			if err != nil {
+				problem(w, 400, err)
+				return
+			}
+			if err = catchup.InitializeHistory(l, &cfg, time.Now(), s.opts.Logger); err != nil {
 				problem(w, 400, err)
 				return
 			}

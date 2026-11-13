@@ -43,7 +43,7 @@ func TestHistoryFloorKeepsNewActs(t *testing.T) {
 				t.Fatal(err)
 			}
 			retained := f.l.Changes[m.Name]
-			if retained.Status != "committed" || retained.Reason != "before_history_floor" || raises != 0 || len(f.gc.Inbound()) != 0 {
+			if retained.Status != "committed" || retained.Reason != "local" || retained.Cause != "before_history_floor" || raises != 0 || len(f.gc.Inbound()) != 0 {
 				t.Fatalf("suppressed create escaped: status=%s reason=%s raises=%d posts=%d", retained.Status, retained.Reason, raises, len(f.gc.Inbound()))
 			}
 			for _, s := range f.l.Spaces {

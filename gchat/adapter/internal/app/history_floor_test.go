@@ -257,7 +257,7 @@ func TestLiveMessageBeforeTheFloorIsNotATurn(t *testing.T) {
 		return l.Changes[old.Name] != nil && l.Changes[old.Name].Status == "committed"
 	})
 	l, _ = historyState(t, f)
-	if got := l.Changes[old.Name]; got.Reason != "before_history_floor" {
+	if got := l.Changes[old.Name]; got.Reason != "local" || got.Cause != "before_history_floor" {
 		t.Errorf("old live reason = %q; posts = %d", got.Reason, len(f.gc.Inbound()))
 	}
 	if len(f.gc.Inbound()) != 0 || notices.Load() != 0 {

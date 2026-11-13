@@ -40,6 +40,35 @@ type Change struct {
 	Membership   *chat.Membership
 	Subscription *events.Subscription
 	Space        string
+	EventTime    time.Time `json:",omitzero"`
+	PublishTime  time.Time `json:",omitzero"`
+	Batch        bool      `json:",omitempty"`
+}
+
+// ActTime judges each resource independently, including within a batch.
+func (c Change) ActTime() time.Time {
+	var raw string
+	switch c.Kind {
+	case "message.created":
+		if c.Message != nil {
+			raw = c.Message.CreateTime
+		}
+	case "message.updated":
+		if c.Message != nil {
+			raw = c.Message.LastUpdateTime
+		}
+	default:
+		if !c.EventTime.IsZero() {
+			return c.EventTime
+		}
+	}
+	if at, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return at
+	}
+	if c.Batch && !c.EventTime.IsZero() {
+		return c.EventTime
+	}
+	return c.PublishTime
 }
 
 type Outcome uint8
@@ -134,6 +163,8 @@ func Decode(msg *pubsub.Message) (*Event, error) {
 		if err != nil {
 			return ev, fmt.Errorf("decode %s change %d: %w", ev.Type, i, err)
 		}
+		change.EventTime, _ = time.Parse(time.RFC3339Nano, msg.Attributes["ce-time"])
+		change.PublishTime, change.Batch = msg.PublishTime, batch
 		changes = append(changes, change)
 	}
 	ev.Changes = changes

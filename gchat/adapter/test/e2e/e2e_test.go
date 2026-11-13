@@ -196,6 +196,37 @@ func (f *fixture) start() {
 	}()
 }
 func (f *fixture) ready() { f.start(); f.health("ready", 10*time.Second) }
+
+func (f *fixture) resumeHistory(saved *ledger.Ledger, turns int) {
+	f.t.Helper()
+	remaining := 0
+	for _, s := range saved.Spaces {
+		remaining += len(s.Backlog)
+	}
+	passes := (remaining + f.cfg.CatchupBudget() - 1) / f.cfg.CatchupBudget()
+	// Each queued delivery syncs intent, attempt, outcome and queue removal.
+	// Allow one second per save (observed slow saves were below one second),
+	// one second per pass, and ten seconds for startup and the health monitor.
+	// The scenario's 18 remaining rows and budget 5 give a ceiling of 86s.
+	budget := 10*time.Second + time.Duration(4*remaining+passes)*time.Second
+	started := time.Now()
+	defer func() {
+		f.t.Logf("RECOVERY_WAIT elapsed=%s ceiling=%s turns=%d failed=%t", time.Since(started), budget, len(f.gc.Inbound()), f.t.Failed())
+	}()
+	f.start()
+	eventually(f.t, budget, func() bool {
+		if len(f.gc.Inbound()) != turns {
+			return false
+		}
+		for _, s := range f.state().Spaces {
+			if len(s.Backlog) != 0 {
+				return false
+			}
+		}
+		return true
+	})
+	f.health("ready", max(time.Millisecond, budget-time.Since(started)))
+}
 func (f *fixture) stop() {
 	if f.cancel == nil {
 		return
@@ -1046,7 +1077,7 @@ func scenariosRecovery(t *testing.T) {
 		// Persisted backlog must be sufficient even when remote history is gone.
 		f.google.Configure(func(g *fakegoogle.Server) { g.Messages = map[string]*api.Message{} })
 		f.setHook(nil)
-		f.ready()
+		f.resumeHistory(saved, 24)
 		f.turns(24)
 		seen := map[string]bool{}
 		for _, m := range f.gc.Inbound() {

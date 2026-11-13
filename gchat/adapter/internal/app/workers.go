@@ -88,12 +88,12 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	// resolve --replay answers a request: it runs the pass, not the raise.
 	a.s.SetPoll(proc.Pass)
 	defer a.s.SetPoll(nil)
-	// A first sign-in may arrive long after process startup. Persist its bound
-	// before reconciliation can record or adopt the first subscription.
-	if err = a.advanceHistoryFloor(); err != nil {
-		return err
-	}
 	if err = a.retry(ctx, "subscription", func() error {
+		// Every attempt owns its bound. Save it before the manager can record
+		// the first subscription, so a crash cannot pair it with an older floor.
+		if e := a.advanceHistoryFloor(); e != nil {
+			return e
+		}
 		var e error
 		if reloaded {
 			_, e = m.TokenReloaded(ctx)

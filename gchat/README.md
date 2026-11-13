@@ -205,10 +205,11 @@ so a full store needs a decision, not a background sweep. The root-level `catchu
 The root-level `first_start_history` setting optionally includes a short history
 window on first start or reset. It is a Go duration string, from `"0s"` to
 `"168h"` inclusive; write `"24h"` for a day, not `"1d"`. Omit it to start at
-the current time. Set it before the first connection; changing it after a
-subscription has been recorded does not change the saved history bound.
+the first successful subscription attempt. Set it before connecting; changing
+it after a subscription has been recorded does not change the saved history bound.
 Remove this key before rolling back to 0.5.0, whose settings loader refuses
-unknown keys. The older ledger reader ignores the floor and keeps saved cursors.
+unknown keys. The older ledger reader drops the floor, per-space starts and
+inventory boundary, keeps saved cursors, and recognizes skipped acts as non-turns.
 
 Optional endpoint/path overrides for tests and private deployments:
 `GCHAT_CHAT_API_BASE`, `GCHAT_EVENTS_API_BASE`, `GCHAT_PUBSUB_ENDPOINT`,
@@ -442,13 +443,39 @@ turn; check the default route or binding. Quarantine holds malformed events.
 
 ### Catch-up and restart recovery
 
-A first start with no ledger and no established marker begins at the current
-time. The bound moves to the first connection if sign-in was delayed. Older
-messages in rooms and direct messages are not turns, queued rows or delivery
-mails; `gc gchat read` still reads them. `first_start_history` can include up to
-a week before that start. Status names the saved bound. A restart with a ledger
-still recovers everything since its last cursor, with the existing overlap and
-event-retention limits. Existing ledgers gain no new bound.
+A first start with no ledger and no established marker begins at the start of
+the first successful subscription attempt. Failed setup attempts keep moving
+that bound until a subscription is recorded. `first_start_history` can include
+up to a week before it. Status names the saved bound.
+
+Each create, edit, deletion or reaction is judged by when that act happened.
+An act before its space's bound is never a turn, queued delivery or delivery
+mail, on the live stream or during recovery. A new edit or reaction on an old
+message still arrives. `gc gchat read` keeps reading the old message's body.
+An act with no usable resource or event time uses its Pub/Sub publish time;
+with no usable time at all it is skipped, counted as
+`history_time_missing:<space>` and logged without message text.
+
+A space first encountered without a cursor or observed join starts at the
+previous completed spaces inventory. On a running adapter this includes at
+most the preceding hourly sweep. A direct message opened during an outage
+keeps messages since the inventory before that outage. On a fresh install's
+first inventory the start is the first-start bound, including its configured
+window. A known membership still supplies its join bound.
+
+At its first load under this version, a released 0.5.0 ledger establishes an
+inventory boundary at load time, with no operator step and no global floor.
+Its cursorless spaces start there. A space with a saved cursor stays unchanged
+and recovers its whole outage, with the existing overlap and event-retention
+limits. An unfinished cursorless interval restarts from its new bound; queued
+older acts leave the queue as committed non-turn records. Their count appears
+in status as `history_backlog_skipped:<space>`. They remain readable from Chat.
+A space never read reports no lost history merely because its start is old.
+
+A rollback keeps the saved cursors and skipped acts as non-turn records. It
+drops the new history bounds and inventory boundary, so spaces first found
+after rollback return to the released adapter's history behavior. Remove
+`first_start_history` from settings before rolling back.
 
 Catch-up runs on startup and subscription recovery, retries unfinished work
 with backoff, and stops when caught up. A recovered message that gc keeps
@@ -516,7 +543,7 @@ Use `gc gchat state restore /absolute/path/backup.json` to request recovery
 through the service to keep its saved history bound and recovery cursors, or
 explicitly choose `gc gchat state reset`. Reset starts at the current time,
 minus the optional `first_start_history` window, and moves that bound to its
-first connection. Messages before the bound will not be delivered;
+first successful subscription attempt. Acts before the bound will not be delivered;
 `gc gchat read` still reads them. Use restore to retain recovery of the gap.
 These proxy commands are
 accepted only in `recovery-required` and refuse while delivery is in flight.
