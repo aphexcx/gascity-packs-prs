@@ -120,11 +120,12 @@ func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
 // An attempt recorded before a newly installed bound necessarily predates it;
 // its Created time is an upper bound on the act, not a replacement event time.
 // Existing cursors never call this migration, and committed deliveries survive.
-func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) {
+func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) []string {
 	bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
 	if bound.IsZero() {
-		return
+		return nil
 	}
+	var retired []string
 	for id, old := range l.Changes {
 		if old.Space != space || old.Status == "committed" || (!old.Created.IsZero() && !old.Created.Before(bound)) ||
 			(!strings.HasPrefix(old.Kind, "message.") && !strings.HasPrefix(old.Kind, "reaction.")) {
@@ -161,12 +162,15 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 		delete(l.Changes, id)
 		delete(l.Unresolved, id)
 		l.Changes[retained.ID] = &retained
+		l.Counters["history_delivery_retired:"+space]++
+		retired = append(retired, old.Message)
 		if old.Kind == "message.deleted" {
 			if state := l.Messages[old.Message]; state != nil {
 				state.Deleted = false
 			}
 		}
 	}
+	return retired
 }
 
 // RetainHistorySkip is also used while migrating a saved queue, before network

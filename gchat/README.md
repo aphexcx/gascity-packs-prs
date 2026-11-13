@@ -501,6 +501,12 @@ limits. An unfinished cursorless interval restarts from its new bound; queued
 older acts leave the queue as committed non-turn records. Their count appears
 in status as `history_backlog_skipped:<space>`. They remain readable from Chat.
 A space never read reports no lost history merely because its start is old.
+Before a box takes this version, check `gc gchat status` for waiting and
+unresolved deliveries: a delivery still waiting in a conversation with no
+reading position is ended at the first load. Each one ended is counted as
+`history_delivery_retired:<space>` and named in one mail to the city's agent
+at that load; a backup restore or a running sweep counts retirements but does
+not mail them.
 
 A rollback keeps the saved cursors and skipped acts as non-turn records. It
 drops the new history bounds and inventory boundary, so spaces first found

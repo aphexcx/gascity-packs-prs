@@ -275,14 +275,18 @@ func (a *application) run(ctx context.Context) error {
 	if recovery {
 		a.health("recovery-required", "ledger is missing or invalid; restore a backup or explicitly reset state")
 	} else {
+		var retired []string
 		a.mu.Lock()
 		*a.l = *l
 		a.l.SetSaveGuard(a.checkStateLock)
 		if fresh {
 			a.l.HistoryFloor = time.Now().UTC().Add(-a.cfg.FirstStartWindow())
-		} else if err = catchup.InitializeHistory(a.l, a.cfg, time.Now(), a.log); err != nil {
-			a.mu.Unlock()
-			return err
+		} else {
+			retired, err = catchup.InitializeHistoryWithReport(a.l, a.cfg, time.Now(), a.log)
+			if err != nil {
+				a.mu.Unlock()
+				return err
+			}
 		}
 		err = a.l.Save(a.cfg.Endpoints.StateFile)
 		a.mu.Unlock()
@@ -292,6 +296,7 @@ func (a *application) run(ctx context.Context) error {
 		if err = ledger.MarkEstablished(a.cfg.SecretsDir); err != nil {
 			return err
 		}
+		a.noticeHistoryRetired(retired)
 		a.loaded.Store(true)
 	}
 	if err = canonicalize(a.cfg); err != nil {
