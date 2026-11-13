@@ -140,6 +140,7 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
     'GET /healthz': async () => ({ status: 200, json: health() }),
     'POST /publish': async (body) => publisher.handlePublish(body),
     'POST /publish-update': async (body) => publisher.handlePublishUpdate(body),
+    'POST /react': async (body) => publisher.handleReact(body),
     'GET /status': async () => ({
       status: 200,
       json: { inbound: inbound.status(), keeper: keeper.status(), ledger: ledger.snapshot(), health: health(), never_silent: notices?.status() },
@@ -221,7 +222,7 @@ async function registerUntilDone(gc, cfg, isStopping) {
         callback_url: cfg.callbackURL,
         // gc renders this into every inbound paste (handler_extmsg.go:727-751);
         // file-based so reply text never has to survive shell quoting.
-        reply_instructions: 'Reply: write the reply to a file, then run: gc whatsapp publish --to {conversation_id} --text-file <path>',
+        reply_instructions: 'Reply: write the reply to a file, then run: gc whatsapp publish --to {conversation_id} --reply-to {message_ts} --text-file <path>',
         capabilities: {
           SupportsChildConversations: false,
           SupportsAttachments: true,

@@ -1,5 +1,26 @@
 # Where each fixture came from
 
+## Quoted replies and reactions (read 2026-11-13)
+
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/contextual-replies/
+  documents `context: {message_id}` beside the message type. Reactions cannot
+  be contextual replies; templates have no contextual bubble. Deleted or
+  long-term-stored targets may arrive without a bubble (storage is typically
+  after 30 days). The page does not specify a made-up id's HTTP result.
+- https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/reaction-messages
+  documents the reaction body and a response with a message id. A target
+  older than 30 days, absent from the chat, deleted, or itself a reaction is
+  not delivered and produces a messages webhook with code 131009. Successful
+  reactions have only a sent-status webhook, not delivered/read webhooks.
+  This page does not state whether a second reaction replaces the first or
+  document empty-emoji removal. Removal is tested against the existing
+  gateway contract; real-phone behavior remains unverified.
+
+These pages were read in a browser. The tests use invented ids and a fake
+Graph endpoint; no real send, gateway, phone number or model was exercised.
+
+## Existing fixtures
+
 Every fixture is Meta's own example payload, transcribed field for field from the reference
 page named here. The pages were read 2026-11-04 (the gp-nn90 build). Only HTML entities were
 decoded. The tests copy a fixture and replace `from`, `wa_id`, `id`, `timestamp` and

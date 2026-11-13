@@ -147,6 +147,19 @@ const sha256Hex = (s) => crypto.createHash('sha256').update(String(s)).digest('h
 // retry still gets the gateway's first answer (its REPEATED KEY rule).
 export const textChunkKey = (key, to, text, index) => `text:${sha256Hex(JSON.stringify([key, to, text]))}:${index}`;
 export const templateKey = (key, to, { name, language, params }) => `template:${sha256Hex(JSON.stringify([key, to, name, language, params]))}`;
+export const reactionKey = (key, to, messageId, emoji) => `reaction:${sha256Hex(JSON.stringify([key, to, messageId, emoji]))}`;
+const validMessageId = (id) => typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\s\x00-\x1f\x7f{}]/u.test(id);
+const requestedQuote = (id) => id === undefined || id === '' ? null
+  : typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\s\x00-\x1f\x7f{}]/u.test(id)
+    ? { message_id: id } : { reason: 'invalid_id' };
+const quoteContext = (quote) => quote?.message_id ? { context: { message_id: quote.message_id } } : {};
+function quoteMetadata(quote, answer) {
+  if (!quote) return {};
+  if (quote.reason) return { quoted: 'false', quote_reason: quote.reason };
+  if (answer.quoted === 'true') return { quoted: 'true', quote_reason: '' };
+  if (answer.quoted === 'unknown') return { quoted: 'unknown', quote_reason: 'replayed' };
+  return { quoted: 'false', quote_reason: answer.quote_reason || 'gateway_without_quotes' };
+}
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -382,7 +395,7 @@ export function createPublisher({
   }
 
   // failure maps a gateway error to gc's receipt, answered 200.
-  function failure(err, { conversationId, conversation, key, chunks, delivered }) {
+  function failure(err, { conversationId, conversation, key, chunks, delivered, reaction = false }) {
     let kind = 'permanent';
     let reason = 'gateway_refused';
     let hint = '';
@@ -392,6 +405,14 @@ export function createPublisher({
       hint = 'The 24-hour WhatsApp window for this conversation is closed: Meta refuses a free-form message until the owner writes again. '
         + `An actual update goes as the approved template: gc whatsapp publish --update --to ${conversationId} --text "<the update>". `
         + 'Otherwise wait for the owner\'s next message; this reply can then be retried with the same idempotency key.';
+      if (reaction) hint = 'The 24-hour WhatsApp window for this conversation is closed, and a reaction is a free-form message: it was not placed. '
+        + 'Say it in words by the window rule, or wait for the owner\'s next message.';
+    } else if (reaction && err?.status === 422 && err.json?.error === 'unknown_message') {
+      reason = 'unknown_message';
+      hint = 'The reaction was not placed: the message is unknown to this gateway or older than its record. Say it in words by the window rule.';
+    } else if (reaction && err?.json?.error === 'meta_error' && err.json.meta_status >= 400 && err.json.meta_status < 500 && err.json.meta_status !== 429) {
+      gatewayError = 'meta_error';
+      hint = 'The reaction was not placed: Meta refused it. The message may be gone or too old. Say it in words by the window rule.';
     } else if (err?.status === 409 && err.json?.error === 'ambiguous_recipient') {
       // PR 76's rule R1 (gp-0g2s): `to` names two owners of this city and the
       // gateway sent nothing. Since gp-g02t a send names the owner's user id
@@ -452,6 +473,7 @@ export function createPublisher({
     log(`send to …${lastFour(conversationId)} failed at chunk ${delivered + 1}/${chunks}: ${reason} (${err?.status ?? 'no answer'})`);
     const metadata = { reason, chunks: String(chunks), chunks_delivered: String(delivered) };
     if (gatewayError) metadata.gateway_error = gatewayError;
+    if (reaction && gatewayError === 'meta_error' && err.json.meta_code != null) metadata.meta_code = String(err.json.meta_code);
     if (hint) metadata.hint = hint;
     if (err?.recipient) metadata.recipient = err.recipient; // refused here: the gateway answered nothing
     else if (Number.isInteger(err?.status)) metadata.gateway_status = String(err.status);
@@ -512,13 +534,14 @@ export function createPublisher({
     let entry = progress.get(key);
     if (entry?.receipt) return { status: 200, json: entry.receipt };
     if (!entry) {
-      entry = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [], session_id: sessionId };
+      entry = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [] };
     }
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer, activity;
       try {
-        ({ answer, activity } = await sendWithActivity({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] },
-          conversationId, entry.session_id ?? sessionId));
+        ({ answer, activity } = await sendWithActivity({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i],
+          ...(i === 0 ? quoteContext(entry.quote) : {}) },
+          conversationId, entry.delivered > 0 ? (entry.session_id ?? sessionId) : sessionId));
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
         if (err?.status === 422 && err.json?.error === 'window_closed') {
@@ -529,6 +552,8 @@ export function createPublisher({
       }
       const messageId = str(answer.message_id);
       entry.message_ids[i] = messageId;
+      if (i === 0) entry.session_id = activity?.session ?? sessionId;
+      if (i === 0) entry.quote_result = quoteMetadata(entry.quote, answer);
       entry.delivered = i + 1;
       entry.activities ??= [];
       if (activity) entry.activities.push(activity);
@@ -541,7 +566,7 @@ export function createPublisher({
       conversation,
       delivered: true,
       idempotency_key: key,
-      metadata: { chunks: String(chunks.length), message_ids: entry.message_ids.join(',') },
+      metadata: { chunks: String(chunks.length), message_ids: entry.message_ids.join(','), ...entry.quote_result },
     };
     progress.save(key, entry);
     log(`publish to …${lastFour(conversationId)} delivered (${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
@@ -609,83 +634,92 @@ export function createPublisher({
     }
     const context = { conversationId, conversation, key, chunks: 1, delivered: 0 };
     const answer = await once(key, { conversationId, textSha, endpoint: 'file' }, conversation,
-      () => chain(conversationId, () => toOwner(context, async (to, closes) => {
-        let entry = progress.get(key);
-        if (!entry) {
-          entry = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
-            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [], session_id: sessionId };
-        }
-        const operation = sha256Hex(JSON.stringify([key, conversationId, textSha]));
-        let uploading = false;
-        try {
-          const recoverOnly = !entry.media_id && (!Number.isFinite(closes) || closes * 1000 <= clock());
-          const saveBeforeSend = () => {
-            if (!progress.save(key, entry)) throw Object.assign(new Error('file journal write failed'), { progressSave: true });
-          };
-          if (!entry.media_id && !recoverOnly) {
-            saveBeforeSend();
-            killPoint('before-media-upload', key);
-            uploading = true;
-            const uploaded = await mediaGateway.upload(file, `file-upload:${operation}`);
-            uploading = false;
-            killPoint('after-media-upload', key);
-            if (!str(uploaded?.media_id) || !Number.isFinite(uploaded.expires_at)) throw Object.assign(new Error('invalid upload answer'), { malformed: true });
-            entry.media_id = uploaded.media_id;
-            entry.media_expires_at = uploaded.expires_at;
+      () => {
+        // Only the in-flight key owner may reserve progress or choose a quote.
+        // A previous failed write may have left this entry only in memory.
+        const reserved = existing ?? { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
+          transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [],
+          quote: requestedQuote(pub.reply_to_message_id) };
+        if (!progress.save(key, reserved)) return failure({ progressSave: true }, context);
+        return chain(conversationId, () => toOwner(context, async (to, closes) => {
+          let entry = progress.get(key);
+          if (!entry) {
+            entry = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
+              transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [] };
           }
-          // A delayed resume starts the send's retention horizon now, not at
-          // upload time. Save before sending so a lost reply cannot age it out.
-          if (!recoverOnly) saveBeforeSend();
-          killPoint('after-media-journal', key);
-          // With no journal handle, probe the existing send key before refusing.
-          // The gateway checks that key before the window and grant. This sentinel
-          // is not a gateway UUID handle, so even a window reopening during the
-          // request cannot cause a new Meta send. No upload is made for the probe.
-          const request = { to, idempotency_key: `file-send:${operation}`, type: file.kind,
-            media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } };
-          const { answer: sent, activity } = caption.trim()
-            ? await sendWithActivity(request, conversationId, entry.session_id ?? sessionId)
-            : { answer: await gateway.send(request) };
-          killPoint('after-media-send', key);
-          if (!str(sent?.message_id)) throw Object.assign(new Error('missing message id'), { noMessageId: true });
-          entry.delivered = 1;
-          entry.message_ids = [sent.message_id];
-          entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
-            metadata: { chunks: '1', message_ids: sent.message_id, file_name: file.name, file_bytes: String(file.size), file_sha256: file.sha256 } };
-          if (activity) entry.activity = activity;
-          progress.save(key, entry);
-          killPoint('after-media-receipt', key);
-          ledger?.noteSend?.(conversationId, { type: file.kind, message_id: sent.message_id, at: clock() });
-          restoreActivity(entry.activity);
-          return { status: 200, json: entry.receipt };
-        } catch (err) {
-          if (err?.status === 422 && err.json?.error === 'window_closed') ledger?.noteWindowClosed?.(conversationId, clock());
-          const refused = failure(err, context);
-          if (!entry.media_id && err?.json?.error === 'media_not_found') {
-            refused.json.failure_kind = 'transient';
-            refused.json.metadata.reason = 'window_changed';
-            refused.json.metadata.hint = 'No completed send was found and the window changed during recovery. Retry with the same idempotency key.';
-            refused.json.error = refused.json.metadata.hint;
-          } else if (err?.json?.error === 'media_not_found' || err?.json?.error === 'media_expired') {
-            refused.json.failure_kind = 'permanent';
-            refused.json.metadata.reason = 'media_expired';
-            refused.json.metadata.hint = 'The upload handle is unavailable or expired. The gateway found no completed send under this key. '
-              + 'Check the chat, then start a new publish with a fresh key if the owner still needs the file; repeating this key cannot restore the handle.';
-            refused.json.error = refused.json.metadata.hint;
+          const operation = sha256Hex(JSON.stringify([key, conversationId, textSha]));
+          let uploading = false;
+          try {
+            const recoverOnly = !entry.media_id && (!Number.isFinite(closes) || closes * 1000 <= clock());
+            const saveBeforeSend = () => {
+              if (!progress.save(key, entry)) throw Object.assign(new Error('file journal write failed'), { progressSave: true });
+            };
+            if (!entry.media_id && !recoverOnly) {
+              saveBeforeSend();
+              killPoint('before-media-upload', key);
+              uploading = true;
+              const uploaded = await mediaGateway.upload(file, `file-upload:${operation}`);
+              uploading = false;
+              killPoint('after-media-upload', key);
+              if (!str(uploaded?.media_id) || !Number.isFinite(uploaded.expires_at)) throw Object.assign(new Error('invalid upload answer'), { malformed: true });
+              entry.media_id = uploaded.media_id;
+              entry.media_expires_at = uploaded.expires_at;
+            }
+            // A delayed resume starts the send's retention horizon now, not at
+            // upload time. Save before sending so a lost reply cannot age it out.
+            if (!recoverOnly) saveBeforeSend();
+            killPoint('after-media-journal', key);
+            // With no journal handle, probe the existing send key before refusing.
+            // The gateway checks that key before the window and grant. This sentinel
+            // is not a gateway UUID handle, so even a window reopening during the
+            // request cannot cause a new Meta send. No upload is made for the probe.
+            const request = { to, idempotency_key: `file-send:${operation}`, type: file.kind, ...quoteContext(entry.quote),
+              media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } };
+            const { answer: sent, activity } = caption.trim()
+              ? await sendWithActivity(request, conversationId, sessionId)
+              : { answer: await gateway.send(request) };
+            killPoint('after-media-send', key);
+            if (!str(sent?.message_id)) throw Object.assign(new Error('missing message id'), { noMessageId: true });
+            entry.delivered = 1;
+            entry.message_ids = [sent.message_id];
+            entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
+              metadata: { chunks: '1', message_ids: sent.message_id, file_name: file.name, file_bytes: String(file.size), file_sha256: file.sha256,
+                ...quoteMetadata(entry.quote, sent) } };
+            if (activity) entry.activity = activity;
+            progress.save(key, entry);
+            killPoint('after-media-receipt', key);
+            ledger?.noteSend?.(conversationId, { type: file.kind, message_id: sent.message_id, at: clock() });
+            restoreActivity(entry.activity);
+            return { status: 200, json: entry.receipt };
+          } catch (err) {
+            if (err?.status === 422 && err.json?.error === 'window_closed') ledger?.noteWindowClosed?.(conversationId, clock());
+            const refused = failure(err, context);
+            if (!entry.media_id && err?.json?.error === 'media_not_found') {
+              refused.json.failure_kind = 'transient';
+              refused.json.metadata.reason = 'window_changed';
+              refused.json.metadata.hint = 'No completed send was found and the window changed during recovery. Retry with the same idempotency key.';
+              refused.json.error = refused.json.metadata.hint;
+            } else if (err?.json?.error === 'media_not_found' || err?.json?.error === 'media_expired') {
+              refused.json.failure_kind = 'permanent';
+              refused.json.metadata.reason = 'media_expired';
+              refused.json.metadata.hint = 'The upload handle is unavailable or expired. The gateway found no completed send under this key. '
+                + 'Check the chat, then start a new publish with a fresh key if the owner still needs the file; repeating this key cannot restore the handle.';
+              refused.json.error = refused.json.metadata.hint;
+            }
+            if (uploading && err?.json?.error === 'outcome_unknown') {
+              refused.json.metadata.hint = 'Meta may have kept the upload, but the gateway has no confirmed handle. Nothing was sent to the owner. '
+                + 'This key will not upload again; an operator must decide whether to start a new publish with a fresh key.';
+              refused.json.error = refused.json.metadata.hint;
+            }
+            if (refused.json.metadata.reason === 'window_closed') {
+              refused.json.metadata.hint = 'Files can be sent only after the owner writes again. A file cannot use the update template. '
+                + `Retry with the same --idempotency-key ${key} to recover any completed send without sending twice.`;
+              refused.json.error = refused.json.metadata.hint;
+            }
+            return refused;
           }
-          if (uploading && err?.json?.error === 'outcome_unknown') {
-            refused.json.metadata.hint = 'Meta may have kept the upload, but the gateway has no confirmed handle. Nothing was sent to the owner. '
-              + 'This key will not upload again; an operator must decide whether to start a new publish with a fresh key.';
-            refused.json.error = refused.json.metadata.hint;
-          }
-          if (refused.json.metadata.reason === 'window_closed') {
-            refused.json.metadata.hint = 'Files can be sent only after the owner writes again. A file cannot use the update template. '
-              + `Retry with the same --idempotency-key ${key} to recover any completed send without sending twice.`;
-            refused.json.error = refused.json.metadata.hint;
-          }
-          return refused;
-        }
-      })));
+        }));
+      });
     return cli ? withTranscript(answer, { key, sessionId, conversationId, text }) : answer;
   }
 
@@ -726,13 +760,77 @@ export function createPublisher({
       }
 
       const answer = await once(key, { conversationId, textSha, endpoint: 'publish' }, conversation,
-        () => chain(conversationId, () => toOwner(
-          { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
-          (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation, sessionId }),
-        )));
+        () => {
+          const reserved = entry ?? { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha,
+            chunks: chunkText(pub.text).length, delivered: 0, message_ids: [],
+            quote: requestedQuote(pub.reply_to_message_id) };
+          if (!progress.save(key, reserved)) return failure({ progressSave: true },
+            { conversationId, conversation, key, chunks: reserved.chunks, delivered: reserved.delivered });
+          return chain(conversationId, () => toOwner(
+            { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
+            (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation, sessionId }),
+          ));
+        });
       return cli ? withTranscript(answer, { key, sessionId, conversationId, text: pub.text }) : answer;
     } catch (err) {
       log(`publish failed inside the adapter: ${err?.message ?? err}`);
+      return { status: 500, json: { delivered: false, failure_kind: 'transient', error: 'internal adapter error; retry with the same idempotency key' } };
+    }
+  }
+
+  async function handleReact(raw) {
+    try {
+      let body;
+      try { body = JSON.parse(raw); } catch { return bad('invalid JSON'); }
+      if (!isObject(body)) return bad('the body must be a JSON object');
+      const metadata = isObject(body.metadata) ? body.metadata : {};
+      const sessionId = str(body.session_id) || str(metadata.source_session_id);
+      if (!sessionId) return bad(ATTRIBUTION_ERROR);
+      const conversationId = str(body.conversation?.conversation_id);
+      if (!conversationId) return bad('conversation.conversation_id is required');
+      if (!validMessageId(body.message_id)) return bad('message_id must be 1 to 256 characters without whitespace, controls or braces');
+      if (typeof body.emoji !== 'string' || body.emoji.length > 32 || /[a-z0-9\s\x00-\x1f\x7f]/i.test(body.emoji)) {
+        return bad('emoji takes the emoji character itself (or an empty string to remove it), at most 32 UTF-16 units, without ASCII letters, digits or whitespace');
+      }
+      if (body.idempotency_key !== undefined && (typeof body.idempotency_key !== 'string' || !body.idempotency_key)) return bad('idempotency_key must be a non-empty string when given');
+      const key = body.idempotency_key || `whatsapp-reaction-${crypto.randomUUID()}`;
+      const conversation = { ...conversationRef(city, conversationId), ...body.conversation, conversation_id: conversationId };
+      const textSha = sha256Hex(JSON.stringify([body.message_id, body.emoji]));
+      const text = body.emoji ? `[reaction ${body.emoji} to ${body.message_id}]` : `[reaction removed from ${body.message_id}]`;
+      const existing = progress.get(key);
+      if (existing && (existing.endpoint !== 'reaction' || entryConversation(existing) !== conversationId || existing.text_sha256 !== textSha)) return conflict(conversation, key);
+      let answer;
+      if (existing?.receipt) answer = { status: 200, json: clone(existing.receipt) };
+      else {
+        const context = { conversationId, conversation, key, chunks: 1, delivered: 0, reaction: true };
+        answer = await once(key, { conversationId, textSha, endpoint: 'reaction' }, conversation,
+          () => chain(conversationId, () => toOwner(context, async (to) => {
+            const entry = progress.get(key) ?? { endpoint: 'reaction', conversation_id: conversationId, text_sha256: textSha,
+              transcript_sha256: sha256Hex(text) };
+            progress.save(key, entry);
+            try {
+              const { answer: sent, activity } = await sendWithActivity({ to, idempotency_key: reactionKey(key, conversationId, body.message_id, body.emoji),
+                type: 'reaction', reaction: { message_id: body.message_id, emoji: body.emoji } }, conversationId, sessionId);
+              entry.activity = activity;
+              entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
+                metadata: { reaction: body.emoji ? 'placed' : 'removed', reacted_to: body.message_id } };
+              progress.save(key, entry);
+              ledger?.noteSend?.(conversationId, { type: 'reaction', message_id: sent.message_id, at: activity?.at ?? clock() });
+              restoreActivity(activity);
+              log(`reaction to …${lastFour(conversationId)} ${body.emoji ? 'placed' : 'removed'}`);
+              return { status: 200, json: entry.receipt };
+            } catch (err) {
+              if (err?.status === 422 && err.json?.error === 'window_closed') {
+                ledger?.noteWindowClosed?.(conversationId, clock());
+                try { onWindowClosed(conversationId); } catch { log('reaction window-closed hook failed'); }
+              }
+              return failure(err, context);
+            }
+          })));
+      }
+      return metadata.origin === 'cli' ? withTranscript(answer, { key, sessionId, conversationId, text }) : answer;
+    } catch {
+      log('reaction failed inside the adapter');
       return { status: 500, json: { delivered: false, failure_kind: 'transient', error: 'internal adapter error; retry with the same idempotency key' } };
     }
   }
@@ -782,7 +880,8 @@ export function createPublisher({
         conversation,
         delivered: true,
         idempotency_key: key,
-        metadata: { template: UPDATE_TEMPLATE, language: updateLanguage, ...(journaled ? {} : { journaled: 'false' }) },
+        metadata: { template: UPDATE_TEMPLATE, language: updateLanguage, ...(journaled ? {} : { journaled: 'false' }),
+          ...quoteMetadata(existing?.quote, answer) },
       },
     };
     progress.save(key, entry);
@@ -835,10 +934,15 @@ export function createPublisher({
         };
       };
       const answer = await once(key, { conversationId: to, textSha, endpoint: 'update' }, conversation,
-        () => chain(to, () => toOwner(
-          { conversationId: to, conversation, key, chunks: 1, delivered: 0 },
-          (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId })),
-        )));
+        () => {
+          const reserved = entry ?? { endpoint: 'update', conversation_id: to, text_sha256: textSha,
+            quote: requestedQuote(body.reply_to_message_id) ? { reason: 'template' } : null };
+          if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
+          return chain(to, () => toOwner(
+            { conversationId: to, conversation, key, chunks: 1, delivered: 0 },
+            (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId })),
+          ));
+        });
       return sessionId ? withTranscript(answer, { key, sessionId, conversationId: to, text: updateTranscriptText(text) }) : answer;
     } catch (err) {
       log(`publish-update failed inside the adapter: ${err?.message ?? err}`);
@@ -859,7 +963,7 @@ export function createPublisher({
     });
   }
 
-  return { handlePublish, handlePublishUpdate, notice };
+  return { handlePublish, handlePublishUpdate, handleReact, notice };
 }
 
 // The outbound transcript line for an update: the template is Meta-side

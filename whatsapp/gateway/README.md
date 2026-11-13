@@ -144,6 +144,42 @@ owner's **reaction** as the owner writing, so it moves the clock. Two reasons:
 
 **This is a judgment call for the founders.** One line in `src/window.ts` flips it.
 
+## Quoted replies
+
+`POST /v1/send` accepts optional `context: {message_id: string}` on text,
+image, audio, video and document sends. The id has 1 to 256 UTF-16 units;
+other context shapes return `400 bad_request`. Templates and reactions
+ignore context. The frozen v1 contract above remains unchanged.
+
+The gateway quotes only an id in this city's message/joined deliveries or
+its own sends. An unknown id, including another city's id or an inbound
+whose eight-day retention has ended, goes as plain text or media. A reaction
+whose target is unknown is refused `422 unknown_message`, without spending
+its key. Reaction targets older than the inbound retention are refused.
+
+A known quote is sent to Meta as `context: {message_id}`. A definite Meta
+4xx refusal, except HTTP 429 or window code 131047, retries once without
+context under the same claimed key. That attempt's result stands. No
+answer, a 5xx or success without an id remains `outcome_unknown` with no
+second call. Window refusals and rate limits never trigger quote fallback.
+
+The response body remains `{message_id}`. A successful request with context
+has `x-gc-quoted: true|false|unknown`. False adds `x-gc-quote-reason:
+unknown_message|meta_refused`. A stored-answer replay says unknown; the
+gateway stores no quote result. Requests without context have neither
+header. The adapter reports absent headers as `gateway_without_quotes`,
+replay as `replayed`, invalid ids as `invalid_id`, and templates as `template`.
+Only receipts for a requested quote gain the string fields `quoted` and
+`quote_reason`; a sent quote has `quoted: "true"` and an empty reason.
+
+The adapter and gateway may ship in either order: an older gateway ignores
+context and sends plain, which the adapter reports. A quote reaches the
+phone only when both are updated. The default reply line quotes its inbound
+message, only on the first chunk. Nothing enables automatic reactions.
+The 24-hour window still applies and neither a quote nor a reaction opens
+it. Gateway deployment is separate; migration 0005 must precede deployment
+of the current gateway. This change adds no migration or database column.
+
 ## Files out (gp-755k)
 
 Additive to v1; the frozen text above is unchanged. Posted on gp-nn90 and

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased (gp-bod9)
+
+- Add `publish --reply-to` and quote the inbound message in the default reply
+  line. Only the first chunk carries context; retries keep the first quote.
+  Missing quotes are reported on stderr without failing a delivered reply.
+  Adapter and gateway can ship in either order; older gateways send plain.
+  Quotes reach phones after both update. Gateway deployment is separate and
+  requires migration 0005 first; this change adds no migration. Quotes and
+  reactions remain free-form sends inside the 24-hour window and do not reopen it.
+- The updated gateway accepts only known message targets belonging to the
+  calling city. Unknown quotes go plain; unknown reactions are refused.
+  An inbound target older than the gateway's eight-day retention is unknown.
+
+- Add `gc whatsapp react --to --message --emoji` for hand reactions and
+  removal with an empty emoji. It uses the existing gateway route, records
+  a transcript and preserves the 24-hour window. After a pack update and
+  adapter restart the mayor can react; nothing automatic is switched on.
+
 ## Unreleased (gp-60dl)
 
 - A hibernating WebSocket per city wakes the adapter to read its existing
