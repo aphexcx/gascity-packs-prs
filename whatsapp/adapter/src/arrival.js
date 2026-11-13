@@ -1,23 +1,32 @@
 // Arrival reactions are independent of delivery and are never taken back.
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { conversationOf } from './render.js';
+import { redactText } from './redact.js';
 
 export const MAX_AGE_MS = 60000;
 export const CHOICE_BUDGET_MS = 1500;
 export const REACTION_BUDGET_MS = 2000;
 export const CONCURRENCY = 4;
+// An acknowledgement marker matters only within MAX_AGE_MS of its message.
+export const ACK_MARKER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const INSTRUCTIONS = 'Pick the reaction that best acknowledges this chat message to an assistant. If two reactions fit, a request outranks a feeling; otherwise the narrower one wins.';
 const DEFAULT = Object.freeze({ emoji: '👀', slack_name: 'eyes' });
 const fallback = () => ({ row: DEFAULT, how: 'default' });
 const digest = (s) => createHash('sha256').update(s).digest('hex');
 
 export function createChoice({ env = process.env, catalog, fetchImpl = fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, log = () => {} } = {}) {
-  const mode = env.ACK_REACTION || ''; const scope = env.ACK_SCOPE || 'addressed';
+  const mode = env.ACK_REACTION || ''; let scope = env.ACK_SCOPE || 'addressed';
   const key = env.JEV_API_KEY || ''; const model = env.JEV_MODEL || 'jev-latest';
   const base = env.JEV_API_BASE_URL || 'https://api.typesafe.ai';
-  if (!['addressed', 'all'].includes(scope)) throw new Error('ACK_SCOPE must be addressed or all');
+  // The scope is checked only when the switch is set; unset, any value reads
+  // as addressed, with no line, as before the switch existed.
+  if (!['addressed', 'all'].includes(scope)) {
+    if (mode) throw new Error('ACK_SCOPE must be addressed or all');
+    scope = 'addressed';
+  }
   let url;
   if (mode) {
     try { url = new URL(base); } catch { /* diagnosed without echoing a credential-bearing URL */ }
@@ -69,7 +78,8 @@ export function createChoice({ env = process.env, catalog, fetchImpl = fetch, no
     async choose(text, seen = now()) {
       if (!mode) return null;
       if (mode !== 'jev') return { row: fixed, how: 'fixed' };
-      const state = Array.from(String(text || '')).slice(0, 1000).join('');
+      // Slack's secret redaction first, then the cut (redact.js).
+      const state = Array.from(redactText(String(text || ''))).slice(0, 1000).join('');
       const remaining = CHOICE_BUDGET_MS - (now() - seen);
       if (!key || !rows.size || !state.trim() || remaining <= 0) return fallback();
       const controller = new AbortController(); let timer;
@@ -80,22 +90,55 @@ export function createChoice({ env = process.env, catalog, fetchImpl = fetch, no
   };
 }
 
+// An attempt marker, created exclusively: null when it already exists (the
+// attempt was spent before). Asynchronous, so no caller's thread waits on the
+// disk; flushMarker makes it durable, with its directory.
+export async function createMarker(stateDir, namespace, id) {
+  const dir = path.join(stateDir, namespace);
+  await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
+  try { return { dir, handle: await fsp.open(path.join(dir, digest(id)), 'wx', 0o600) }; }
+  catch (err) { if (err.code === 'EEXIST') return null; throw err; }
+}
+
+export async function flushMarker({ dir, handle }) {
+  try { await handle.sync(); } finally { await handle.close(); }
+  const parent = await fsp.open(dir, 'r');
+  try { await parent.sync(); } finally { await parent.close(); }
+}
+
 // Atomically reserve before any network effect. A crash spends the attempt;
 // an uncertain response must not produce a second reaction after restart.
-export function reserve(stateDir, namespace, id) {
-  const dir = path.join(stateDir, namespace); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  let fd;
-  try { fd = fs.openSync(path.join(dir, digest(id)), 'wx', 0o600); }
-  catch (err) { if (err.code === 'EEXIST') return false; throw err; }
-  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  const parent = fs.openSync(dir, 'r'); try { fs.fsyncSync(parent); } finally { fs.closeSync(parent); }
+export async function reserve(stateDir, namespace, id) {
+  const marker = await createMarker(stateDir, namespace, id);
+  if (!marker) return false;
+  await flushMarker(marker);
   return true;
+}
+
+// Removes this adapter's own markers older than maxAgeMs, by modification
+// time: only empty files named by a sha256 in hex. Nothing else is touched.
+export async function pruneMarkers(dir, maxAgeMs, now = Date.now()) {
+  let names;
+  try { names = await fsp.readdir(dir); } catch { return; }
+  for (const name of names) {
+    if (!/^[0-9a-f]{64}$/.test(name)) continue;
+    const file = path.join(dir, name);
+    try {
+      const stat = await fsp.lstat(file);
+      if (stat.isFile() && stat.size === 0 && stat.mtimeMs < now - maxAgeMs) await fsp.unlink(file);
+    } catch { /* gone or unreadable: left as it is */ }
+  }
 }
 
 export function createArrival({ choice, stateDir, gateway, stopwatch, clock = Date.now, log = () => {} }) {
   const tasks = new Set(); let warned = false;
   const warn = () => { if (!warned) { warned = true; log('ACK_REACTION: acknowledgement failed; no retry'); } };
+  const track = (task) => { tasks.add(task); task.finally(() => tasks.delete(task)); return task; };
+  // At start, and once a day from index.js while running.
+  const prune = () => (stateDir ? track(pruneMarkers(path.join(stateDir, 'ack-attempts'), ACK_MARKER_MAX_AGE_MS).catch(() => {})) : Promise.resolve());
+  prune();
   return {
+    prune,
     observe(delivery, { replay = false, seen = clock() } = {}) {
       const msg = delivery?.message; const conversation = conversationOf(delivery);
       const at = Number(msg?.timestamp) * 1000;
@@ -103,7 +146,8 @@ export function createArrival({ choice, stateDir, gateway, stopwatch, clock = Da
       const task = new Promise((resolve) => setImmediate(resolve)).then(async () => {
         stopwatch?.record({ event: 'inbound', conversation, message: msg.id, message_at: new Date(at).toISOString(), at: new Date(seen).toISOString() });
         if (!choice.enabled) return;
-        if (!reserve(stateDir, 'ack-attempts', `${conversation}\0${msg.id}`)) return;
+        // Claimed and flushed before the Jev call: at most one, across a crash.
+        if (!await reserve(stateDir, 'ack-attempts', `${conversation}\0${msg.id}`)) return;
         // Only the sender's words, never generated attachment descriptions,
         // interactive IDs, locations, sender profiles or transport metadata.
         const text = msg.type === 'text' ? msg.text?.body : msg[msg.type]?.caption ?? msg.button?.text ?? msg.interactive?.button_reply?.title ?? msg.interactive?.list_reply?.title ?? '';
@@ -114,8 +158,8 @@ export function createArrival({ choice, stateDir, gateway, stopwatch, clock = Da
         if (!response?.message_id) { warn(); return; }
         stopwatch?.record({ event: 'reaction', conversation, message: msg.id, at: new Date(clock()).toISOString(), actor: 'adapter', choice: picked.how });
       }).catch(warn);
-      tasks.add(task); task.finally(() => tasks.delete(task));
+      track(task);
     },
-    async wait() { await Promise.all([...tasks]); },
+    async wait() { while (tasks.size) await Promise.all([...tasks]); },
   };
 }

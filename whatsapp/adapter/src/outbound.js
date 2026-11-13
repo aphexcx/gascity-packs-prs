@@ -402,7 +402,7 @@ export function createPublisher({
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer;
       const sendKey = textChunkKey(key, conversationId, text, i);
-      const uncertain = stopwatch?.attempt(sendKey) ?? false;
+      const uncertain = (await stopwatch?.attempt(sendKey)) ?? false;
       try {
         answer = await gateway.send({ to, idempotency_key: sendKey, type: 'text', text: chunks[i] });
         if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
@@ -526,7 +526,7 @@ export function createPublisher({
           // The gateway checks that key before the window and grant. This sentinel
           // is not a gateway UUID handle, so even a window reopening during the
           // request cannot cause a new Meta send. No upload is made for the probe.
-          const uncertain = stopwatch?.attempt(`file-send:${operation}`) ?? false;
+          const uncertain = (await stopwatch?.attempt(`file-send:${operation}`)) ?? false;
           const sent = await gateway.send({ to, idempotency_key: `file-send:${operation}`, type: file.kind,
             media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } });
           killPoint('after-media-send', key);
@@ -625,7 +625,7 @@ export function createPublisher({
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
     let answer;
     const sendKey = templateKey(key, to, template);
-    const uncertain = stopwatch?.attempt(sendKey) ?? false;
+    const uncertain = (await stopwatch?.attempt(sendKey)) ?? false;
     try {
       answer = await gateway.send({ to: recipient, idempotency_key: sendKey, type: 'template', template });
       if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });

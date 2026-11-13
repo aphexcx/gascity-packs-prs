@@ -1,10 +1,17 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { reserve } from './arrival.js';
+import { createMarker, flushMarker, pruneMarkers } from './arrival.js';
 
-export function releaseId(root = path.dirname(fileURLToPath(import.meta.url))) {
+const SOURCE_ROOT = path.dirname(fileURLToPath(import.meta.url));
+// A words marker matters while the publisher may still retry: 7 days for a
+// text, 30 for a file send (outbound.js); one day past the longer.
+export const WORDS_MARKER_MAX_AGE_MS = 31 * 24 * 60 * 60 * 1000;
+export const RELEASE_WARNING = 'stopwatch: release unavailable; recorded as unknown';
+
+export function releaseId(root = SOURCE_ROOT) {
   const files = [];
   const visit = (dir) => { for (const entry of fs.readdirSync(dir, { withFileTypes: true })) { const file = path.join(dir, entry.name); if (entry.isDirectory()) visit(file); else if (entry.isFile() && entry.name.endsWith('.js')) files.push(file); } };
   visit(root); const hash = createHash('sha256');
@@ -14,9 +21,17 @@ export function releaseId(root = path.dirname(fileURLToPath(import.meta.url))) {
 
 const eventKey = (e) => e.message && ['inbound', 'reaction', 'words'].includes(e.event) ? `${e.event}\0${e.event === 'words' ? '' : e.conversation}\0${e.message}` : '';
 
-export function createStopwatch({ stateDir, release = releaseId(), clock = Date.now, log = () => {} }) {
+// Lines are appended in order through node:fs/promises, off the caller's
+// thread: record returns at once and no delivery or send waits on a flush.
+// "First only" is decided at record, so a key is queued once. A line lost to
+// a failed write is a lost measurement, never a lost message.
+export function createStopwatch({ stateDir, release, releaseRoot = SOURCE_ROOT, clock = Date.now, log = () => {} }) {
   const seen = new Set(); let warned = false;
   const warn = () => { if (!warned) { warned = true; log('stopwatch: state file unavailable; adapter continues'); } };
+  if (release === undefined) {
+    // The stopwatch never breaks the adapter: an unhashable release is unknown.
+    try { release = releaseId(releaseRoot); } catch { release = 'unknown'; log(RELEASE_WARNING); }
+  }
   try {
     for (const file of fs.readdirSync(stateDir).filter((name) => /^stopwatch-\d{4}-\d{2}\.jsonl$/.test(name)).sort()) {
       for (const line of fs.readFileSync(path.join(stateDir, file), 'utf8').split('\n')) {
@@ -24,6 +39,18 @@ export function createStopwatch({ stateDir, release = releaseId(), clock = Date.
       }
     }
   } catch (err) { if (err.code !== 'ENOENT') warn(); }
+  const pending = new Set();
+  const track = (work) => { pending.add(work); work.finally(() => pending.delete(work)); return work; };
+  let chain = Promise.resolve();
+  const append = async (e, at) => {
+    await fsp.mkdir(stateDir, { recursive: true, mode: 0o700 });
+    const handle = await fsp.open(path.join(stateDir, `stopwatch-${at.toISOString().slice(0, 7)}.jsonl`), 'a+', 0o600);
+    try {
+      await handle.chmod(0o600); const { size } = await handle.stat();
+      if (size) { const last = Buffer.alloc(1); await handle.read(last, 0, 1, size - 1); if (last[0] !== 10) await handle.write('\n'); }
+      await handle.write(`${JSON.stringify(e)}\n`); await handle.sync();
+    } finally { await handle.close(); }
+  };
   const record = (input) => {
     // The whitelist prevents an accidental envelope spread from persisting text.
     const e = { event: input.event, channel: 'whatsapp', conversation: input.conversation, at: input.at };
@@ -32,21 +59,28 @@ export function createStopwatch({ stateDir, release = releaseId(), clock = Date.
     if (e.event === 'words') e.acceptance_uncertain = Boolean(input.acceptance_uncertain);
     const key = eventKey(e); if (key && seen.has(key)) return;
     const at = new Date(e.at); if (!Number.isFinite(at.getTime())) return;
-    try {
-      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      const fd = fs.openSync(path.join(stateDir, `stopwatch-${at.toISOString().slice(0, 7)}.jsonl`), 'a+', 0o600);
-      try {
-        fs.fchmodSync(fd, 0o600); const size = fs.fstatSync(fd).size;
-        if (size) { const last = Buffer.alloc(1); fs.readSync(fd, last, 0, 1, size - 1); if (last[0] !== 10) fs.writeSync(fd, '\n'); }
-        fs.writeSync(fd, `${JSON.stringify(e)}\n`); fs.fsyncSync(fd);
-      } finally { fs.closeSync(fd); }
-      if (key) seen.add(key);
-    } catch { warn(); }
+    if (key) seen.add(key);
+    chain = chain.then(() => append(e, at)).catch(() => warn());
+    track(chain);
   };
+  const prune = () => track(pruneMarkers(path.join(stateDir, 'words-attempts'), WORDS_MARKER_MAX_AGE_MS).catch(() => {}));
+  prune();
   return {
     record,
-    // A failed reservation makes the time uncertain without failing a send.
-    attempt(key) { try { return !reserve(stateDir, 'words-attempts', key); } catch { warn(); return true; } },
+    // RULING 1 of round 1: a send may wait for its marker to be created, never
+    // for its flush, which follows off the send path. The time is uncertain
+    // unless this attempt created the marker; a failed reservation makes it
+    // uncertain without failing a send.
+    async attempt(key) {
+      let marker;
+      try { marker = await createMarker(stateDir, 'words-attempts', key); } catch { warn(); return true; }
+      if (!marker) return true;
+      track(flushMarker(marker).catch(() => warn()));
+      return false;
+    },
     words(conversation, message, uncertain) { record({ event: 'words', conversation, message, at: new Date(clock()).toISOString(), acceptance_uncertain: uncertain }); },
+    prune,
+    // Waits until every queued line, marker flush and prune has settled.
+    async flush() { while (pending.size) await Promise.all([...pending]); },
   };
 }

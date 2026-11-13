@@ -3,7 +3,9 @@
 ## Arrival reactions and stopwatch
 
 `ACK_REACTION` is empty (off) by default. Set it to `jev` to send only the
-message's text to TypeSafe, cut to 1,000 Unicode characters,
+message's text to TypeSafe, after the same secret redaction as Slack's
+(`adapter/src/redact.js`, a port of Slack's redaction with a copy of its
+patterns) and then cut to 1,000 Unicode characters,
 using `JEV_API_KEY`; no sender, room, IDs or attachment bytes are sent. Jev
 chooses from the arrival rows of `reactions.json`; absent credentials, unusable
 catalogs, timeouts and unusable answers use the fixed eyes reaction.
@@ -11,10 +13,12 @@ catalogs, timeouts and unusable answers use the fixed eyes reaction.
 A fixed arrival row's `slack_name` also works in every adapter. Claim rows,
 `auto`, `model`, and unknown names are rejected at startup. With an unusable
 catalog, only `jev` and `eyes` are available. `ACK_SCOPE=addressed` is the
-default; `all` includes delivered room messages. Own messages, bots, mutations,
+default; `all` includes delivered room messages. `ACK_SCOPE` is checked only
+when `ACK_REACTION` is set. Own messages, bots, mutations,
 reactions, keeper events, replays, duplicates, and messages over 60 seconds old
 are excluded. A durable attempt marker prevents a second acknowledgement after
 a restart, even if a channel response was lost. Acknowledgements are never removed.
+Markers older than one day are removed at start and once a day.
 
 The adapter env file overrides inherited values; otherwise `JEV_API_KEY` comes
 from the process environment. Key changes require an adapter restart. Status
@@ -34,10 +38,15 @@ Words are recorded once per returned message ID; another confirmation never move
 The stopwatch runs even with acknowledgement off. It writes monthly UTC
 `stopwatch-YYYY-MM.jsonl` files with mode 0600, containing coordinates and
 timestamps only. Inbound lines include the first 12 SHA-256 hex characters of
-the adapter's source files in a fixed sort.
+the adapter's source files in a fixed sort; when they cannot be read, the
+release is `unknown`, one warning is logged, and the adapter starts.
 Reaction lines record the first confirmation, actor and adapter choice method;
 words lines record posts. An unwritable journal warns once and delivery continues.
-The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
+The lines are appended and flushed off the delivery's thread, so no delivery
+or send waits on the disk; a stop drains them. Each send creates one empty
+marker under `words-attempts` first (a send waits for the create, never for
+its flush); markers older than 31 days are removed at start and once a day.
+The adapter never deletes a stopwatch file. `GC_SERVICE_STATE_ROOT` overrides the
 timing directory for every adapter.
 
 Run `gc whatsapp stopwatch` with the pack's installed alias. It requires Python 3.11+

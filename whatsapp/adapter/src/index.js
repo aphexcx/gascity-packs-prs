@@ -241,6 +241,8 @@ export async function main() {
   const deadLetters = createDeadLetters({ stateDir: cfg.stateDir });
   const gateway = createGatewayClient({ url: cfg.gatewayURL, credential: cfg.credential, timeoutMs: cfg.gatewayTimeoutMs });
   const arrival = createArrival({ choice, stateDir: timingDir, gateway, stopwatch, clock, log });
+  // Both prune their old attempt markers at start; again once a day.
+  setInterval(() => { arrival.prune(); stopwatch.prune(); }, 24 * 60 * 60 * 1000).unref();
   const gc = createGcClient({ base: cfg.gcAPIBase, city: cfg.cityName, postTimeoutMs: cfg.gcPostTimeoutMs });
   const ledger = createLedger({ stateDir: cfg.stateDir, clock, log });
   const keeper = createKeeper({
@@ -333,7 +335,10 @@ export async function main() {
     inbound.stop();
     server.close();
     journal.close();
-    setTimeout(() => process.exit(0), 200).unref();
+    // Drain the stopwatch's queued lines and marker flushes, bounded so the
+    // stop stays inside the two seconds gc allows before SIGKILL.
+    const bound = new Promise((resolve) => { setTimeout(resolve, 1500).unref(); });
+    void Promise.race([stopwatch.flush(), bound]).finally(() => setTimeout(() => process.exit(0), 200).unref());
   };
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGINT', () => stop('SIGINT'));
