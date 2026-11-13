@@ -18,3 +18,11 @@ pnpm exec node --test --test-name-pattern 'in-flight key ownership|unsent attemp
 Before the fix: six failed, zero passed. After the fix: six passed, zero failed. Each exact case name is listed in [tests.md](tests.md).
 
 The evidence runner now records the Git SHA and tracked-dirty state both before and after each verification command. Earlier logs lacked that stamp; their results are historical rather than assertions of a later head's state.
+
+## Round 2
+
+DEEP review using `gpt-6-astra`, same base, reviewed head `2498e51f84a97c6c850f0ef42a5ff652560a491a`. Validated verdict: **CLEAN**, with no critical or major findings and one minor finding. Tests were not run by the reviewer; its verdict used source review and the recorded worker evidence.
+
+**MINOR: a retry can lose its original quote after a journal-write failure. FIXED** in `2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec`. The progress store retains entries in memory after a failed disk write. Text, file and update retries now persist the retained reservation before reaching the gateway, including when the reservation already exists in memory. A later gateway refusal and process restart therefore preserve the original quote choice.
+
+Three parameterized fault-injection tests failed before the fix and passed afterward; the full quote suite passes all 25 cases. The correction follows the reviewed SHA; there is no claimed third review. The mayor's gate and second-model read remain pending.

@@ -142,13 +142,7 @@ This record shows the old (`-`) and new (`+`) lines for every changed command, r
 -        if (!entry) {
 -          entry = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
 -            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [], session_id: sessionId };
-+      () => {
-+        // Only the in-flight key owner may reserve progress or choose a quote.
-+        if (!existing) {
-+          const reserved = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
-+            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [],
-+            quote: requestedQuote(pub.reply_to_message_id) };
-+          if (!progress.save(key, reserved)) return failure({ progressSave: true }, context);
+-        }
 -        const operation = sha256Hex(JSON.stringify([key, conversationId, textSha]));
 -        let uploading = false;
 -        try {
@@ -211,6 +205,13 @@ This record shows the old (`-`) and new (`+`) lines for every changed command, r
 -            refused.json.metadata.hint = 'Meta may have kept the upload, but the gateway has no confirmed handle. Nothing was sent to the owner. '
 -              + 'This key will not upload again; an operator must decide whether to start a new publish with a fresh key.';
 -            refused.json.error = refused.json.metadata.hint;
++      () => {
++        // Only the in-flight key owner may reserve progress or choose a quote.
++        // A previous failed write may have left this entry only in memory.
++        const reserved = existing ?? { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
++          transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [],
++          quote: requestedQuote(pub.reply_to_message_id) };
++        if (!progress.save(key, reserved)) return failure({ progressSave: true }, context);
 +        return chain(conversationId, () => toOwner(context, async (to, closes) => {
 +          let entry = progress.get(key);
 +          if (!entry) {
@@ -300,12 +301,11 @@ This record shows the old (`-`) and new (`+`) lines for every changed command, r
 -          (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation, sessionId }),
 -        )));
 +        () => {
-+          if (!entry) {
-+            const reserved = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha,
-+              chunks: chunkText(pub.text).length, delivered: 0, message_ids: [],
-+              quote: requestedQuote(pub.reply_to_message_id) };
-+            if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId, conversation, key, chunks: reserved.chunks, delivered: 0 });
-+          }
++          const reserved = entry ?? { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha,
++            chunks: chunkText(pub.text).length, delivered: 0, message_ids: [],
++            quote: requestedQuote(pub.reply_to_message_id) };
++          if (!progress.save(key, reserved)) return failure({ progressSave: true },
++            { conversationId, conversation, key, chunks: reserved.chunks, delivered: reserved.delivered });
 +          return chain(conversationId, () => toOwner(
 +            { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
 +            (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation, sessionId }),
@@ -376,11 +376,9 @@ This record shows the old (`-`) and new (`+`) lines for every changed command, r
 -          (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId })),
 -        )));
 +        () => {
-+          if (!entry) {
-+            const reserved = { endpoint: 'update', conversation_id: to, text_sha256: textSha,
-+              quote: requestedQuote(body.reply_to_message_id) ? { reason: 'template' } : null };
-+            if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
-+          }
++          const reserved = entry ?? { endpoint: 'update', conversation_id: to, text_sha256: textSha,
++            quote: requestedQuote(body.reply_to_message_id) ? { reason: 'template' } : null };
++          if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
 +          return chain(to, () => toOwner(
 +            { conversationId: to, conversation, key, chunks: 1, delivered: 0 },
 +            (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId })),

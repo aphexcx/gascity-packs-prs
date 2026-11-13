@@ -34,13 +34,13 @@ PART C: STOPPED, waiting on PR 104. No acknowledgement module or model route was
 
 Runtime: Node `v24.21.0` from `pnpm exec node --version`. The make runner selected Python `3.13.13` through uv; the shell's Python `3.15.0` was not the pytest runtime. No unsupported-engine warning occurred.
 
-Final code verification used `b981c9803b990cc505da73ebaae89b2e87366a3b`. [verification.json](verification.json) records each command, its exit status, and matching clean tracked state at its starting and ending SHA. Later commits contain evidence only.
+Final adapter verification used `2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec`. The unchanged gateway, shell and Python surfaces were verified at `b981c9803b990cc505da73ebaae89b2e87366a3b`. [verification.json](verification.json) records each command, its exit status, and matching clean tracked state at its starting and ending SHA. Later commits contain evidence only.
 
 | Location | Invocation | Result |
 | --- | --- | --- |
-| adapter | `pnpm test` | 417 tests: 416 passed, one existing timing timeout; that case passed in isolation below. |
+| adapter | `pnpm test` | 420 tests: 419 passed, zero failed assertions, one existing document-recovery case cancelled by its timeout; that case passed in isolation below. |
 | adapter/test | `pnpm exec node --test react.test.js` | 33 passed: 27 original cases and six review regressions; each failed before its implementation or correction. |
-| adapter/test | `pnpm exec node --test quote.test.js` | 22 passed; 21 failed before implementation and one no-quote pin already passed. |
+| adapter/test | `pnpm exec node --test quote.test.js` | 25 passed: 21 failed before implementation, one no-quote pin already passed, and three journal-recovery regressions failed before correction. |
 | gateway | `pnpm exec vitest run test -t 'quoted replies\|quote wire'` | 25 passed; 18 failed before implementation and seven compatibility pins passed. |
 | gateway | `pnpm test` | 333 passed across six files. |
 | gateway | `pnpm typecheck` | exit 0. |
@@ -55,7 +55,7 @@ make test PYTEST_DIRS='tests whatsapp/tests' \
   PYTEST_RUNNER="echo 'env -u MAKEFLAGS -u MAKEOVERRIDES -u MFLAGS -u PYTEST_DIRS -u PYTEST_ARGS -u PYTEST_RUNNER uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'"
 ```
 
-The initial full adapter run passed every tracked test but also ran a preexisting untracked config test (eight failures). That file was preserved separately and excluded from delivery. A later run under concurrent test load hit five existing timing-sensitive cases. All five passed in isolation, with unchanged code, deadlines and assertions:
+The initial full adapter run passed every tracked test but also ran a preexisting untracked config test (eight failures). That file was preserved separately during tracked-suite verification, then restored unchanged to its original location; it is excluded from delivery. A later run under concurrent test load hit five existing timing-sensitive cases. All five passed in isolation, with unchanged code, deadlines and assertions:
 
 - audio survives SIGKILL at after-media-send with one upload and one send;
 - held: wake, reconnect and safety reads of a held row cause one post;
@@ -72,14 +72,23 @@ pnpm exec node --test --test-concurrency=1 --test-name-pattern \
 
 It reported 24 passing runner entries: the five selected cases and 19 empty file wrappers. An intermediate rerun also hit `held: a wake during an in-flight read queues exactly one further read`.
 
-The final stable-head adapter run passed 416 of 417 tests; only the existing M2 inbox-compaction case timed out waiting for a later poll. Both that case and the intermediate held-wake case passed unchanged at the same final code SHA, using:
+An intermediate stable-head adapter run passed 416 of 417 tests; only the existing M2 inbox-compaction case timed out waiting for a later poll. Both that case and the intermediate held-wake case passed unchanged at that same code SHA, using:
 
 ```sh
 pnpm exec node --test --test-concurrency=1 --test-name-pattern \
   'M2: an inbox page|held: a wake during an in-flight read'
 ```
 
-This isolated run reported 23 passing runner entries: two selected cases and 21 empty file wrappers. The full command's exit status remains 1 in the evidence; it is not reported as an unqualified green run. Adapter tests need no installed dependencies despite pnpm's missing-node_modules warning. Gateway fixture tests emit existing binary-body text warnings.
+This isolated run reported 23 passing runner entries: two selected cases and 21 empty file wrappers.
+
+After the round-two correction, the final run at `2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec` passed 419 of 420 tests, with zero failed assertions and one cancellation: `document survives SIGKILL at after-media-receipt with one upload and one send` exceeded its existing 30-second timeout. It passed unchanged at the same SHA using:
+
+```sh
+pnpm exec node --test --test-concurrency=1 --test-name-pattern \
+  'document survives SIGKILL at after-media-receipt'
+```
+
+That run reported 23 passing runner entries: one selected case and 22 empty file wrappers. Both full commands' exit status remains 1 in the evidence; neither is reported as an unqualified green run. Adapter tests need no installed dependencies despite pnpm's missing-node_modules warning. Gateway fixture tests emit existing binary-body text warnings.
 
 ## Existing tests changed
 

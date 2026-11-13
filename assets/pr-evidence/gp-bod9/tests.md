@@ -51,6 +51,18 @@ Tests were committed in `c83027ff9234422e88425732f2798df32d2f3cdc`, before the c
 | unsent attempt: reaction retry attributes the actual sending session | FAIL | PASS |
 | unsent attempt: file retry attributes the actual sending session | FAIL | PASS |
 
+## Round-two journal recovery regressions
+
+From `whatsapp/adapter/test`: `pnpm exec node --test --test-name-pattern 'quote reservation survives write failure' quote.test.js`.
+
+Tests were committed in `f3ff01b6694e4958d50532ae0658fea937943ad1`, before the correction. Three failed before the fix and three passed afterward. They simulate a failed journal write, a retry that reaches a gateway refusal, and a restart with the quote flag omitted.
+
+| Test | Before correction | After correction |
+| --- | --- | --- |
+| quote reservation survives write failure, gateway refusal and restart (text) | FAIL | PASS |
+| quote reservation survives write failure, gateway refusal and restart (file) | FAIL | PASS |
+| quote reservation survives write failure, gateway refusal and restart (update) | FAIL | PASS |
+
 ## Adapter quotes
 
 From `whatsapp/adapter/test`: `pnpm exec node --test quote.test.js`.
