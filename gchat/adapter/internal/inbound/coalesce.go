@@ -315,6 +315,9 @@ func (p *Processor) merged(input []*ledger.ChangeState, anchor string) (wire.Inb
 
 // flushWindows is called under the inbound gate, before live or catch-up work.
 func (p *Processor) flushWindows(ctx context.Context) error {
+	if p.opts.Config.CoalesceWindow() == 0 && len(p.recoverHeld) == 0 {
+		return nil
+	}
 	l, err := p.snapshot()
 	if err != nil {
 		return err
@@ -342,6 +345,9 @@ func (p *Processor) flushWindows(ctx context.Context) error {
 }
 
 func (p *Processor) signalWindow() {
+	if p.opts.Config.CoalesceWindow() == 0 {
+		return
+	}
 	select {
 	case p.windowChanged <- struct{}{}:
 	default:
