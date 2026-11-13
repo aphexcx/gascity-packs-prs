@@ -91,7 +91,6 @@ func (p *Processor) hold(l *ledger.Ledger, input puller.Change, id string, w wir
 		// Preserve the create ID and timestamp, with the last body. The special
 		// kind keeps a rollback's superseded check from withdrawing this fold.
 		w.ProviderMessageID = previous.ID
-		w.Text = strings.Replace(w.Text, "\nedited: ", "\n", 1)
 		if previous.MemberKind == "" {
 			previous.MemberKind = previous.Kind
 		}

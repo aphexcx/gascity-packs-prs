@@ -43,3 +43,34 @@ func TestCatchUpIsMerged(t *testing.T) {
 		t.Fatal("cursor changed")
 	}
 }
+
+func TestCatchUpWindowKeepsFloor(t *testing.T) {
+	for _, window := range []string{"0s", "8s"} {
+		t.Run(window, func(t *testing.T) {
+			f := setup(t)
+			_, _ = toml.Decode("coalesce_window = "+fmt.Sprintf("%q", window), &f.opts.Config.Settings)
+			f.addSpace("spaces/room", true)
+			f.opts.Ledger.HistoryFloor = frozen.Add(-30 * time.Minute)
+			old := f.addMessage("spaces/room", 0, frozen.Add(-time.Hour))
+			old.Text = "old-body-never-delivered"
+			for i := 1; i <= 2; i++ {
+				f.addMessage("spaces/room", i, frozen.Add(-time.Duration(i)*time.Minute))
+			}
+			f.freeze(t)
+			f.pass(t, 2, 0)
+			want := 1
+			if window == "0s" {
+				want = 2
+			}
+			turns := f.gc.Inbound()
+			if len(turns) != want {
+				t.Fatalf("turns=%d", len(turns))
+			}
+			for _, w := range turns {
+				if strings.Contains(w.Text, old.Text) {
+					t.Fatal("old catch-up line")
+				}
+			}
+		})
+	}
+}

@@ -44,6 +44,17 @@ func windowSetup(t *testing.T, window string) *windowFixture {
 	return f
 }
 
+func (f *windowFixture) handle(t *testing.T, ev *puller.Event) {
+	t.Helper()
+	for i := range ev.Changes {
+		ev.Changes[i].PublishTime = f.now
+		if ev.Changes[i].EventTime.IsZero() {
+			ev.Changes[i].EventTime = f.now
+		}
+	}
+	handle(t, f.fixture, ev)
+}
+
 func (f *windowFixture) send(t *testing.T, n int, kind string, change func(*api.Message)) *api.Message {
 	t.Helper()
 	m := message()
@@ -56,7 +67,7 @@ func (f *windowFixture) send(t *testing.T, n int, kind string, change func(*api.
 	}
 	ev := event(fmt.Sprintf("%s-%s-%s", kind, m.Name, m.LastUpdateTime), kind, m)
 	ev.Changes[0].Space = m.Space.Name
-	handle(t, f.fixture, ev)
+	f.handle(t, ev)
 	return m
 }
 
@@ -181,7 +192,7 @@ func TestWhatGoesAtOnce(t *testing.T) {
 			if row == "reaction_dm" {
 				f.l.Spaces[space] = &ledger.SpaceState{Kind: "dm"}
 				f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
-				handle(t, f.fixture, &puller.Event{Changes: []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/r1", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}}}})
+				f.handle(t, &puller.Event{Changes: []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/r1", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}}}})
 			} else if row == "catchup" {
 				m := message()
 				m.CreateTime = f.now.Format(time.RFC3339)
@@ -291,14 +302,14 @@ func TestActsInsideTheWindow(t *testing.T) {
 					f.now = f.now.Add(time.Second)
 					m.LastUpdateTime = f.now.Format(time.RFC3339Nano)
 					m.Text = fmt.Sprintf("revision-%d", i)
-					handle(t, f.fixture, event(fmt.Sprint(i), "message.updated", m))
+					f.handle(t, event(fmt.Sprint(i), "message.updated", m))
 				}
 			case "create_delete", "delete_delivered":
-				handle(t, f.fixture, event("delete", "message.deleted", &api.Message{Name: m.Name}))
+				f.handle(t, event("delete", "message.deleted", &api.Message{Name: m.Name}))
 			case "reaction_pair":
 				f.l.Messages[m.Name].Mine = true
 				for _, action := range []string{"created", "deleted"} {
-					handle(t, f.fixture, &puller.Event{Changes: []puller.Change{{Kind: "reaction." + action, Space: space, Reaction: &api.Reaction{Name: m.Name + "/reactions/r1", User: m.Sender, Emoji: &api.Emoji{Unicode: "👍"}}}}})
+					f.handle(t, &puller.Event{Changes: []puller.Change{{Kind: "reaction." + action, Space: space, Reaction: &api.Reaction{Name: m.Name + "/reactions/r1", User: m.Sender, Emoji: &api.Emoji{Unicode: "👍"}}}}})
 				}
 			}
 			f.advance(t, 8*time.Second)
@@ -360,12 +371,12 @@ func TestRedeliveryOfAHeldAct(t *testing.T) {
 	f := windowSetup(t, "8s")
 	m := f.send(t, 1, "message.created", nil)
 	for i := 0; i < 3; i++ {
-		handle(t, f.fixture, event(fmt.Sprint(i), "message.created", m))
+		f.handle(t, event(fmt.Sprint(i), "message.created", m))
 	}
 	f.turns(t, 0)
 	f.advance(t, 8*time.Second)
 	f.turns(t, 1)
-	handle(t, f.fixture, event("after", "message.created", m))
+	f.handle(t, event("after", "message.created", m))
 	f.advance(t, 8*time.Second)
 	f.turns(t, 1)
 }

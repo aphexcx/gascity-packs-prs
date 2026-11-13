@@ -878,7 +878,10 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if local == "" && c.Kind != "message.deleted" {
 		w.Text, w.Attachments = NormalizeContent(ctx, p.opts.Chat, p.opts.Config.Endpoints, m)
 	}
-	if c.Kind == "message.updated" && id != m.Name {
+	// Decide the body before Render. Removing an "edited: " prefix after
+	// rendering could expose a first body line that forges a provenance frame.
+	foldsCreate := p.opts.Config.CoalesceWindow() > 0 && isHeld(base) && base.OriginalKind() == "message.created" && base.CatchUp == catchUp
+	if c.Kind == "message.updated" && id != m.Name && !foldsCreate {
 		w.Text = "edited: " + w.Text
 	}
 	if !framed {
