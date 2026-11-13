@@ -2,17 +2,166 @@ package inbound
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 )
+
+func TestRetryNeverSendsWithdrawnText(t *testing.T) {
+	for _, form := range []string{"merged_member", "merged_owner", "folded", "edit_owner", "catchup"} {
+		for _, kind := range []string{"message.deleted", "message.updated"} {
+			t.Run(form+"/"+kind, func(t *testing.T) {
+				f := windowSetup(t, "8s")
+				f.gc.CityNotRunning = true
+				var target *api.Message
+				survivor := "body-002"
+				switch form {
+				case "catchup":
+					a, b := message(), message()
+					a.Name, a.Text, a.CreateTime = space+"/messages/m001", "body-001", f.now.Format(time.RFC3339Nano)
+					b.Name, b.Text, b.CreateTime = space+"/messages/m002", survivor, f.now.Add(time.Second).Format(time.RFC3339Nano)
+					_, _ = f.p.HandleChanges(context.Background(), []puller.Change{{Kind: "message.created", Space: space, Message: a}, {Kind: "message.created", Space: space, Message: b}})
+					target = a
+				case "edit_owner":
+					// An earlier failed create is superseded by an edit which
+					// itself becomes the owner of a later merged turn.
+					target = f.send(t, 1, "message.created", nil)
+					f.now = f.now.Add(8 * time.Second)
+					_ = f.p.Poll(context.Background())
+					f.send(t, 2, "message.created", nil)
+					f.now = f.now.Add(time.Second)
+					target.LastUpdateTime = f.now.Format(time.RFC3339Nano)
+					target.Text = "first-edit"
+					target.Annotations = []*api.Annotation{{Type: "USER_MENTION", UserMention: &api.UserMentionMetadata{User: &api.User{Name: identity}}}}
+					_, _ = f.p.Handle(context.Background(), event("first-edit", "message.updated", target))
+				default:
+					target = f.send(t, 1, "message.created", nil)
+					f.now = f.now.Add(time.Second)
+					if form == "folded" {
+						target.LastUpdateTime, target.Text = f.now.Format(time.RFC3339Nano), "folded-text"
+						f.handle(t, event("folded-edit", "message.updated", target))
+						survivor = ""
+					} else {
+						other := f.send(t, 2, "message.created", nil)
+						if form == "merged_owner" {
+							target, survivor = other, "body-001"
+						}
+					}
+				}
+				f.now = f.now.Add(8 * time.Second)
+				_ = f.p.Poll(context.Background())
+				f.turns(t, 0)
+				withdrawn := target.Text
+				f.now = f.now.Add(time.Second)
+				target.Text, target.LastUpdateTime, target.Annotations = "current-text", f.now.Format(time.RFC3339Nano), nil
+				_, _ = f.p.Handle(context.Background(), event("withdraw", kind, target))
+				f.gc.CityNotRunning = false
+				for i := 0; i < 3; i++ {
+					f.advance(t, 10*time.Second)
+				}
+				posts := f.gc.Inbound()
+				text := joinTurns(posts)
+				if strings.Contains(text, withdrawn) || (form == "edit_owner" && strings.Contains(text, "body-001")) {
+					t.Errorf("withdrawn text reposted: %s", text)
+				}
+				if survivor != "" && strings.Count(text, survivor) != 1 {
+					t.Errorf("survivor count = %d", strings.Count(text, survivor))
+				}
+				want := 2
+				if form == "folded" {
+					want = 1
+				}
+				if len(posts) != want {
+					t.Errorf("posts=%d want=%d", len(posts), want)
+				} else {
+					last := posts[len(posts)-1]
+					if kind == "message.deleted" && !strings.HasSuffix(last.Text, "\ndeleted") || kind == "message.updated" && !strings.HasSuffix(last.Text, "\nedited: current-text") {
+						t.Errorf("withdrawal did not follow rewritten turn: %s", last.Text)
+					}
+				}
+				unresolved := 0
+				if kind == "message.deleted" || form == "folded" {
+					unresolved++
+				}
+				if form == "edit_owner" {
+					unresolved++ // the earlier standalone create
+				}
+				if len(f.l.Unresolved) != unresolved || len(f.mails) != unresolved {
+					t.Errorf("unresolved=%d mails=%d want=%d", len(f.l.Unresolved), len(f.mails), unresolved)
+				}
+				for _, c := range f.l.Unresolved {
+					if c.Reason != reasonWithdrawn {
+						t.Errorf("unexpected unresolved reason %q", c.Reason)
+					}
+				}
+				for i, post := range posts {
+					t.Logf("POST %d id=%s text=%q", i, post.ProviderMessageID, post.Text)
+				}
+			})
+		}
+	}
+}
+
+func TestRetryTranscriptKeepsFirstText(t *testing.T) {
+	f := windowSetup(t, "8s")
+	refusing := true
+	var mu sync.Mutex
+	transcript := map[string]string{}
+	var fanout []wire.InboundMessage
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		var envelope wire.InboundEnvelope
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		m := envelope.Message
+		if _, exists := transcript[m.ProviderMessageID]; !exists {
+			transcript[m.ProviderMessageID] = m.Text
+		}
+		if refusing {
+			w.WriteHeader(503)
+			return
+		}
+		fanout = append(fanout, m)
+		_ = json.NewEncoder(w).Encode(wire.InboundResponse{Delivery: wire.Delivery{Status: "delivered"}})
+	}))
+	defer s.Close()
+	f.p.opts.GC = gcclient.New(s.URL, "examplecity")
+	a := f.send(t, 1, "message.created", nil)
+	f.now = f.now.Add(time.Second)
+	b := f.send(t, 2, "message.created", nil)
+	f.now = f.now.Add(8 * time.Second)
+	_ = f.p.Poll(context.Background())
+	f.now = f.now.Add(time.Second)
+	f.handle(t, event("deleted", "message.deleted", a))
+	mu.Lock()
+	refusing = false
+	mu.Unlock()
+	f.advance(t, 10*time.Second)
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(transcript[b.Name], "body-001") {
+		t.Error("fake transcript must retain the first row for the key")
+	}
+	if len(fanout) != 2 || strings.Contains(joinTurns(fanout), "body-001") || !strings.HasSuffix(fanout[len(fanout)-1].Text, "\ndeleted") {
+		t.Errorf("fanout must contain the survivor then the withdrawal: %s", joinTurns(fanout))
+	}
+}
 
 func TestMalformedHeldRecordIsOneUnresolved(t *testing.T) {
 	for _, broken := range []int{1, 2} {
