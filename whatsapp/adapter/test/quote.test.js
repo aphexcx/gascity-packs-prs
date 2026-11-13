@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { createPublisher } from '../src/outbound.js';
+import { createPublisher, PROGRESS_FILE } from '../src/outbound.js';
 import { createGatewayClient } from '../src/gateway.js';
 import { startFakeGateway, tempDir, createTestClock, CREDENTIAL, rig, waitFor } from './fakes.js';
 
@@ -96,6 +96,37 @@ for (const retryId of [undefined, 'wamid.different']) test(`quote remains the fi
   const count = r.gw.sends.length;
   assert.deepEqual(await r.publish(body({ reply_to_message_id: 'wamid.third' })), answer);
   assert.equal(r.gw.sends.length, count);
+});
+
+for (const kind of ['text', 'file', 'update']) test(`quote reservation survives write failure, gateway refusal and restart (${kind})`, async (t) => {
+  const r = await setup(t);
+  const file = path.join(r.dir, 'fixture.txt');
+  fs.writeFileSync(file, 'fixture attachment');
+  const request = (id) => body({ reply_to_message_id: id,
+    ...(kind === 'file' ? { text: undefined, file } : {}), ...(kind === 'update' ? { to: OWNER } : {}) });
+  const call = (id) => kind === 'update'
+    ? r.publisher.handlePublishUpdate(JSON.stringify(request(id))) : r.publish(request(id));
+  const rename = fs.renameSync;
+  let failWrites = true;
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    if (failWrites && to === path.join(r.dir, 'state', PROGRESS_FILE)) {
+      throw Object.assign(new Error('fixture storage full'), { code: 'ENOSPC' });
+    }
+    return rename(from, to);
+  });
+  assert.equal((await call(TARGET)).json.metadata.reason, 'outbound_progress_unavailable');
+  failWrites = false;
+  const method = kind === 'file' ? 'window' : 'send';
+  const original = r.gateway[method];
+  r.gateway[method] = async () => { throw Object.assign(new Error('fixture throttle'), { status: 429 }); };
+  assert.equal((await call(undefined)).json.delivered, false);
+  r.gateway[method] = original;
+  r.restart();
+  const answer = await call(undefined);
+  assert.equal(answer.json.delivered, true);
+  assert.equal(r.gw.sends.length, 1);
+  if (kind === 'update') assert.equal(answer.json.metadata.quote_reason, 'template');
+  else assert.deepEqual(r.gw.sends[0].context, { message_id: TARGET });
 });
 
 test('pin: no quote keeps the exact existing wire and receipt', async (t) => {
