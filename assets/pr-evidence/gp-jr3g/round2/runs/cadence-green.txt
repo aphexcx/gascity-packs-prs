@@ -1,0 +1,15 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 2,
+    "top_level_pass": 1
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/app TestCatchupCadence/steady
+PASS gchat-adapter/internal/app TestCatchupCadence/held_space
+PASS gchat-adapter/internal/app TestCatchupCadence
+PASS gchat-adapter/internal/app

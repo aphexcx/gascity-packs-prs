@@ -1,0 +1,37 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 3,
+    "subtests_pass": 1,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/inbound",
+    "-run",
+    "^TestNewActsOnOldMessagesKeepTheirFrame$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/message.updated
+FAIL gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/message.deleted
+FAIL gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/reaction.created
+FAIL gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/reaction.deleted
+FAIL gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame
+FAIL gchat-adapter/internal/inbound
+
+    history_bound_test.go:134: new act turns=0 want 1
+    history_bound_test.go:134: new act turns=1 want 2
+    history_bound_test.go:134: new act turns=1 want 2

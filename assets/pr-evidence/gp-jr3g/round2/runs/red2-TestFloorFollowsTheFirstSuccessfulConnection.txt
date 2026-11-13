@@ -1,0 +1,29 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 5,
+    "top_level_fail": 1
+  },
+  "command": null,
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/503
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/403
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/create
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/reload
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/24h
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection
+FAIL gchat-adapter/internal/app
+
+    history_bound_test.go:361: floor predates successful attempt: floor=2026-11-13 06:23:05.076515 +0000 UTC allowed=2026-11-13 06:23:05.193867 +0000 UTC
+    history_bound_test.go:364: before-connection turns=1
+    history_bound_test.go:361: floor predates successful attempt: floor=2026-11-13 06:23:07.254706 +0000 UTC allowed=2026-11-13 06:23:07.368247 +0000 UTC
+    history_bound_test.go:364: before-connection turns=1
+    history_bound_test.go:361: floor predates successful attempt: floor=2026-11-13 06:23:09.431451 +0000 UTC allowed=2026-11-13 06:23:09.549378 +0000 UTC
+    history_bound_test.go:364: before-connection turns=1
+    history_bound_test.go:361: floor predates successful attempt: floor=2026-11-13 06:23:13.578329 +0000 UTC allowed=2026-11-13 06:23:13.693782 +0000 UTC
+    history_bound_test.go:364: before-connection turns=1
+    history_bound_test.go:361: floor predates successful attempt: floor=2026-11-12 06:23:15.766316 +0000 UTC allowed=2026-11-12 06:23:15.881669 +0000 UTC
+    history_bound_test.go:364: before-connection turns=1

@@ -1,0 +1,62 @@
+[
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1
+  }
+]

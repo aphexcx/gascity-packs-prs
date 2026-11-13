@@ -1,0 +1,43 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 3,
+    "subtests_pass": 18,
+    "top_level_pass": 9
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestHistoryBatchUsesEachResourceTime/created
+PASS gchat-adapter/internal/inbound TestHistoryBatchUsesEachResourceTime/updated
+PASS gchat-adapter/internal/inbound TestHistoryBatchUsesEachResourceTime
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/created/old
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/created/new
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/created/none
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/updated/old
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/updated/new
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/updated/none
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime
+PASS gchat-adapter/internal/inbound TestNewReactionRemovalKeepsSkippedAttribution
+PASS gchat-adapter/internal/inbound TestUnavailableReactionParentDoesNotBlockBatch/400
+PASS gchat-adapter/internal/inbound TestUnavailableReactionParentDoesNotBlockBatch/401
+PASS gchat-adapter/internal/inbound TestUnavailableReactionParentDoesNotBlockBatch/403
+PASS gchat-adapter/internal/inbound TestUnavailableReactionParentDoesNotBlockBatch/404
+PASS gchat-adapter/internal/inbound TestUnavailableReactionParentDoesNotBlockBatch/503
+PASS gchat-adapter/internal/inbound TestUnavailableReactionParentDoesNotBlockBatch
+PASS gchat-adapter/internal/inbound TestRetainedUnavailableChangesAreCountedAndLoggedOnce/message_space
+PASS gchat-adapter/internal/inbound TestRetainedUnavailableChangesAreCountedAndLoggedOnce/reaction_parent
+PASS gchat-adapter/internal/inbound TestRetainedUnavailableChangesAreCountedAndLoggedOnce/reaction_space
+PASS gchat-adapter/internal/inbound TestRetainedUnavailableChangesAreCountedAndLoggedOnce
+PASS gchat-adapter/internal/inbound TestCatchUpSavesOnlyDeliveryState
+PASS gchat-adapter/internal/inbound TestCatchUpReactionMarkerBelongsToCurrentChange/true
+PASS gchat-adapter/internal/inbound TestCatchUpReactionMarkerBelongsToCurrentChange/false
+PASS gchat-adapter/internal/inbound TestCatchUpReactionMarkerBelongsToCurrentChange
+PASS gchat-adapter/internal/inbound
+PASS gchat-adapter/internal/ledger TestHistoryFloorLedgerCompatibility
+PASS gchat-adapter/internal/ledger
+PASS gchat-adapter/internal/app TestReleasedCursorlessHistoryCannotReplayAfterHold
+PASS gchat-adapter/internal/app
+
+    history_upgrade_test.go:151: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages

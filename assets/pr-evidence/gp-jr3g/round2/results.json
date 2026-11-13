@@ -1,0 +1,2485 @@
+{
+  "app-first": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 78,
+      "top_level_pass": 11
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "attribution-red": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "cadence-green": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "detached-attempts-green": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 15,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "detached-attempts-red": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 15,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "e2e-after": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 30,
+      "top_level_pass": 30
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "e2e-before": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 30,
+      "top_level_pass": 30
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "e2e-final": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 30,
+      "top_level_pass": 30
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "e2e-reviewed-final": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 30,
+      "top_level_pass": 30
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestBoundedActWithoutTimeUsesPublishTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestBoundedActWithoutTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 3,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestBoundedQueueRetiresSavedDelivery": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestBoundedQueueRetiresSavedDelivery$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 15,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestCatchupMissingEnvelopeTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCatchupMissingEnvelopeTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 4,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestCursorlessMigrationRetiresDetachedAttempts": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 15,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestCursorlessMigrationRetiresEveryUpdateRevision": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 3,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestCursorlessSpaceStartsWhereItWasFirstSeen": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessSpaceStartsWhereItWasFirstSeen$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 6,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestFloorFollowsTheFirstSuccessfulConnection": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestFloorFollowsTheFirstSuccessfulConnection$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 5,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestHistoryBatchUsesEachResourceTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryBatchUsesEachResourceTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestHistoryFloorLedgerCompatibility": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestHistoryFloorLedgerCompatibility$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestHistoryFloorSurvivesRetentionFallback": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestHistoryFloorSurvivesRetentionFallback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 24,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestHistoryRollbackExchange": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestLiveActsBeforeTheFloorAreNotTurns": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestLiveActsBeforeTheFloorAreNotTurns$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 8,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestMessageWithoutActTimeUsesPublishTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestMessageWithoutActTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 6,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestNeverReadSpaceReportsNoLoss": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestNeverReadSpaceReportsNoLoss$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestNewActsOnOldMessagesKeepTheirFrame": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewActsOnOldMessagesKeepTheirFrame$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 4,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestNewReactionRemovalKeepsSkippedAttribution": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewReactionRemovalKeepsSkippedAttribution$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestNoOldActIsEverATurn": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestNoOldActIsEverATurn$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 60,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestOldActNeverDownloadsAttachments": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestOldActNeverDownloadsAttachments$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestOldActOrdersAndNewActs": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestOldActOrdersAndNewActs$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 9,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestReleasedCursorlessHistoryCannotReplayAfterHold": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedCursorlessHistoryCannotReplayAfterHold$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestReleasedLedgerCursorlessSpacesStartAtLoad": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedLedgerCursorlessSpacesStartAtLoad$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestRetainedHistoryKeepsReleasedEventIdentity": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestRollbackSkippedCreateDoesNotWake": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestRollbackSkippedCreateDoesNotWake$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestSavedCursorStillDeliversItsOutage": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestSavedCursorStillDeliversItsOutage$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "final-named-TestSkippedActReadsAsNotDeliveredAfterRollback": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestSkippedActReadsAsNotDeliveredAfterRollback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 5,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "fixture-green": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 21,
+      "top_level_pass": 3
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "focused-extra": {
+    "command": null,
+    "counts": {
+      "packages_pass": 3,
+      "subtests_pass": 18,
+      "top_level_pass": 9
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "full-go-1": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./...",
+      "-p=1",
+      "-count=1",
+      "-timeout=30m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 2,
+      "packages_pass": 19,
+      "subtests_fail": 16,
+      "subtests_pass": 1307,
+      "top_level_fail": 6,
+      "top_level_pass": 683,
+      "top_level_skip": 2
+    },
+    "exit": 1,
+    "last_event": "pass"
+  },
+  "full-go-2": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./...",
+      "-p=1",
+      "-count=1",
+      "-timeout=30m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 21,
+      "subtests_pass": 1338,
+      "top_level_pass": 690,
+      "top_level_skip": 2
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "full-go-3": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./...",
+      "-p=1",
+      "-count=1",
+      "-timeout=30m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 21,
+      "subtests_pass": 1358,
+      "top_level_pass": 693,
+      "top_level_skip": 2
+    },
+    "exit": 0,
+    "last_event": "pass",
+    "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+  },
+  "green-TestBoundedActWithoutTimeUsesPublishTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestBoundedActWithoutTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 3,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestCursorlessSpaceStartsWhereItWasFirstSeen": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessSpaceStartsWhereItWasFirstSeen$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 6,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestFloorFollowsTheFirstSuccessfulConnection": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestFloorFollowsTheFirstSuccessfulConnection$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 5,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestLiveActsBeforeTheFloorAreNotTurns": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestLiveActsBeforeTheFloorAreNotTurns$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 8,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestNeverReadSpaceReportsNoLoss": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestNeverReadSpaceReportsNoLoss$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestNewActsOnOldMessagesKeepTheirFrame": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewActsOnOldMessagesKeepTheirFrame$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 4,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestNoOldActIsEverATurn": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestNoOldActIsEverATurn$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 60,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestOldActOrdersAndNewActs": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestOldActOrdersAndNewActs$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 9,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestReleasedCursorlessHistoryCannotReplayAfterHold": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedCursorlessHistoryCannotReplayAfterHold$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestReleasedLedgerCursorlessSpacesStartAtLoad": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedLedgerCursorlessSpacesStartAtLoad$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestRollbackSkippedCreateDoesNotWake": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestRollbackSkippedCreateDoesNotWake$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestSavedCursorStillDeliversItsOutage": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestSavedCursorStillDeliversItsOutage$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-TestSkippedActReadsAsNotDeliveredAfterRollback": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestSkippedActReadsAsNotDeliveredAfterRollback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 5,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestCatchupMissingEnvelopeTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCatchupMissingEnvelopeTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 4,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestHistoryBatchUsesEachResourceTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryBatchUsesEachResourceTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestHistoryFloorLedgerCompatibility": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestHistoryFloorLedgerCompatibility$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestHistoryFloorSurvivesRetentionFallback": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestHistoryFloorSurvivesRetentionFallback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 24,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestHistoryRollbackExchange": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestMessageWithoutActTimeUsesPublishTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestMessageWithoutActTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 6,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestNewReactionRemovalKeepsSkippedAttribution": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewReactionRemovalKeepsSkippedAttribution$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestOldActNeverDownloadsAttachments": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestOldActNeverDownloadsAttachments$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "green-extra-TestReleasedCursorlessHistoryCannotReplayAfterHold": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedCursorlessHistoryCannotReplayAfterHold$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "green-first": {
+    "command": null,
+    "counts": {
+      "packages_fail": 2,
+      "packages_pass": 1,
+      "subtests_fail": 2,
+      "subtests_pass": 33,
+      "top_level_fail": 2,
+      "top_level_pass": 6
+    },
+    "exit": 1,
+    "last_event": "pass"
+  },
+  "head-order-green": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "missing-envelope-red": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 2,
+      "subtests_pass": 2,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "packages-first": {
+    "command": null,
+    "counts": {
+      "packages_fail": 3,
+      "packages_pass": 2,
+      "subtests_fail": 12,
+      "subtests_pass": 230,
+      "top_level_fail": 11,
+      "top_level_pass": 146
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "packages-second": {
+    "command": null,
+    "counts": {
+      "packages_fail": 2,
+      "packages_pass": 2,
+      "subtests_fail": 8,
+      "subtests_pass": 315,
+      "top_level_fail": 5,
+      "top_level_pass": 208
+    },
+    "exit": 1,
+    "last_event": "pass"
+  },
+  "queue-intent-base-red": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "queue-intent-base-red2": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 15,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "queue-intent-green": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 15,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "queue-intent-red": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 15,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestBoundedActWithoutTimeUsesPublishTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestBoundedActWithoutTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 2,
+      "subtests_pass": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestCursorlessSpaceStartsWhereItWasFirstSeen": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessSpaceStartsWhereItWasFirstSeen$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 6,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestFloorFollowsTheFirstSuccessfulConnection": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestFloorFollowsTheFirstSuccessfulConnection$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 5,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestLiveActsBeforeTheFloorAreNotTurns": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestLiveActsBeforeTheFloorAreNotTurns$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 6,
+      "subtests_pass": 2,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestNeverReadSpaceReportsNoLoss": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestNeverReadSpaceReportsNoLoss$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 2,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestNewActsOnOldMessagesKeepTheirFrame": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewActsOnOldMessagesKeepTheirFrame$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 3,
+      "subtests_pass": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestNoOldActIsEverATurn": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestNoOldActIsEverATurn$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 30,
+      "subtests_pass": 30,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestOldActOrdersAndNewActs": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 4,
+      "subtests_pass": 5,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestReleasedLedgerCursorlessSpacesStartAtLoad": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedLedgerCursorlessSpacesStartAtLoad$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 2,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-TestRollbackSkippedCreateDoesNotWake": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestRollbackSkippedCreateDoesNotWake$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "red-TestSavedCursorStillDeliversItsOutage": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestSavedCursorStillDeliversItsOutage$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "red-TestSkippedActReadsAsNotDeliveredAfterRollback": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestSkippedActReadsAsNotDeliveredAfterRollback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 5,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestCatchupMissingEnvelopeTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCatchupMissingEnvelopeTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 2,
+      "subtests_pass": 2,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestHistoryBatchUsesEachResourceTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryBatchUsesEachResourceTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 1,
+      "subtests_pass": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestHistoryFloorLedgerCompatibility": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestHistoryFloorLedgerCompatibility$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestHistoryFloorSurvivesRetentionFallback": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestHistoryFloorSurvivesRetentionFallback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 8,
+      "subtests_pass": 16,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestHistoryRollbackExchange": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestMessageWithoutActTimeUsesPublishTime": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestMessageWithoutActTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 5,
+      "subtests_pass": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestNewReactionRemovalKeepsSkippedAttribution": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewReactionRemovalKeepsSkippedAttribution$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestOldActNeverDownloadsAttachments": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestOldActNeverDownloadsAttachments$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 1,
+      "subtests_pass": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red-extra-TestReleasedCursorlessHistoryCannotReplayAfterHold": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedCursorlessHistoryCannotReplayAfterHold$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "red2-TestFloorFollowsTheFirstSuccessfulConnection": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 5,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "review-base-TestCursorlessMigrationRetiresDetachedAttempts": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 15,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "review-base-TestCursorlessMigrationRetiresEveryUpdateRevision": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 3,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "review-base-TestRetainedHistoryKeepsReleasedEventIdentity": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "review-green-TestCursorlessMigrationRetiresDetachedAttempts": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 15,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "review-green-TestCursorlessMigrationRetiresEveryUpdateRevision": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 3,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "review-green-TestRetainedHistoryKeepsReleasedEventIdentity": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "review-green2-TestCursorlessMigrationRetiresDetachedAttempts": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 15,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "review-green2-TestCursorlessMigrationRetiresEveryUpdateRevision": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 3,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "review-green2-TestRetainedHistoryKeepsReleasedEventIdentity": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 2,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "review-red-TestCursorlessMigrationRetiresDetachedAttempts": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 15,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "review-red-TestCursorlessMigrationRetiresEveryUpdateRevision": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 3,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "review-red-TestRetainedHistoryKeepsReleasedEventIdentity": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 1,
+      "subtests_pass": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "review-red2-TestCursorlessMigrationRetiresDetachedAttempts": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 15,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "review-red2-TestCursorlessMigrationRetiresEveryUpdateRevision": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 3,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "review-red2-TestRetainedHistoryKeepsReleasedEventIdentity": {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 2,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "rollback-final-read": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "rollback-final-write": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "rollback-read": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "rollback-write": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "slow-after": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 1,
+      "top_level_pass": 1
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "slow-before": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "subscription-base": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "subtests_pass": 6,
+      "top_level_pass": 3
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "subscription-isolated": {
+    "command": null,
+    "counts": {
+      "packages_fail": 1,
+      "subtests_fail": 1,
+      "subtests_pass": 1,
+      "top_level_fail": 1
+    },
+    "exit": 1,
+    "last_event": "fail"
+  },
+  "upgrade-repeat": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 5
+    },
+    "exit": 0,
+    "last_event": "pass"
+  },
+  "upgrade-repeat30": {
+    "command": null,
+    "counts": {
+      "packages_pass": 1,
+      "top_level_pass": 30
+    },
+    "exit": 0,
+    "last_event": "pass"
+  }
+}

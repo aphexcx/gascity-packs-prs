@@ -1,0 +1,27 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/ledger",
+    "-run",
+    "^TestHistoryFloorLedgerCompatibility$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/ledger TestHistoryFloorLedgerCompatibility
+PASS gchat-adapter/internal/ledger

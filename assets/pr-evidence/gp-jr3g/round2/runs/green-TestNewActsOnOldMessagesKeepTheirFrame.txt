@@ -1,0 +1,32 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 4,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/inbound",
+    "-run",
+    "^TestNewActsOnOldMessagesKeepTheirFrame$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/message.updated
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/message.deleted
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/reaction.created
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/reaction.deleted
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame
+PASS gchat-adapter/internal/inbound

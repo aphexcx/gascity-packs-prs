@@ -1,0 +1,18 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 1,
+    "subtests_pass": 1,
+    "top_level_fail": 1
+  },
+  "command": null,
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/403
+PASS gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/404
+FAIL gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn
+FAIL gchat-adapter/internal/app
+
+    subscription_test.go:354: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
