@@ -3,6 +3,7 @@ package inbound
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,76 @@ import (
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 )
+
+func TestMalformedHeldRecordIsOneUnresolved(t *testing.T) {
+	for _, broken := range []int{1, 2} {
+		t.Run(fmt.Sprintf("member_%d", broken), func(t *testing.T) {
+			f := windowSetup(t, "8s")
+			f.gc.NextDelivery = "pending"
+			pending := f.send(t, 90, "message.created", func(m *api.Message) {
+				m.Space = &api.Space{Name: "spaces/dmspace", SpaceType: "DIRECT_MESSAGE"}
+				m.Name = m.Space.Name + "/messages/pending"
+			})
+			pendingID := f.l.Changes[pending.Name].ReceiptID
+			f.gc.SetReceipt(pendingID, wire.ReceiptResponse{State: "concluded", Delivery: wire.Delivery{Status: "delivered"}})
+			f.send(t, 1, "message.created", nil)
+			f.send(t, 2, "message.created", nil)
+			bad := fmt.Sprintf("%s/messages/m%03d", space, broken)
+			f.l.Changes[bad].Event = "{broken"
+			dm := message()
+			dm.Space = &api.Space{Name: "spaces/anotherdm", SpaceType: "DIRECT_MESSAGE"}
+			dm.Name, dm.Text, dm.CreateTime = dm.Space.Name+"/messages/d1", "direct-body", f.now.Format(time.RFC3339Nano)
+			ev := event("direct", "message.created", dm)
+			ev.Changes[0].Space = dm.Space.Name
+			for i := 0; i < 3; i++ {
+				f.now = f.now.Add(10 * time.Second)
+				if out, err := f.p.Handle(context.Background(), ev); out != puller.Ack || err != nil {
+					t.Errorf("DM attempt %d: %v %v", i, out, err)
+				}
+				if err := f.p.Poll(context.Background()); err != nil {
+					t.Errorf("poll %d: %v", i, err)
+				}
+			}
+			if c := f.l.Changes[dm.Name]; c == nil || c.Status != "committed" {
+				t.Error("DM was not recorded and delivered")
+			}
+			if f.l.Changes[pending.Name].Status != "committed" {
+				t.Error("poll did not reach pending receipt")
+			}
+			if len(f.l.Unresolved) != 1 || f.l.Unresolved[bad] == nil || len(f.mails) != 1 {
+				t.Errorf("unresolved=%d mails=%d", len(f.l.Unresolved), len(f.mails))
+			}
+			text := joinTurns(f.gc.Inbound())
+			if strings.Count(text, "direct-body") != 1 || strings.Count(text, fmt.Sprintf("body-%03d", 3-broken)) != 1 {
+				t.Errorf("survivor or DM lost/duplicated: %s", text)
+			}
+		})
+	}
+}
+
+func TestDueWindowNeverRefusesAnotherSpace(t *testing.T) {
+	f := windowSetup(t, "8s")
+	f.send(t, 1, "message.created", nil)
+	f.gc.CityNotRunning = true
+	f.now = f.now.Add(8 * time.Second)
+	dm := message()
+	dm.Space = &api.Space{Name: "spaces/dmspace", SpaceType: "DIRECT_MESSAGE"}
+	dm.Name, dm.Text, dm.CreateTime = dm.Space.Name+"/messages/d1", "direct-body", f.now.Format(time.RFC3339Nano)
+	ev := event("direct", "message.created", dm)
+	ev.Changes[0].Space = dm.Space.Name
+	if out, err := f.p.Handle(context.Background(), ev); out != puller.Nack || err == nil {
+		t.Fatal("expected gc outage")
+	}
+	if f.l.Changes[dm.Name] == nil {
+		t.Error("DM was refused before being recorded")
+	}
+	f.gc.CityNotRunning = false
+	f.advance(t, 10*time.Second)
+	text := joinTurns(f.gc.Inbound())
+	if strings.Count(text, "direct-body") != 1 || strings.Count(text, "body-001") != 1 {
+		t.Errorf("poll did not retry both spaces once: %s", text)
+	}
+}
 
 func TestHeldActSavePrecedesAcknowledgment(t *testing.T) {
 	f := windowSetup(t, "8s")
