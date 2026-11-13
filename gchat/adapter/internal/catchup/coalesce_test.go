@@ -1,12 +1,69 @@
 package catchup
 
 import (
+	"context"
 	"fmt"
 	"github.com/BurntSushi/toml"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestCatchUpRetryCountsEveryAct(t *testing.T) {
+	f := setup(t)
+	if _, err := toml.Decode(`coalesce_window = "8s"`, &f.opts.Config.Settings); err != nil {
+		t.Fatal(err)
+	}
+	if f.r.budget != 50 {
+		t.Fatalf("default budget = %d, want 50", f.r.budget)
+	}
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 70; i++ {
+		f.addMessage("spaces/room", i, frozen.Add(-time.Hour+time.Duration(i+1)*time.Second)).Text = fmt.Sprintf("unique-body-%03d!", i)
+	}
+	f.freeze(t)
+	f.gc.CityNotRunning = true
+	if delivered, _, err := f.r.Pass(context.Background()); err == nil || delivered != 0 {
+		t.Fatalf("refused pass = %d, %v", delivered, err)
+	}
+	f.gc.CityNotRunning = false
+	previous := 0
+	for pass := 0; pass < 3; pass++ {
+		delivered, remaining, err := f.r.Pass(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := ""
+		for _, w := range f.gc.Inbound() {
+			text += w.Text
+		}
+		total := strings.Count(text, "unique-body-")
+		if actual := total - previous; actual > f.r.budget || delivered != actual {
+			t.Errorf("pass %d: delivered=%d actual=%d budget=%d", pass, delivered, actual, f.r.budget)
+		}
+		previous = total
+		if remaining == 0 {
+			break
+		}
+	}
+	text := ""
+	for _, w := range f.gc.Inbound() {
+		text += w.Text
+	}
+	last := -1
+	for i := 0; i < 70; i++ {
+		body := fmt.Sprintf("unique-body-%03d!", i)
+		at := strings.Index(text, body)
+		if strings.Count(text, body) != 1 || at <= last {
+			t.Fatalf("missing, duplicate or reordered act %d", i)
+		}
+		last = at
+	}
+	s := f.opts.Ledger.Spaces["spaces/room"]
+	if !s.MessageCursor.Equal(frozen) || !s.EventCursor.Equal(frozen) || len(s.Backlog) != 0 {
+		t.Fatal("cursor did not settle")
+	}
+}
 
 func TestCatchUpIsMerged(t *testing.T) {
 	f := setup(t)
