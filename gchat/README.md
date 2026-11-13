@@ -354,8 +354,10 @@ arrives up to eight seconds later, with a burst in one turn. Direct messages,
 mentions of the mayor and replies in a thread she wrote in arrive as fast as
 before. A mention or thread reply takes that room's held messages along in
 one turn. Reactions wait out the window, including reactions in DMs. After
-downtime, missed messages arrive in merged turns. Nothing changes before the
-pack update and adapter restart; `coalesce_window = "0s"` turns it off.
+downtime, missed messages arrive in merged turns. A box that sets nothing
+changes behavior when its adapter updates: the default is on at eight
+seconds. Restart the adapter after updating; `coalesce_window = "0s"` turns
+coalescing off.
 
 Each space has a fixed window, ending early at 50 acts or before adding a
 message would exceed 32,000 bytes. One oversized message goes alone. Each
@@ -367,7 +369,13 @@ The ledger saves held messages before acknowledging them and saves a merged
 turn before posting it. A stop leaves them there; the next start delivers them
 before that space's catch-up. A merged turn has one receipt, retry record and
 unresolved id, with its member count in status. Resolve that id once to replay
-the exact merged text or accept every member. History reads still use each
+the saved current text or accept every member. Before a retry, deleted members
+are removed and edited members use their current text. A surviving owner keeps
+the key; when the owner was deleted, the newest survivor owns the replacement.
+The edit or deletion follows that delivery. When gc had recorded a turn before
+it refused it, gc's saved transcript keeps that first text; the adapter sends
+the current text and then the withdrawal; a gc change is needed for the saved
+row itself. History reads still use each
 message's own text. A rollback delivers held messages individually and keeps
 delivered groups completed. A frozen group in flight remains one delivery on
 the older reader: pending receipts are polled, and an interrupted POST becomes

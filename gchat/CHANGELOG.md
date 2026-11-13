@@ -2,12 +2,14 @@
 
 ## Unreleased
 
+- Coalesced retries refresh withdrawn members before posting, preserve literal edit prefixes in history, quote body from-line prefixes, isolate malformed held records, and count retried catch-up acts against the budget.
+
 - Room chatter now waits a per-space window (default eight seconds) and arrives
   as one turn, with each message's full from line. DMs, mentions and replies in
   the mayor's threads arrive immediately; reactions wait for the window.
   Catch-up merges missed messages, and the ledger keeps held messages across
   stops and crashes. `coalesce_window = "0s"` restores individual turns.
-  This takes effect when a box updates the pack and restarts its adapter.
+  A box that sets nothing changes behavior when its adapter updates and restarts: the default is on.
   Remove the setting before rolling back to an older adapter.
 
 - The skill gives reactions fixed meanings, with the same tables and rules
