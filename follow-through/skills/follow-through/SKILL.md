@@ -72,7 +72,8 @@ When no item goes in, send nothing.
 There is no second follow-up, ever. The pack will not ask again about an
 item it raised. If a mail names an item you already handled, with a
 follow-up or by leaving it out, it is the same ask arriving a second time.
-Send nothing for it. Look at the conversation before you write: a follow-up
+Send nothing for it. Look at the conversation before you write, and at any
+other channel the WhatsApp section below may have sent you to: a follow-up
 you already sent is there.
 
 A follow-up mail can come long after its items fell due, because a mail
@@ -259,10 +260,11 @@ and the word stopped. What you do depends on its kind:
 - For a stopped `hours-notice`, do what the No daytime hours section above
   says, as if its mail had come.
 - For a stopped `reminder`, you still give it, because the owner was told it
-  is set. Find it with `gc follow-through remind --list`: it is a reminder of
-  that conversation still shown as set after its time. Then do what the
-  Reminders section says for a reminder mail that says it is late, as if
-  that mail had just come.
+  is set. Status does not say which reminder stopped. Run
+  `gc follow-through remind --list`, and for every reminder of that
+  conversation still shown as set after its time, do what the Reminders
+  section says for a reminder mail that says it is late, as if that mail had
+  just come.
 
 ## The verbs
 
