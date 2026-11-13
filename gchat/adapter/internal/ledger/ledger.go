@@ -125,6 +125,10 @@ type ChangeState struct {
 	// The owner retains its own original message for history and attribution.
 	MemberEvent string `json:"member_event,omitempty"`
 	MemberKind  string `json:"member_kind,omitempty"`
+	// MemberRevision identifies the effective text saved when a failed merged
+	// delivery is refreshed after an edit. Older readers ignore this field and
+	// send the already-refreshed Event under the existing delivery key.
+	MemberRevision time.Time `json:"member_revision,omitzero"`
 	// NextAttempt is the earliest time of the next POST of a change that gc
 	// answered "not delivered" four or more times.
 	NextAttempt time.Time `json:"next_attempt,omitzero"`

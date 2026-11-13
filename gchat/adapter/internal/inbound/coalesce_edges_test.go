@@ -98,8 +98,10 @@ func TestRetryNeverSendsWithdrawnText(t *testing.T) {
 				if form == "edit_owner" {
 					unresolved++ // the earlier standalone create
 				}
-				if len(f.l.Unresolved) != unresolved || len(f.mails) != unresolved {
-					t.Errorf("unresolved=%d mails=%d want=%d", len(f.l.Unresolved), len(f.mails), unresolved)
+				// The parent mails a withdrawal only to end an earlier stuck
+				// mail. These brief outages never reached StuckAfter.
+				if len(f.l.Unresolved) != unresolved || len(f.mails) != 0 {
+					t.Errorf("unresolved=%d want=%d mails=%d want=0", len(f.l.Unresolved), unresolved, len(f.mails))
 				}
 				for _, c := range f.l.Unresolved {
 					if c.Reason != reasonWithdrawn {

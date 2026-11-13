@@ -1070,6 +1070,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 		name = strings.Split(c.Reaction.Name, "/reactions/")[0]
 	}
 	unavailable := strings.HasPrefix(local, "space unavailable") || strings.HasPrefix(local, "parent unavailable")
+	refreshed := false
 	err = p.update(func(l *ledger.Ledger) {
 		status := "intent"
 		if local != "" {
@@ -1093,6 +1094,13 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			}
 			l.Messages[name] = state
 		}
+		if c.Kind == "message.updated" || c.Kind == "message.deleted" {
+			for _, owner := range l.Changes {
+				if owner.Space == c.Space {
+					refreshed = p.refreshMerged(l, owner) || refreshed
+				}
+			}
+		}
 		if space != nil {
 			// Preserve cursors/backlog and any concurrent wake-policy update.
 			if current := l.Spaces[c.Space]; current != nil {
@@ -1105,6 +1113,13 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			}
 		}
 	})
+	if err == nil && refreshed {
+		var l *ledger.Ledger
+		l, err = p.snapshot()
+		if err == nil {
+			err = ReconcileNeverSilent(l, p.opts.NeverSilent)
+		}
+	}
 	if err == nil && unavailable {
 		p.opts.Logger.Warn("inbound change retained", "space", c.Space, "change", id, "message", name, "cause", local)
 	}
@@ -1136,6 +1151,21 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		}
 		if isHeld(c) {
 			return nil
+		}
+		if p.refreshMerged(l, c) {
+			if err := p.opts.NeverSilent.WithHistory(func() error {
+				if err := p.update(func(current *ledger.Ledger) { p.refreshMerged(current, current.Changes[id]) }); err != nil {
+					return err
+				}
+				current, err := p.snapshot()
+				if err != nil {
+					return err
+				}
+				return ReconcileNeverSilent(current, p.opts.NeverSilent)
+			}); err != nil {
+				return err
+			}
+			continue
 		}
 		if superseded(l, c) {
 			return p.unresolved(id, reasonWithdrawn)
@@ -1270,7 +1300,7 @@ func reasonCode(code string) string {
 // a newer edit or tombstone. Keep it for an operator instead of replaying it.
 // Pending receipts still get polled: they describe a POST already in flight.
 func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
-	if c.Kind != "message.created" && c.Kind != "message.updated" {
+	if c.OriginalKind() != "message.created" && c.OriginalKind() != "message.updated" {
 		return false
 	}
 	state := l.Messages[c.Message]
@@ -1280,12 +1310,15 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 	if state.Deleted {
 		return true
 	}
+	if !c.MemberRevision.IsZero() && !state.Revision.After(c.MemberRevision) {
+		return false
+	}
 	if stamp, ok := strings.CutPrefix(c.ID, c.Message+"#updated#"); ok {
 		revision, err := time.Parse(time.RFC3339Nano, stamp)
 		return err == nil && state.Revision.After(revision)
 	}
 	for _, other := range l.Changes {
-		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID && other.Cause != "before_history_floor" && other.Cause != "history_time_missing" {
+		if other.Message == c.Message && other.OriginalKind() == "message.updated" && other.ID != c.ID && other.MemberOf != c.ID && other.Cause != "before_history_floor" && other.Cause != "history_time_missing" {
 			return true
 		}
 	}

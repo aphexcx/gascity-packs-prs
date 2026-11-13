@@ -33,7 +33,7 @@ func ReconcileNeverSilent(l *ledger.Ledger, notices *neversilent.Engine) error {
 			// Migration can retain old delivery observations, but the retired
 			// attempt no longer owes an answer. Do this before NoticeDelivered.
 			err = notices.ForgetTracked(id)
-			if err == nil && c.Kind == "message.created" && c.Message != id && l.Changes[c.Message] == nil {
+			if err == nil && c.OriginalKind() == "message.created" && c.Message != id && l.Changes[c.Message] == nil {
 				// A queued create with no usable time has a history-only ID.
 				// Its old enrollment used the message ID. A surviving primary
 				// record belongs to a valid act and must not be forgotten.
