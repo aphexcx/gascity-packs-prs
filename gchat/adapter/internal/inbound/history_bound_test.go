@@ -253,7 +253,7 @@ func TestHistoryBatchUsesEachResourceTime(t *testing.T) {
 	}
 }
 
-func TestMessageWithoutActTimeUsesPublishTime(t *testing.T) {
+func TestMessageWithoutActTimeNeverUsesPublishTime(t *testing.T) {
 	for _, kind := range []string{"created", "updated"} {
 		for _, stamp := range []string{"old", "new", "none"} {
 			t.Run(kind+"/"+stamp, func(t *testing.T) {
@@ -275,15 +275,18 @@ func TestMessageWithoutActTimeUsesPublishTime(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				handle(t, f, ev)
-				want := 0
-				if stamp == "new" {
-					want = 1
+				out, err := f.p.Handle(t.Context(), ev)
+				if kind == "updated" {
+					if out != puller.Quarantine || err == nil || err.Error() != "inbound: update time missing" {
+						t.Errorf("Handle=%v, %v; want missing-time quarantine", out, err)
+					}
+				} else if out != puller.Ack || err != nil {
+					t.Errorf("Handle=%v, %v; want Ack", out, err)
 				}
-				if len(f.gc.Inbound()) != want {
-					t.Errorf("turns=%d want %d", len(f.gc.Inbound()), want)
+				if len(f.gc.Inbound()) != 0 {
+					t.Errorf("turns=%d want 0", len(f.gc.Inbound()))
 				}
-				if stamp == "none" && f.l.Counters["history_time_missing:"+space] != 1 {
+				if kind == "created" && f.l.Counters["history_time_missing:"+space] != 1 {
 					t.Error("missing-time counter absent")
 				}
 			})
