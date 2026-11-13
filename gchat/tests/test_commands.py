@@ -363,6 +363,12 @@ class ProxyCommandsTest(ProxyFixture):
         self.assertNotIn("stuck", result.stdout)
         self.assertNotIn("age", result.stdout)
 
+    def test_status_text_names_window_and_held_acts(self):
+        self.respond("/status", {"health": {"state": "ready"}, "coalesce_window": "8s", "held_acts": 3})
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Coalescing: 8s; held acts: 3", result.stdout.splitlines())
+
     def test_status_text_names_the_history_floor(self):
         value = {"health": {"state": "ready"}, "history_floor": "2030-01-02T03:04:05Z"}
         self.respond("/status", value)
