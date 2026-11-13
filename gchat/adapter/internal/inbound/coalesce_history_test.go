@@ -2,13 +2,46 @@ package inbound
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/provenance"
+	"gchat-adapter/internal/wire"
 )
+
+func TestWithdrawnRecordKeepsHistorySpeaker(t *testing.T) {
+	f := windowSetup(t, "8s")
+	f.send(t, 1, "message.created", nil)
+	f.now = f.now.Add(time.Second)
+	owner := f.send(t, 2, "message.created", nil)
+	f.gc.CityNotRunning = true
+	f.now = f.now.Add(8 * time.Second)
+	_ = f.p.Poll(context.Background())
+	original := f.l.Changes[owner.Name].OriginalEvent()
+	f.handle(t, event("delete-owner", "message.deleted", owner))
+	c := f.l.Unresolved[owner.Name]
+	if c == nil || c.Event != "" || c.OriginalEvent() != original || c.OriginalKind() != "message.created" {
+		t.Fatal("retirement must keep its per-message history and erase its replay payload")
+	}
+	var before, after wire.InboundMessage
+	if err := json.Unmarshal([]byte(original), &before); err != nil {
+		t.Fatal(err)
+	}
+	frame, ok := provenance.FrameOf(before.Text)
+	if !ok {
+		t.Fatal("fixture lacks a speaker frame")
+	}
+	f.l.HistoryFloor = f.now.Add(time.Hour)
+	RetireSpaceHistory(f.l, f.opts.Config, space, nil)
+	c = f.l.Changes[owner.Name]
+	if c == nil || json.Unmarshal([]byte(c.Event), &after) != nil || after.Text != frame || after.Actor != before.Actor {
+		t.Fatal("history migration lost the retired member's sender")
+	}
+}
 
 func TestCoalescedKindReadersRetireOldHistory(t *testing.T) {
 	for _, mode := range []string{"folded", "merged", "queued_edit"} {
