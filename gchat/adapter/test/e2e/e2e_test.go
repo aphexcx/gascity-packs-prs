@@ -1571,6 +1571,8 @@ func scenariosOperations(t *testing.T) {
 	})
 	t.Run("revoked token puts the adapter in `needs-sign-in` and health says so", func(t *testing.T) {
 		f := newFixture(t)
+		f.ready()
+		f.stop()
 		f.replaceToken(true)
 		f.google.Configure(func(g *fakegoogle.Server) { g.TokenError = "invalid_grant" })
 		f.start()

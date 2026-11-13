@@ -207,6 +207,8 @@ window on first start or reset. It is a Go duration string, from `"0s"` to
 `"168h"` inclusive; write `"24h"` for a day, not `"1d"`. Omit it to start at
 the current time. Set it before the first connection; changing it after a
 subscription has been recorded does not change the saved history bound.
+Remove this key before rolling back to 0.5.0, whose settings loader refuses
+unknown keys. The older ledger reader ignores the floor and keeps saved cursors.
 
 Optional endpoint/path overrides for tests and private deployments:
 `GCHAT_CHAT_API_BASE`, `GCHAT_EVENTS_API_BASE`, `GCHAT_PUBSUB_ENDPOINT`,
