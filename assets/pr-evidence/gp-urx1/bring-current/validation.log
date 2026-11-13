@@ -1,0 +1,166 @@
+Validation status excerpts; all test commands unset GC_BIN.
+Node through pnpm: v24.21.0.
+Code under test: 920210cd6b3d2c38934d7149fcc60240be97ea04 unless labeled main.
+Main archive: c26e664ec079f6a5e5cc9cab31a091500e4d6fd7.
+
+[gateway-test]
+Directory: whatsapp/gateway
+Command: env -u GC_BIN pnpm test
+Exit: 0
+ Test Files  6 passed (6)
+      Tests  351 passed (351)
+
+[gateway-typecheck]
+Directory: whatsapp/gateway
+Command: env -u GC_BIN pnpm typecheck
+Exit: 0
+
+[gateway-build]
+Directory: whatsapp/gateway
+Command: env -u GC_BIN pnpm build
+Exit: 0
+--dry-run: exiting now.
+
+[gateway-class]
+Directory: whatsapp/gateway
+Command: env -u GC_BIN pnpm exec vitest run test/wake.test.ts -t gp-urx1
+Exit: 0
+ Test Files  1 passed (1)
+      Tests  18 passed | 34 skipped (52)
+
+[diff-check]
+Directory: <clone>
+Command: git diff --check c26e664ec079f6a5e5cc9cab31a091500e4d6fd7 HEAD -- whatsapp
+Exit: 0
+
+[auto-merge-tree]
+Directory: <clone>
+Command: git diff --exit-code 406c32fdf599ee051e1be4c19aa02dc514d5e8ff HEAD -- . ':(exclude)whatsapp/CHANGELOG.md'
+Exit: 0
+
+[conflict-markers]
+Directory: <clone>
+Command: python3 -I -c 'import subprocess,sys; r=subprocess.run(["rg","-n","--max-columns","200","^(<<<<<<<|=======|>>>>>>>)","whatsapp"]); print("No conflict markers" if r.returncode==1 else "marker check failed"); sys.exit(0 if r.returncode==1 else 1)'
+Exit: 0
+
+[adapter-test]
+Directory: whatsapp/adapter
+Command: env -u GC_BIN pnpm test
+Exit: 1
+✖ C: dropping and reconnecting a held link preserves the outage and notice marks (22639.067667ms)
+ℹ tests 431
+ℹ pass 430
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+✖ C: dropping and reconnecting a held link preserves the outage and notice marks (22639.067667ms)
+
+[held-link-merge-1]
+Directory: whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js
+Exit: 1
+Uptime: 16:17  up 4 days,  3:40, 5 users, load averages: 5.02 14.71 24.26
+✖ C: dropping and reconnecting a held link preserves the outage and notice marks (22653.510708ms)
+ℹ tests 7
+ℹ pass 6
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+✖ C: dropping and reconnecting a held link preserves the outage and notice marks (22653.510708ms)
+
+[held-link-main-1]
+Directory: <tmp>/main-tree/whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js
+Exit: 1
+Uptime: 16:17  up 4 days,  3:41, 5 users, load averages: 4.01 13.10 23.18
+Setup failure only: partial archive omitted whatsapp/media-types.json; excluded from comparison.
+ℹ tests 1
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+
+[held-link-main-1-complete]
+Directory: <tmp>/main-tree/whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js
+Exit: 0
+Uptime: 16:18  up 4 days,  3:41, 5 users, load averages: 7.65 13.22 22.93
+ℹ tests 7
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+
+[held-link-merge-2]
+Directory: whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js
+Exit: 0
+Uptime: 16:18  up 4 days,  3:42, 5 users, load averages: 9.03 12.97 22.50
+ℹ tests 7
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+
+[held-link-main-2]
+Directory: <tmp>/main-tree/whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js
+Exit: 0
+Uptime: 16:19  up 4 days,  3:43, 5 users, load averages: 6.31 11.44 21.22
+ℹ tests 7
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+
+[held-link-merge-3]
+Directory: whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js
+Exit: 0
+Uptime: 16:20  up 4 days,  3:43, 5 users, load averages: 5.39 10.65 20.54
+ℹ tests 7
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+
+[held-link-main-3]
+Directory: <tmp>/main-tree/whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js
+Exit: 0
+Uptime: 16:20  up 4 days,  3:44, 5 users, load averages: 5.11 10.25 20.17
+ℹ tests 7
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+
+[adapter-class]
+Directory: whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 --test-name-pattern=gp-urx1 test/link.test.js test/link-engine.test.js
+Exit: 0
+Uptime: 16:21  up 4 days,  3:44, 5 users, load averages: 4.83 9.54 19.45
+ℹ tests 11
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+
+[held-link-D-observation]
+Directory: whatsapp/adapter
+Command: env -u GC_BIN pnpm exec node --test --test-concurrency=1 '--test-name-pattern=^D:' <tmp>/held-link-observation.test.mjs
+Exit: 0
+Uptime: 16:22  up 4 days,  3:45, 5 users, load averages: 9.69 10.11 19.15
+ℹ observed safety-read link: {"mode":"poll","state":"up","since":1793804700000,"last_wake_at":null,"wakes":0,"reconnects":0,"reason":"unannounced_delivery"}
+ℹ tests 1
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+
+[pack-test]
+Directory: <clone>
+Command: env -u GC_BIN -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest whatsapp/tests -q
+Exit: 0
+Uptime: 16:22  up 4 days,  3:45, 5 users, load averages: 8.26 9.78 18.87
+107 passed in 63.88s (0:01:03)
