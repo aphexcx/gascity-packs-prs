@@ -169,6 +169,21 @@ func (p *Processor) flushSpace(ctx context.Context, space string, catchUp, force
 		if len(acts) == 0 {
 			return nil
 		}
+		// A damaged member is its own unresolved delivery. Remove it before
+		// rendering so it cannot poison its neighbors or every window pass.
+		malformed := false
+		for _, c := range acts {
+			var w wire.InboundMessage
+			if json.Unmarshal([]byte(c.Event), &w) != nil || w.ProviderMessageID != c.ID {
+				if err := p.unresolved(c.ID, "stored turn is malformed"); err != nil {
+					return err
+				}
+				malformed = true
+			}
+		}
+		if malformed {
+			continue
+		}
 		n := min(len(acts), windowActLimit)
 		for i := 2; i <= n; i++ {
 			w, _, err := p.merged(acts[:i], anchor)
@@ -320,15 +335,16 @@ func (p *Processor) flushWindows(ctx context.Context) error {
 		ordered = append(ordered, name)
 	}
 	sort.Strings(ordered)
+	var failures []error
 	for _, name := range ordered {
 		if err = p.flushSpace(ctx, name, false, false, ""); err != nil {
-			return err
+			failures = append(failures, err)
 		}
 		if err = p.flushSpace(ctx, name, true, true, ""); err != nil {
-			return err
+			failures = append(failures, err)
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func (p *Processor) signalWindow() {

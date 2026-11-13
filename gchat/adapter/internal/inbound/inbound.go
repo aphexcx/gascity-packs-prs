@@ -224,7 +224,9 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 		return puller.Quarantine, errors.New("inbound: missing event")
 	}
 	if err := p.flushWindows(ctx); err != nil {
-		return puller.Nack, err
+		// Existing obligations retain their own failure. Record this event
+		// before deciding its outcome, even when another space is unavailable.
+		p.opts.Logger.Warn("inbound window deferred; retained for retry")
 	}
 	l, err := p.snapshot()
 	if err != nil {
@@ -300,8 +302,9 @@ func (p *Processor) Pass(ctx context.Context) error {
 		return err
 	}
 	defer p.leave()
+	var failures []error
 	if err := p.flushWindows(ctx); err != nil {
-		return err
+		failures = append(failures, err)
 	}
 	var l *ledger.Ledger
 	if err := p.opts.NeverSilent.WithHistory(func() error {
@@ -321,7 +324,6 @@ func (p *Processor) Pass(ctx context.Context) error {
 		}
 	}
 	sort.Slice(ids, func(i, j int) bool { return earlier(l.Changes[ids[i]], l.Changes[ids[j]]) })
-	var failures []error
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return err
