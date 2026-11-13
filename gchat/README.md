@@ -373,9 +373,12 @@ the saved current text or accept every member. Before a retry, deleted members
 are removed and edited members use their current text. A surviving owner keeps
 the key; when the owner was deleted, the newest survivor owns the replacement,
 including the turn's attempt count, fragment marker and retry schedule.
-Changing the owner never resets the fragment retry bound. After an unknown
-outcome, the surviving turn ends unresolved for the operator to inspect and
-accept or replay; an owner change never makes that turn automatically sendable.
+Changing the owner never resets the fragment retry bound. An interrupted intent
+with an unknown POST outcome becomes an unresolved surviving turn; inspect the
+delivery before accepting it or replaying its sanitized payload. If a turn was
+already unresolved when the withdrawal arrived, its frozen payload is cleared
+and only acceptance is available. An owner change never makes an unknown
+outcome automatically sendable.
 The deleted owner's retired record has no replayable payload and can be accepted.
 The edit or deletion follows that delivery. When gc had recorded a turn before
 it refused it, gc's saved transcript keeps that first text; the adapter sends
