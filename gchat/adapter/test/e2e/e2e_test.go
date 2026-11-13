@@ -495,19 +495,26 @@ func TestEndToEnd(t *testing.T) {
 		}
 	})
 	t.Run("reaction on own message is a turn, on another's is not", func(t *testing.T) {
-		f := newFixture(t)
-		f.ready()
-		own := f.publishViaGC("my message", "")
-		f.assertSent(own, 1)
-		other := f.emitMessage("spaces/room", "their message", "users/222")
-		f.committed(other.Name)
-		for i, parent := range []string{own.MessageID, other.Name} {
-			r := &api.Reaction{Name: parent + "/reactions/r", User: &api.User{Name: "users/333"}, Emoji: &api.Emoji{Unicode: "👍"}}
-			f.emit("reaction.v1.created", fmt.Sprint("react", i), map[string]any{"reaction": r})
-			f.committed(r.Name + "#created")
+		for _, mode := range []string{"off", "default"} {
+			t.Run(mode, func(t *testing.T) {
+				f := newFixture(t)
+				if mode == "default" {
+					f.cfg.Settings.CoalesceWindow = nil
+				}
+				f.ready()
+				own := f.publishViaGC("my message", "")
+				f.assertSent(own, 1)
+				other := f.emitMessage("spaces/room", "their message", "users/222")
+				f.committed(other.Name)
+				for i, parent := range []string{own.MessageID, other.Name} {
+					r := &api.Reaction{Name: parent + "/reactions/r", User: &api.User{Name: "users/333"}, Emoji: &api.Emoji{Unicode: "👍"}}
+					f.emit("reaction.v1.created", fmt.Sprint("react", i), map[string]any{"reaction": r})
+					f.committed(r.Name + "#created")
+				}
+				f.turns(2)
+				f.expectTurn(t, "reaction created: 👍")
+			})
 		}
-		f.turns(2)
-		f.expectTurn(t, "reaction created: 👍")
 	})
 	t.Run("two users react to one message, and one user removes and re-adds a reaction, each delivered once", func(t *testing.T) {
 		f := newFixture(t)
@@ -858,55 +865,62 @@ func scenariosRecovery(t *testing.T) {
 		}
 	})
 	t.Run("subscription lapsed, catch-up delivers only what was missed, once, with the cursor advancing only past handled records", func(t *testing.T) {
-		f := newFixture(t)
-		f.ready()
-		m := f.emitMessage("spaces/room", "already seen", "users/222")
-		f.committed(m.Name)
-		f.barrier()
-		old := f.state().Spaces["spaces/room"].MessageCursor
-		f.google.Configure(func(g *fakegoogle.Server) { g.Messages[m.Name] = m })
-		f.history(3, "spaces/room", time.Now().Add(-time.Second))
-		f.google.Advance(5 * time.Hour)
-		var blocked atomic.Bool
-		var recoveryChecks atomic.Int32
-		blocked.Store(true)
-		f.setHook(func(w http.ResponseWriter, r *http.Request) bool {
-			if strings.HasSuffix(r.URL.Path, "/inbound") {
-				if blocked.Load() {
-					http.Error(w, "outage", http.StatusServiceUnavailable)
-					return true
+		for _, mode := range []string{"off", "default"} {
+			t.Run(mode, func(t *testing.T) {
+				f := newFixture(t)
+				if mode == "default" {
+					f.cfg.Settings.CoalesceWindow = nil
 				}
-				recoveryChecks.Add(1)
+				f.ready()
+				m := f.emitMessage("spaces/room", "already seen", "users/222")
+				f.committed(m.Name)
+				f.barrier()
+				old := f.state().Spaces["spaces/room"].MessageCursor
+				f.google.Configure(func(g *fakegoogle.Server) { g.Messages[m.Name] = m })
+				f.history(3, "spaces/room", time.Now().Add(-time.Second))
+				f.google.Advance(5 * time.Hour)
+				var blocked atomic.Bool
+				var recoveryChecks atomic.Int32
+				blocked.Store(true)
+				f.setHook(func(w http.ResponseWriter, r *http.Request) bool {
+					if strings.HasSuffix(r.URL.Path, "/inbound") {
+						if blocked.Load() {
+							http.Error(w, "outage", http.StatusServiceUnavailable)
+							return true
+						}
+						recoveryChecks.Add(1)
+						if !f.state().Spaces["spaces/room"].MessageCursor.Equal(old) {
+							t.Error("cursor advanced before a recovered record was handled")
+						}
+					}
+					return false
+				})
+				f.lifecycle("expired")
+				eventually(t, 5*time.Second, func() bool { return len(f.state().Spaces["spaces/room"].Backlog) > 0 })
 				if !f.state().Spaces["spaces/room"].MessageCursor.Equal(old) {
-					t.Error("cursor advanced before a recovered record was handled")
+					t.Fatal("cursor advanced over unhandled records")
 				}
-			}
-			return false
-		})
-		f.lifecycle("expired")
-		eventually(t, 5*time.Second, func() bool { return len(f.state().Spaces["spaces/room"].Backlog) > 0 })
-		if !f.state().Spaces["spaces/room"].MessageCursor.Equal(old) {
-			t.Fatal("cursor advanced over unhandled records")
+				blocked.Store(false)
+				eventually(t, 20*time.Second, func() bool {
+					state := f.state().Spaces["spaces/room"]
+					return len(state.Backlog) == 0 && state.MessageCursor.After(old)
+				})
+				f.health("ready", 20*time.Second)
+				f.turns(4)
+				s := f.state().Spaces["spaces/room"]
+				if !s.MessageCursor.After(old) || len(s.Backlog) != 0 || recoveryChecks.Load() == 0 {
+					t.Fatal("cursor did not settle")
+				}
+				for _, v := range f.gc.Inbound()[1:] {
+					if !strings.HasPrefix(v.Text, "[catch-up]\n") {
+						t.Fatal("missing catch-up marker")
+					}
+				}
+				f.stop()
+				f.ready()
+				f.turns(4)
+			})
 		}
-		blocked.Store(false)
-		eventually(t, 20*time.Second, func() bool {
-			state := f.state().Spaces["spaces/room"]
-			return len(state.Backlog) == 0 && state.MessageCursor.After(old)
-		})
-		f.health("ready", 20*time.Second)
-		f.turns(4)
-		s := f.state().Spaces["spaces/room"]
-		if !s.MessageCursor.After(old) || len(s.Backlog) != 0 || recoveryChecks.Load() == 0 {
-			t.Fatal("cursor did not settle")
-		}
-		for _, v := range f.gc.Inbound()[1:] {
-			if !strings.HasPrefix(v.Text, "[catch-up]\n") {
-				t.Fatal("missing catch-up marker")
-			}
-		}
-		f.stop()
-		f.ready()
-		f.turns(4)
 	})
 	t.Run("three thousand missed messages drain over several passes with the backlog visible in status", func(t *testing.T) {
 		f := newFixture(t)
