@@ -18,6 +18,14 @@ binding = "DB"
 database_name = "whatsapp-gateway"
 migrations_dir = "migrations"
 
+[[durable_objects.bindings]]
+name = "CITY_WAKE"
+class_name = "CityWake"
+
+[[migrations]]
+tag = "city-wake-v1"
+new_sqlite_classes = ["CityWake"]
+
 # One daily maintenance run: bodies past the 7-day hold, expired codes, aged idempotency keys.
 [triggers]
 crons = ["17 4 * * *"]
@@ -33,6 +41,7 @@ enabled = true
 invocation_logs = false
 
 [vars]
+WAKE = "on"
 PUBLIC_URL = "https://whatsapp.dynasty.computer"
 DISPLAY_NAME = "Dynasty"
 # Read 2026-11-04 on https://developers.facebook.com/docs/graph-api/changelog/versions:

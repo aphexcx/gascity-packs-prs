@@ -815,3 +815,22 @@ def test_enroll_writes_the_credential_0600_and_prints_nothing_secret(tmp_path):
         assert again.returncode == 1 and 'already holds' in again.stderr
     finally:
         server.shutdown()
+
+
+@pytest.mark.parametrize('mode,state,reason', [('held', 'up', ''), ('poll', 'down', 'pong_timeout')])
+def test_status_renders_gateway_link_directly_below_enrollment(fake, mode, state, reason):
+    adapter = fake({'GET /status': (200, {
+        'health': {'gateway_auth': 'ok'},
+        'inbound': {'link': {'mode': mode, 'state': state, 'since': 1800000000000,
+                            'last_wake_at': None, 'wakes': 2, 'reconnects': 1, 'reason': reason},
+                    'last_poll_at': None, 'entries': {}, 'acks_owed': 0, 'dead_letters': 0, 'held': [], 'gaps': []},
+        'keeper': {'conversations': {}},
+    })})
+    result = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    enrolled = lines.index('Enrolled:      yes')
+    assert lines[enrolled + 1].startswith(f'Gateway link:  {mode} ({state}')
+    assert 'wakes 2' in lines[enrolled + 1] and 'reconnects 1' in lines[enrolled + 1]
+    if reason:
+        assert reason in lines[enrolled + 1]

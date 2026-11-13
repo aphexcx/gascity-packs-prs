@@ -1,8 +1,15 @@
 // The bindings the tests see: the Worker's own (wrangler.toml and the test secrets in
 // vitest.config.ts) plus the migrations test/setup.ts applies.
+declare module "*?raw" {
+  const source: string;
+  export default source;
+}
+
 declare namespace Cloudflare {
   interface Env {
     DB: D1Database;
+    CITY_WAKE: DurableObjectNamespace<import("../src/wake.js").CityWake>;
+    WAKE?: string;
     MIGRATION_DB: D1Database;
     BACKFILL_DB: D1Database;
     TEST_MIGRATIONS: import("cloudflare:test").D1Migration[];

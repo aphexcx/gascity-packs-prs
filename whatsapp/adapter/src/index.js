@@ -9,6 +9,7 @@
 //   WHATSAPP_STATE_DIR                override of the state dir (tests)
 //   WHATSAPP_GATEWAY_URL, WHATSAPP_GATEWAY_CREDENTIAL   the gateway and the per-city credential
 //   WHATSAPP_POLL_MS (2000), WHATSAPP_WATERMARK_CHECK_MS (60000), WHATSAPP_TICK_MS (250),
+//   WHATSAPP_HELD_CONNECTION (on), WHATSAPP_HELD_POLL_MS (300000),
 //   WHATSAPP_GC_POST_TIMEOUT_MS (30000), WHATSAPP_GATEWAY_TIMEOUT_MS (15000),
 //   WHATSAPP_COMPACT_MS (600000), WHATSAPP_ROUTE_AGENT (mayor),
 //   WHATSAPP_KEEPER_UPDATE_HOUR (10), WHATSAPP_CITY_TZ, WHATSAPP_UPDATE_LANGUAGE (en_US),
@@ -72,6 +73,8 @@ export function loadConfig() {
     gatewayURL: getenv('WHATSAPP_GATEWAY_URL'),
     credential: getenv('WHATSAPP_GATEWAY_CREDENTIAL'),
     pollMs: intEnv('WHATSAPP_POLL_MS', 2000),
+    heldConnection: getenv('WHATSAPP_HELD_CONNECTION', 'on') !== 'off',
+    heldPollMs: intEnv('WHATSAPP_HELD_POLL_MS', 300000),
     watermarkCheckMs: intEnv('WHATSAPP_WATERMARK_CHECK_MS', 60000),
     tickMs: intEnv('WHATSAPP_TICK_MS', 250),
     gcPostTimeoutMs: intEnv('WHATSAPP_GC_POST_TIMEOUT_MS', 30000),
@@ -311,6 +314,7 @@ export async function main() {
     compactMs: cfg.compactMs,
     routeAgent: cfg.routeAgent,
     onAuthFailure: () => { authState = 'revoked or not enrolled'; },
+    heldConnection: { gatewayURL: cfg.gatewayURL, credential: cfg.credential, enabled: cfg.heldConnection, pollMs: cfg.heldPollMs },
   });
 
   const health = () => ({

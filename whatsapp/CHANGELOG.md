@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased (gp-60dl)
+
+- A hibernating WebSocket per city wakes the adapter to read its existing
+  inbox. Quiet connections use a five-minute safety read; disconnected or
+  unsupported boxes keep polling. The journal, inbox and acknowledgement
+  contract stay unchanged. Status shows whether the link is held or polling.
+- The gateway switch closes existing sockets on the next message or inbox
+  read; a per-box switch restores polling immediately on restart. No D1
+  migration, and no deployment is included in this change.
+- Add opt-in never-silent owner notices, durable outage mail and health/status reporting for newly addressed human messages.
+
 ## Unreleased (gp-tu0b)
 
 - Test fixtures now use invented names.
@@ -17,8 +28,6 @@
   a message that only thanks, confirms, agrees or closes a topic gets an
   answer in words (gp-1v3u). The rows are a catalog, `reactions.json` at the
   pack's root and the same file in all three packs (gp-bis1).
-- Add opt-in never-silent owner notices, durable outage mail and health/status reporting for newly addressed human messages.
-
 - The adapter keys every owner by the gateway's `conversation_id` (PR 76's
   inbox), never the number: the gc conversation and the actor, the chain, the
   watermark, the lookup and the probe, the dead letter, the window ledger, the

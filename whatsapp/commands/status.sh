@@ -38,6 +38,7 @@ printf '%s' "$WA_BODY" | jq -r '
   def t: if . == null then "-" elif type == "number" then (. / 1000 | floor | todate) else (tostring | sub("\\.[0-9]+Z$"; "Z")) end;
   def last4: tostring | gsub("[^0-9A-Za-z]"; "") | .[-4:];
   "Enrolled:      \(if .health.gateway_auth == "ok" then "yes" else .health.gateway_auth end)",
+  ((.inbound.link // {}) as $l | "Gateway link:  \($l.mode // "poll") (\($l.state // "unavailable")\(if ($l.reason // "") != "" then "; \($l.reason)" else "" end)); since \($l.since | t); last wake \($l.last_wake_at | t); wakes \($l.wakes // 0); reconnects \($l.reconnects // 0)"),
   "Last poll:     \(.inbound.last_poll_at | t)\(if (.inbound.last_poll_error // "") != "" then " (error: \(.inbound.last_poll_error))" else "" end)",
   "Entries:       \(.inbound.entries | to_entries | map("\(.key) \(.value)") | join(", ") | if . == "" then "none" else . end); acks owed \(.inbound.acks_owed)\(if (.inbound.binds_owed // 0) > 0 then " (\(.inbound.binds_owed) held for a keeper bind)" else "" end)",
   "Dead letters:  \(.inbound.dead_letters)",
