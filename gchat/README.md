@@ -481,9 +481,9 @@ message still arrives. `gc gchat read` keeps reading the old message's body.
 For a message missing its resource time, the history bound uses its event time;
 Pub/Sub publish time never decides. With neither time, an edit is quarantined
 and a create in a bounded space is skipped, counted as
-`history_time_missing:<space>` and logged without message text. A malformed
-resource time is quarantined. Spaces without a bound keep the released
-behavior: a missing edit time is quarantined, and a timeless create is a turn.
+`history_time_missing:<space>` and logged without message text. Spaces without
+a bound keep the released behavior: a missing edit time is quarantined, and a
+timeless create is a turn.
 Other acts keep their publish-time fallback when event time is missing.
 
 A space first encountered without a cursor or observed join starts at the

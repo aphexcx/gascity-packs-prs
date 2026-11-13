@@ -1,0 +1,9 @@
+{"Time":"2026-11-13T05:01:15.664884-06:00","Action":"start","Package":"gchat-adapter/internal/app"}
+{"Time":"2026-11-13T05:01:15.874053-06:00","Action":"run","Package":"gchat-adapter/internal/app","Test":"TestReleasedCursorlessHistoryCannotReplayAfterHold"}
+{"Time":"2026-11-13T05:01:15.878229-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestReleasedCursorlessHistoryCannotReplayAfterHold","Output":"=== RUN   TestReleasedCursorlessHistoryCannotReplayAfterHold","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:17.966356-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestReleasedCursorlessHistoryCannotReplayAfterHold","Output":"    history_upgrade_test.go:156: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages"}
+{"Time":"2026-11-13T05:01:18.009454-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestReleasedCursorlessHistoryCannotReplayAfterHold","Output":"--- PASS: TestReleasedCursorlessHistoryCannotReplayAfterHold (2.14s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:18.01678-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Test":"TestReleasedCursorlessHistoryCannotReplayAfterHold","Elapsed":2.14}
+{"Time":"2026-11-13T05:01:18.016874-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:18.016944-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"ok  \tgchat-adapter/internal/app\t2.352s"}
+{"Time":"2026-11-13T05:01:18.016969-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Elapsed":2.352}

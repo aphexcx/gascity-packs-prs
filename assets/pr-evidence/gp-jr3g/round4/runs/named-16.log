@@ -1,0 +1,9 @@
+{"Time":"2026-11-13T05:01:12.680701-06:00","Action":"start","Package":"gchat-adapter/internal/inbound"}
+{"Time":"2026-11-13T05:01:12.878616-06:00","Action":"run","Package":"gchat-adapter/internal/inbound","Test":"TestHistoryRollbackExchange"}
+{"Time":"2026-11-13T05:01:12.881257-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestHistoryRollbackExchange","Output":"=== RUN   TestHistoryRollbackExchange","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:13.692059-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestHistoryRollbackExchange","Output":"    history_exchange_test.go:93: read 5 skipped-act records: zero turns after every unmentioned edit and deletion"}
+{"Time":"2026-11-13T05:01:13.696674-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestHistoryRollbackExchange","Output":"--- PASS: TestHistoryRollbackExchange (0.82s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:13.696702-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Test":"TestHistoryRollbackExchange","Elapsed":0.82}
+{"Time":"2026-11-13T05:01:13.69678-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:13.697615-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Output":"ok  \tgchat-adapter/internal/inbound\t1.017s"}
+{"Time":"2026-11-13T05:01:13.697649-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Elapsed":1.017}

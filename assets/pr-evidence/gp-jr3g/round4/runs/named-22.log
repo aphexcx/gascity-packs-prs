@@ -1,0 +1,20 @@
+{"Time":"2026-11-13T05:01:43.639945-06:00","Action":"start","Package":"gchat-adapter/internal/catchup"}
+{"Time":"2026-11-13T05:01:43.828458-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision"}
+{"Time":"2026-11-13T05:01:43.833325-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision","Output":"=== RUN   TestCursorlessMigrationRetiresEveryUpdateRevision","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:43.833387-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/intent"}
+{"Time":"2026-11-13T05:01:43.8334-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/intent","Output":"=== RUN   TestCursorlessMigrationRetiresEveryUpdateRevision/intent","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:43.952706-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/intent","Output":"--- PASS: TestCursorlessMigrationRetiresEveryUpdateRevision/intent (0.12s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:43.952753-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/intent","Elapsed":0.12}
+{"Time":"2026-11-13T05:01:43.958178-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/pending"}
+{"Time":"2026-11-13T05:01:43.958202-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/pending","Output":"=== RUN   TestCursorlessMigrationRetiresEveryUpdateRevision/pending","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:44.061536-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/pending","Output":"--- PASS: TestCursorlessMigrationRetiresEveryUpdateRevision/pending (0.11s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:44.061568-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/pending","Elapsed":0.11}
+{"Time":"2026-11-13T05:01:44.061577-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved"}
+{"Time":"2026-11-13T05:01:44.061584-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved","Output":"=== RUN   TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:44.201075-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved","Output":"--- PASS: TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved (0.14s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:44.206333-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved","Elapsed":0.14}
+{"Time":"2026-11-13T05:01:44.206388-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision","Output":"--- PASS: TestCursorlessMigrationRetiresEveryUpdateRevision (0.37s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:44.206406-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCursorlessMigrationRetiresEveryUpdateRevision","Elapsed":0.37}
+{"Time":"2026-11-13T05:01:44.206425-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:44.211856-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Output":"ok  \tgchat-adapter/internal/catchup\t0.570s"}
+{"Time":"2026-11-13T05:01:44.211874-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Elapsed":0.572}

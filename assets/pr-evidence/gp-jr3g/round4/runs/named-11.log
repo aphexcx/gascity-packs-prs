@@ -1,0 +1,8 @@
+{"Time":"2026-11-13T05:00:48.762904-06:00","Action":"start","Package":"gchat-adapter/internal/catchup"}
+{"Time":"2026-11-13T05:00:48.927603-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestSavedCursorStillDeliversItsOutage"}
+{"Time":"2026-11-13T05:00:48.932064-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestSavedCursorStillDeliversItsOutage","Output":"=== RUN   TestSavedCursorStillDeliversItsOutage","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:49.623926-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestSavedCursorStillDeliversItsOutage","Output":"--- PASS: TestSavedCursorStillDeliversItsOutage (0.70s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:49.624035-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestSavedCursorStillDeliversItsOutage","Elapsed":0.7}
+{"Time":"2026-11-13T05:00:49.624069-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:49.624809-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Output":"ok  \tgchat-adapter/internal/catchup\t0.860s"}
+{"Time":"2026-11-13T05:00:49.630738-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Elapsed":0.868}
