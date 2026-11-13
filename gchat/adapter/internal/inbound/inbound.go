@@ -1442,7 +1442,11 @@ func (p *Processor) unresolved(id, reason string) error {
 		if c == nil {
 			return
 		}
-		markUnresolved(l, id, c, reason, p.opts.Now())
+		if reason == reasonWithdrawn && (p.opts.Config.CoalesceWindow() > 0 || c.MemberEvent != "" || c.MemberOf != "" || len(c.Members) > 0) {
+			retireWithdrawn(l, c, p.opts.Now())
+		} else {
+			markUnresolved(l, id, c, reason, p.opts.Now())
+		}
 		recorded = true
 	})
 	if err == nil && recorded {

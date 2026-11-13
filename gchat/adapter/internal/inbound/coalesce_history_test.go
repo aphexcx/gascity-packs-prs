@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"gchat-adapter/internal/ledger"
-	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/provenance"
+	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 )
 

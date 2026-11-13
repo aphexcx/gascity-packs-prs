@@ -71,9 +71,8 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 	}
 	if len(survivors) == 0 {
 		// One frozen delivery becomes one unresolved obligation. Its members
-		// stay attached, and superseded prevents an operator replay from
-		// sending its withdrawn bytes.
-		markUnresolved(l, owner.ID, owner, reasonWithdrawn, p.opts.Now())
+		// stay attached; even a released reader cannot replay its old payload.
+		retireWithdrawn(l, owner, p.opts.Now())
 		return true
 	}
 	sort.Slice(survivors, func(i, j int) bool {
@@ -96,10 +95,9 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 	raw, _ := json.Marshal(w)
 	created := owner.Created
 	for _, c := range removed {
-		c.Event, c.Kind = c.OriginalEvent(), c.OriginalKind()
-		c.MemberEvent, c.MemberKind, c.MemberOf, c.Members = "", "", "", nil
+		c.MemberOf, c.Members = "", nil
 		c.HeldUntil = time.Time{}
-		markUnresolved(l, c.ID, c, reasonWithdrawn, p.opts.Now())
+		retireWithdrawn(l, c, p.opts.Now())
 	}
 	ids := make([]string, 0, len(survivors))
 	for _, copy := range survivors {
@@ -121,6 +119,14 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 	}
 	l.Changes[anchor].Members = ids
 	return true
+}
+
+// Keep per-message history, but no replayable delivery bytes. Both current and
+// released resolve handlers reject the empty Event before mutating retirement.
+func retireWithdrawn(l *ledger.Ledger, c *ledger.ChangeState, at time.Time) {
+	c.MemberEvent, c.MemberKind = c.OriginalEvent(), c.OriginalKind()
+	c.Event, c.Kind = "", c.MemberKind
+	markUnresolved(l, c.ID, c, reasonWithdrawn, at)
 }
 
 func currentEdit(l *ledger.Ledger, message string, revision time.Time) *ledger.ChangeState {
