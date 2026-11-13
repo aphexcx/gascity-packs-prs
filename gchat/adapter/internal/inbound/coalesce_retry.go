@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/wire"
 )
 
@@ -54,6 +55,9 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 					}
 				}
 			}
+			// Prefix removal can expose a body frame that Render did not see
+			// at line start. Persist safe text even for a singleton survivor.
+			w.Text = provenance.QuoteMergedHeaders(w.Text)
 			if member.CatchUp {
 				w.Text = "[catch-up]\n" + w.Text
 			}

@@ -64,18 +64,17 @@ func (r *Runner) prepareMerged(ctx context.Context, name string, budget *int) (i
 		if len(indexes) == 0 {
 			break
 		}
+		var batchErr error
 		if len(changes) > 0 {
-			out, err := r.opts.Processor.HandleChanges(ctx, changes)
-			if err != nil {
-				return delivered, err
-			}
-			if out != puller.Ack {
-				return delivered, errors.New("catchup: batch was not acknowledged")
+			var out puller.Outcome
+			out, batchErr = r.opts.Processor.HandleChanges(ctx, changes)
+			if batchErr == nil && out != puller.Ack {
+				batchErr = errors.New("catchup: batch was not acknowledged")
 			}
 		}
 		after, err := r.snapshot()
 		if err != nil {
-			return delivered, err
+			return delivered, errors.Join(batchErr, err)
 		}
 		for id, c := range after.Changes {
 			// A refused pass has already recorded its acts (including committed
@@ -108,6 +107,11 @@ func (r *Runner) prepareMerged(ctx context.Context, name string, budget *int) (i
 			if owner := after.Delivery(c); owner != nil && owner.Status == "committed" && owner.Reason == "delivered" {
 				delivered++
 			}
+		}
+		// Earlier turns can have landed before a later turn fails. Report
+		// those transitions now; a later pass sees them already committed.
+		if batchErr != nil {
+			return delivered, batchErr
 		}
 		if err = r.update(func(l *ledger.Ledger) error {
 			s, err := spaceState(l, name)
