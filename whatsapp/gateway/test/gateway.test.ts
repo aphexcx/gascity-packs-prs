@@ -1166,9 +1166,10 @@ describe("City side: the 24-hour window", () => {
     expect(w.find((x) => x.conversation_id === userOf(wa))).toEqual({ conversation_id: userOf(wa), user_id: userOf(wa), last_inbound_at: T0, window_closes_at: T0 + CLOSE });
 
     t.clock.now = T0 + 2 * HOUR;
+    const target = (await t.held(a)).find((d) => d.kind === "joined")!.wamid;
     const sends = [
       await t.send(a, { to: wa, idempotency_key: uniq(), type: "text", text: "a text" }),
-      await t.send(a, { to: wa, idempotency_key: uniq(), type: "reaction", reaction: { message_id: "wamid.X", emoji: "\u{1F44D}" } }),
+      await t.send(a, { to: wa, idempotency_key: uniq(), type: "reaction", reaction: { message_id: target, emoji: "\u{1F44D}" } }),
       await t.send(a, { to: wa, idempotency_key: uniq(), type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } }),
     ];
     expect(sends.map((s) => s.status)).toEqual([200, 200, 200]);

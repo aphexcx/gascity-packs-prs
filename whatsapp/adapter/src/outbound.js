@@ -150,7 +150,8 @@ export const templateKey = (key, to, { name, language, params }) => `template:${
 export const reactionKey = (key, to, messageId, emoji) => `reaction:${sha256Hex(JSON.stringify([key, to, messageId, emoji]))}`;
 const validMessageId = (id) => typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\s\x00-\x1f\x7f{}]/u.test(id);
 const requestedQuote = (id) => id === undefined || id === '' ? null
-  : validMessageId(id) ? { message_id: id } : { reason: 'invalid_id' };
+  : typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\s\x00-\x1f\x7f{}]/u.test(id)
+    ? { message_id: id } : { reason: 'invalid_id' };
 const quoteContext = (quote) => quote?.message_id ? { context: { message_id: quote.message_id } } : {};
 function quoteMetadata(quote, answer) {
   if (!quote) return {};
