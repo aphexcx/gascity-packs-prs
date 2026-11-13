@@ -78,8 +78,21 @@ func (r *Runner) prepareMerged(ctx context.Context, name string, budget *int) (i
 			return delivered, err
 		}
 		for id, c := range after.Changes {
-			if before.Changes[id] != nil {
+			// A refused pass has already recorded its acts (including committed
+			// members of an intent owner). They still spend this pass's budget
+			// when retried. Ignore deliveries outside this selected slice.
+			selected := false
+			for _, change := range changes {
+				selected = selected || related(change, c)
+			}
+			if !selected {
 				continue
+			}
+			if old := before.Changes[id]; old != nil {
+				owner := before.Delivery(old)
+				if owner.Status == "committed" || owner.Status == "unresolved" {
+					continue
+				}
 			}
 			if !strings.HasPrefix(c.OriginalKind(), "message.") && !strings.HasPrefix(c.OriginalKind(), "reaction.") {
 				continue
