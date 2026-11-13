@@ -1,0 +1,41 @@
+{
+  "class": "DEEP",
+  "base": "2e8bd289",
+  "reviewed_sha": "cd8b03a652e67161d2c444c6b5934e463d430d77",
+  "verdict": "BLOCK",
+  "findings": [
+    {
+      "severity": "MAJOR",
+      "class": "provenance boundary after edit-prefix removal",
+      "test": "TestRetriedSingletonKeepsProvenance",
+      "red_leaf_failures": 16,
+      "green_repetitions": 20,
+      "green_leaf_passes": 320,
+      "outcome": "FIXED",
+      "fix": "18a65afa7d2faa3028818fe4e9c44abd44614c44"
+    },
+    {
+      "severity": "MAJOR",
+      "class": "released replay bypasses supersession of withdrawn records",
+      "test": "actual current/released/main TestCoalescedLedgerCompatibility through /resolve and /status",
+      "red_withdrawal_failures_per_reader": 6,
+      "green_repetitions_per_reader": 20,
+      "green_subtest_passes_per_reader": 140,
+      "outcome": "FIXED",
+      "fix": "2e267bc10ff09f75ba86730c4c76af737b86f596",
+      "evidence": "rollback-results.json"
+    },
+    {
+      "severity": "MINOR",
+      "class": "catch-up success prefix lost when later batch delivery errors",
+      "test": "TestCatchUpReportsPartialSuccess",
+      "red_failures": 1,
+      "green_repetitions": 20,
+      "outcome": "FIXED",
+      "fix": "18a65afa7d2faa3028818fe4e9c44abd44614c44"
+    }
+  ],
+  "merge_resolution_findings": [],
+  "final_gate": "pending",
+  "final_second_model_read": "pending"
+}
