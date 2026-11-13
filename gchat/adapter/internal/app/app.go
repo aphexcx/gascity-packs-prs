@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"gchat-adapter/internal/ack"
+	"gchat-adapter/internal/arrival"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/events"
@@ -46,6 +47,7 @@ var errIdentityChanged = errors.New("app: observed identity changed; rebuilding 
 type application struct {
 	arrival            *ack.Service
 	watch              *stopwatch.Writer
+	stateDir           string
 	cfg                *config.Config
 	opts               Options
 	log                *slog.Logger
@@ -86,12 +88,19 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	arrivalOptions := cfg.Acknowledgement
-	arrivalOptions.Log = func(message string) { opts.Logger.Warn(message) }
-	choice, err := ack.New(arrivalOptions)
+	stateDir := os.Getenv("GC_SERVICE_STATE_ROOT")
+	if stateDir == "" {
+		stateDir = filepath.Dir(cfg.Endpoints.StateFile)
+	}
+	var a *application // assigned below, before any arrival can run
+	service, watch, err := arrival.New(arrival.Options{Acknowledgement: cfg.Acknowledgement, StateDir: stateDir,
+		Log:  func(message string) { opts.Logger.Warn(message) },
+		Chat: func() *chat.Client { return a.chatClient.Load() }})
 	if err != nil {
 		return err
 	}
+	// The writer drains last, after every producer below has stopped.
+	defer watch.Close()
 	lock, err := LockState(cfg.Endpoints.StateFile)
 	if err != nil {
 		return err
@@ -100,35 +109,8 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if err := lock.RecordSocket(cfg.Secrets.ServiceSocket); err != nil {
 		return err
 	}
-	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), spaceJoined: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
-	stateDir := os.Getenv("GC_SERVICE_STATE_ROOT")
-	if stateDir == "" {
-		stateDir = filepath.Dir(cfg.Endpoints.StateFile)
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return errors.New("stopwatch: executable unavailable")
-	}
-	release, err := stopwatch.Release(executable)
-	if err != nil {
-		return errors.New("stopwatch: executable digest unavailable")
-	}
-	a.watch = stopwatch.New(stateDir, "gchat", release, arrivalOptions.Log)
-	a.arrival = &ack.Service{Choice: choice, Dir: stateDir, Log: arrivalOptions.Log,
-		Inbound: func(in ack.Input) {
-			a.watch.Record(stopwatch.Event{Event: "inbound", Conversation: in.Conversation, Message: in.Message, Thread: in.Thread, MessageAt: in.Time, At: in.Seen})
-		},
-		Reaction: func(in ack.Input, how string, at time.Time) {
-			a.watch.Record(stopwatch.Event{Event: "reaction", Conversation: in.Conversation, Message: in.Message, At: at, Actor: "adapter", Choice: how})
-		},
-		SendChoice: func(ctx context.Context, in ack.Input, choose func(context.Context) (ack.Row, string)) (string, error) {
-			c := a.chatClient.Load()
-			if c == nil {
-				return "", errors.New("chat unavailable")
-			}
-			return c.CreateArrivalReaction(ctx, in.Message, in.Seen.Add(ack.ReactionBudget), ack.Default.Emoji, func(choiceCtx context.Context) (string, string) { row, how := choose(choiceCtx); return row.Emoji, how })
-		},
-	}
+	a = &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), spaceJoined: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
+	a.watch, a.arrival, a.stateDir = watch, service, stateDir
 	a.stateLock = lock
 	a.l.SetSaveGuard(a.checkStateLock)
 	s, err := server.New(server.Options{Stopwatch: a.watch, Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
@@ -160,6 +142,7 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	}
 	serviceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	go ack.KeepPruned(serviceCtx, a.stateDir)
 	defer s.Close()
 	h := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/state" {

@@ -3,7 +3,8 @@
 ## Arrival reactions and stopwatch
 
 `ACK_REACTION` is empty (off) by default. Set it to `jev` to send only the
-message's text to TypeSafe, cut to 1,000 Unicode characters,
+message's text to TypeSafe, cut to 1,000 Unicode characters after the same
+secret redaction as Slack's,
 using `JEV_API_KEY`; no sender, room, IDs or attachment bytes are sent. Jev
 chooses from the arrival rows of `reactions.json`; absent credentials, unusable
 catalogs, timeouts and unusable answers use the fixed eyes reaction.
@@ -14,7 +15,10 @@ catalog, only `jev` and `eyes` are available. `ACK_SCOPE=addressed` is the
 default; `all` includes delivered room messages. Own messages, bots, mutations,
 reactions, keeper events, replays, duplicates, and messages over 60 seconds old
 are excluded. A durable attempt marker prevents a second acknowledgement after
-a restart, even if a channel response was lost. Acknowledgements are never removed.
+a restart, even if a channel response was lost; markers older than a day are
+removed at start and once a day. Acknowledgements are never removed.
+`ACK_SCOPE` is read only when `ACK_REACTION` is set; unset, any value starts as
+before this feature.
 
 The adapter env file overrides inherited values; otherwise `JEV_API_KEY` comes
 from the process environment. Key changes require an adapter restart. Status
@@ -25,18 +29,22 @@ each with a budget of 1,500 milliseconds from first sight. Delivery to gc runs
 independently of choices and channel requests. The reaction request target is
 two seconds from first sight; channel confirmation can take longer.
 
-Google Chat keeps one shared reaction pace of five requests per second, without bursts. At twelve simultaneous messages, that pace cannot fit every request inside two seconds; overflow uses eyes, stays queued, and records the actual confirmation time.
+Google Chat keeps one shared reaction pace of five requests per second, without bursts; with `ACK_REACTION` unset the mayor's own reactions keep the earlier gate at the same rate. At twelve simultaneous messages, that pace cannot fit every request inside two seconds; overflow uses eyes, stays queued, and records the actual confirmation time.
 
 While choices are pending, the scheduler counts backward from each message's two-second deadline. It abandons a choice only at the latest safe slot; a lone message retains its full 1,500 milliseconds. Ready choices use available slots immediately.
 
-Google words times use the message's create time. State defaults to the directory containing the effective `GCHAT_STATE_FILE`; supply `--state-dir` when the adapter env file overrides that path.
+Google words times use the message's create time. With `ACK_REACTION` unset the stopwatch makes no Google call of its own, so a message in a space whose kind is not yet known gets no inbound line. State defaults to the directory containing the effective `GCHAT_STATE_FILE`; supply `--state-dir` when the adapter env file overrides that path.
 
 The stopwatch runs even with acknowledgement off. It writes monthly UTC
 `stopwatch-YYYY-MM.jsonl` files with mode 0600, containing coordinates and
 timestamps only. Inbound lines include the first 12 SHA-256 hex characters of
-the running binary.
+the running binary, or `unknown` with one warning when it cannot be read; the
+adapter starts either way.
 Reaction lines record the first confirmation, actor and adapter choice method;
 words lines record posts. An unwritable journal warns once and delivery continues.
+Lines are written by one background writer with a queue of 1,024 lines, so no
+delivery or post waits on a disk flush; a full queue drops the line with that
+one warning, never a message.
 The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
 timing directory for every adapter.
 

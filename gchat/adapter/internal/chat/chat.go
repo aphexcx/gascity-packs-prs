@@ -342,6 +342,15 @@ func (c *Client) CreateReaction(ctx context.Context, message, emoji string) (str
 	return result.Name, nil
 }
 
+// EnableArrivalPace makes the identity's reactions share the
+// acknowledgement's deadline queue. Call it before the client is shared, and
+// only when the acknowledgement is on.
+func (c *Client) EnableArrivalPace() {
+	c.limits.mu.Lock()
+	c.limits.arrivalPace = true
+	c.limits.mu.Unlock()
+}
+
 // CreateArrivalReaction overlaps the choice with the identity's existing pace.
 // Unlike explicit agent actions, an acknowledgement is attempted only once.
 func (c *Client) CreateArrivalReaction(ctx context.Context, message string, deadline time.Time, fallback string, choose func(context.Context) (string, string)) (string, error) {
@@ -731,6 +740,10 @@ type Limiter struct {
 	spaces          map[string]*pace
 	reactions       *pace
 	reactionChoices *reactionQueue
+	// arrivalPace puts every reaction in the deadline queue shared with the
+	// acknowledgement (RULING 2 of round 1). It is set only when the
+	// acknowledgement is on; otherwise reactions take the base's gate.
+	arrivalPace bool
 }
 type pace struct {
 	gate chan struct{}
@@ -741,6 +754,12 @@ func (l *Limiter) WaitWrite(ctx context.Context, space string) error {
 	return l.acquire(ctx, space, false)
 }
 func (l *Limiter) WaitReaction(ctx context.Context) error {
+	l.mu.Lock()
+	shared := l.arrivalPace
+	l.mu.Unlock()
+	if !shared {
+		return l.acquire(ctx, "", true)
+	}
 	ready := make(chan struct{})
 	close(ready)
 	_, err := l.waitReactionChoice(ctx, time.Time{}, ready)

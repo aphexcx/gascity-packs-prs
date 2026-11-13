@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gchat-adapter/internal/arrival"
 	"gchat-adapter/internal/catchup"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
@@ -19,7 +20,6 @@ import (
 	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
-	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/token"
 
 	"cloud.google.com/go/pubsub/v2"
@@ -48,11 +48,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	if err != nil {
 		return err
 	}
-	c.MessageCreated = func(space, message, thread, stamp string) {
-		if at, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
-			a.watch.Record(stopwatch.Event{Event: "words", Conversation: space, Message: message, Thread: thread, At: at})
-		}
-	}
+	arrival.Wire(c, a.arrival, a.watch)
 	if err = a.seedIdentity(source.IdentityUserID()); err != nil {
 		return err
 	}

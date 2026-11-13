@@ -232,10 +232,14 @@ func (p *Processor) observeArrivals(ev *puller.Event) {
 			in.Thread = m.Thread.Name
 		}
 		// Space lookup may need HTTP; it belongs to the independent arrival path.
+		// With the acknowledgement off it makes no call the base does not make:
+		// the kind comes from the ledger or the event, or the message gets no
+		// stopwatch inbound line.
+		lookup := p.opts.Ack.Choice.Enabled()
 		go func(c puller.Change, in ack.Input) {
 			ctx, cancel := context.WithTimeout(context.Background(), ack.ReactionBudget)
 			defer cancel()
-			s, err := p.space(ctx, c.Space, c.Message.Space)
+			s, err := p.resolveSpace(ctx, c.Space, c.Message.Space, lookup)
 			if err != nil {
 				return
 			}
@@ -735,6 +739,11 @@ func retainedReason(reason string, err error) string {
 }
 
 func (p *Processor) space(ctx context.Context, name string, supplied *api.Space) (*ledger.SpaceState, error) {
+	return p.resolveSpace(ctx, name, supplied, true)
+}
+
+// resolveSpace is space with the ListSpaces fallback optional.
+func (p *Processor) resolveSpace(ctx context.Context, name string, supplied *api.Space, lookup bool) (*ledger.SpaceState, error) {
 	l, err := p.snapshot()
 	if err != nil {
 		return nil, err
@@ -753,7 +762,7 @@ func (p *Processor) space(ctx context.Context, name string, supplied *api.Space)
 	if supplied != nil {
 		kind = spaceKind(supplied)
 	}
-	if kind == "" {
+	if kind == "" && lookup {
 		spaces, err := p.opts.Chat.ListSpaces(ctx)
 		if err != nil {
 			return nil, err // callers classify it and return only a safe summary
@@ -960,7 +969,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		}
 	}
 	local := ""
-	if !state.Mine || (r.User != nil && r.User.Name == p.identity()) {
+	if !state.Mine {
 		local = "local"
 	}
 	if err := p.record(c, id, w, state, s, local, catchUp, ""); err != nil {
