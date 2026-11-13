@@ -636,12 +636,11 @@ export function createPublisher({
     const answer = await once(key, { conversationId, textSha, endpoint: 'file' }, conversation,
       () => {
         // Only the in-flight key owner may reserve progress or choose a quote.
-        if (!existing) {
-          const reserved = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
-            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [],
-            quote: requestedQuote(pub.reply_to_message_id) };
-          if (!progress.save(key, reserved)) return failure({ progressSave: true }, context);
-        }
+        // A previous failed write may have left this entry only in memory.
+        const reserved = existing ?? { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
+          transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [],
+          quote: requestedQuote(pub.reply_to_message_id) };
+        if (!progress.save(key, reserved)) return failure({ progressSave: true }, context);
         return chain(conversationId, () => toOwner(context, async (to, closes) => {
           let entry = progress.get(key);
           if (!entry) {
@@ -762,12 +761,11 @@ export function createPublisher({
 
       const answer = await once(key, { conversationId, textSha, endpoint: 'publish' }, conversation,
         () => {
-          if (!entry) {
-            const reserved = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha,
-              chunks: chunkText(pub.text).length, delivered: 0, message_ids: [],
-              quote: requestedQuote(pub.reply_to_message_id) };
-            if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId, conversation, key, chunks: reserved.chunks, delivered: 0 });
-          }
+          const reserved = entry ?? { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha,
+            chunks: chunkText(pub.text).length, delivered: 0, message_ids: [],
+            quote: requestedQuote(pub.reply_to_message_id) };
+          if (!progress.save(key, reserved)) return failure({ progressSave: true },
+            { conversationId, conversation, key, chunks: reserved.chunks, delivered: reserved.delivered });
           return chain(conversationId, () => toOwner(
             { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
             (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation, sessionId }),
@@ -937,11 +935,9 @@ export function createPublisher({
       };
       const answer = await once(key, { conversationId: to, textSha, endpoint: 'update' }, conversation,
         () => {
-          if (!entry) {
-            const reserved = { endpoint: 'update', conversation_id: to, text_sha256: textSha,
-              quote: requestedQuote(body.reply_to_message_id) ? { reason: 'template' } : null };
-            if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
-          }
+          const reserved = entry ?? { endpoint: 'update', conversation_id: to, text_sha256: textSha,
+            quote: requestedQuote(body.reply_to_message_id) ? { reason: 'template' } : null };
+          if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
           return chain(to, () => toOwner(
             { conversationId: to, conversation, key, chunks: 1, delivered: 0 },
             (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId })),
