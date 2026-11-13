@@ -57,10 +57,24 @@ func (a *application) neverSilentGate() error {
 	if !a.neverSilent.Enabled() {
 		return nil
 	}
-	a.mu.Lock()
-	snapshot := a.l.Clone()
-	a.mu.Unlock()
-	return inbound.ReconcileNeverSilent(snapshot, a.neverSilent)
+	return a.neverSilent.WithHistory(func() error {
+		a.mu.Lock()
+		snapshot := a.l.Clone()
+		a.mu.Unlock()
+		return inbound.ReconcileNeverSilent(snapshot, a.neverSilent)
+	})
+}
+
+func (a *application) pollNeverSilentOnce(ctx context.Context) error {
+	// POST /state holds noticeStateMu through replacement and migration.
+	// Keep the watch's snapshot, decisions and effects on one side of that
+	// boundary. The ledger mutex remains free during network effects.
+	a.noticeStateMu.Lock()
+	defer a.noticeStateMu.Unlock()
+	if err := a.neverSilentGate(); err != nil {
+		return err
+	}
+	return a.neverSilent.Poll(ctx)
 }
 
 // The watch owns one engine for the service lifetime. Registration, inbound
@@ -73,10 +87,7 @@ func (a *application) pollNeverSilent(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			err := a.neverSilentGate()
-			if err == nil {
-				err = a.neverSilent.Poll(ctx)
-			}
+			err := a.pollNeverSilentOnce(ctx)
 			if errors.Is(err, ErrStateLockLost) {
 				return
 			}

@@ -50,6 +50,7 @@ type application struct {
 	l                  *ledger.Ledger
 	mu                 sync.Mutex
 	stateMu            sync.Mutex // excludes app health transitions during POST /state
+	noticeStateMu      sync.Mutex // orders notice passes with state replacement
 	s                  *server.Server
 	manager            atomic.Pointer[events.Manager]
 	chatClient         atomic.Pointer[chat.Client]
@@ -132,6 +133,8 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 		if r.Method == http.MethodPost && r.URL.Path == "/state" {
 			a.stateMu.Lock()
 			defer a.stateMu.Unlock()
+			a.noticeStateMu.Lock()
+			defer a.noticeStateMu.Unlock()
 			if err := a.checkStateLock(); err != nil {
 				http.Error(w, err.Error(), http.StatusConflict)
 				return

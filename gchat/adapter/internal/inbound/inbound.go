@@ -278,11 +278,15 @@ func (p *Processor) Pass(ctx context.Context) error {
 		return err
 	}
 	defer p.leave()
-	l, err := p.snapshot()
-	if err != nil {
-		return err
-	}
-	if err := ReconcileNeverSilent(l, p.opts.NeverSilent); err != nil {
+	var l *ledger.Ledger
+	if err := p.opts.NeverSilent.WithHistory(func() error {
+		var err error
+		l, err = p.snapshot()
+		if err != nil {
+			return err
+		}
+		return ReconcileNeverSilent(l, p.opts.NeverSilent)
+	}); err != nil {
 		return err
 	}
 	ids := make([]string, 0)
@@ -893,12 +897,14 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
-		if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
-			return err
+	if err := p.opts.NeverSilent.WithHistory(func() error {
+		if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
+			if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
+				return err
+			}
 		}
-	}
-	if err := p.record(c, id, w, &state, s, local, catchUp, learnedDomain); err != nil {
+		return p.record(c, id, w, &state, s, local, catchUp, learnedDomain)
+	}); err != nil {
 		return err
 	}
 	return p.resume(ctx, id)
