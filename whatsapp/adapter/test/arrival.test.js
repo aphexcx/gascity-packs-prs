@@ -118,3 +118,63 @@ test('canary key is absent from errors and log output; empty text and missing ke
   assert.equal(calls, 1); assert.ok(!JSON.stringify(logs).includes(canary));
   assert.throws(() => createChoice({ env: { ACK_REACTION: 'jev', JEV_API_BASE_URL: 'http://example.invalid', JEV_API_KEY: canary }, catalog }), /JEV_API_BASE_URL/);
 });
+
+// --- PR 104 round 2 -------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const cases = JSON.parse(fs.readFileSync(new URL('./fixtures/redaction-cases.json', import.meta.url), 'utf8'));
+// A failure names the case and the lengths only: the shared fixtures assemble
+// credential shapes from parts, so a printed state would hold a whole one.
+const caseText = (c) => (c.text_parts ? c.text_parts.join('') : c.text);
+
+test('ACK_SCOPE is checked only when ACK_REACTION is set', () => {
+  const logs = [];
+  for (const mode of [undefined, '']) {
+    const env = { ACK_SCOPE: 'everyone', ...(mode === undefined ? {} : { ACK_REACTION: mode }) };
+    let choice;
+    assert.doesNotThrow(() => { choice = createChoice({ env, catalog, log: (s) => logs.push(s) }); });
+    assert.equal(choice.enabled, false);
+    assert.equal(choice.all, false, 'an unknown scope reads as addressed while off');
+  }
+  assert.deepEqual(logs, [], 'no line while the switch is off');
+  assert.throws(() => createChoice({ env: { ACK_REACTION: 'eyes', ACK_SCOPE: 'everyone' }, catalog }), /^Error: ACK_SCOPE must be addressed or all$/);
+});
+
+test('the Jev state is redacted like Slack', async () => {
+  let state; let calls = 0;
+  const choice = createChoice({ env: { ACK_REACTION: 'jev', JEV_API_KEY: 'test-credential' }, catalog, fetchImpl: async (_url, options) => {
+    calls++; state = JSON.parse(options.body).state;
+    return new Response(JSON.stringify({ answers: { ack: { choice: 'option_001' } } }));
+  } });
+  let checked = 0;
+  for (const c of cases) {
+    state = undefined; const before = calls;
+    await choice.choose(caseText(c), Date.now());
+    const want = Array.from(c.want).slice(0, 1000).join('');
+    assert.equal(calls, before + 1, `${c.name}: one request`);
+    assert.ok(state === want, `${c.name}: state is not the redacted want (state ${String(state ?? '').length} chars, want ${want.length})`);
+    checked++;
+  }
+  assert.equal(checked, cases.length); assert.ok(checked >= 100, `only ${checked} fixture cases`);
+  // Redact first, then cut: a secret that straddles the cut leaves no tail.
+  state = undefined;
+  await choice.choose(`${'. '.repeat(495)}${'a'.repeat(100)}`, Date.now());
+  assert.equal(Array.from(state).length, 1000);
+  assert.ok(!state.includes('aaaa'), 'a partial secret survived the cut');
+});
+
+test('ack markers older than one day are pruned at start; nothing else is touched', async (t) => {
+  const stateDir = temp(t); const dir = path.join(stateDir, 'ack-attempts'); fs.mkdirSync(dir, { recursive: true });
+  const now = Date.now();
+  const make = (where, name, ageMs, body = '') => { const file = path.join(where, name); fs.writeFileSync(file, body); const at = new Date(now - ageMs); fs.utimesSync(file, at, at); };
+  make(dir, 'a'.repeat(64), 2 * DAY_MS); // old, empty, ours: removed
+  make(dir, 'b'.repeat(64), DAY_MS - 60000); // newer than a day: kept
+  make(dir, 'c'.repeat(64), 2 * DAY_MS, 'not empty'); // not an empty marker: kept
+  make(dir, 'stray-file', 2 * DAY_MS); // another name: kept
+  make(dir, 'stopwatch-2020-01.jsonl', 40 * DAY_MS, '{}\n'); // a stopwatch name: kept
+  make(stateDir, 'stopwatch-2020-01.jsonl', 40 * DAY_MS, '{}\n');
+  const arrival = createArrival({ choice: createChoice({ env: {}, catalog }), stateDir, gateway: { send: async () => ({}) } });
+  await arrival.wait();
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['b'.repeat(64), 'c'.repeat(64), 'stopwatch-2020-01.jsonl', 'stray-file']);
+  assert.ok(fs.existsSync(path.join(stateDir, 'stopwatch-2020-01.jsonl')));
+});
