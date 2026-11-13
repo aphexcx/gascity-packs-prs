@@ -19,6 +19,7 @@ import (
 func captureArrivalInputs(t *testing.T, cfg *config) <-chan ack.Input {
 	t.Helper()
 	inputs := make(chan ack.Input, 4)
+	cfg.arrivalStarted = time.Now().UTC()
 	choice, err := ack.New(ack.Options{Catalog: ack.Catalog})
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +146,47 @@ func TestArrivalCoversLegacyThreadRoutes(t *testing.T) {
 			env := plainRoomEnvelope(t, "event-example", "C1", slackTimestamp(now), root, "synthetic follow-up")
 			processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, sticky, env, func() {})
 			requireArrivalInput(t, inputs, true)
+		})
+	}
+}
+
+func TestArrivalKeepsLiveCrossAppMention(t *testing.T) {
+	for _, threaded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("threaded=%v", threaded), func(t *testing.T) {
+			gc := newFakeGC(t)
+			df, bf := baseDirectoryFile(), baseBindingsFile()
+			h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+			h.openBarrier()
+			withMentionOnlyLane(t, h, outsiderBinding())
+			h.gw.cfg.slackAppID = "A0SWITCH"
+			h.gw.cfg.companySelfBotUserID = ""
+			inputs := captureArrivalInputs(t, &h.gw.cfg)
+			ev := humanMessage(slackTimestamp(time.Now()), "<@"+companyMOBotUserID+"> synthetic turn")
+			if threaded {
+				ev.ThreadTS = slackTimestamp(time.Now().Add(-time.Second))
+			}
+			// The live persona copy cannot identify the switchboard mention. Its
+			// receipt is admission history, not evidence of a process restart.
+			admitPersonaCopy(t, h, ev)
+			h.wait()
+			receipt, err := h.gw.store().Get(ReceiptOrigin{TeamID: testTeamID, ChannelID: testChannelID, TS: ev.TS})
+			if err != nil || receipt == nil {
+				t.Fatalf("admission receipt: %v", err)
+			}
+			requireArrivalInput(t, inputs, false)
+			admitCompanyRoomAppMention(t, h, ev)
+			h.wait()
+			if outsiderPostCount(gc) != 1 {
+				t.Fatal("live mention did not deliver")
+			}
+			select {
+			case in := <-inputs:
+				if !in.Seen.Equal(receipt.ReceivedAt) {
+					t.Fatal("live twin moved the first-sight clock")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("admitted live turn has no arrival timing record")
+			}
 		})
 	}
 }

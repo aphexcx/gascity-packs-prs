@@ -402,6 +402,7 @@ type config struct {
 	arrival             *ack.Service
 	arrivalChoice       *ack.Choice
 	arrivalState        string
+	arrivalStarted      time.Time
 	publicListen        string
 	internalListen      string // unused when serviceSocket is set
 	serviceSocket       string // when set, bind a UDS here for /publish instead of internalListen

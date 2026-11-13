@@ -9,7 +9,7 @@ occurred in the final Node run. `pnpm exec node --version` returned v24.21.0.
 | Google Chat, module directory | `env -u GC_BIN go test ./... -count=1 -timeout=30m -json` | 1,846 passed, 2 opt-in real-gc tests skipped, exit 0 |
 | Google shared stopwatch after thread normalization | `go test ./internal/stopwatch -count=1 -json` | 2 passed, exit 0 |
 | Slack, module directory, after second-round fixes | `go test ./... -count=1 -json` | 13,356 passed, 3 skipped, exit 0 |
-| Slack, after the final paired-event guard | `go test . -run 'TestArrival\|TestCompanyRoomMentionOnly' -count=1 -json` | 50 passed, exit 0 |
+| Slack, after the final paired-event guard | `go test . -run 'TestArrival\|TestCompanyRoomMentionOnly' -count=1 -json` | 53 passed, exit 0 |
 | WhatsApp, adapter/test directory | `pnpm exec node --test --test-concurrency=2` | 265 passed, zero failed/cancelled/skipped, exit 0 |
 | Repository | `make test` | 2,900 passed, 1 failed, 131 skipped, 10,735 subtests passed, 2 warnings, exit 2 |
 | Unchanged failing repository case, isolated | `make test PYTEST_DIRS=gascity/tests PYTEST_ARGS='-q -k test_a_signal_during_the_release_is_lost_and_nothing_is_left_standing'` | 1 passed, 529 deselected, exit 0 |

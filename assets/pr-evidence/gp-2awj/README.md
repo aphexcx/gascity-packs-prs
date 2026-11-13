@@ -151,8 +151,17 @@ for complete-suite results and limitations.
 The third DEEP round reviewed the entire delta and returned CLEAN, with no
 critical or major findings and one minor paired-event replay issue. The
 `app_mention` twin could still observe an interrupted arrival after restart.
-The same replay regression reproduced this additional path. The fix checks
-whether its canonical message already has an admission receipt, while
+The same replay regression reproduced this additional path. The initial fix
+checked whether its canonical message had an admission receipt, while
 `TestArrivalCoversCompanyAddressingRoutes/mention_first` preserves a legitimate
 first-arriving mention. All 50 targeted arrival and company mention-only
 test/subtest outcomes pass after this fix.
+
+The fourth round reviewed that delta and found one major regression introduced
+by its receipt-presence guard: a live persona copy could admit a message before
+the switchboard copy identified its target. `TestArrivalKeepsLiveCrossAppMention`
+reproduced the failure. The final guard distinguishes receipts from before this
+arrival service started from receipts admitted during the current run; a live
+twin preserves the receipt's first-sight time. The root and threaded variants,
+along with the recovery/duplicate cases, pass all 53 targeted test/subtest
+outcomes. This shown regression was in the fourth round's own changes.

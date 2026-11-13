@@ -48,6 +48,7 @@ func startArrival(cfg *config) error {
 	}
 	watch := stopwatch.New(cfg.arrivalState, "slack", release, func(s string) { log.Print(s) })
 	cfg.inboundJournal.watch = watch
+	cfg.arrivalStarted = time.Now().UTC()
 	cfg.arrival = &ack.Service{Choice: cfg.arrivalChoice, Dir: cfg.arrivalState, Log: func(s string) { log.Print(s) },
 		Inbound: func(in ack.Input) {
 			watch.Record(stopwatch.Event{Event: "inbound", Conversation: in.Conversation, Message: in.Message, Thread: in.Thread, MessageAt: in.Time, At: in.Seen})
