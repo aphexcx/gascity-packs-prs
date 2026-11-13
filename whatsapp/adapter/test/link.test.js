@@ -389,7 +389,7 @@ test('held: the retry of a failed read that a wake asked for is still announced 
   await waitFor(() => polls(r) === reads + 1, { what: "the wake's read, answered 503" });
   await sleep(100);
   await r.pumpUntil(() => r.gw.acked.has(id), { stepMs: 1000, realMs: 40, what: 'the retry that takes the delivery' });
-  await settled(r);
+  await sleep(150); // not settled(): the 503 is a request the box never counts as a read
   assert.deepEqual(linkView((await status(r)).link), { mode: 'held', state: 'up', reason: '' });
   const after = polls(r);
   await r.pump(10000, { stepMs: 1000, realMs: 15 });

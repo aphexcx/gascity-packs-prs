@@ -56,8 +56,8 @@ at the adapter directory; a missing selected file never falls back to another.
 | `WHATSAPP_GATEWAY_CREDENTIAL` | the per-city credential (written by `gc whatsapp enroll`, 0600) |
 | `GC_CITY_NAME`, `GC_API_BASE_URL` | the city and its API (not controller-injected; check `gc status`) |
 | `WHATSAPP_POLL_MS` | inbox poll, default 2000 |
-| `WHATSAPP_HELD_CONNECTION` | held wake link, default on; `off` in any case (spaces ignored) restores the ordinary poll; any other value, including `false`, `0` and `no`, leaves it on and is named once in the log at start |
-| `WHATSAPP_HELD_POLL_MS` | safety inbox read while the link is up, default 300000 |
+| `WHATSAPP_HELD_CONNECTION` | held wake link, default on; `off` in any case (spaces ignored) restores the ordinary poll; a value other than `on` or `off`, including `false`, `0` and `no`, leaves it on and is named once in the log at start |
+| `WHATSAPP_HELD_POLL_MS` | safety inbox read while the link is held, default 300000 |
 | `WHATSAPP_WATERMARK_CHECK_MS` | the all-watermark restore read, default 60000 |
 | `WHATSAPP_ROUTE_AGENT` | the default route's agent for the paste probe, default `mayor` |
 | `WHATSAPP_KEEPER_UPDATE_HOUR`, `WHATSAPP_CITY_TZ` | the keeper's daily update hour (default 10) and the city's zone |

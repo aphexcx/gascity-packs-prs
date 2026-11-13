@@ -237,8 +237,8 @@ receives `401 unauthorized`; a live credential without the upgrade receives
 `426 upgrade_required`. Success is `101`. Other methods receive `405`. With
 `WAKE` set to `off` (in any case; spaces around it are ignored) or no
 `CITY_WAKE` binding, the route returns `404 not_found`. Any other value of
-`WAKE`, including `false`, `0` and `no`, leaves the link on, and the gateway
-has no start at which to say so: this sentence is the guard.
+`WAKE`, including `false`, `0` and `no`, quoted or not, leaves the link on, and
+the gateway has no start at which to say so: this sentence is the guard.
 
 The wire carries only three fixed words: the gateway sends text `wake` and
 `pong`; the adapter sends text `ping`. Close codes are `4401` for a revoked

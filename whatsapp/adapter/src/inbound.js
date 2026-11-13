@@ -252,6 +252,9 @@ export function createInbound({
   // --- the gateway poll ------------------------------------------------------
 
   let pollWanted = false;
+  // A connect or a wake asked for a read that has not yet succeeded: its retry,
+  // though timed, is still the announced read.
+  let readAsked = false;
   let nextBindRetryAt = 0;
   const link = createLink({
     ...heldConnection,
@@ -265,7 +268,7 @@ export function createInbound({
   async function poll() {
     polling = true;
     // A read that a connect or a wake asked for was announced; a timed read was not.
-    const asked = pollWanted;
+    readAsked ||= pollWanted;
     pollWanted = false;
     const seq = ++pollSeq;
     try {
@@ -287,7 +290,8 @@ export function createInbound({
       // A timed read on an up link found a new delivery, and no wake or connect
       // came while it ran: the gateway cannot wake this box. Read at pollMs until
       // the next wake or reconnect (link.held turns true again).
-      if (gotDelivery && !asked && !pollWanted) link.unannounced();
+      if (gotDelivery && !readAsked && !pollWanted) link.unannounced();
+      readAsked = false;
       nextPollAt = clock() + (link.held ? heldPollMs : pollMs);
     } catch (err) {
       stats.lastPollError = err.message;
