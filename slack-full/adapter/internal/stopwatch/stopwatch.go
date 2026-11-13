@@ -25,6 +25,19 @@ type Event struct {
 	Actor        string    `json:"actor,omitempty"`
 	Choice       string    `json:"choice,omitempty"`
 }
+
+// QueueSize bounds the events waiting for the writer goroutine. Record never
+// blocks: on a full queue the event is dropped with the one warning, a lost
+// measurement and never a lost message. CloseTimeout bounds the drain at
+// shutdown.
+const (
+	QueueSize    = 1024
+	CloseTimeout = 2 * time.Second
+)
+
+// Writer decides under its lock (dedup, Slack thread normalization) and
+// hands each new line to one writer goroutine, which does the file work and
+// its flush. No caller ever waits on the disk.
 type Writer struct {
 	mu                    sync.Mutex
 	dir, channel, release string
@@ -32,10 +45,17 @@ type Writer struct {
 	threads               map[string]string
 	log                   func(string)
 	warning               sync.Once
+	queue                 chan Event
+	queued                int        // handed to the writer, not yet written
+	idle                  *sync.Cond // broadcast as queued falls
+	closed                bool
+	done                  chan struct{}
+	beforeWrite           func() // test seam: runs before each disk write
 }
 
 func New(dir, channel, release string, log func(string)) *Writer {
-	w := &Writer{dir: dir, channel: channel, release: release, seen: map[string]bool{}, threads: map[string]string{}, log: log}
+	w := &Writer{dir: dir, channel: channel, release: release, seen: map[string]bool{}, threads: map[string]string{}, log: log, queue: make(chan Event, QueueSize), done: make(chan struct{})}
+	w.idle = sync.NewCond(&w.mu)
 	files, err := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 	if err != nil {
 		w.warn()
@@ -59,6 +79,7 @@ func New(dir, channel, release string, log func(string)) *Writer {
 		}
 		f.Close()
 	}
+	go w.run()
 	return w
 }
 func eventKey(e Event) string {
@@ -87,6 +108,9 @@ func (w *Writer) warn() {
 		}
 	})
 }
+
+// Record returns at once. The first line per key wins here, before the disk
+// sees it, so "first only" holds whatever the writer's pace.
 func (w *Writer) Record(e Event) {
 	if w == nil {
 		return
@@ -114,8 +138,62 @@ func (w *Writer) Record(e Event) {
 	if key != "" && w.seen[key] {
 		return
 	}
-	if e.At.IsZero() {
+	if e.At.IsZero() || w.closed {
 		return
+	}
+	w.remember(e)
+	select {
+	case w.queue <- e:
+		w.queued++
+	default:
+		w.warn()
+	}
+}
+
+func (w *Writer) run() {
+	defer close(w.done)
+	for e := range w.queue {
+		w.write(e)
+		w.mu.Lock()
+		w.queued--
+		w.idle.Broadcast()
+		w.mu.Unlock()
+	}
+}
+
+// Flush waits until every line recorded so far is on disk. For tests.
+func (w *Writer) Flush() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	for w.queued > 0 {
+		w.idle.Wait()
+	}
+	w.mu.Unlock()
+}
+
+// Close stops intake and drains the queue for at most CloseTimeout. It is
+// safe to call more than once.
+func (w *Writer) Close() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	if !w.closed {
+		w.closed = true
+		close(w.queue)
+	}
+	w.mu.Unlock()
+	select {
+	case <-w.done:
+	case <-time.After(CloseTimeout):
+	}
+}
+
+func (w *Writer) write(e Event) {
+	if w.beforeWrite != nil {
+		w.beforeWrite()
 	}
 	if err := os.MkdirAll(w.dir, 0700); err != nil {
 		w.warn()
@@ -161,9 +239,7 @@ func (w *Writer) Record(e Event) {
 	}
 	if err = f.Sync(); err != nil {
 		w.warn()
-		return
 	}
-	w.remember(e)
 }
 func Release(file string) (string, error) {
 	f, err := os.Open(file)
@@ -176,4 +252,19 @@ func Release(file string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil))[:12], nil
+}
+
+// ReleaseOf names the running release. When the executable cannot be found,
+// opened or read, the release is "unknown", log hears one line, and the
+// adapter starts: the stopwatch never breaks the adapter.
+func ReleaseOf(executable func() (string, error), log func(string)) string {
+	if path, err := executable(); err == nil {
+		if release, err := Release(path); err == nil {
+			return release
+		}
+	}
+	if log != nil {
+		log("stopwatch: release unavailable; recorded as unknown")
+	}
+	return "unknown"
 }

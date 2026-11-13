@@ -62,6 +62,12 @@ func New(o Options) (*Choice, error) {
 	if c.scope == "" {
 		c.scope = "addressed"
 	}
+	// The PR's base reads ACK_SCOPE nowhere: with the switch unset any value
+	// starts, silently. Only the stopwatch reads the scope then, and a value
+	// that is not all keeps it to addressed messages.
+	if c.mode == "" && c.scope != "all" {
+		c.scope = "addressed"
+	}
 	if c.scope != "addressed" && c.scope != "all" {
 		return nil, errors.New("ACK_SCOPE must be addressed or all")
 	}

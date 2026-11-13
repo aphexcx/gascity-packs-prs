@@ -19,10 +19,12 @@ func TestMonthlyPrivateJournalAndRestart(t *testing.T) {
 	w.Record(Event{Event: "reaction", Conversation: in.Conversation, Message: in.Message, At: at.Add(time.Second), Actor: "adapter", Choice: "fixed"})
 	words := Event{Event: "words", Conversation: in.Conversation, Message: "reply-example", At: at.Add(time.Second)}
 	w.Record(words)
+	w.Flush()
 	w = New(dir, "gchat", "release-example", nil)
 	w.Record(words)
 	w.Record(in)
 	w.Record(Event{Event: "reaction", Conversation: in.Conversation, Message: in.Message, At: at.Add(2 * time.Second), Actor: "agent"})
+	w.Flush()
 	files, _ := filepath.Glob(filepath.Join(dir, "stopwatch-*.jsonl"))
 	if len(files) != 2 {
 		t.Fatal(files)
@@ -62,6 +64,7 @@ func TestWriteFailureWarnsOnceAndReleaseHashesBytes(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		w.Record(Event{Event: "words", At: time.Now()})
 	}
+	w.Flush()
 	if warnings != 1 {
 		t.Fatal(warnings)
 	}

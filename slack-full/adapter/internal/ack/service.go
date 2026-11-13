@@ -6,9 +6,56 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 )
+
+// MarkerAge bounds an attempt marker's use: it matters only within MaxAge of
+// its message, so a day is ample. PruneInterval is the running pass.
+const (
+	MarkerAge     = 24 * time.Hour
+	PruneInterval = 24 * time.Hour
+)
+
+var markerName = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// PruneAttempts removes acknowledgement markers older than MarkerAge from
+// <dir>/ack-attempts, by modification time. Only empty files named by 64 hex
+// characters are markers; nothing else in the state directory is touched.
+// Errors are ignored: a marker left behind only costs an inode.
+func PruneAttempts(dir string, now time.Time) {
+	root := filepath.Join(dir, "ack-attempts")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !markerName.MatchString(e.Name()) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.Size() != 0 || now.Sub(info.ModTime()) <= MarkerAge {
+			continue
+		}
+		_ = os.Remove(filepath.Join(root, e.Name()))
+	}
+}
+
+// KeepPruned runs PruneAttempts once per PruneInterval until ctx ends; the
+// start runs PruneAttempts itself first.
+func KeepPruned(ctx context.Context, dir string) {
+	ticker := time.NewTicker(PruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			PruneAttempts(dir, now)
+		}
+	}
+}
 
 type Input struct {
 	Conversation, Message, Thread, Text string
