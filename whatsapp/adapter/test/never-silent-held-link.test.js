@@ -55,9 +55,10 @@ async function admit(r, name, held = true) {
   return r.state().messages[rid(name)];
 }
 
-async function lineAtBound(r, message) {
+async function lineAtBound(r, message, mailBefore = 1) {
   r.clock.set(message.stopped + FAILURE_WAIT_MS - TICK_MS);
-  await stays(() => r.gw.sends.length === 0, { forMs: 2 * TICK_MS, what: 'owner grace before bound' });
+  await stays(() => r.gw.sends.length === 0 && r.remote().length === mailBefore,
+    { forMs: 2 * TICK_MS, what: 'owner and operator timing before bound' });
   r.clock.advance(TICK_MS);
   await waitFor(() => r.gw.sends.length === 1, { what: 'owner line at bound' });
   await waitFor(() => r.remote().length === 1, { what: 'outage mail at bound' });
@@ -88,7 +89,7 @@ test('A: continuous failed receipts notify at three minutes without an inbox rea
   assert.equal(m.failureKind, 'failed');
   const reads = r.inboxReads();
   assert.equal(r.remote().length, 0);
-  await lineAtBound(r, { stopped: m.failureSince });
+  await lineAtBound(r, { stopped: m.failureSince }, 0);
   await waitFor(() => r.remote().length === 1);
   assert.equal(r.inboxReads(), reads);
   assert.equal(r.state().messages[rid('example-failed')].stopped, undefined);

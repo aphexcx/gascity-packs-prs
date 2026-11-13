@@ -9,7 +9,7 @@ moves the existing notice changelog bullet below main's held-link bullets.
 
 | Row | Consumer / observation | Main's change under it | Test plan |
 | --- | --- | --- | --- |
-| A | `adapter/src/index.js` main loop calls `inbound.tick()` then `notices.poll()` each 250 ms; `never-silent.js` poll/cause reads the clock for failure, uncertain-stop and delivered-health waits | Inbox reads now use 300000 ms while held, 2000 ms while disconnected; tick remains independent | Child-process pins: uncertain stop mails immediately, owner line at 180000 ms within one tick; continuous failed receipts give both at three minutes, with no additional inbox read |
+| A | `adapter/src/index.js` main loop calls `inbound.tick()` then `notices.poll()` each 250 ms; `never-silent.js` poll/cause reads the clock for failure, uncertain-stop and delivered-health waits | Inbox reads now use 300000 ms while held, 2000 ms while disconnected; tick remains independent | Child-process pins: uncertain stop mails immediately, owner line at the 180000 ms fake-clock boundary; continuous failed receipts give both at three minutes, with no additional inbox read |
 | B | `adapter/src/inbound.js` take tracks eligible new messages before journaling; `observeDelivery` feeds POST and concluded receipt results to notices | A connect/wake requests the same `poll()`/take path; no alternate receipt path | Same terminal pending receipt with zero delivered bytes in held and polling modes: enrollment, targets, observation and stop persist, one owner line and one start mail |
 | C | `never-silent.js` outage grouping, durable owner reservation and start/cleared mail marks | Link up/down only changes inbox scheduling; no notice callback takes link state | Drop/reconnect while stopped: 2-second fallback reads resume, same outage id, one line/start mail and no cleared mail |
 | D | `inbound.js` track uses `created: clock()`; `never-silent.js` result/stop default to `clock()`; oldest age uses created | Lost wake on a healthy link can postpone admission until the 300-second safety read | No enrollment or notice before admission; provider timestamp stays old, created/observation/stop are adapter arrival time; the three-minute line wait starts then |
@@ -36,3 +36,11 @@ No production behavior change is planned. A-D are pins at the merge commit.
 For B, E and F, one-sided-hunk checks will demonstrate that the tests detect
 losing either behavior where a side's hunk can be removed independently.
 All fixtures and endpoints are local/invented; no live state is read.
+
+Timing measurement limit: A checks silence one fake tick before the boundary
+and records the notice exactly at the boundary, while the configured main
+loop interval is 250 ms. It proves the logical threshold independently of
+inbox reads. The fake clock is frozen while asynchronous work settles; these
+tests do not measure wall-clock scheduling latency or guarantee that host
+load and I/O complete within 250 ms. Continuous-failure mail is also asserted
+absent in the pre-bound interval; uncertain-stop mail is already present.
