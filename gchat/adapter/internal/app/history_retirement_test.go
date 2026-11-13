@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/wire"
@@ -97,22 +98,23 @@ func TestFirstStartCountsAndToldRetiredDeliveries(t *testing.T) {
 					t.Errorf("%s: ledger=%d status=%d want=%d", key, loaded.Counters[key], counters[key], wantCount)
 				}
 			}
+			wantMail := wantCount > 0 && !strings.HasPrefix(mode, "restore")
 			// Let the service notification worker drain before checking exact counts.
 			deadline := time.Now().Add(time.Second)
 			for time.Now().Before(deadline) {
 				mu.Lock()
 				got := len(mails)
 				mu.Unlock()
-				if got > 0 || wantCount == 0 {
+				if got > 0 || !wantMail {
 					break
 				}
 				time.Sleep(5 * time.Millisecond)
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if wantCount == 0 {
+			if !wantMail {
 				if len(mails) != 0 {
-					t.Errorf("zero retirement sent %d mails", len(mails))
+					t.Errorf("no-mail start sent %d mails", len(mails))
 				}
 				return
 			}
@@ -129,5 +131,22 @@ func TestFirstStartCountsAndToldRetiredDeliveries(t *testing.T) {
 				t.Error("mail exposed message text or sender name")
 			}
 		})
+	}
+}
+
+func TestHistoryRetirementNoticeDedup(t *testing.T) {
+	a := &application{cfg: &config.Config{}, notices: make(chan notification, 8), notified: map[string]bool{}}
+	for _, start := range []string{"first-start", "first-start", "second-start"} {
+		a.notice("history-delivery-retired", "1 waiting delivery: spaces/dm/messages/one", start)
+	}
+	if len(a.notices) != 2 {
+		t.Fatalf("start notifications=%d want 2", len(a.notices))
+	}
+	one, two := <-a.notices, <-a.notices
+	if one.dedup == two.dedup {
+		t.Error("different starts share a dedup key")
+	}
+	if one.message != two.message || strings.Contains(one.message, "Subscription reconciliation failed") {
+		t.Error("retirement body changed or gained unrelated subscription advice")
 	}
 }
