@@ -1,12 +1,17 @@
 package main
 
-// THE OFF-PARITY TEST (PR 104 round 2, item 11). With ACK_REACTION unset the
-// adapter must behave as it does at the PR's base, c9969436. This file runs
-// byte for byte at the base, at the PR head and at the tip. It names only
-// symbols that exist at the base; what the start wires after the base (the
-// arrival service, the stopwatch writer) is reached through ONE hook,
-// offparity_hook_test.go, which does nothing at the base. The expected values
-// below are what the base produces; the base run proves them.
+// THE OFF-PARITY TEST (PR 104 round 2, item 11; round 3, item 3). With
+// ACK_REACTION unset the adapter must behave as it does at the base. Since
+// round 3 the base is main at 205d0aecedf944792f1e3b3fbc420b9e5ad910d8 (round
+// 2's was c9969436). This file runs byte for byte at the base and at the tip.
+// It names only symbols that exist at the base; what the start wires after
+// the base (the arrival service, the stopwatch writer) is reached through ONE
+// hook, offparity_hook_test.go, which does nothing at the base. The expected
+// values below are what the base produces; the base run proves them. The
+// script runs twice: NEVER_SILENT unset, and NEVER_SILENT=on with main's own
+// engine (newNeverSilent, as main.go builds it before the company gateway
+// copies cfg), observing its state file without times after one reconcile
+// and poll, as runNeverSilent's tick does.
 //
 // The only differences allowed, each named with its contract item:
 //   - the stopwatch's own files, stopwatch-YYYY-MM.jsonl (item 15);
@@ -16,6 +21,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -240,7 +246,78 @@ func offParityHealthzDelta(before, after map[string]string) []string {
 	return out
 }
 
+// offParityNeverSilent reads never-silent's state file without its times: a
+// time is <t>, an unset one <zero>, the script's second <now>. One line per
+// top-level field, and one per tracked message.
+func offParityNeverSilent(t *testing.T, path, now string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return []string{"<no state file>"}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(v any) any
+	walk = func(v any) any {
+		switch x := v.(type) {
+		case string:
+			if at, err := time.Parse(time.RFC3339Nano, x); err == nil {
+				if at.IsZero() {
+					return "<zero>"
+				}
+				return "<t>"
+			}
+			return x
+		case []any:
+			for i := range x {
+				x[i] = walk(x[i])
+			}
+			return x
+		case map[string]any:
+			for k := range x {
+				x[k] = walk(x[k])
+			}
+			return x
+		}
+		return v
+	}
+	text := func(v any) string {
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(walk(v))
+		return strings.ReplaceAll(strings.TrimSpace(b.String()), now, "<now>")
+	}
+	var out []string
+	for key, v := range doc {
+		if messages, ok := v.(map[string]any); ok && key == "messages" {
+			for id, m := range messages {
+				out = append(out, "message "+strings.ReplaceAll(id, now, "<now>")+" "+text(m))
+			}
+			continue
+		}
+		out = append(out, key+" "+text(v))
+	}
+	sort.Strings(out)
+	return out
+}
+
 func TestOffParityWithTheBase(t *testing.T) {
+	offParityScript(t, false)
+}
+
+// NEVER_SILENT=on with ACK_REACTION unset: the adapter behaves as the base
+// does with NEVER_SILENT=on (round 3, item 3).
+func TestOffParityWithTheBaseNeverSilentOn(t *testing.T) {
+	offParityScript(t, true)
+}
+
+func offParityScript(t *testing.T, neverSilent bool) {
 	now := time.Now()
 	sec := strconv.FormatInt(now.Unix(), 10)
 	ts := func(n int) string { return fmt.Sprintf("%s.%06d", sec, n) }
@@ -263,8 +340,11 @@ func TestOffParityWithTheBase(t *testing.T) {
 	env["GC_API_BASE_URL"] = gcStub.URL
 	env["GC_CITY_PATH"] = city
 	env["FILE_UPLOAD_ROOT"] = upload
-	for _, key := range []string{"ACK_REACTION", "ACK_SCOPE", "JEV_API_KEY", "GC_SERVICE_STATE_ROOT"} {
+	for _, key := range []string{"ACK_REACTION", "ACK_SCOPE", "JEV_API_KEY", "GC_SERVICE_STATE_ROOT", "NEVER_SILENT", "NEVER_SILENT_OPERATOR_CONTEXT", "MAYOR_HEALTH_FILE"} {
 		t.Setenv(key, "")
+	}
+	if neverSilent {
+		t.Setenv("NEVER_SILENT", "on")
 	}
 	healthzBefore := offParityHealthz()
 	read, restore := captureLog(t)
@@ -277,6 +357,11 @@ func TestOffParityWithTheBase(t *testing.T) {
 	// head, startArrival); at the base there is none.
 	if err := offParityStart(t, &cfg, ""); err != nil {
 		t.Fatalf("start: %v", err)
+	}
+	if neverSilent {
+		if cfg.neverSilent, err = newNeverSilent(cfg, nil, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cfg.dispatchSem = make(chan struct{}, 16)
 	cfg.busyMarks = newBusyReactionRegistry()
@@ -342,6 +427,9 @@ func TestOffParityWithTheBase(t *testing.T) {
 	var probes int32
 	h.gw.channelMembersProbe = countingMembersProbe(map[string]bool{botRiley: true}, true, &probes)
 	offParityCompany(t, h.gw, cfg)
+	if neverSilent {
+		h.gw.cfg.neverSilent = cfg.neverSilent // newCompanyGateway copies cfg
+	}
 	h.openBarrier()
 	if _, handled := h.admitViaHandler(t, humanMessage(ts(110), driftMention(botRiley)), 0); !handled {
 		t.Fatal("company mention not handled")
@@ -357,6 +445,20 @@ func TestOffParityWithTheBase(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSpace(h.gw.healthzDetail()), "\n") {
 		company = append(company, strings.ReplaceAll(line, h.ingressDir, "<ingress>"))
 	}
+	var notices []string
+	wantTurns, wantCalls, wantCompany, wantHealthz, wantLogs, wantState := offParityWantTurns, offParityWantCalls, offParityWantCompany, offParityWantHealthz, offParityWantLogs, offParityWantState
+	if neverSilent {
+		// One tick of runNeverSilent: reconcile, then poll. No health file
+		// and nothing failed, so nothing is due.
+		if err := cfg.reconcileNeverSilent(); err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.neverSilent.Poll(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		notices = offParityNeverSilent(t, companyStateDirDefault(cfg.cityPath, "never-silent.json"), sec)
+		wantTurns, wantCalls, wantCompany, wantHealthz, wantLogs, wantState = offParityOnWantTurns, offParityOnWantCalls, offParityOnWantCompany, offParityOnWantHealthz, offParityOnWantLogs, offParityOnWantState
+	}
 	healthz := offParityHealthzDelta(healthzBefore, offParityHealthz())
 	logs := offParityLogLines(read(), sec, city)
 	t.Logf("turns=%#v", fakeGC.list(sec))
@@ -365,12 +467,16 @@ func TestOffParityWithTheBase(t *testing.T) {
 	t.Logf("healthz=%#v", healthz)
 	t.Logf("logs=%#v", logs)
 	t.Logf("state=%#v", offParityTree(t, city, sec))
-	offParityMatch(t, "turns raised", fakeGC.list(sec), offParityWantTurns)
-	offParityMatch(t, "vendor calls", slack.list(sec), offParityWantCalls)
-	offParityMatch(t, "company counters", company, offParityWantCompany)
-	offParityMatch(t, "healthz", healthz, offParityWantHealthz)
-	offParityMatch(t, "log lines", logs, offParityWantLogs)
-	offParityMatch(t, "state directory", offParityTree(t, city, sec), offParityWantState)
+	t.Logf("never-silent=%#v", notices)
+	offParityMatch(t, "turns raised", fakeGC.list(sec), wantTurns)
+	offParityMatch(t, "vendor calls", slack.list(sec), wantCalls)
+	offParityMatch(t, "company counters", company, wantCompany)
+	offParityMatch(t, "healthz", healthz, wantHealthz)
+	offParityMatch(t, "log lines", logs, wantLogs)
+	offParityMatch(t, "state directory", offParityTree(t, city, sec), wantState)
+	if neverSilent {
+		offParityMatch(t, "never-silent state", notices, offParityOnWantNeverSilent)
+	}
 }
 
 // What a start accepts with ACK_REACTION unset: an ACK_SCOPE the base never
@@ -403,13 +509,29 @@ func TestOffParityStartsAsTheBase(t *testing.T) {
 	}
 }
 
-// The base's observations of the script above (c9969436, base hooks),
-// generated from that run's own %#v output.
+// The base's observations of the script with NEVER_SILENT=on (main at
+// 205d0aec, base hooks), generated from that run's own %#v output.
+var (
+	offParityOnWantTurns       = []string{"POST /v0/city/test-city/extmsg/inbound | CEXAMPLE | room | <now>.000103 |  | <@U0BOTSELF> please look", "POST /v0/city/test-city/extmsg/inbound | CEXAMPLE | room | <now>.000104 |  | no mention here", "POST /v0/city/test-city/extmsg/inbound | DEXAMPLE | dm | <now>.000101 |  | a direct message", "POST /v0/city/test-city/extmsg/inbound | GEXAMPLE | room | <now>.000102 |  | <@U0BOTSELF> in a group"}
+	offParityOnWantCalls       = []string{"chat.postMessage thread_ts=<now>.000300 x1", "chat.postMessage x1", "conversations.history x1", "conversations.replies ts=<now>.000300 x1", "files.completeUploadExternal x1", "files.getUploadURLExternal x1", "reactions.add x3", "reactions.remove x1", "upload x1"}
+	offParityOnWantCompany     = []string{"membership_probes=1", "session_calls=1", "company_barrier_ready=true", "company_store_ready=true", "company_store_error=\"\"", "company_write_failures=0", "company_delivery_failures=0", "company_target_reresolved=0", "company_materialize_requests=0", "company_boot_requests=0", "company_delivered_asleep=0", "company_roster_drift_wakes=1", "company_stale_posting_intents=0", "company_correlation_parked=0", "company_directory_loaded=true", "company_bindings_loaded=true", "company_dm_bindings_loaded=false", "registered_agent_apps=0", "registered_agent_apps_join_warnings=0", "company_dm_sig_reject=0", "company_dm_token_missing=0", "company_dm_receipts_received=0", "company_dm_receipts_routing=0", "company_dm_receipts_delivered=0", "company_dm_receipts_no_delivery=0", "company_dm_receipts_failed=0", "company_mpim_receipts_received=0", "company_mpim_receipts_routing=0", "company_mpim_receipts_delivered=0", "company_mpim_receipts_no_delivery=0", "company_mpim_receipts_failed=0", "company_body_missing=0", "company_bodies_redacted=0", "company_body_digest_mismatch=0"}
+	offParityOnWantHealthz     = []string{"dispatch_dropped_total=+0", "ok="}
+	offParityOnWantLogs        = []string{"company: roster-drift eligibility overlay admitted agent=riley bot_user_id=U0AAAAAA2 room=orchestrator-team channel=C0AAAAAAA (live channel member, directory roster stale — recapture declaratively)", "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000103 thread= target=\"\" bot_mention=true files=0 spooled=0 text=24ch posted=24ch receipt=unsupported", "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000104 thread= target=\"\" bot_mention=false files=0 spooled=0 text=15ch posted=15ch receipt=unsupported", "inbound: chan=DEXAMPLE user=U0AAAAAA1 ts=<now>.000101 thread= target=\"\" bot_mention=false files=0 spooled=0 text=16ch posted=16ch receipt=unsupported", "inbound: chan=GEXAMPLE user=U0AAAAAA1 ts=<now>.000102 thread= target=\"\" bot_mention=true files=0 spooled=0 text=23ch posted=23ch receipt=unsupported", "publish-file: conv=CEXAMPLE file=answer.txt size=9 reply_to= session= as=\"\"", "publish: conv=CEXAMPLE text=32ch posted=32ch reply_to= idem=offparity-root session=gc-offparity as=\"\" mentions_rewritten=false", "publish: conv=CEXAMPLE text=33ch posted=33ch reply_to=<now>.000300 idem=offparity-child session=gc-offparity as=\"\" mentions_rewritten=false", "react: op=reactions.add conv=CEXAMPLE ts=<now>.000103 emoji=thumbsup"}
+	offParityOnWantState       = []string{".gc/", ".gc/slack/", ".gc/slack/inbound-journal/", ".gc/slack/inbound-journal/<date>.jsonl rows=accepted@CEXAMPLE/<now>.000103/thread=,accepted@CEXAMPLE/<now>.000104/thread=,accepted@DEXAMPLE/<now>.000101/thread=,accepted@GEXAMPLE/<now>.000102/thread=,reaction@CEXAMPLE/<now>.000103/thread=,reply@CEXAMPLE/<now>.000501/thread=,reply@CEXAMPLE/<now>.000502/thread=<now>.000300", ".gc/slack/never-silent-acts/", ".gc/slack/never-silent.json", ".gc/slack/publish-receipts/", ".gc/slack/publish-receipts/11f3a8939e248e75a8027adc52c8b4f2f94cab4b721b1f5a176f82cd0e923876.json message=<now>.000502 thread=<now>.000300 reply_to=<now>.000300 delivered=true readback=confirmed", ".gc/slack/publish-receipts/ed059699115662aeca1fcd2785a50a6348f8f6877ae71e9b6bb765319f9f2a51.json message=<now>.000501 thread= reply_to= delivered=true readback=confirmed", "uploads/", "uploads/answer.txt"}
+	offParityOnWantNeverSilent = []string{"acts [{\"at\":\"<t>\",\"conversation\":\"CEXAMPLE\",\"session\":\"gc-offparity\",\"thread\":\"\"},{\"at\":\"<t>\",\"conversation\":\"CEXAMPLE\",\"session\":\"gc-offparity\",\"thread\":\"<now>.000300\"}]", "message CEXAMPLE:<now>.000103 {\"conversation\":\"CEXAMPLE\",\"created\":\"<t>\",\"delivered\":\"<zero>\",\"failure_since\":\"<zero>\",\"id\":\"CEXAMPLE:<now>.000103\",\"observed\":\"<t>\",\"stopped\":\"<zero>\",\"thread\":\"<now>.000103\"}", "message DEXAMPLE:<now>.000101 {\"conversation\":\"DEXAMPLE\",\"created\":\"<t>\",\"delivered\":\"<zero>\",\"failure_since\":\"<zero>\",\"id\":\"DEXAMPLE:<now>.000101\",\"observed\":\"<t>\",\"stopped\":\"<zero>\",\"thread\":\"<now>.000101\"}", "message GEXAMPLE:<now>.000102 {\"conversation\":\"GEXAMPLE\",\"created\":\"<t>\",\"delivered\":\"<zero>\",\"failure_since\":\"<zero>\",\"id\":\"GEXAMPLE:<now>.000102\",\"observed\":\"<t>\",\"stopped\":\"<zero>\",\"thread\":\"<now>.000102\"}", "outages null", "owners {}", "posted null"}
+)
+
+// The base's observations of the script with NEVER_SILENT unset (main at
+// 205d0aec, base hooks), generated from that run's own %#v output. One
+// expectation differs from round 2's base c9969436: the state directory's
+// journal holds a reply row for the root publish, reply@CEXAMPLE/<now>.000501,
+// because main's 863e9aa8 (PR 98) journals every session publish, root posts
+// included (recordDeliveredPublish).
 var (
 	offParityWantTurns   = []string{"POST /v0/city/test-city/extmsg/inbound | CEXAMPLE | room | <now>.000103 |  | <@U0BOTSELF> please look", "POST /v0/city/test-city/extmsg/inbound | CEXAMPLE | room | <now>.000104 |  | no mention here", "POST /v0/city/test-city/extmsg/inbound | DEXAMPLE | dm | <now>.000101 |  | a direct message", "POST /v0/city/test-city/extmsg/inbound | GEXAMPLE | room | <now>.000102 |  | <@U0BOTSELF> in a group"}
 	offParityWantCalls   = []string{"chat.postMessage thread_ts=<now>.000300 x1", "chat.postMessage x1", "conversations.history x1", "conversations.replies ts=<now>.000300 x1", "files.completeUploadExternal x1", "files.getUploadURLExternal x1", "reactions.add x3", "reactions.remove x1", "upload x1"}
 	offParityWantCompany = []string{"membership_probes=1", "session_calls=1", "company_barrier_ready=true", "company_store_ready=true", "company_store_error=\"\"", "company_write_failures=0", "company_delivery_failures=0", "company_target_reresolved=0", "company_materialize_requests=0", "company_boot_requests=0", "company_delivered_asleep=0", "company_roster_drift_wakes=1", "company_stale_posting_intents=0", "company_correlation_parked=0", "company_directory_loaded=true", "company_bindings_loaded=true", "company_dm_bindings_loaded=false", "registered_agent_apps=0", "registered_agent_apps_join_warnings=0", "company_dm_sig_reject=0", "company_dm_token_missing=0", "company_dm_receipts_received=0", "company_dm_receipts_routing=0", "company_dm_receipts_delivered=0", "company_dm_receipts_no_delivery=0", "company_dm_receipts_failed=0", "company_mpim_receipts_received=0", "company_mpim_receipts_routing=0", "company_mpim_receipts_delivered=0", "company_mpim_receipts_no_delivery=0", "company_mpim_receipts_failed=0", "company_body_missing=0", "company_bodies_redacted=0", "company_body_digest_mismatch=0"}
 	offParityWantHealthz = []string{"dispatch_dropped_total=+0", "ok="}
 	offParityWantLogs    = []string{"company: roster-drift eligibility overlay admitted agent=riley bot_user_id=U0AAAAAA2 room=orchestrator-team channel=C0AAAAAAA (live channel member, directory roster stale — recapture declaratively)", "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000103 thread= target=\"\" bot_mention=true files=0 spooled=0 text=24ch posted=24ch receipt=unsupported", "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000104 thread= target=\"\" bot_mention=false files=0 spooled=0 text=15ch posted=15ch receipt=unsupported", "inbound: chan=DEXAMPLE user=U0AAAAAA1 ts=<now>.000101 thread= target=\"\" bot_mention=false files=0 spooled=0 text=16ch posted=16ch receipt=unsupported", "inbound: chan=GEXAMPLE user=U0AAAAAA1 ts=<now>.000102 thread= target=\"\" bot_mention=true files=0 spooled=0 text=23ch posted=23ch receipt=unsupported", "publish-file: conv=CEXAMPLE file=answer.txt size=9 reply_to= session= as=\"\"", "publish: conv=CEXAMPLE text=32ch posted=32ch reply_to= idem=offparity-root session=gc-offparity as=\"\" mentions_rewritten=false", "publish: conv=CEXAMPLE text=33ch posted=33ch reply_to=<now>.000300 idem=offparity-child session=gc-offparity as=\"\" mentions_rewritten=false", "react: op=reactions.add conv=CEXAMPLE ts=<now>.000103 emoji=thumbsup"}
-	offParityWantState   = []string{".gc/", ".gc/slack/", ".gc/slack/inbound-journal/", ".gc/slack/inbound-journal/<date>.jsonl rows=accepted@CEXAMPLE/<now>.000103/thread=,accepted@CEXAMPLE/<now>.000104/thread=,accepted@DEXAMPLE/<now>.000101/thread=,accepted@GEXAMPLE/<now>.000102/thread=,reaction@CEXAMPLE/<now>.000103/thread=,reply@CEXAMPLE/<now>.000502/thread=<now>.000300", ".gc/slack/publish-receipts/", ".gc/slack/publish-receipts/11f3a8939e248e75a8027adc52c8b4f2f94cab4b721b1f5a176f82cd0e923876.json message=<now>.000502 thread=<now>.000300 reply_to=<now>.000300 delivered=true readback=confirmed", ".gc/slack/publish-receipts/ed059699115662aeca1fcd2785a50a6348f8f6877ae71e9b6bb765319f9f2a51.json message=<now>.000501 thread= reply_to= delivered=true readback=confirmed", "uploads/", "uploads/answer.txt"}
+	offParityWantState   = []string{".gc/", ".gc/slack/", ".gc/slack/inbound-journal/", ".gc/slack/inbound-journal/<date>.jsonl rows=accepted@CEXAMPLE/<now>.000103/thread=,accepted@CEXAMPLE/<now>.000104/thread=,accepted@DEXAMPLE/<now>.000101/thread=,accepted@GEXAMPLE/<now>.000102/thread=,reaction@CEXAMPLE/<now>.000103/thread=,reply@CEXAMPLE/<now>.000501/thread=,reply@CEXAMPLE/<now>.000502/thread=<now>.000300", ".gc/slack/publish-receipts/", ".gc/slack/publish-receipts/11f3a8939e248e75a8027adc52c8b4f2f94cab4b721b1f5a176f82cd0e923876.json message=<now>.000502 thread=<now>.000300 reply_to=<now>.000300 delivered=true readback=confirmed", ".gc/slack/publish-receipts/ed059699115662aeca1fcd2785a50a6348f8f6877ae71e9b6bb765319f9f2a51.json message=<now>.000501 thread= reply_to= delivered=true readback=confirmed", "uploads/", "uploads/answer.txt"}
 )

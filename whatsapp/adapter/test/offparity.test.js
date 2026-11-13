@@ -1,11 +1,14 @@
-// Off parity (PR 104 round 2, item 11): with ACK_REACTION unset, the adapter
-// behaves as it does at the PR's base c99694367081b2b3e98a58aafaf1320e091621fe
-// on the same inputs. One script, replayed against the fakes through the real
-// adapter process; every observation is compared with the values the base
-// produces, written below. This file runs byte for byte at the base, at the
-// PR's head and at the round's tip; newer wiring is reached only through
-// offparity-hook.js (the base's copy is kept under
-// assets/pr-evidence/gp-2awj/round2/base-hooks/).
+// Off parity (PR 104 round 2, item 11; round 3, item 3): with ACK_REACTION
+// unset, the adapter behaves as it does at the base on the same inputs. Since
+// round 3 the base is main at 205d0aecedf944792f1e3b3fbc420b9e5ad910d8 (round
+// 2's was c99694367081b2b3e98a58aafaf1320e091621fe). One script, replayed
+// against the fakes through the real adapter process; every observation is
+// compared with the values the base produces, written below. This file runs
+// byte for byte at the base and at the tip; newer wiring is reached only
+// through offparity-hook.js (the base's copy is kept under
+// assets/pr-evidence/gp-2awj/round2/base-hooks/). The script runs twice:
+// NEVER_SILENT unset, and NEVER_SILENT=on, where the adapter process wires
+// main's never-silent itself and the state file is read without its times.
 //
 // THE ONLY DIFFERENCES ALLOWED, each removed before the comparison:
 // - the stopwatch's files stopwatch-YYYY-MM.jsonl in the state directory
@@ -175,6 +178,163 @@ const BASE = {
     "whatsapp-media/inbound/",
     "whatsapp-media/inbound/owner-example/",
     "whatsapp-media/inbound/owner-example/message-example-2-image.jpg"
+  ],
+  "neverSilent": [
+    "<no state file>"
+  ]
+};
+
+// The script's observations with NEVER_SILENT=on at the base, main at
+// 205d0aecedf944792f1e3b3fbc420b9e5ad910d8, recorded as BASE was.
+const BASE_NEVER_SILENT_ON = {
+  "turns": [
+    {
+      "conversation": "owner-example",
+      "message": "message-example-1",
+      "actor": "owner-example",
+      "attachments": [],
+      "text": "hello from the owner"
+    },
+    {
+      "conversation": "owner-example",
+      "message": "message-example-2",
+      "actor": "owner-example",
+      "attachments": [
+        "image/jpeg"
+      ],
+      "text": "the shop front\n\n[1 WhatsApp file attached]\n  1. message-example-2-image.jpg (image/jpeg) saved to <dir>/.gc/whatsapp-media/inbound/owner-example/message-example-2-image.jpg; Read that path to view it"
+    },
+    {
+      "conversation": "owner-example",
+      "message": "message-example-3",
+      "actor": "owner-example",
+      "attachments": [],
+      "text": "OK [ok-1]"
+    },
+    {
+      "conversation": "owner-example",
+      "message": "message-example-4",
+      "actor": "owner-example",
+      "attachments": [],
+      "text": "[reaction 👍 to message-example-out]"
+    },
+    {
+      "conversation": "owner-example",
+      "message": "message-example-5",
+      "actor": "owner-example",
+      "attachments": [],
+      "text": "[unsupported WhatsApp message: system]"
+    }
+  ],
+  "city": {
+    "GET /extmsg/transcript": 1,
+    "POST /extmsg/adapters": 1,
+    "POST /extmsg/inbound": 5
+  },
+  "gateway": {
+    "GET /v1/media/media-example-1": 1,
+    "GET /v1/window": 5,
+    "POST /v1/read": 5,
+    "POST /v1/send": 4,
+    "POST /v1/uploads": 1
+  },
+  "polled": true,
+  "acknowledged": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "sends": [
+    {
+      "type": "text",
+      "to": "owner-example",
+      "key": "text:<sha256>:0",
+      "chars": 4096
+    },
+    {
+      "type": "text",
+      "to": "owner-example",
+      "key": "text:<sha256>:1",
+      "chars": 1004
+    },
+    {
+      "type": "document",
+      "to": "owner-example",
+      "key": "file-send:<sha256>",
+      "chars": null
+    },
+    {
+      "type": "template",
+      "to": "other-example",
+      "key": "template:<sha256>",
+      "chars": null
+    }
+  ],
+  "reads": [
+    "message-example-1",
+    "message-example-2",
+    "message-example-3",
+    "message-example-4",
+    "message-example-5"
+  ],
+  "jev": 0,
+  "answers": [
+    {
+      "status": 200,
+      "delivered": true
+    },
+    {
+      "status": 200,
+      "delivered": true
+    },
+    {
+      "status": 200,
+      "delivered": true
+    }
+  ],
+  "health": {
+    "status": 200,
+    "json": {
+      "ok": true,
+      "gateway_auth": "ok",
+      "city": "test-city"
+    }
+  },
+  "log": [
+    "internal listener on UDS <dir>/s.sock",
+    "journal compacted (start): 0 acknowledged entr(ies) dropped, 1 line(s) kept",
+    "media …mple image: saved (100 bytes)",
+    "publish to …mple delivered (2 chunks)",
+    "registered with gc as provider=whatsapp account=dynasty callback=<gc>/v0/city/test-city/svc/whatsapp",
+    "update to …mple sent as the dynasty_update template",
+    "watermark read (schedule): 1 watermark(s), 0 gap(s) standing"
+  ],
+  "state": [
+    "whatsapp/",
+    "whatsapp/inbound_dead_letter/",
+    "whatsapp/inbound_journal.jsonl",
+    "whatsapp/keeper.json",
+    "whatsapp/ledger.json",
+    "whatsapp/never-silent-outbound.json",
+    "whatsapp/never-silent.json",
+    "whatsapp/outbound_progress.json",
+    "whatsapp/updates.jsonl",
+    "whatsapp-media/",
+    "whatsapp-media/inbound/",
+    "whatsapp-media/inbound/owner-example/",
+    "whatsapp-media/inbound/owner-example/message-example-2-image.jpg"
+  ],
+  "neverSilent": [
+    "acts [{\"at\":\"<t>\",\"conversation\":\"owner-example\",\"session\":\"session-example\"}]",
+    "message whatsapp:dynasty:message-example-1 {\"conversation\":\"owner-example\",\"created\":\"<t>\",\"delivered\":\"<t>\",\"id\":\"whatsapp:dynasty:message-example-1\",\"observed\":\"<t>\",\"targets\":[\"s-mayor\"]}",
+    "message whatsapp:dynasty:message-example-2 {\"conversation\":\"owner-example\",\"created\":\"<t>\",\"delivered\":\"<t>\",\"id\":\"whatsapp:dynasty:message-example-2\",\"observed\":\"<t>\",\"targets\":[\"s-mayor\"]}",
+    "message whatsapp:dynasty:message-example-3 {\"conversation\":\"owner-example\",\"created\":\"<t>\",\"delivered\":\"<t>\",\"id\":\"whatsapp:dynasty:message-example-3\",\"observed\":\"<t>\",\"targets\":[\"s-mayor\"]}",
+    "outages []",
+    "owners {}",
+    "posted []"
   ]
 };
 
@@ -187,12 +347,37 @@ async function fakeJev(t) {
   return jev;
 }
 
+// never-silent's state file without its times: a number that reads as epoch
+// milliseconds is <t>. Keys sorted; one line per top-level field and one per
+// tracked message.
+function neverSilentState(stateDir) {
+  const file = path.join(stateDir, 'never-silent.json');
+  if (!fs.existsSync(file)) return ['<no state file>'];
+  const canon = (v) => {
+    if (typeof v === 'number' && v >= 1e12) return '<t>';
+    if (Array.isArray(v)) return v.map(canon);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]));
+    return v;
+  };
+  const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const out = [];
+  for (const [key, value] of Object.entries(doc)) {
+    if (key === 'messages') for (const [id, m] of Object.entries(value)) out.push(`message ${id} ${JSON.stringify(canon(m))}`);
+    else out.push(`${key} ${JSON.stringify(canon(value))}`);
+  }
+  return out.sort();
+}
+
 function listing(root) {
   const out = [];
   const walk = (dir, rel) => {
     if (!fs.existsSync(dir)) return;
     for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const name = rel ? `${rel}/${entry.name}` : entry.name;
+      // The temp file of an atomic write (src/ledger.js writeFileAtomic) that
+      // the script's closing SIGKILL interrupted: the kill's timing, not
+      // behaviour. With NEVER_SILENT=on the state is written every tick.
+      if (/^\.tmp-\d+-[0-9a-f]+$/.test(entry.name)) continue;
       if (entry.isDirectory()) {
         if (entry.name === 'words-attempts') continue; // RULING 1, allowed
         out.push(`${name}/`);
@@ -269,6 +454,7 @@ async function runScript(t, extra = {}) {
     // Sorted: two workers may log in either order on a loaded host.
     log: logLines(r.adapter.log(), r, jev).sort(),
     state: listing(path.join(r.dir, '.gc')),
+    neverSilent: neverSilentState(path.join(r.dir, '.gc', 'whatsapp')),
   };
 }
 
@@ -276,6 +462,14 @@ test(`with ACK_REACTION unset the script observes as at the base (${tree})`, asy
   const observed = await runScript(t);
   if (process.env.OFFPARITY_PRINT) t.diagnostic(JSON.stringify(observed));
   for (const key of Object.keys(BASE)) assert.deepEqual(observed[key], BASE[key], `${key} differs from the base`);
+});
+
+// Round 3, item 3: NEVER_SILENT=on with ACK_REACTION unset. Nothing in the
+// script fails and no health file exists, so no line is due.
+test(`with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (${tree})`, async (t) => {
+  const observed = await runScript(t, { NEVER_SILENT: 'on' });
+  if (process.env.OFFPARITY_PRINT) t.diagnostic(JSON.stringify(observed));
+  for (const key of Object.keys(BASE_NEVER_SILENT_ON)) assert.deepEqual(observed[key], BASE_NEVER_SILENT_ON[key], `${key} differs from the base`);
 });
 
 test(`an ACK_SCOPE that is neither addressed nor all starts as at the base (1c, ${tree})`, async (t) => {
