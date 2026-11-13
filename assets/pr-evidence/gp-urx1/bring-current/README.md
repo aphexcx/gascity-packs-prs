@@ -1,8 +1,17 @@
 # PR 105: bring-current validation
 
-Status: **BLOCKED by the reconnect acceptance test; not published.**
-No source behavior or test assertion was changed to resolve the failure.
-The existing draft PR remains at its original head. No deployment occurred.
+Current status: **validation accepted with one documented audio-test
+cancellation; the follow-up changes evidence only.**
+
+The [20-pair comparison](comparison.md) reproduced test C on both revisions:
+3/20 merge runs and 2/20 main runs. See [the follow-up validation](follow-up.md)
+for row b, the complete current counts, six passing file-publishing isolation
+runs, and the [follow-up review](follow-up-review.md).
+
+The sections below preserve the initial bring-current investigation. Its
+merge-only inference was based on three runs per revision and is superseded
+by the 20-pair comparison. No source behavior, assertion or timeout changed.
+The PR remains draft. No deployment occurred.
 
 ## Revisions
 
