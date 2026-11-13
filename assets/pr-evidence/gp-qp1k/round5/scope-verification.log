@@ -1,0 +1,2 @@
+command=git diff --exit-code c99694367081b2b3e98a58aafaf1320e091621fe HEAD -- slack-full/adapter/inbound_recovery.go slack-full/adapter/inbound_recovery_base_decoder_test.go slack-full/adapter/inbound_recovery_review_test.go slack-full/adapter/inbound_recovery_round2_contract_test.go slack-full/adapter/inbound_recovery_round2_test.go slack-full/adapter/inbound_recovery_test.go exit=0
+command=git diff --exit-code 0b790454653fe4d6de64c057c0ae295b8d4a0057 HEAD -- gchat/adapter whatsapp/adapter/src exit=0

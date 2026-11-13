@@ -1,0 +1,7 @@
+=== RUN   TestNeverSilentCredentialsArriveAfterFirstPoll
+    never_silent_startup_test.go:150: without credentials: owner lines=0 operator mails=1
+    never_silent_startup_test.go:152: condition did not become true
+--- FAIL: TestNeverSilentCredentialsArriveAfterFirstPoll (17.39s)
+FAIL
+FAIL	gchat-adapter/internal/app	17.763s
+FAIL

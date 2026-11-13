@@ -1,0 +1,1 @@
+command=['pnpm', 'exec', 'node', '--test', '--test-concurrency=1', '--test-name-pattern=primary delivered resolution clears a stale sidecar stop after restart', 'test/never-silent-integration.test.js'] exit=0

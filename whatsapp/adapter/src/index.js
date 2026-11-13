@@ -35,6 +35,7 @@ import { createKeeper } from './keeper.js';
 import { createLedger, lastFour } from './ledger.js';
 import { createMedia, describeAttachments } from './media.js';
 import { createPublisher, outboundChunkChars } from './outbound.js';
+import { createNeverSilent } from './never-silent.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -71,6 +72,11 @@ export function loadConfig() {
     registerOnStart: getenv('REGISTER_ON_START', 'true') !== 'false',
     stateDir: getenv('WHATSAPP_STATE_DIR', path.join(cityPath, '.gc', 'whatsapp')),
     cityDir: cityPath,
+    neverSilent: getenv('NEVER_SILENT') === 'on',
+    mayorHealthFile: getenv('MAYOR_HEALTH_FILE', path.join(cityPath, '.gc', 'mayor-health.json')),
+    operatorContext: getenv('NEVER_SILENT_OPERATOR_CONTEXT'),
+    operatorAgent: getenv('NEVER_SILENT_OPERATOR_AGENT', 'mayor'),
+    gcBin: getenv('GC_BIN', 'gc'),
     outboundRootConfig: process.env.WHATSAPP_OUTBOUND_ROOTS,
     mediaDir: getenv('WHATSAPP_MEDIA_DIR', path.join(cityPath, '.gc', 'whatsapp-media', 'inbound')),
     gatewayURL: getenv('WHATSAPP_GATEWAY_URL'),
@@ -139,14 +145,15 @@ function parseJSON(text) {
   try { return JSON.parse(text || '{}'); } catch { return undefined; }
 }
 
-export function createListener({ inbound, publisher, keeper, ledger, gateway, health }) {
+export function createListener({ inbound, publisher, keeper, ledger, gateway, health, notices }) {
   const routes = {
     'GET /healthz': async () => ({ status: 200, json: health() }),
     'POST /publish': async (body) => publisher.handlePublish(body),
     'POST /publish-update': async (body) => publisher.handlePublishUpdate(body),
+    'POST /react': async (body) => publisher.handleReact(body),
     'GET /status': async () => ({
       status: 200,
-      json: { inbound: inbound.status(), keeper: keeper.status(), ledger: ledger.snapshot(), health: health() },
+      json: { inbound: inbound.status(), keeper: keeper.status(), ledger: ledger.snapshot(), health: health(), never_silent: notices?.status() },
     }),
     'POST /inbound/resolve': async (body) => {
       const req = parseJSON(body);
@@ -225,7 +232,7 @@ async function registerUntilDone(gc, cfg, isStopping) {
         callback_url: cfg.callbackURL,
         // gc renders this into every inbound paste (handler_extmsg.go:727-751);
         // file-based so reply text never has to survive shell quoting.
-        reply_instructions: 'Reply: write the reply to a file, then run: gc whatsapp publish --to {conversation_id} --text-file <path>',
+        reply_instructions: 'Reply: write the reply to a file, then run: gc whatsapp publish --to {conversation_id} --reply-to {message_ts} --text-file <path>',
         capabilities: {
           SupportsChildConversations: false,
           SupportsAttachments: true,
@@ -276,6 +283,12 @@ export async function main() {
     transcribeTimeoutMs: cfg.transcribeTimeoutMs,
   });
   const media = { hydrate: (args) => mediaStore.hydrate(args), describe: (results) => describeAttachments(results) };
+  const notices = createNeverSilent({
+    enabled: cfg.neverSilent, stateDir: cfg.stateDir, healthFile: cfg.mayorHealthFile,
+    city: cfg.cityName, operatorContext: cfg.operatorContext, operatorAgent: cfg.operatorAgent,
+    localAgent: cfg.routeAgent, gcBin: cfg.gcBin, clock, log,
+    post: (message, line, canPost) => publisher.notice(message.conversation, line, `never-silent:${message.id}:${message.created}`, canPost),
+  });
   const publisher = createPublisher({
     stateDir: cfg.stateDir,
     gateway,
@@ -284,6 +297,7 @@ export async function main() {
     clock,
     log,
     ledger,
+    notices,
     onWindowClosed: (conversationId) => keeper.noteRefusedNudge(conversationId),
     updateLanguage: cfg.updateLanguage,
     cityDir: cfg.cityDir,
@@ -304,6 +318,7 @@ export async function main() {
     media,
     ledger,
     keeper,
+    notices,
     pollMs: cfg.pollMs,
     gcPostTimeoutMs: cfg.gcPostTimeoutMs,
     watermarkCheckMs: cfg.watermarkCheckMs,
@@ -319,7 +334,7 @@ export async function main() {
     city: cfg.cityName,
   });
 
-  const server = http.createServer(createListener({ inbound, publisher, keeper, ledger, gateway, health }));
+  const server = http.createServer(createListener({ inbound, publisher, keeper, ledger, gateway, health, notices }));
   server.headersTimeout = 10000;
   server.requestTimeout = 60000;
   if (cfg.serviceSocket) {
@@ -350,6 +365,7 @@ export async function main() {
   while (!stopping) {
     try {
       await inbound.tick();
+      void notices.poll().catch(() => log('never-silent: poll failed; durable state retained'));
     } catch (err) {
       log(`tick failed: ${err.message}`);
     }

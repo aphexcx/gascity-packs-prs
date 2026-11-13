@@ -50,6 +50,7 @@ def _make_router(routes: dict[str, Any]):
     /events endpoint returns.
     """
     captured: list[dict[str, Any]] = []
+    routes = {"/never-silent/status": {"enabled": False, "health": {"state": "unknown", "reason": "unavailable"}, "outages": [], "owner_lines_seven_days": 0}, **routes}
 
     def fake_request(method: str, url: str, body=None, *, csrf: bool = True,
                      timeout: float = 30.0):
@@ -313,6 +314,8 @@ def test_json_output_is_machine_readable(
     assert parsed["events"]["inbound"] and parsed["events"]["outbound"] == []
     assert parsed["session"] == ""
     assert parsed["bindings"] == []
+    assert parsed["never_silent"]["enabled"] is False
+    assert parsed["never_silent"]["owner_lines_seven_days"] == 0
 
 
 def test_adapter_lookup_failure_degrades_gracefully(

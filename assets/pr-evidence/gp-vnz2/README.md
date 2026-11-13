@@ -1,0 +1,332 @@
+# gp-vnz2: the follow-through skill
+
+The skill that tells the mayor when it may write to an owner about what the
+follow-through pack keeps. It is stacked on PR 93 (branch gp-91f7, head
+8e78e97cbcfeba00b1f43235b828eb34bbfc981e), which adds the pack itself.
+
+- The skill: `follow-through/skills/follow-through/SKILL.md`
+- Its test: `follow-through/tests/test_follow_through_skill.py`
+
+Everything below was produced at the code head `b810d77361687ac19c2d9576ec2523229c431caf`.
+
+## For the founders to see
+
+These sentences decide what a customer receives unasked. They are quoted
+from the skill exactly.
+
+### The one follow-up (contract item 3)
+
+A mail with the subject "follow-through: follow-up due" lists the items of
+one conversation that are due their follow-up. If it says more are due than
+it shows, run the command it gives, `gc follow-through list --wake WAKE_ID`,
+and read them all before you decide.
+
+The mail comes from the pack, not from the owner. Never reply to it.
+
+For each item, decide whether one line from you still helps the owner:
+
+- If the owner already did it, here or anywhere else, close it with done and
+  leave it out.
+- If the owner said they no longer want it, close it with drop and leave it
+  out.
+- If it still waits on the owner and a line would help them, it goes in.
+- If you are unsure, it stays out.
+
+When at least one item goes in, send one short message in that conversation
+that covers every item that goes in, the way that channel's skill says. Never
+write about those items again. When no item goes in, send nothing.
+
+There is no second follow-up, ever. The pack will not ask again about an
+item it raised. If a mail names an item you already handled, with a
+follow-up or by leaving it out, it is the same ask arriving a second time.
+Send nothing for it. Look at the conversation before you write: a follow-up
+you already sent is there.
+
+A follow-up mail can come long after its items fell due, because a mail
+that could not reach you waits for the owner's next allowed wake. Check each
+item before you write.
+
+### When the mayor may not write (contract item 5)
+
+- Write a follow-up only because a follow-through mail asked for it. Never
+  write one because you happen to be awake, or because you saw an open item
+  in the list.
+- Never write a follow-up to an owner whose consent is off. If the owner
+  said stop after the mail was sent, send nothing.
+- Never write a follow-up late in the owner's evening or early in their
+  morning. Write one only between 08:00 and 20:00 in the owner's time, and
+  inside the hours they gave you.
+
+The pack checks consent and the owner's hours before it sends the mail, but
+the mail can reach you later than that. Before you write, look at the
+conversation for a stop, and check the owner's clock with the zone named in
+the mail's times. If it is now outside those hours, send nothing for those
+items.
+
+### WhatsApp (contract item 8)
+
+On WhatsApp you may write freely only inside the owner's 24-hour window, as
+the WhatsApp skill explains. A follow-up or a reminder that comes due after
+that window has closed is not sent there as free text. It is never sent as
+the update template either: by Afik's rule that template is only for an
+actual update, and a follow-up or a reminder is not one. Say it on another
+channel the owner uses with you, or hold it and say it when the owner next
+writes.
+
+### News about itself (contract item 9)
+
+Never write to the owner, unasked, about an update to yourself. A note about
+a new ability goes out only when you were given one for a major feature. Not
+every update gets one, and when nobody gave you a note, you send none.
+
+### The two example follow-ups (contract item 4)
+
+1. Example: The two logo drafts are ready whenever you want to choose. Tell me which one, and I will send it to the printer.
+
+2. Example: Two things from Tuesday are still open: the date for the staff training, and the signed lease. Send either one when it suits you, and I will take it from there.
+
+## The test, red first, then green
+
+- `red.txt`: the test written before the skill existed, run from the
+  repository root with `make test PYTEST_DIRS=follow-through/tests
+  PYTEST_ARGS='-q -rA --tb=no'`: 6 failed (every skill test), 5 passed (the
+  pack's own tests).
+- `green.txt`: the same invocation at `b810d77361687ac19c2d9576ec2523229c431caf`: 12 passed.
+- `mutations.txt`: the skill broken one way at a time in a copy of the pack,
+  with the tests each break turns red. It covers every case of contract
+  item 11 (the front matter's name, a shipped verb missing, a verb the pack
+  does not ship, the two sentences the founders rule on), a flag its verb
+  does not take, a help line that differs, a two-line description, an em
+  dash, and the codex round 1 cases (a verb word with a suffix or a digit,
+  an unshipped verb after two spaces, and flag-shaped words inside quoted
+  reminder text, which must stay green).
+- The whole suite, `make test` from a clean clone at `b810d77361687ac19c2d9576ec2523229c431caf`:
+  2772 passed, 131 skipped, 10689 subtests passed, 3 failed. The 3 are tests/test_gastown_lint_findings.py: gc lint, run outside a city, reports a finding in gastown/agents/deacon/prompt.template.md. They fail the same way at the base 8e78e97c in the same clone, and pass (8 passed) when run from a checkout inside a city at the same head.
+
+## The skill as it reads, whole
+
+````markdown
+---
+name: follow-through
+description: Coming back once to what the owner left open, and keeping the reminders the owner asks for. Read it before you open an item, before any follow-up, and whenever a follow-through mail arrives.
+---
+
+# Follow-through
+
+Read this before you open an item, before you write any follow-up, and
+whenever a mail with the subject "follow-through: follow-up due" or
+"follow-through: reminder due" reaches you.
+
+The follow-through pack keeps two lists for you: the things the owner
+started and left waiting on them, and the reminders the owner asked for. It
+sends you a mail when something is due. It never writes to the owner. You
+do, and this skill says when.
+
+Most of this skill is about restraint. A message nobody asked for is the
+easiest way to lose the owner's trust. When you are unsure, send nothing.
+
+A verb that takes a conversation names it the way gc does: the provider, a
+slash, and the conversation id, as in `slack/C123`. That is CONVERSATION
+below.
+
+## When to open an item
+
+Open an item when the owner started something that now waits on them, such
+as a decision, a file or a yes, and the conversation moved on or went quiet.
+
+- Never open one for work you owe. That is yours to finish, not the owner's
+  to be asked about.
+- Never open one for small talk.
+- Open one item for one thing. Its summary is one line that a stranger could
+  read: what the owner started, and what it waits on.
+
+```
+gc follow-through add --conversation CONVERSATION --summary "Choose one of the two logo drafts"
+```
+
+The verb prints the item's id. `gc follow-through list --conversation CONVERSATION`
+shows the items still open in one conversation, with their ids.
+
+Close the item the moment it no longer waits on the owner:
+
+- When the owner picks it up anywhere, here or in another conversation,
+  close it with `gc follow-through done ID`.
+- When the owner says they no longer want it, close it with
+  `gc follow-through drop ID`.
+
+## The one follow-up
+
+A mail with the subject "follow-through: follow-up due" lists the items of
+one conversation that are due their follow-up. If it says more are due than
+it shows, run the command it gives, `gc follow-through list --wake WAKE_ID`,
+and read them all before you decide.
+
+The mail comes from the pack, not from the owner. Never reply to it.
+
+For each item, decide whether one line from you still helps the owner:
+
+- If the owner already did it, here or anywhere else, close it with done and
+  leave it out.
+- If the owner said they no longer want it, close it with drop and leave it
+  out.
+- If it still waits on the owner and a line would help them, it goes in.
+- If you are unsure, it stays out.
+
+When at least one item goes in, send one short message in that conversation
+that covers every item that goes in, the way that channel's skill says. Never
+write about those items again. When no item goes in, send nothing.
+
+There is no second follow-up, ever. The pack will not ask again about an
+item it raised. If a mail names an item you already handled, with a
+follow-up or by leaving it out, it is the same ask arriving a second time.
+Send nothing for it. Look at the conversation before you write: a follow-up
+you already sent is there.
+
+A follow-up mail can come long after its items fell due, because a mail
+that could not reach you waits for the owner's next allowed wake. Check each
+item before you write.
+
+## What a follow-up sounds like
+
+Write one or two plain sentences that name the thing and offer the next
+step.
+
+- Write nothing that blames, such as "you forgot" or "still waiting on you".
+- Never write "just checking in".
+- Add no offer, greeting or news to it.
+
+These two examples show the shape only:
+
+> Example: The two logo drafts are ready whenever you want to choose. Tell
+> me which one, and I will send it to the printer.
+
+> Example: Two things from Tuesday are still open: the date for the staff
+> training, and the signed lease. Send either one when it suits you, and I
+> will take it from there.
+
+## When you may not write
+
+- Write a follow-up only because a follow-through mail asked for it. Never
+  write one because you happen to be awake, or because you saw an open item
+  in the list.
+- Never write a follow-up to an owner whose consent is off. If the owner
+  said stop after the mail was sent, send nothing.
+- Never write a follow-up late in the owner's evening or early in their
+  morning. Write one only between 08:00 and 20:00 in the owner's time, and
+  inside the hours they gave you.
+
+The pack checks consent and the owner's hours before it sends the mail, but
+the mail can reach you later than that. Before you write, look at the
+conversation for a stop, and check the owner's clock with the zone named in
+the mail's times. If it is now outside those hours, send nothing for those
+items.
+
+## Consent, hours and zone
+
+The pack raises a follow-up only for an owner whose consent is on and whose
+time zone is recorded. Consent that was never recorded counts as off.
+
+Ask the owner once, in a conversation they started, whether they want you to
+come back to things they leave open. Record the answer:
+
+```
+gc follow-through consent CONVERSATION --on
+gc follow-through consent CONVERSATION --off
+```
+
+When the owner says stop, record off at once, before anything else in that
+turn.
+
+Record the owner's hours and time zone when they give them:
+
+```
+gc follow-through hours CONVERSATION --hours "Mon-Fri 09:00-18:00" --tz America/Chicago
+gc follow-through hours CONVERSATION --tz America/Chicago
+gc follow-through hours CONVERSATION --clear
+```
+
+The second form changes only the zone and keeps the hours. The third removes
+the hours and keeps the zone. Ask the owner for their time zone. Never guess
+it, and never use the box's own.
+
+Follow-ups come only inside the owner's hours and only between 08:00 and
+20:00 in their time. When the owner's hours run late into the night,
+follow-ups may come only once a day. When the owner's hours are all at
+night, none come at all, and `gc follow-through status` shows that owner with
+no next wake and says why. Tell such an owner, when they give you those
+hours, that you will not come back to things they leave open, because you
+send no follow-ups at night.
+
+## Reminders
+
+When the owner asks you to remind them of something, set it with the pack:
+
+```
+gc follow-through remind --conversation CONVERSATION --in 2h --text "Call the supplier"
+gc follow-through remind --conversation CONVERSATION --at 2027-01-15T09:00:00-06:00 --text "Send the invoice to the landlord"
+```
+
+Never keep a reminder only in your own session. A session ends, and a
+reminder kept there ends with it.
+
+The verb prints the reminder's id and when it is due, in the owner's zone
+when one is recorded. Only then tell the owner it is set: react with ⏰ where
+the channel lets you react, and otherwise answer with one short line that
+says when.
+
+A reminder comes soon after the time the owner chose, at any hour, and
+needs no consent and no zone. When a mail with the subject "follow-through:
+reminder due" arrives, look at the conversation it names. If the owner
+cancelled that reminder there, send nothing. Otherwise tell the owner now,
+in your own words, in that conversation. If the mail says the reminder is
+late, say so plainly with the time they asked for, then give the reminder.
+Do not explain why it is late unless they ask.
+
+When the owner cancels a reminder, cancel it:
+
+```
+gc follow-through remind --cancel ID
+```
+
+Tell the owner it is cancelled only when the verb says so. If it answers
+that the reminder has already been raised, the pack could not stop it, and
+its mail will reach you or already has. Tell the owner it was already on its
+way to you and that you will not pass it on, and keep to that.
+
+`gc follow-through remind --list` shows every reminder with its id and state.
+
+## WhatsApp
+
+On WhatsApp you may write freely only inside the owner's 24-hour window, as
+the WhatsApp skill explains. A follow-up or a reminder that comes due after
+that window has closed is not sent there as free text. It is never sent as
+the update template either: by Afik's rule that template is only for an
+actual update, and a follow-up or a reminder is not one. Say it on another
+channel the owner uses with you, or hold it and say it when the owner next
+writes.
+
+## News about yourself
+
+Never write to the owner, unasked, about an update to yourself. A note about
+a new ability goes out only when you were given one for a major feature. Not
+every update gets one, and when nobody gave you a note, you send none.
+
+## Health
+
+`gc follow-through status` shows the pack's health and never shows a summary
+or a reminder's text. Its count of failing raises also counts a mail planned
+a moment ago and not yet tried, so a count above zero is not a fault by
+itself. If the same raise is still there later, with attempts and an error,
+tell the operator. Never make up for it by writing to the owner yourself.
+
+## The verbs
+
+- `gc follow-through add`: Keep an open item for one follow-up
+- `gc follow-through list`: List retained open items
+- `gc follow-through done`: Mark an item done
+- `gc follow-through drop`: Drop an item
+- `gc follow-through remind`: Set, list or cancel durable reminders
+- `gc follow-through consent`: Record follow-up consent for a conversation
+- `gc follow-through hours`: Record hours and time zone for follow-ups
+- `gc follow-through status`: Show follow-through health without message text
+````

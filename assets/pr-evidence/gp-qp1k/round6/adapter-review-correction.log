@@ -1,0 +1,18 @@
+✔ A: notice clock and immediate mail do not wait for the held inbox poll (5269.59875ms)
+ℹ pin: mail at stop; line at +180000 ms; no additional inbox read; tick 250 ms
+✔ A: continuous failed receipts notify at three minutes without an inbox read (2536.732083ms)
+▶ B: wake and poll carry the same admission and receipt result into notices
+  ✔ wake (2767.750417ms)
+  ✔ poll (3003.914417ms)
+✔ B: wake and poll carry the same admission and receipt result into notices (5772.167166ms)
+✔ C: dropping and reconnecting a held link preserves the outage and notice marks (3640.271209ms)
+✔ D: a lost wake starts no outage before arrival and uses the adapter arrival clock (3143.346834ms)
+ℹ pin: provider sent +0; adapter admitted +300000; first owner line +480000 ms
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 20410.722958

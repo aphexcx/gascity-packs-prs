@@ -1,0 +1,1 @@
+pnpm exec node --test --test-concurrency=2 --test-reporter=tap --test-name-pattern="switch enablement|outage watch survives registration"	exit=1

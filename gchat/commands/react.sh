@@ -15,6 +15,6 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$message" ] && [ -n "$emoji" ] || gchat_die '--message and --emoji are required'
 gchat_init
-payload=$(jq -n --arg message "$message" --arg emoji "$emoji" --argjson remove "$remove" '{message:$message, emoji:$emoji, remove:$remove}')
+payload=$(jq -n --arg message "$message" --arg emoji "$emoji" --argjson remove "$remove" --arg session "${GC_SESSION_ID:-}" '{message:$message, emoji:$emoji, remove:$remove} + (if $session == "" then {} else {session_id:$session} end)')
 result=$(gchat_post react "$payload")
 printf '%s\n' "$result" | jq .

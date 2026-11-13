@@ -182,6 +182,51 @@ A template never opens or extends the window; only the owner's next message
 does. Whether a text is an actual update is the mayor's skill rule (Afik:
 "only if there is an actual update").
 
+## Quoted replies
+
+The reply line under every inbound message now includes
+`gc whatsapp publish --to <conversation_id> --reply-to <message_id> --text-file <path>`.
+It quotes that message on the first part of a text, or on the file's message.
+Leave the flag off subsequent messages of the same answer. The first call's
+quote is retained when its idempotency key is retried, without changing the
+send keys. An invalid id goes plain, including an unexpanded placeholder
+from an older gc. A keeper or delivery-failure id goes plain when the gateway
+does not recognize it. Templates accept the flag but cannot quote.
+
+Only a receipt that requested a quote adds the strings `metadata.quoted`
+and `metadata.quote_reason`. Quoted is `true` when the gateway sent context
+(with an empty reason), `false` for `invalid_id`, `template`,
+`gateway_without_quotes`, `unknown_message` or `meta_refused`, and `unknown`
+with reason `replayed` when only a stored gateway answer is available.
+The command still exits 0 after a successful send and explains a missing
+or uncertain quote on stderr. Meta may omit a quote bubble for a deleted or
+archived target even after accepting the context.
+
+The adapter and gateway can ship in either order. An older gateway ignores
+context and sends plain; the command reports that. Quotes reach a phone only
+when both are updated. Nothing changes on a box until its pack is updated
+and its adapter restarts. Gateway deployment is separate from this change,
+and migration 0005 must precede deployment of the current gateway. There is
+no new migration. Quoted replies use the same 24-hour window and never reopen
+it. Nothing automatic is enabled.
+
+## Hand reactions
+
+`gc whatsapp react --to <conversation_id> --message <message_id> --emoji 👀`
+places a reaction; `--emoji ""` removes it. Use the inbound "Message id:"
+line. The emoji is a character, not a catalog name. All three flags are
+required, and the command needs session attribution just like a publish.
+It prints a resume key before sending and records the delivered reaction in
+the transcript. Reuse that key after a transport error; changing its message
+or emoji is a conflict. A reaction is recorded as the mayor's act when
+`NEVER_SILENT` is on.
+
+A reaction needs the open 24-hour window and never reopens it. It cannot
+use the update template. A refusal exits 1 with a reason and a hint; say the
+same thing in words by the window rule. Nothing reacts automatically: this
+command acts only when the mayor runs it. A box gains it after updating its
+pack and restarting the adapter. No gateway update is needed for this command.
+
 ## Files out
 
 `gc whatsapp publish --to <conversation_id> --file <path>` sends one image,
@@ -254,11 +299,37 @@ user id whole, a number in any form) and print the last four digits the
 adapter matched. The mayor never replies to a keeper event; it publishes a real
 update or nothing.
 
+## Never silent (opt-in)
+
+Set `NEVER_SILENT=on` to enable notices for newly admitted human messages addressed to the mayor. It is off by default. Edits, deletions, reactions, bots and recovery traffic do not start notices. A busy mayor is never reported just for taking time to reply.
+
+The adapter knows `not_delivered` when it stops trying, or observes three continuous minutes of definite delivery failures or connection/dial errors, city-not-found responses or server errors. A successful HTTP response saying pending resets the failure wait. An uncertain stopped delivery raises operator mail immediately but waits three minutes without a session reply or reaction before telling the owner.
+
+The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
+
+Nothing in these packs writes that file yet. Its writer must run independently of gc's supervisor so evidence remains fresh when the supervisor fails. It must never call an asleep, drained or suspended session down: gc wakes those sessions for incoming messages. Until a writer exists, only not_delivered can fire.
+
+The owner receives one of these exact lines in the same conversation and thread, with the usual reply identity:
+
+- not_delivered or session_down: "I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back."
+- no_seat: "I can't answer yet because no Claude account is signed in for me. The team that runs me has been told."
+- seat_at_cap: "I've reached my usage limit for now and can't answer until it resets. The team that runs me has been told."
+
+A durable reservation permits at most one attempt per conversation in six hours. A refused post is logged once, and restart never repeats that attempt. There are no reminders or recovery messages to owners. Notices do not count as session replies. The local mayor also learns which fixed line was posted.
+
+Set `NEVER_SILENT_OPERATOR_CONTEXT` to the operator city's gc context. `NEVER_SILENT_OPERATOR_AGENT` defaults to mayor; `GC_BIN` defaults to gc. Without a context the adapter logs once when an outage starts and sends no remote mail. Each adapter/cause outage gets a start mail and a cleared mail, with durable sent marks and failed-send retries at most once a minute for 24 hours. Remote gc accepts `--dedup` but the pinned implementation does not forward it; the adapter's durable sent mark provides the guard.
+
+Operator mail contains only city, adapter, cause, times, aggregate counts and age, owner-notice counts, relevant health state/check time and a status command. It contains no customer text, name, address or conversation coordinates. Local state retains the coordinates needed to reply; those never leave the city in operator mail.
+
+`gc whatsapp status` and its `--json` output include enabled state, health and its age or unknown reason, open outages with aggregate counts and sent marks, and the number of owner lines posted in seven days.
+
 ## The verbs
 
 | Verb | What it does |
 | --- | --- |
 | `gc whatsapp publish --to <conversation_id> --text-file <path>` | free-form text inside the window |
+| `gc whatsapp publish --to <conversation_id> --reply-to <message_id> --text-file <path>` | quote the inbound message on the first part of the reply |
+| `gc whatsapp react --to <conversation_id> --message <message_id> --emoji <emoji>` | place a hand reaction inside the window; an empty emoji removes it |
 | `gc whatsapp publish --to <conversation_id> --file <path> [--caption-file <path>]` | one allowed file inside the window; upload/send resume under the printed key |
 | `gc whatsapp publish --update --to <conversation_id> --text "..."` | the update template outside the window |
 | `gc whatsapp invite [--proactive-consent] [--hours "Mon-Fri 09:00-18:00"] [--tz <zone>]` | a 6-digit, 24-hour invite code and the two lines the owner is told |

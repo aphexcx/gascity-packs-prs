@@ -1,0 +1,10 @@
+=== RUN   TestNeverSilentStartsBeforeRegistration
+=== RUN   TestNeverSilentStartsBeforeRegistration/first-restart
+    never_silent_startup_test.go:94: registration 503s=3 owner lines=1 operator mails=1
+=== RUN   TestNeverSilentStartsBeforeRegistration/second-restart
+    never_silent_startup_test.go:94: registration 503s=3 owner lines=1 operator mails=1
+--- PASS: TestNeverSilentStartsBeforeRegistration (12.17s)
+    --- PASS: TestNeverSilentStartsBeforeRegistration/first-restart (6.05s)
+    --- PASS: TestNeverSilentStartsBeforeRegistration/second-restart (6.03s)
+PASS
+ok  	gchat-adapter/internal/app	12.468s

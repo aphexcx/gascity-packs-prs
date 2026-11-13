@@ -1,0 +1,8 @@
+=== RUN   TestNeverSilentHoldPostBranches
+=== RUN   TestNeverSilentHoldPostBranches/refused_connections
+    never_silent_hold_test.go:213: owner lines=0 start mails=0 cleared mails=0; want 1/1/0
+--- FAIL: TestNeverSilentHoldPostBranches (0.31s)
+    --- FAIL: TestNeverSilentHoldPostBranches/refused_connections (0.31s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	0.543s
+FAIL

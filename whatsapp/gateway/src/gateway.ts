@@ -348,12 +348,19 @@ interface OwnerRow {
 }
 
 function parseSend(body: Obj): SendRequest {
+  let context: { message_id: string } | undefined;
+  if ((body.type === "text" || isMediaKind(body.type)) && body.context !== undefined) {
+    if (!isObj(body.context) || Object.keys(body.context).length !== 1) throw new HttpError(400, "bad_request");
+    const messageId = boundedString(body.context.message_id, 1, 256);
+    if (!messageId) throw new HttpError(400, "bad_request");
+    context = { message_id: messageId };
+  }
   if (isMediaKind(body.type)) {
     const m = isObj(body.media) ? body.media : {};
     const mediaId = boundedString(m.id, 1, 128);
     if (!mediaId || (m.caption !== undefined && (body.type === "audio" || typeof m.caption !== "string" || [...m.caption].length > 1024))
       || (m.filename !== undefined && (body.type !== "document" || !validFilename(m.filename)))) throw new HttpError(400, "bad_request");
-    return { type: body.type, mediaId, ...(m.caption !== undefined ? { caption: m.caption as string } : {}),
+    return { type: body.type, mediaId, ...(context ? { context } : {}), ...(m.caption !== undefined ? { caption: m.caption as string } : {}),
       ...(m.filename !== undefined ? { filename: m.filename as string } : {}) };
   }
   switch (body.type) {
@@ -361,7 +368,7 @@ function parseSend(body: Obj): SendRequest {
       const text = typeof body.text === "string" ? body.text : null;
       if (!text) throw new HttpError(400, "bad_request");
       if ([...text].length > MAX_TEXT_CHARS) throw new HttpError(400, "text_too_long");
-      return { type: "text", text };
+      return { type: "text", text, ...(context ? { context } : {}) };
     }
     case "reaction": {
       const r = isObj(body.reaction) ? body.reaction : null;
@@ -1024,13 +1031,27 @@ export function createGateway(deps: Deps) {
     return json({ ok: true });
   }
 
+  async function knowsMessage(cityId: string, messageId: string, now: number): Promise<boolean> {
+    const known = await db.prepare(
+      `SELECT 1 AS one FROM deliveries WHERE city_id = ?1 AND wamid = ?2
+         AND kind IN ('message', 'joined') AND received_at > ?3
+       UNION ALL SELECT 1 AS one FROM sends WHERE city_id = ?1 AND wamid = ?2 AND created_at > ?4 LIMIT 1`,
+    ).bind(cityId, messageId, now - TOMBSTONE_SECONDS, now - SENDS_KEEP_SECONDS).first();
+    return Boolean(known);
+  }
+
   async function send(request: Request): Promise<Response> {
     const cityId = await cityOf(request);
     const body = await readJson(request);
     const to = parseTo(body.to);
     const key = boundedString(body.idempotency_key, 1, 200);
     if (!key) throw new HttpError(400, "bad_request");
+    const requestedAttempt = boundedString(request.headers.get("x-gc-send-attempt"), 1, 100);
+    const activityAttempt = requestedAttempt && /^[A-Za-z0-9_-]+$/.test(requestedAttempt) ? requestedAttempt : null;
     let req = parseSend(body);
+    const askedQuote = "context" in req && Boolean(req.context);
+    let quoted: "true" | "false" | "unknown" | undefined = askedQuote ? "true" : undefined;
+    let quoteReason: "unknown_message" | "meta_refused" | undefined;
     const now = deps.now();
     // `to` names THIS city's owners by their conversation_id (the id the box files one under), by
     // their current user_id, or by a number one shows: the number whose newest pairing (its mark)
@@ -1050,10 +1071,10 @@ export function createGateway(deps: Deps) {
     // The key first: a repeat answers the first answer, whatever the window says now. A key whose
     // first call may have reached Meta without an answer saying so never makes a second call.
     const prior = await db
-      .prepare("SELECT wamid, state, created_at FROM sends WHERE city_id = ? AND idempotency_key = ?")
+      .prepare("SELECT wamid, state, created_at, activity_attempt_id FROM sends WHERE city_id = ? AND idempotency_key = ?")
       .bind(cityId, key)
-      .first<{ wamid: string | null; state: string; created_at: number }>();
-    if (prior) return repeatAnswer(prior, now);
+      .first<{ wamid: string | null; state: string; created_at: number; activity_attempt_id: string | null }>();
+    if (prior) return repeatAnswer(prior, now, askedQuote);
     // A `to` naming two owners (one's conversation_id, kept from a phone number it no longer
     // holds, and the number another shows now: a recycled number) is refused, and nothing is
     // sent: the box may mean either, and a guess hands one owner's message to the other. A box
@@ -1085,6 +1106,15 @@ export function createGateway(deps: Deps) {
       log({ event: "send_refused", reason: "window_closed", type: req.type });
       throw new HttpError(422, "window_closed");
     }
+    if (req.type === "reaction" && !await knowsMessage(cityId, req.messageId, now)) {
+      throw new HttpError(422, "unknown_message");
+    }
+    if ("context" in req && req.context && !await knowsMessage(cityId, req.context.message_id, now)) {
+      const { context: _context, ...plain } = req;
+      req = plain;
+      quoted = "false";
+      quoteReason = "unknown_message";
+    }
     if ("mediaId" in req) {
       const grant = await db.prepare("SELECT meta_id FROM uploads WHERE city_id = ? AND media_id = ? AND kind = ? AND state = 'ready' AND expires_at > ?")
         .bind(cityId, req.mediaId, req.type, now).first<{ meta_id: string }>();
@@ -1094,23 +1124,34 @@ export function createGateway(deps: Deps) {
     const client = graph();
     const claim = await db
       .prepare(
-        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at, conversation_id)
-         VALUES (?1, ?2, NULL, 'claimed', ?3, ?4, ?5)
+        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at, conversation_id, activity_attempt_id)
+         VALUES (?1, ?2, NULL, 'claimed', ?3, ?4, ?5, ?6)
          ON CONFLICT (city_id, idempotency_key) DO NOTHING`,
       )
-      .bind(cityId, key, req.type, now, owner.conversation_id)
+      .bind(cityId, key, req.type, now, owner.conversation_id, activityAttempt)
       .run();
     if (changes(claim) !== 1) {
       const raced = await db
-        .prepare("SELECT wamid, state, created_at FROM sends WHERE city_id = ? AND idempotency_key = ?")
+        .prepare("SELECT wamid, state, created_at, activity_attempt_id FROM sends WHERE city_id = ? AND idempotency_key = ?")
         .bind(cityId, key)
-        .first<{ wamid: string | null; state: string; created_at: number }>();
-      if (raced) return repeatAnswer(raced, now);
+        .first<{ wamid: string | null; state: string; created_at: number; activity_attempt_id: string | null }>();
+      if (raced) return repeatAnswer(raced, now, askedQuote);
       throw new HttpError(409, "in_flight");
     }
     let wamid: string;
     try {
-      wamid = await graphSend(client, sendBody(address, req));
+      try {
+        wamid = await graphSend(client, sendBody(address, req));
+      } catch (e) {
+        if (!(e instanceof GraphError) || !("context" in req && req.context)
+          || e.status < 400 || e.status >= 500 || e.status === 429 || e.code === META_OUTSIDE_WINDOW) throw e;
+        // A definite refusal sent nothing. Retry plain once within this claim;
+        // ambiguous outcomes never enter this branch.
+        const { context: _context, ...plain } = req;
+        quoted = "false";
+        quoteReason = "meta_refused";
+        wamid = await graphSend(client, sendBody(address, plain));
+      }
     } catch (e) {
       if (!(e instanceof GraphError)) throw e;
       log({ event: "send_failed", type: req.type, meta_status: e.status, meta_code: e.code });
@@ -1153,12 +1194,24 @@ export function createGateway(deps: Deps) {
       log({ event: "send_record_failed", type: req.type, error: errorName(e) });
     }
     log({ event: "send", type: req.type });
-    return json({ message_id: wamid });
+    return sendAnswer(wamid, false, activityAttempt, quoted, quoteReason);
+  }
+
+  function sendAnswer(messageId: string, replayed: boolean, activityAttempt: string | null,
+    quoted?: "true" | "false" | "unknown", quoteReason?: string): Response {
+    const answer = json({ message_id: messageId });
+    // Keep the frozen response body identical on replay. This optional header
+    // distinguishes old words from a fresh send after send-key retention ends.
+    answer.headers.set("x-gc-replayed", String(replayed));
+    if (activityAttempt) answer.headers.set("x-gc-send-attempt", activityAttempt);
+    if (quoted) answer.headers.set("x-gc-quoted", quoted);
+    if (quoteReason) answer.headers.set("x-gc-quote-reason", quoteReason);
+    return answer;
   }
 
   /** What a repeated idempotency key answers: the first message_id, or why there is none. */
-  function repeatAnswer(prior: { wamid: string | null; state: string; created_at: number }, now: number): Response {
-    if (prior.wamid) return json({ message_id: prior.wamid });
+  function repeatAnswer(prior: { wamid: string | null; state: string; created_at: number; activity_attempt_id: string | null }, now: number, askedQuote = false): Response {
+    if (prior.wamid) return sendAnswer(prior.wamid, true, prior.activity_attempt_id, askedQuote ? "unknown" : undefined);
     if (prior.state === "claimed" && prior.created_at > now - SEND_CLAIM_STALE_SECONDS) {
       throw new HttpError(409, "in_flight");
     }

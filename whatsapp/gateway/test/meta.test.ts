@@ -261,6 +261,20 @@ describe("business-scoped user ids (Meta's BSUID examples)", () => {
 });
 
 describe("send bodies (Meta's documented shapes)", () => {
+  it("quote wire: text and every media type carry context beside their content", () => {
+    const context = { message_id: "wamid.example" };
+    expect(sendBody("US.fixture", { type: "text", text: "reply", context })).toEqual({
+      messaging_product: "whatsapp", recipient_type: "individual", recipient: "US.fixture",
+      type: "text", text: { body: "reply", preview_url: false }, context,
+    });
+    for (const type of ["image", "audio", "video", "document"] as const) {
+      expect(sendBody("US.fixture", { type, mediaId: "example-media", context })).toEqual({
+        messaging_product: "whatsapp", recipient_type: "individual", recipient: "US.fixture",
+        type, [type]: { id: "example-media" }, context,
+      });
+    }
+  });
+
   it("text, reaction and template", () => {
     expect(sendBody("16505551234", { type: "text", text: "hello" })).toEqual({
       messaging_product: "whatsapp",

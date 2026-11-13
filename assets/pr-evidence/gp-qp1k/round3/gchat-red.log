@@ -1,0 +1,13 @@
+=== RUN   TestNeverSilentStartsBeforeRegistration
+=== RUN   TestNeverSilentStartsBeforeRegistration/first-restart
+    never_silent_startup_test.go:94: registration 503s=4 owner lines=0 operator mails=0
+    never_silent_startup_test.go:99: got owner lines=0 operator mails=0; want 1, 1
+=== RUN   TestNeverSilentStartsBeforeRegistration/second-restart
+    never_silent_startup_test.go:94: registration 503s=4 owner lines=0 operator mails=0
+    never_silent_startup_test.go:99: got owner lines=0 operator mails=0; want 1, 1
+--- FAIL: TestNeverSilentStartsBeforeRegistration (24.10s)
+    --- FAIL: TestNeverSilentStartsBeforeRegistration/first-restart (12.04s)
+    --- FAIL: TestNeverSilentStartsBeforeRegistration/second-restart (12.02s)
+FAIL
+FAIL	gchat-adapter/internal/app	24.373s
+FAIL

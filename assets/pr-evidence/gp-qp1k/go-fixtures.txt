@@ -1,0 +1,156 @@
+Google Chat
+=== RUN   TestEpisodesPersistAndAggregateByCause
+    engine_test.go:88: never-silent: example-city: gchat: not_delivered
+        city: example-city
+        channel: gchat
+        cause: not_delivered — the message did not land and will not without recovery
+        started: 2026-11-12T08:03:00Z
+        conversations: 4
+        messages: 12
+        oldest_age_seconds: 180
+        owners_told: true (4 conversations)
+        status: gc gchat status --json
+
+    engine_test.go:88: never-silent: example-city: gchat: not_delivered cleared
+        city: example-city
+        channel: gchat
+        cause: not_delivered — the message did not land and will not without recovery
+        started: 2026-11-12T08:03:00Z
+        ended: 2026-11-12T08:03:01Z
+
+--- PASS: TestEpisodesPersistAndAggregateByCause (2.13s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/ok/false
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/ok/false (0.23s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/ok/true
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/ok/true (0.39s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/no_seat/false
+    engine_test.go:176: I can't answer yet because no Claude account is signed in for me. The team that runs me has been told.
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/no_seat/false (0.16s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/no_seat/true
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/no_seat/true (0.40s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/seat_at_cap/false
+    engine_test.go:176: I've reached my usage limit for now and can't answer until it resets. The team that runs me has been told.
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/seat_at_cap/false (0.52s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/seat_at_cap/true
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/seat_at_cap/true (0.14s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/session_down/false
+    engine_test.go:176: I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/session_down/false (0.38s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/session_down/true
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/session_down/true (0.10s)
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct (2.32s)
+=== RUN   TestOperatorMailContainsNoCustomerCanaries
+    engine_test.go:267: never-silent: example-city: gchat: not_delivered
+        city: example-city
+        channel: gchat
+        cause: not_delivered — the message did not land and will not without recovery
+        started: 2026-11-12T08:00:00Z
+        conversations: 1
+        messages: 1
+        oldest_age_seconds: 0
+        owners_told: true (1 conversations)
+        status: gc gchat status --json
+
+--- PASS: TestOperatorMailContainsNoCustomerCanaries (0.46s)
+=== RUN   TestFakeGCBinaryRecordsRemoteMailArguments
+    engine_test.go:306: mail
+        send
+        --context
+        example-operator
+        mayor
+        --dedup
+        never-silent:1c8273ca7c37964ae254c130cf3ce455
+        -s
+        never-silent: example-city: gchat: not_delivered
+        -m
+        city: example-city
+        channel: gchat
+        cause: not_delivered — the message did not land and will not without recovery
+        started: 2026-11-12T08:00:00Z
+        conversations: 1
+        messages: 1
+        oldest_age_seconds: 0
+        owners_told: true (1 conversations)
+        status: gc gchat status --json
+
+
+--- PASS: TestFakeGCBinaryRecordsRemoteMailArguments (0.32s)
+Slack
+=== RUN   TestEpisodesPersistAndAggregateByCause
+    engine_test.go:88: never-silent: example-city: slack: not_delivered
+        city: example-city
+        channel: slack
+        cause: not_delivered — the message did not land and will not without recovery
+        started: 2026-11-12T08:03:00Z
+        conversations: 4
+        messages: 12
+        oldest_age_seconds: 180
+        owners_told: true (4 conversations)
+        status: gc slack status --json
+
+    engine_test.go:88: never-silent: example-city: slack: not_delivered cleared
+        city: example-city
+        channel: slack
+        cause: not_delivered — the message did not land and will not without recovery
+        started: 2026-11-12T08:03:00Z
+        ended: 2026-11-12T08:03:01Z
+
+--- PASS: TestEpisodesPersistAndAggregateByCause (0.64s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/ok/false
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/ok/false (0.05s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/ok/true
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/ok/true (0.07s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/no_seat/false
+    engine_test.go:176: I can't answer yet because no Claude account is signed in for me. The team that runs me has been told.
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/no_seat/false (0.11s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/no_seat/true
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/no_seat/true (0.07s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/seat_at_cap/false
+    engine_test.go:176: I've reached my usage limit for now and can't answer until it resets. The team that runs me has been told.
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/seat_at_cap/false (0.09s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/seat_at_cap/true
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/seat_at_cap/true (0.07s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/session_down/false
+    engine_test.go:176: I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/session_down/false (0.10s)
+=== RUN   TestHealthRequiresDeliveredAndNoSessionAct/session_down/true
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct/session_down/true (0.07s)
+--- PASS: TestHealthRequiresDeliveredAndNoSessionAct (0.62s)
+=== RUN   TestOperatorMailContainsNoCustomerCanaries
+    engine_test.go:267: never-silent: example-city: slack: not_delivered
+        city: example-city
+        channel: slack
+        cause: not_delivered — the message did not land and will not without recovery
+        started: 2026-11-12T08:00:00Z
+        conversations: 1
+        messages: 1
+        oldest_age_seconds: 0
+        owners_told: true (1 conversations)
+        status: gc slack status --json
+
+--- PASS: TestOperatorMailContainsNoCustomerCanaries (0.09s)
+=== RUN   TestFakeGCBinaryRecordsRemoteMailArguments
+    engine_test.go:306: mail
+        send
+        --context
+        example-operator
+        mayor
+        --dedup
+        never-silent:c1ccbbc16f315d345eec99a324a62cf8
+        -s
+        never-silent: example-city: slack: not_delivered
+        -m
+        city: example-city
+        channel: slack
+        cause: not_delivered — the message did not land and will not without recovery
+        started: 2026-11-12T08:00:00Z
+        conversations: 1
+        messages: 1
+        oldest_age_seconds: 0
+        owners_told: true (1 conversations)
+        status: gc slack status --json
+
+
+--- PASS: TestFakeGCBinaryRecordsRemoteMailArguments (0.14s)

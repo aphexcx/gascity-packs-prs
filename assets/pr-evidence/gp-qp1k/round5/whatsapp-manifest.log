@@ -1,0 +1,2 @@
+command=pnpm test log=whatsapp-1.log exit=0
+command=pnpm exec node --test --test-concurrency=1 test/never-silent.test.js log=whatsapp-2.log exit=0

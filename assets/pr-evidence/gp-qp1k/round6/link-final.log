@@ -1,0 +1,25 @@
+✔ held: a runtime without WebSocket polls at its original interval (289.999ms)
+✔ held: an owed keeper bind retries at the original cadence without another inbox read (329.181875ms)
+✔ held: URL conversion strips query and credentials, with no subprotocol (0.683458ms)
+✔ held: credential travels only in the upgrade header (3037.318583ms)
+✔ held: a wake delivers and acknowledges within two real seconds despite a ten-minute poll (1061.053125ms)
+✔ held: a wake during an in-flight read queues exactly one further read (947.483083ms)
+✔ held: a quiet connection reads only once each safety interval (2506.963291ms)
+✔ held: every reconnect reads a delivery whose wake was lost (365.059208ms)
+✔ held: route missing and explicit off retain the ordinary polling cadence (551.386166ms)
+✔ held: a missed pong closes the socket within forty clock seconds and resumes polling (939.313875ms)
+✔ held: reconnect attempts follow 1, 5, 15, 60, then 300 seconds without a loop (906.786083ms)
+✔ held: the inbox 401 stops all further polls and reconnects (812.734334ms)
+✔ held: offline for an hour loses no delivery and posts each once after restart (326.345125ms)
+✔ held: wake, reconnect and safety reads of a held row cause one post (928.811125ms)
+✔ held: SIGKILL after received during a wake read recovers exactly once (365.598875ms)
+✔ held: a closed socket resumes the ordinary poll without waiting for the held interval (335.8275ms)
+✔ held: 4503 rollback close immediately resumes polling and posts the held delivery once (415.490333ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14226.821292

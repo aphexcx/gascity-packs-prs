@@ -74,7 +74,7 @@ def test_command_entries_resolve_to_nested_words():
         found[' '.join(manifest.parent.relative_to(PACK / 'commands').parts)] = target.name
     assert found == {
         'publish': 'publish.sh', 'invite': 'invite.sh', 'consent': 'consent.sh', 'hours': 'hours.sh',
-        'enroll': 'enroll.sh', 'status': 'status.sh',
+        'enroll': 'enroll.sh', 'status': 'status.sh', 'react': 'react.sh',
         'inbound resolve': 'resolve.sh', 'inbound clear-gap': 'clear-gap.sh',
     }
 
@@ -418,6 +418,40 @@ def fake():
         server.close()
 
 
+@pytest.mark.parametrize('emoji', ['👀', ''])
+def test_react_posts_characters_and_cli_session(fake, emoji):
+    adapter = fake({'POST /react': (200, {'message_id': 'wamid.out.1', 'delivered': True})})
+    result = verb('react.sh', '--to', 'example-owner', '--message', 'wamid.example', '--emoji', emoji,
+                  '--idempotency-key', 'reaction-key', '--session', 's-mayor',
+                  WHATSAPP_ADAPTER_URL=adapter.url, GC_CITY_NAME='fixture-city')
+    assert result.returncode == 0, result.stderr
+    assert 'reaction-key' in result.stderr
+    method, route, body = adapter.requests[0]
+    assert (method, route) == ('POST', '/react')
+    assert body == {'conversation': {'scope_id': 'fixture-city', 'provider': 'whatsapp', 'account_id': 'dynasty',
+                                    'conversation_id': 'example-owner', 'kind': 'dm'},
+                    'message_id': 'wamid.example', 'emoji': emoji, 'idempotency_key': 'reaction-key',
+                    'session_id': 's-mayor', 'metadata': {'origin': 'cli'}}
+
+
+@pytest.mark.parametrize('args', [[], ['--to', 'owner'], ['--to', 'owner', '--message', 'id'],
+    ['--message', 'id', '--emoji', '👀'], ['--to', 'owner', '--emoji', '👀'],
+    ['--to'], ['--message'], ['--emoji'], ['--to', 'owner', '--message', '', '--emoji', '👀']])
+def test_react_usage_errors_send_nothing(fake, args):
+    adapter = fake({})
+    assert verb('react.sh', *args, WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
+    assert adapter.requests == []
+
+
+def test_react_refused_receipt_prints_reason_and_hint(fake):
+    adapter = fake({'POST /react': (200, {'delivered': False,
+        'metadata': {'reason': 'window_closed', 'hint': 'wait for the next message'}})})
+    result = verb('react.sh', '--to=example-owner', '--message=wamid.example', '--emoji=👀',
+                  WHATSAPP_ADAPTER_URL=adapter.url, GC_SESSION_ID='s-mayor')
+    assert result.returncode == 1
+    assert 'window_closed' in result.stderr and 'wait for the next message' in result.stderr
+
+
 def test_publish_sends_the_extmsg_shape_with_cli_origin_and_session(fake, tmp_path):
     adapter = fake({'POST /publish': (200, {'message_id': 'wamid.out.1', 'delivered': True})})
     text = tmp_path / 'reply.txt'
@@ -433,6 +467,43 @@ def test_publish_sends_the_extmsg_shape_with_cli_origin_and_session(fake, tmp_pa
     assert body['session_id'] == 's-mayor'
     assert body['metadata'] == {'origin': 'cli'}
     assert body['idempotency_key'].startswith('whatsapp-cli-')
+
+
+@pytest.mark.parametrize('mode', ['text', 'file', 'update'])
+@pytest.mark.parametrize('flag', ['--reply-to', '--reply-to=wamid.example'])
+def test_publish_quote_flag_reaches_adapter(fake, mode, flag):
+    route = '/publish-update' if mode == 'update' else '/publish'
+    adapter = fake({f'POST {route}': (200, {'delivered': True})})
+    flags = [flag, 'wamid.example'] if flag == '--reply-to' else [flag]
+    content = ['--file', '/fixture.txt'] if mode == 'file' else ['--text', 'fixture reply']
+    result = verb('publish.sh', '--to', 'example-owner', *flags, *content,
+                  *(['--update'] if mode == 'update' else []), WHATSAPP_ADAPTER_URL=adapter.url)
+    assert result.returncode == 0, result.stderr
+    assert adapter.requests[0][2]['reply_to_message_id'] == 'wamid.example'
+
+
+@pytest.mark.parametrize('quoted,reason,line', [
+    ('false', 'unknown_message', 'sent without the quote (unknown_message)'),
+    ('false', 'gateway_without_quotes', 'sent without the quote (gateway_without_quotes)'),
+    ('false', 'invalid_id', 'sent without the quote (invalid_id)'),
+    ('false', 'template', 'sent without the quote (template)'),
+    ('false', 'meta_refused', 'sent without the quote (meta_refused)'),
+    ('unknown', 'replayed', 'sent; the gateway did not say whether the quote was applied'),
+])
+def test_publish_quote_warning_still_exits_zero(fake, quoted, reason, line):
+    adapter = fake({'POST /publish': (200, {'delivered': True, 'metadata': {'quoted': quoted, 'quote_reason': reason}})})
+    result = verb('publish.sh', '--to', 'example-owner', '--text', 'fixture', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert result.returncode == 0
+    assert f'gc whatsapp publish: {line}' in result.stderr
+
+
+def test_publish_quote_empty_or_absent_is_omitted_and_missing_value_is_usage_error(fake):
+    adapter = fake({'POST /publish': (200, {'delivered': True})})
+    for args in [[], ['--reply-to', '']]:
+        result = verb('publish.sh', '--to', 'example-owner', '--text', 'fixture', *args, WHATSAPP_ADAPTER_URL=adapter.url)
+        assert result.returncode == 0
+        assert 'reply_to_message_id' not in adapter.requests[-1][2]
+    assert verb('publish.sh', '--to', 'example-owner', '--text', 'fixture', '--reply-to').returncode == 2
 
 
 def test_publish_window_closed_prints_the_hint(fake):
@@ -630,6 +701,10 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     assert ('Window read:   last good 2026-11-05T15:20:00Z; failing since 2026-11-05T15:21:00Z (3 attempt(s)): '
             'HTTP 503 from https://gw.invalid/v1/window') in out
     assert '5511900001234' not in out
+    encoded = verb('status.sh', '--json', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert encoded.returncode == 0, encoded.stderr
+    assert '5511900001234' not in encoded.stdout
+    assert json.loads(encoded.stdout)['keeper']['conversations'][0]['conversation_last4'] == '1234'
 
 
 @pytest.mark.parametrize('city_set', [False, True])
@@ -830,3 +905,32 @@ def test_status_renders_gateway_link_directly_below_enrollment(fake, mode, state
     assert 'wakes 2' in lines[enrolled + 1] and 'reconnects 1' in lines[enrolled + 1]
     if reason:
         assert reason in lines[enrolled + 1]
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+@pytest.mark.parametrize('mode,state', [('held', 'up'), ('poll', 'disabled')])
+def test_status_keeps_link_and_never_silent_in_plain_and_json(fake, enabled, mode, state):
+    link = {'mode': mode, 'state': state, 'since': 1800000000000,
+            'last_wake_at': None, 'wakes': 2, 'reconnects': 1, 'reason': ''}
+    notices = {'enabled': enabled, 'health': {'state': 'unknown', 'reason': 'unavailable'},
+               'owner_lines_seven_days': 1 if enabled else 0,
+               'outages': [{'cause': 'not_delivered', 'start': '2027-01-15T08:00:00Z',
+                            'conversations': 1, 'messages': 1, 'owners_told': 1,
+                            'mail_sent': True}] if enabled else []}
+    adapter = fake({'GET /status': (200, {
+        'health': {'gateway_auth': 'ok'}, 'never_silent': notices,
+        'inbound': {'link': link, 'last_poll_at': None, 'entries': {}, 'acks_owed': 0,
+                    'dead_letters': 0, 'held': [], 'gaps': []},
+        'keeper': {'conversations': {}}, 'ledger': {'conversations': {}},
+    })})
+    plain = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert plain.returncode == 0, plain.stderr
+    lines = plain.stdout.splitlines()
+    assert lines[lines.index('Enrolled:      yes') + 1].startswith(f'Gateway link:  {mode} ({state}')
+    assert f'Never silent:  {str(enabled).lower()}; health unknown' in plain.stdout
+    assert ('not_delivered since' in plain.stdout) == enabled
+    encoded = verb('status.sh', '--json', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert encoded.returncode == 0, encoded.stderr
+    result = json.loads(encoded.stdout)
+    assert result['inbound']['link'] == link
+    assert result['never_silent'] == notices

@@ -14,16 +14,23 @@ export function createGatewayClient({ url, credential, timeoutMs = 15000, fetchI
   const base = String(url || '').replace(/\/+$/, '');
   const bearer = () => (typeof credential === 'function' ? credential() : credential) || '';
 
-  async function call(method, path, { body, rawBody, auth = true, expect, uploadHeaders } = {}) {
+  async function call(method, path, { body, rawBody, auth = true, expect, uploadHeaders, captureResponse, activityAttempt } = {}) {
     if (!base) throw Object.assign(new Error('WHATSAPP_GATEWAY_URL is not set'), { config: true });
     const headers = { ...uploadHeaders };
+    if (activityAttempt) headers['X-GC-Send-Attempt'] = activityAttempt;
     if (auth) {
       const token = bearer();
       if (!token) throw Object.assign(new Error('not enrolled: run gc whatsapp enroll'), { status: 401, auth: true });
       headers.Authorization = `Bearer ${token}`;
     }
     try {
-      return await requestJSON(`${base}${path}`, { method, headers, body, rawBody, timeoutMs, fetchImpl, expect });
+      return await requestJSON(`${base}${path}`, { method, headers, body, rawBody, timeoutMs, expect,
+        fetchImpl: captureResponse ? async (...args) => {
+          const response = await fetchImpl(...args);
+          captureResponse(response);
+          return response;
+        } : fetchImpl,
+      });
     } catch (err) {
       if (err.status === 401) err.auth = true;
       throw err;
@@ -41,7 +48,20 @@ export function createGatewayClient({ url, credential, timeoutMs = 15000, fetchI
       return call('GET', `/v1/inbox?${q}`);
     },
     ack: (ids) => call('POST', '/v1/inbox/ack', { body: { ids } }),
-    send: (body) => call('POST', '/v1/send', { body }),
+    send: async ({ activity_attempt_id, ...body }) => {
+      let replayed, acceptedAttempt, quoted, quoteReason;
+      const answer = await call('POST', '/v1/send', { body, activityAttempt: activity_attempt_id, captureResponse: (response) => {
+        const flag = response.headers.get('x-gc-replayed');
+        if (flag === 'true' || flag === 'false') replayed = flag === 'true';
+        acceptedAttempt = response.headers.get('x-gc-send-attempt');
+        const quote = response.headers.get('x-gc-quoted');
+        if (['true', 'false', 'unknown'].includes(quote)) quoted = quote;
+        const reason = response.headers.get('x-gc-quote-reason');
+        if (['unknown_message', 'meta_refused'].includes(reason)) quoteReason = reason;
+      } });
+      return { ...answer, ...(replayed === undefined ? {} : { replayed }), ...(acceptedAttempt ? { activity_attempt_id: acceptedAttempt } : {}),
+        ...(quoted === undefined ? {} : { quoted }), ...(quoteReason ? { quote_reason: quoteReason } : {}) };
+    },
     upload: (file, key) => call('POST', '/v1/uploads', { rawBody: file.bytes, uploadHeaders: {
       'Content-Type': file.mime, 'Content-Length': String(file.size),
       'X-Filename': encodeURIComponent(file.name), 'X-Content-SHA256': file.sha256, 'Idempotency-Key': key,

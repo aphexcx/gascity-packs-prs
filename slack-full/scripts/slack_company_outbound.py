@@ -932,7 +932,9 @@ def intent_mark_published(nonce: str, posted_ts: str) -> dict[str, Any]:
     def _m(intent: dict[str, Any]) -> None:
         intent["status"] = "published"
         intent["posted_ts"] = posted_ts
-    return update_intent(nonce, _m)
+    intent = update_intent(nonce, _m)
+    _record_never_silent_intent(intent)
+    return intent
 
 
 def intent_mark_failed(nonce: str, detail: str = "") -> dict[str, Any]:
@@ -1427,6 +1429,7 @@ def reconcile_intent(intent: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _ensure_record(intent: dict[str, Any]) -> None:
+    _record_never_silent_intent(intent)
     # Only a delegation post owns a delegation record. Result/synthesis posts
     # are durable-but-recordless (Go owns the result-claim transition), so
     # reconciling them must never materialize a spurious pending record.
@@ -2376,6 +2379,30 @@ def post_peer_synthesis(
     return report
 
 
+def _record_never_silent_intent(intent: dict[str, Any]) -> None:
+    if intent.get("status") != "published" or not intent.get("posted_ts"):
+        return
+    for session in session_name_aliases(intent.get("requester_session", "")):
+        _record_never_silent_reply({"channel_id": intent["channel_id"], "session": session}, intent["posted_ts"], "")
+
+
+def _record_never_silent_reply(turn: dict[str, Any], posted_ts: str, thread: str) -> None:
+    # The adapter owns the switch. Only an enabled adapter has created this
+    # sidecar; caller sessions need not inherit its service environment.
+    if not _state_dir("", "never-silent.json").is_file():
+        return
+    try:
+        at = datetime.fromtimestamp(float(posted_ts), timezone.utc).isoformat()
+        activity = {"conversation": turn["channel_id"], "thread": thread,
+                    "session": turn["session"], "at": at}
+        key = hashlib.sha256(_dumps(activity)).hexdigest()
+        _atomic_write_json(_state_dir("", "never-silent-acts") / f"{key}.json", activity)
+    except (OSError, ValueError, OutboundError):
+        # Delivery already succeeded. Never turn an activity-write failure into
+        # a retry of the customer-facing Slack post.
+        print("never-silent: could not record session activity", file=sys.stderr)
+
+
 def post_company_root_reply(
     *, body: str, origin_ts: str, session_name: str, turn_ref: str = "",
 ) -> dict[str, Any]:
@@ -2407,6 +2434,7 @@ def post_company_root_reply(
     posted_ts = post_message(
         token, channel=turn["channel_id"], text=text,
         thread_ts=turn["thread_root_ts"])
+    _record_never_silent_reply(turn, posted_ts, turn["thread_root_ts"])
     return {"status": "posted", "kind": turn["kind"], "posted_ts": posted_ts,
             "channel_id": turn["channel_id"], "thread_ts": turn["thread_root_ts"]}
 
@@ -2461,9 +2489,12 @@ def _post_dm_family_reply(
         metadata_nonce="",
         make_metadata=dm_metadata,
     )
-    return _company_post_report(
+    report = _company_post_report(
         intent, outcome, kind=report_kind,
         channel_id=turn["channel_id"], thread_ts=thread_ts)
+    if report["status"] == "posted":
+        _record_never_silent_reply(turn, report["posted_ts"], thread_ts)
+    return report
 
 
 def post_company_dm_reply(
