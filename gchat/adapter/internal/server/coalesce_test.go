@@ -14,6 +14,45 @@ import (
 	api "google.golang.org/api/chat/v1"
 )
 
+func TestHistoryPreservesFoldedLiteralEditPrefix(t *testing.T) {
+	for _, window := range []string{"8s", "0s"} {
+		t.Run(window, func(t *testing.T) {
+			f := setup(t)
+			if _, err := toml.Decode("coalesce_window = "+fmt.Sprintf("%q", window), &f.cfg.Settings); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+			p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: f.l, LedgerMu: f.mu, LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: f.options.GC, IdentityUserID: "users/123", Now: func() time.Time { return now }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := &api.Message{Name: "spaces/room/messages/literal", Text: "before", CreateTime: now.Format(time.RFC3339Nano), Sender: &api.User{Name: "users/456"}, Space: &api.Space{Name: "spaces/room", SpaceType: "SPACE"}}
+			for _, kind := range []string{"message.created", "message.updated"} {
+				if kind == "message.updated" {
+					now = now.Add(time.Second)
+					m.LastUpdateTime = now.Format(time.RFC3339Nano)
+					m.Text = "edited: these are the persons words"
+				}
+				if out, err := p.Handle(context.Background(), &puller.Event{Changes: []puller.Change{{Kind: kind, Space: m.Space.Name, Message: m}}}); out != puller.Ack || err != nil {
+					t.Fatal(out, err)
+				}
+			}
+			for _, phase := range []string{"held", "delivered"} {
+				if phase == "delivered" {
+					now = now.Add(8 * time.Second)
+					if err := p.Poll(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				got, ok := historyContent(f.l, m)
+				if !ok || got.Text != m.Text {
+					t.Errorf("%s history = %q, found %v; want %q", phase, got.Text, ok, m.Text)
+				}
+			}
+		})
+	}
+}
+
 func TestCoalescingStatus(t *testing.T) {
 	f := setup(t)
 	if _, err := toml.Decode(`coalesce_window = "8s"`, &f.cfg.Settings); err != nil {
