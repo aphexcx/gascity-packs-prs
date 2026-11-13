@@ -322,7 +322,7 @@ func (f *fixture) status() map[string]json.RawMessage {
 }
 func (f *fixture) committed(id string) {
 	f.t.Helper()
-	eventually(f.t, 10*time.Second, func() bool { c := f.state().Changes[id]; return c != nil && c.Status == "committed" })
+	eventually(f.t, 10*time.Second+f.cfg.CoalesceWindow(), func() bool { c := f.state().Changes[id]; return c != nil && c.Status == "committed" })
 }
 func (f *fixture) emit(kind, id string, body any) string {
 	f.t.Helper()
@@ -362,7 +362,7 @@ func (f *fixture) expectTurn(t *testing.T, matchText string) wire.InboundMessage
 }
 func (f *fixture) turns(n int) {
 	f.t.Helper()
-	eventually(f.t, 10*time.Second, func() bool { return len(f.gc.Inbound()) >= n })
+	eventually(f.t, 10*time.Second+f.cfg.CoalesceWindow(), func() bool { return len(f.gc.Inbound()) >= n })
 	if got := len(f.gc.Inbound()); got != n {
 		f.t.Fatalf("accepted POSTs=%d want %d", got, n)
 	}
@@ -906,19 +906,33 @@ func scenariosRecovery(t *testing.T) {
 					return len(state.Backlog) == 0 && state.MessageCursor.After(old)
 				})
 				f.health("ready", 20*time.Second)
-				f.turns(4)
+				want, marker := 4, "[catch-up]\n"
+				if mode == "default" {
+					want, marker = 2, "[catch-up: 3 messages,"
+					if f.cfg.Settings.CoalesceWindow != nil || f.cfg.CoalesceWindow() != 8*time.Second {
+						t.Fatal("unset window must exercise the 8-second default")
+					}
+				}
+				f.turns(want)
 				s := f.state().Spaces["spaces/room"]
 				if !s.MessageCursor.After(old) || len(s.Backlog) != 0 || recoveryChecks.Load() == 0 {
 					t.Fatal("cursor did not settle")
 				}
+				var recovered strings.Builder
 				for _, v := range f.gc.Inbound()[1:] {
-					if !strings.HasPrefix(v.Text, "[catch-up]\n") {
+					if !strings.HasPrefix(v.Text, marker) {
 						t.Fatal("missing catch-up marker")
+					}
+					recovered.WriteString(v.Text)
+				}
+				for i := 0; i < 3; i++ {
+					if strings.Count(recovered.String(), fmt.Sprintf("missed %04d", i)) != 1 {
+						t.Fatalf("missed act %d was lost or duplicated", i)
 					}
 				}
 				f.stop()
 				f.ready()
-				f.turns(4)
+				f.turns(want)
 			})
 		}
 	})
