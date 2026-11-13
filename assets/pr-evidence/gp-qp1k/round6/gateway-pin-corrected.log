@@ -1,0 +1,9 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 $REPO/whatsapp/gateway
+
+
+ Test Files  1 passed | 5 skipped (6)
+      Tests  1 passed | 307 skipped (308)
+   Start at  22:50:30
+   Duration  1.47s (transform 453ms, setup 1.57s, import 683ms, tests 300ms, environment 0ms)

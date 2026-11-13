@@ -1,0 +1,31 @@
+{
+  "counts": {
+    "test_pass": 13443,
+    "test_skip": 3,
+    "package_pass": 3
+  },
+  "failures": [],
+  "skipped": [
+    "TestIngestionLiveBusySessionProof",
+    "TestMinimalReplayMeasurement",
+    "TestRegistrationStartupDelayedPort"
+  ],
+  "packages": [
+    {
+      "Package": "github.com/sjarmak/gc-slack-adapter",
+      "Action": "pass",
+      "Elapsed": 328.115
+    },
+    {
+      "Package": "github.com/sjarmak/gc-slack-adapter/internal/neversilent",
+      "Action": "pass",
+      "Elapsed": 6.225
+    },
+    {
+      "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+      "Action": "pass",
+      "Elapsed": 0.14
+    }
+  ],
+  "failure_output": []
+}
