@@ -636,9 +636,20 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 	if blindCopy && len(targets) == 0 {
 		return
 	}
-	if len(targets) > 0 {
+	if len(targets) > 0 && cfg.arrival != nil {
 		// This lane owns addressing for outsiders to company membership.
 		// Reuse its selected targets; receipt routing alone cannot see them.
+		if ev.Type == "app_mention" {
+			// The mention twin can precede its canonical message. Once an
+			// admission receipt exists it is a repeat sight, even if a crash
+			// prevented the first arrival task from creating its marker.
+			store := g.store()
+			if store == nil {
+				env.replayed = true
+			} else if receipt, err := store.Get(origin); err != nil || receipt != nil {
+				env.replayed = true
+			}
+		}
 		observeSlackArrival(cfg, env, ev, true, nil)
 	}
 	g.runMentionOnlyTargets(origin, ev, target, targets, scanFailed || blindCopy)

@@ -82,7 +82,7 @@ func TestArrivalUsesDMFamilyAdmissionPolicy(t *testing.T) {
 }
 
 func TestArrivalCoversCompanyAddressingRoutes(t *testing.T) {
-	for _, route := range []string{"switchboard", "handle", "user group", "own thread", "thread broadcast"} {
+	for _, route := range []string{"switchboard", "handle", "user group", "own thread", "thread broadcast", "mention first"} {
 		t.Run(route, func(t *testing.T) {
 			gc := newFakeGC(t)
 			df, bf := baseDirectoryFile(), baseBindingsFile()
@@ -113,7 +113,11 @@ func TestArrivalCoversCompanyAddressingRoutes(t *testing.T) {
 			case "thread broadcast":
 				ev.Text, ev.Subtype = "<@U0AAAAAA1> synthetic", "thread_broadcast"
 			}
-			admitCompanyRoomMessage(t, h, ev)
+			if route == "mention first" {
+				admitCompanyRoomAppMention(t, h, ev)
+			} else {
+				admitCompanyRoomMessage(t, h, ev)
+			}
 			h.wait()
 			requireArrivalInput(t, inputs, true)
 		})
@@ -146,7 +150,7 @@ func TestArrivalCoversLegacyThreadRoutes(t *testing.T) {
 }
 
 func TestArrivalExcludesRecoveredCompanyMentionOnlyTurn(t *testing.T) {
-	for _, path := range []string{"startup recovery", "redelivery"} {
+	for _, path := range []string{"startup recovery", "redelivery", "mention twin"} {
 		t.Run(path, func(t *testing.T) {
 			gc := newFakeGC(t)
 			df, bf := baseDirectoryFile(), baseBindingsFile()
@@ -164,6 +168,8 @@ func TestArrivalExcludesRecoveredCompanyMentionOnlyTurn(t *testing.T) {
 			h.gw.cfg.channelClaims = newEventDedupCache(time.Minute)
 			if path == "startup recovery" {
 				h.gw.replayMentionOnlyPending()
+			} else if path == "mention twin" {
+				admitCompanyRoomAppMention(t, h, ev)
 			} else {
 				admitCompanyRoomMessage(t, h, ev)
 			}

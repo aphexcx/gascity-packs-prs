@@ -147,3 +147,12 @@ Both were reproduced before fixing their classes:
 The targeted second-round integration checks pass all ten test/subtest outcomes.
 The report/parity suite passes all five tests. See [VALIDATION.md](VALIDATION.md)
 for complete-suite results and limitations.
+
+The third DEEP round reviewed the entire delta and returned CLEAN, with no
+critical or major findings and one minor paired-event replay issue. The
+`app_mention` twin could still observe an interrupted arrival after restart.
+The same replay regression reproduced this additional path. The fix checks
+whether its canonical message already has an admission receipt, while
+`TestArrivalCoversCompanyAddressingRoutes/mention_first` preserves a legitimate
+first-arriving mention. All 50 targeted arrival and company mention-only
+test/subtest outcomes pass after this fix.
