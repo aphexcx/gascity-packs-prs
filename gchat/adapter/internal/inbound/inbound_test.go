@@ -93,7 +93,7 @@ func message() *api.Message {
 }
 
 func event(id, kind string, m *api.Message) *puller.Event {
-	return &puller.Event{PubSubID: id, Changes: []puller.Change{{Kind: kind, Message: m, Space: space}}}
+	return &puller.Event{PubSubID: id, Changes: []puller.Change{{Kind: kind, Message: m, Space: space, PublishTime: time.Now().UTC()}}}
 }
 
 func handle(t *testing.T, f *fixture, ev *puller.Event) {
