@@ -363,6 +363,20 @@ class ProxyCommandsTest(ProxyFixture):
         self.assertNotIn("stuck", result.stdout)
         self.assertNotIn("age", result.stdout)
 
+    def test_status_text_names_the_history_floor(self):
+        value = {"health": {"state": "ready"}, "history_floor": "2030-01-02T03:04:05Z"}
+        self.respond("/status", value)
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[lines.index("Last event: none") + 1],
+            "History: first start skipped messages written before 2030-01-02T03:04:05Z; gc gchat read still reads them")
+        del value["history_floor"]
+        self.respond("/status", value)
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("History: first start", result.stdout)
+
     def test_status_text_shows_age_cause_and_next_attempt(self):
         self.respond("/status", {"health": {"state": "ready", "reason": ""}, "subscription": {"state": "ACTIVE", "name": "subscriptions/example"},
             "backlog": 0, "unresolved": 1, "pending": 2, "stuck": 1, "unrecorded": 0, "quarantine": 0, "counters": {},
