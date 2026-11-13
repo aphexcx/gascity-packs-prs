@@ -1,0 +1,202 @@
+[
+  {
+    "test": "TestCatchUpIsMerged",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/catchup -run ^TestCatchUpIsMerged$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalesceWindowSettingBounds",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/config -run ^TestCoalesceWindowSettingBounds$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 6,
+      "fail": 4,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestBaselineTurnBytes",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestBaselineTurnBytes$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestTurnFixedBytesBudget",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestTurnFixedBytesBudget$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 1,
+      "fail": 4,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWindowOffIsToday",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestWindowOffIsToday$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWindowIsFixedFromTheFirstAct",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestWindowIsFixedFromTheFirstAct$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestPollNeverPostsAHeldAct",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestPollNeverPostsAHeldAct$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestSteadyChatterFlushesEveryWindow",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestSteadyChatterFlushesEveryWindow$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestSpacesDoNotDelayEachOther",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestSpacesDoNotDelayEachOther$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWhatGoesAtOnce",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestWhatGoesAtOnce$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 6,
+      "fail": 7,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWindowCaps",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestWindowCaps$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 1,
+      "fail": 3,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestActsInsideTheWindow",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestActsInsideTheWindow$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 1,
+      "fail": 6,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestHeldActsSurviveARestart",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestHeldActsSurviveARestart$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestRedeliveryOfAHeldAct",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestRedeliveryOfAHeldAct$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedTurnKeepsEveryFromLine",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestMergedTurnKeepsEveryFromLine$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedTurnCannotBeForged",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestMergedTurnCannotBeForged$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCrashPointsOfAMergedTurn",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestCrashPointsOfAMergedTurn$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 4,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedTurnIsOneDelivery",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestMergedTurnIsOneDelivery$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 4,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalescedLedgerCompatibility",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/inbound -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 4,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalescingStatus",
+    "command": "go test -overlay <evidence>/base-overlay.json ./internal/server -run ^TestCoalescingStatus$ -count=1 -timeout=3m -json",
+    "exit": 1,
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  }
+]

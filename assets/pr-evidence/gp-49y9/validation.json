@@ -1,0 +1,65 @@
+{
+  "implementation_sha": "30ef56d2c558f1a284d31019c79805f43cdc568b",
+  "go": "go1.27.3 darwin/arm64",
+  "python": "3.15.0",
+  "full_go": {
+    "working_directory": "gchat/adapter",
+    "command": "env -u GC_BIN -u NEVER_SILENT go test ./... -p=1 -count=1 -timeout=30m -json",
+    "exit": 0,
+    "counts": {
+      "top_level_pass": 725,
+      "subtest_pass": 1421,
+      "package_pass": 21,
+      "top_level_skip": 2
+    },
+    "skipped": [
+      "TestRealGCContract",
+      "TestRealGCReplyReminder"
+    ],
+    "failures": []
+  },
+  "python_suite": {
+    "working_directory": "repository root",
+    "command": "make test PYTEST_DIRS='tests gchat/tests' PYTHON='env -u MAKEFLAGS -u MFLAGS -u MAKEOVERRIDES -u PYTEST_DIRS -u PYTHON python3'",
+    "exit": 0,
+    "counts": {
+      "passed": 463,
+      "skipped": 127,
+      "subtests_passed": 250
+    }
+  },
+  "repeat_checks": [
+    {
+      "working_directory": "gchat/adapter",
+      "command": "env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run '^(TestActsInsideTheWindow|TestCoalescedLedgerCompatibility|TestCoalescingKeepsHistoryBoundary|TestCrashPointsOfAMergedTurn|TestFoldedEditsKeepProvenance|TestHeldActSavePrecedesAcknowledgment|TestHeldActsSurviveARestart|TestLateAndCatchUpHeaderBudget|TestMentioningEditTakesHeldChatter|TestMergedRedeliveryWhilePendingOrDelivered|TestMergedTurnCannotBeForged|TestMergedTurnIsOneDelivery|TestMergedTurnKeepsEveryFromLine|TestMergedTurnUsesProviderOrderAndOneAnchor|TestPollNeverPostsAHeldAct|TestRedeliveryOfAHeldAct|TestSpacesDoNotDelayEachOther|TestSteadyChatterFlushesEveryWindow|TestTurnFixedBytesBudget|TestWhatGoesAtOnce|TestWindowCaps|TestWindowIsFixedFromTheFirstAct|TestWindowOffIsToday|TestWindowTimerOwnsDeadline)$' -count=20 -timeout=5m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 940,
+        "top_level_pass": 480,
+        "package_pass": 1
+      },
+      "skipped": [],
+      "failures": []
+    },
+    {
+      "working_directory": "gchat/adapter",
+      "command": "env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run '^(TestCoalescedLedgerCompatibility|TestMergedRedeliveryWhilePendingOrDelivered|TestWindowTimerOwnsDeadline)$' -race -count=1 -timeout=5m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "top_level_pass": 3,
+        "package_pass": 1
+      },
+      "skipped": [],
+      "failures": []
+    }
+  ],
+  "clone_regression": {
+    "counts": {
+      "top_level_pass": 1,
+      "package_pass": 1
+    },
+    "skipped": [],
+    "failures": []
+  }
+}

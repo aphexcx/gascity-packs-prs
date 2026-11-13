@@ -1,0 +1,26 @@
+[
+  {
+    "stage": "writer",
+    "source": "30ef56d2c558f1a284d31019c79805f43cdc568b",
+    "command": "go test -overlay <evidence>/writer-overlay.json ./internal/inbound -run ^TestExportRollbackLedgers$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 5,
+      "test_pass": 1,
+      "package_pass": 1
+    },
+    "failures": []
+  },
+  {
+    "stage": "released-reader",
+    "source": "d2f453b83a428546dfe7fa01dc2bd831c0b47ae0",
+    "command": "go test -overlay <evidence>/released-reader-overlay.json ./internal/inbound -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 5,
+      "test_pass": 1,
+      "package_pass": 1
+    },
+    "failures": []
+  }
+]
