@@ -42,8 +42,9 @@ the adapter's source files in a fixed sort; when they cannot be read, the
 release is `unknown`, one warning is logged, and the adapter starts.
 Reaction lines record the first confirmation, actor and adapter choice method;
 words lines record posts. An unwritable journal warns once and delivery continues.
-The lines are appended and flushed off the delivery's thread, so no delivery
-or send waits on the disk; a stop drains them. Each send creates one empty
+The lines are appended and flushed off the delivery's thread, on one chain
+shared with the markers' flushes (so they hold at most one thread of Node's
+pool), and no delivery or send waits on the disk; a stop drains them. Each send creates one empty
 marker under `words-attempts` first (a send waits for the create, never for
 its flush); markers older than 31 days are removed at start and once a day.
 The adapter never deletes a stopwatch file. `GC_SERVICE_STATE_ROOT` overrides the

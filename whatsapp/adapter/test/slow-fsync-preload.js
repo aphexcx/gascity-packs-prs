@@ -3,6 +3,9 @@
 // stopwatch file, an attempt marker or a marker directory takes
 // WA_SLOW_FSYNC_MS (200 ms by default) longer: fs.fsyncSync, fs.fsync,
 // fs.fdatasyncSync, fs.fdatasync, and a FileHandle's sync and datasync.
+// A synchronous flush blocks the calling thread; an asynchronous one holds a
+// thread of Node's libuv pool for that long, as a real slow fsync does, so a
+// file create queued behind slow flushes in the pool is measured too.
 // WA_SLOW_FSYNC_MATCH replaces the path rule ('.' slows every flush).
 // WA_SLOW_FSYNC_LOG names a file that gets one line per slowed flush, so a
 // test can show the preload took effect.
@@ -11,8 +14,10 @@
 // the city is the base's own design (journal.js), so slowing it would slow
 // every tree alike and measure nothing of the stopwatch.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -23,7 +28,15 @@ const slow = new Set();
 const name = (file) => (file instanceof URL ? fileURLToPath(file) : String(file));
 const note = (file, fd) => { if (rule.test(name(file))) slow.add(fd); else slow.delete(fd); };
 const block = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-const later = () => new Promise((resolve) => setTimeout(resolve, ms));
+// Holding a pool thread: pbkdf2 runs on the pool; its iterations are
+// calibrated once so that one call takes about ms.
+const pbkdf2 = promisify(crypto.pbkdf2);
+let iterations = 20000;
+{
+  const t0 = performance.now(); crypto.pbkdf2Sync('slow', 'flush', iterations, 32, 'sha512');
+  iterations = Math.max(1000, Math.round(iterations * ms / Math.max(performance.now() - t0, 0.5)));
+}
+const later = () => pbkdf2('slow', 'flush', iterations, 32, 'sha512');
 const appendFileSync = fs.appendFileSync;
 const slowed = (what) => { if (process.env.WA_SLOW_FSYNC_LOG) appendFileSync(process.env.WA_SLOW_FSYNC_LOG, `${what}\n`); };
 
@@ -45,7 +58,7 @@ for (const method of ['fsync', 'fdatasync']) {
   const original = fs[method];
   fs[method] = function (fd, cb) {
     if (!slow.has(fd)) return original.call(this, fd, cb);
-    slowed(method); setTimeout(() => original.call(this, fd, cb), ms);
+    slowed(method); later().then(() => original.call(this, fd, cb));
     return undefined;
   };
 }

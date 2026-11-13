@@ -41,7 +41,18 @@ export function createStopwatch({ stateDir, release, releaseRoot = SOURCE_ROOT, 
   } catch (err) { if (err.code !== 'ENOENT') warn(); }
   const pending = new Set();
   const track = (work) => { pending.add(work); work.finally(() => pending.delete(work)); return work; };
+  // One chain for every flush made for the stopwatch and the attempt markers
+  // (the lines, the words markers, and the arrival task's ack markers). A real
+  // slow fsync holds a thread of Node's four-thread pool; on one chain these
+  // hold at most one, so a send's exclusive create never queues behind them.
+  // The returned promise carries the work's own outcome; the chain goes on.
   let chain = Promise.resolve();
+  const serial = (work) => {
+    const run = chain.then(work);
+    chain = run.catch(() => {});
+    track(chain);
+    return run;
+  };
   const append = async (e, at) => {
     await fsp.mkdir(stateDir, { recursive: true, mode: 0o700 });
     const handle = await fsp.open(path.join(stateDir, `stopwatch-${at.toISOString().slice(0, 7)}.jsonl`), 'a+', 0o600);
@@ -60,8 +71,7 @@ export function createStopwatch({ stateDir, release, releaseRoot = SOURCE_ROOT, 
     const key = eventKey(e); if (key && seen.has(key)) return;
     const at = new Date(e.at); if (!Number.isFinite(at.getTime())) return;
     if (key) seen.add(key);
-    chain = chain.then(() => append(e, at)).catch(() => warn());
-    track(chain);
+    serial(() => append(e, at)).catch(() => warn());
   };
   const prune = () => track(pruneMarkers(path.join(stateDir, 'words-attempts'), WORDS_MARKER_MAX_AGE_MS).catch(() => {}));
   prune();
@@ -75,11 +85,12 @@ export function createStopwatch({ stateDir, release, releaseRoot = SOURCE_ROOT, 
       let marker;
       try { marker = await createMarker(stateDir, 'words-attempts', key); } catch { warn(); return true; }
       if (!marker) return true;
-      track(flushMarker(marker).catch(() => warn()));
+      serial(() => flushMarker(marker)).catch(() => warn());
       return false;
     },
     words(conversation, message, uncertain) { record({ event: 'words', conversation, message, at: new Date(clock()).toISOString(), acceptance_uncertain: uncertain }); },
     prune,
+    serial,
     // Waits until every queued line, marker flush and prune has settled.
     async flush() { while (pending.size) await Promise.all([...pending]); },
   };

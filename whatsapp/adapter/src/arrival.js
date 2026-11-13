@@ -147,7 +147,11 @@ export function createArrival({ choice, stateDir, gateway, stopwatch, clock = Da
         stopwatch?.record({ event: 'inbound', conversation, message: msg.id, message_at: new Date(at).toISOString(), at: new Date(seen).toISOString() });
         if (!choice.enabled) return;
         // Claimed and flushed before the Jev call: at most one, across a crash.
-        if (!await reserve(stateDir, 'ack-attempts', `${conversation}\0${msg.id}`)) return;
+        // The flush takes the stopwatch's one chain, so it holds at most the
+        // one pool thread the stopwatch's flushes share.
+        const marker = await createMarker(stateDir, 'ack-attempts', `${conversation}\0${msg.id}`);
+        if (!marker) return;
+        await (stopwatch?.serial ? stopwatch.serial(() => flushMarker(marker)) : flushMarker(marker));
         // Only the sender's words, never generated attachment descriptions,
         // interactive IDs, locations, sender profiles or transport metadata.
         const text = msg.type === 'text' ? msg.text?.body : msg[msg.type]?.caption ?? msg.button?.text ?? msg.interactive?.button_reply?.title ?? msg.interactive?.list_reply?.title ?? '';
