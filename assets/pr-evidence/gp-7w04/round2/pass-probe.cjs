@@ -1,0 +1,35 @@
+'use strict';
+const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+const zlib = require('node:zlib'), assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const script = path.resolve('reachable/reachable.cjs');
+const { command, runHook } = require(script);
+const city = fs.mkdtempSync(path.join(os.tmpdir(), 'reachable-pass-probe-'));
+const dir = path.join(city, '.gc'); fs.mkdirSync(dir);
+const log = path.join(dir, 'events.jsonl'), now = Date.now();
+const env = { ...process.env, GC_CITY_PATH: city, GC_CITY: city, GC_AGENT: 'mayor', GC_SESSION_ID: 'session-example' };
+const o = { city, now, imports: '', env };
+const row = (seq, type) => JSON.stringify({ seq, type, ts: new Date(now - 60000).toISOString(), payload: { provider: 'example', conversation_id: 'room-example', target_agent: 'mayor' } }) + '\n';
+const hook = (id, tool_name) => ({ hook_event_name: 'PreToolUse', tool_name, tool_use_id: id, tool_input: {} });
+const pass = () => spawnSync(process.execPath, [script, 'pass', 'example/room-example'], { env, encoding: 'utf8' });
+try {
+  command('mode', ['enforce'], o);
+  fs.writeFileSync(log, row(1, 'example.padding'));
+  runHook(hook('cursor', 'Read'), o);
+  fs.appendFileSync(log, row(2, 'extmsg.inbound'));
+  const rotating = log + '.rotating-20260102T120000Z-seq-1-2';
+  fs.renameSync(log, rotating); fs.writeFileSync(log, '');
+  const pending = pass();
+  assert.equal(pending.status, 1); assert.equal(pending.stdout, '');
+  assert.equal(pending.stderr, 'reachable: event_catchup_incomplete\n');
+  console.log('pending publication: exit=' + pending.status + '; stderr=' + pending.stderr.trim());
+  fs.writeFileSync(log + '.archive-20260102T120000Z-seq-1-2.gz', zlib.gzipSync(fs.readFileSync(rotating)));
+  fs.unlinkSync(rotating);
+  assert.equal(runHook(hook('before-pass', 'Write'), { ...o, now: Date.now() }).hookSpecificOutput?.permissionDecision, 'deny');
+  const complete = pass();
+  assert.equal(complete.status, 0); assert.equal(complete.stderr, '');
+  assert.deepEqual(JSON.parse(complete.stdout), { conversation: 'example/room-example', seen: true });
+  console.log('published archive, empty active log: exit=' + complete.status + '; stdout=' + JSON.stringify(JSON.parse(complete.stdout)));
+  assert.deepEqual(runHook(hook('after-pass', 'Write'), { ...o, now: Date.now() }), {});
+  console.log('next Write allowed; active log bytes=' + fs.statSync(log).size);
+} finally { fs.rmSync(city, { recursive: true, force: true }); }

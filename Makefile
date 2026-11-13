@@ -23,10 +23,13 @@ PYTEST_DIRS ?= tests contributing-to-gascity/tests gascity/tests discord/tests g
 PYTEST_ARGS ?= -q
 PYTEST_RUNNER = if $(PYTHON) -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo '$(PYTHON) -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema $(PYTHON) -m pytest'; fi
 
-.PHONY: test test-gascity registry-help registry-format-validate registry-validate registry-validate-all registry-publish registry-withdraw
+.PHONY: test test-reachable test-gascity registry-help registry-format-validate registry-validate registry-validate-all registry-publish registry-withdraw
 
-test:
+test: test-reachable
 	env -u GC_TEMPLATE $$($(PYTEST_RUNNER)) $(PYTEST_DIRS) $(PYTEST_ARGS)
+
+test-reachable:
+	cd reachable/test && node --test --test-reporter=tap
 
 test-gascity:
 	env -u GC_TEMPLATE $$($(PYTEST_RUNNER)) tests gascity/tests $(PYTEST_ARGS)

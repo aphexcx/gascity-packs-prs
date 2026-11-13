@@ -1,0 +1,210 @@
+TAP version 13
+# Subtest: 5: an exemption ignores future inbounds until explicitly removed
+ok 1 - 5: an exemption ignores future inbounds until explicitly removed
+  ---
+  duration_ms: 16.161917
+  type: 'test'
+  ...
+# Subtest: 11: an expired measurement never refuses and state-lock contention fails open
+ok 2 - 11: an expired measurement never refuses and state-lock contention fails open
+  ---
+  duration_ms: 4.647542
+  type: 'test'
+  ...
+# Subtest: 3,4: a historical mayor wake identifies an old session reply after handoff
+ok 3 - 3,4: a historical mayor wake identifies an old session reply after handoff
+  ---
+  duration_ms: 0.135666
+  type: 'test'
+  ...
+# Subtest: 4: age expiry and an unrelated reaction do not stand in for words
+ok 4 - 4: age expiry and an unrelated reaction do not stand in for words
+  ---
+  duration_ms: 0.084625
+  type: 'test'
+  ...
+# Subtest: 13: duplicate Stop without a prompt ID cannot clear an intervening inbound
+not ok 5 - 13: duplicate Stop without a prompt ID cannot clear an intervening inbound
+  ---
+  duration_ms: 0.480916
+  type: 'test'
+  location: '<worktree>/reachable/test/bounds.test.cjs:60:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    0 !== 1
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/bounds.test.cjs:67:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 15: first install always starts observe; reinstall preserves an explicit mode
+not ok 6 - 15: first install always starts observe; reinstall preserves an explicit mode
+  ---
+  duration_ms: 6.029708
+  type: 'test'
+  location: '<worktree>/reachable/test/bounds.test.cjs:70:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'enforce'
+    - 'observe'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'observe'
+  actual: 'enforce'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/bounds.test.cjs:73:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 16: uninstall preserves a later hook added to the same matcher and rejects symlinked settings
+ok 7 - 16: uninstall preserves a later hook added to the same matcher and rejects symlinked settings
+  ---
+  duration_ms: 5.142167
+  type: 'test'
+  ...
+# Subtest: 9: aliases come from all four pack rows, including a locally renamed directory
+ok 8 - 9: aliases come from all four pack rows, including a locally renamed directory
+  ---
+  duration_ms: 1.2985
+  type: 'test'
+  ...
+# Subtest: 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
+ok 9 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
+  ---
+  duration_ms: 1939.734583
+  type: 'test'
+  ...
+# 256 MiB, 100 warm decisions: p95=1.150ms
+# 256 MiB, 20 complete hook processes: p95=38.307ms
+# Subtest: 8: exact refusal, one line per conversation in oldest-first order
+ok 10 - 8: exact refusal, one line per conversation in oldest-first order
+  ---
+  duration_ms: 0.994125
+  type: 'test'
+  ...
+# Subtest: 10,13: at most three refusals per message; duplicate call is identical and counted once
+ok 11 - 10,13: at most three refusals per message; duplicate call is identical and counted once
+  ---
+  duration_ms: 0.95725
+  type: 'test'
+  ...
+# Subtest: 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
+ok 12 - 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
+  ---
+  duration_ms: 0.090958
+  type: 'test'
+  ...
+# Subtest: 12: long calls record tool name and waiting at start or while running, never the command
+ok 13 - 12: long calls record tool name and waiting at start or while running, never the command
+  ---
+  duration_ms: 1.262708
+  type: 'test'
+  ...
+# Subtest: 15: observe records would refuse, off and incomplete catch-up never refuse
+ok 14 - 15: observe records would refuse, off and incomplete catch-up never refuse
+  ---
+  duration_ms: 0.140334
+  type: 'test'
+  ...
+# Subtest: 9: exact measured read-only tool names each pass
+ok 15 - 9: exact measured read-only tool names each pass
+  ---
+  duration_ms: 0.075
+  type: 'test'
+  ...
+# Subtest: 9: imported channel aliases, own verbs and handoff pass; shell composition is work
+ok 16 - 9: imported channel aliases, own verbs and handoff pass; shell composition is work
+  ---
+  duration_ms: 0.109208
+  type: 'test'
+  ...
+# Subtest: 13: cursor reads appended complete rows once and preserves partial rows
+ok 17 - 13: cursor reads appended complete rows once and preserves partial rows
+  ---
+  duration_ms: 9.82725
+  type: 'test'
+  ...
+# Subtest: 13: rotation recovers an unread archived row without repeating the cursor row
+ok 18 - 13: rotation recovers an unread archived row without repeating the cursor row
+  ---
+  duration_ms: 2.474208
+  type: 'test'
+  ...
+# Subtest: 11: malformed rows and sequence gaps fail measurement
+ok 19 - 11: malformed rows and sequence gaps fail measurement
+  ---
+  duration_ms: 1.976167
+  type: 'test'
+  ...
+# Subtest: 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
+ok 20 - 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
+  ---
+  duration_ms: 0.324125
+  type: 'test'
+  ...
+# Subtest: 4: only the mayor outbound in the same conversation clears a wait
+ok 21 - 4: only the mayor outbound in the same conversation clears a wait
+  ---
+  duration_ms: 0.143041
+  type: 'test'
+  ...
+# Subtest: 6,15: workers and subagents do no I/O; an uninstalled city stays off
+ok 22 - 6,15: workers and subagents do no I/O; an uninstalled city stays off
+  ---
+  duration_ms: 8.692209
+  type: 'test'
+  ...
+# Subtest: 2,14,15: modes, pass, exemptions and private atomic state
+ok 23 - 2,14,15: modes, pass, exemptions and private atomic state
+  ---
+  duration_ms: 12.436
+  type: 'test'
+  ...
+# Subtest: 11: unreadable log, invalid state and backwards clock fail open and log one error
+ok 24 - 11: unreadable log, invalid state and backwards clock fail open and log one error
+  ---
+  duration_ms: 5.573584
+  type: 'test'
+  ...
+# Subtest: 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
+ok 25 - 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
+  ---
+  duration_ms: 7.857
+  type: 'test'
+  ...
+# Subtest: 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
+ok 26 - 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
+  ---
+  duration_ms: 6.145584
+  type: 'test'
+  ...
+1..26
+# tests 26
+# suites 0
+# pass 24
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2032.298167

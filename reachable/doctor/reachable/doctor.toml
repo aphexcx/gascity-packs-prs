@@ -1,0 +1,2 @@
+description = "Reachable hook registration, copy, event log, and mayor prompt"
+run = "run.sh"

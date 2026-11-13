@@ -1,0 +1,89 @@
+TAP version 13
+1..0
+# Subtest: bounds.test.cjs
+ok 1 - bounds.test.cjs
+  ---
+  duration_ms: 40.903666
+  type: 'test'
+  ...
+1..0
+# Subtest: decision.test.cjs
+ok 2 - decision.test.cjs
+  ---
+  duration_ms: 40.809625
+  type: 'test'
+  ...
+1..0
+# Subtest: events.test.cjs
+ok 3 - events.test.cjs
+  ---
+  duration_ms: 40.859875
+  type: 'test'
+  ...
+1..0
+# Subtest: pack.test.cjs
+ok 4 - pack.test.cjs
+  ---
+  duration_ms: 36.504417
+  type: 'test'
+  ...
+# Subtest: review 2: Stop sees the deployed seq-stamped in-flight rotation
+not ok 5 - review 2: Stop sees the deployed seq-stamped in-flight rotation
+  ---
+  duration_ms: 7.541916
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:32:1'
+  failureType: 'testCodeFailure'
+  error: 'event_sequence_gap'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    parseRows (/private<reviewed-source>)
+    readEvents (/private<reviewed-source>)
+    syncEvents (/private<reviewed-source>)
+    /private<reviewed-source>
+    withLock (/private<reviewed-source>)
+    command (/private<reviewed-source>)
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:41:16)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+  ...
+# Subtest: review 8: concurrent error publication retains both records
+not ok 6 - review 8: concurrent error publication retains both records
+  ---
+  duration_ms: 2.825333
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:126:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    1 !== 2
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:136:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+  ...
+1..0
+# Subtest: runtime.test.cjs
+ok 6 - runtime.test.cjs
+  ---
+  duration_ms: 38.786708
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 5
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 60.232042

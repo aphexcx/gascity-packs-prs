@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(?:.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "example-other-hook"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read"
+    ]
+  }
+}

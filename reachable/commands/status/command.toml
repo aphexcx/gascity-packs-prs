@@ -1,0 +1,2 @@
+description = "Show hook health, waiting conversations, and fourteen days of history"
+run = "run.sh"

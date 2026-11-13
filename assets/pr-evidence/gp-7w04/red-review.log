@@ -1,0 +1,455 @@
+TAP version 13
+# Subtest: 5: an exemption ignores future inbounds until explicitly removed
+ok 1 - 5: an exemption ignores future inbounds until explicitly removed
+  ---
+  duration_ms: 9.793542
+  type: 'test'
+  ...
+# Subtest: 11: an expired measurement never refuses and state-lock contention fails open
+ok 2 - 11: an expired measurement never refuses and state-lock contention fails open
+  ---
+  duration_ms: 5.381958
+  type: 'test'
+  ...
+# Subtest: 11: malformed hook stdin fails open and records one error using the installed city argument
+ok 3 - 11: malformed hook stdin fails open and records one error using the installed city argument
+  ---
+  duration_ms: 34.093292
+  type: 'test'
+  ...
+# Subtest: 3,4: a historical mayor wake identifies an old session reply after handoff
+ok 4 - 3,4: a historical mayor wake identifies an old session reply after handoff
+  ---
+  duration_ms: 0.172875
+  type: 'test'
+  ...
+# Subtest: 4: age expiry and an unrelated reaction do not stand in for words
+ok 5 - 4: age expiry and an unrelated reaction do not stand in for words
+  ---
+  duration_ms: 0.095292
+  type: 'test'
+  ...
+# Subtest: 13: duplicate Stop without a prompt ID cannot clear an intervening inbound
+ok 6 - 13: duplicate Stop without a prompt ID cannot clear an intervening inbound
+  ---
+  duration_ms: 0.139708
+  type: 'test'
+  ...
+# Subtest: 15: first install always starts observe; reinstall preserves an explicit mode
+ok 7 - 15: first install always starts observe; reinstall preserves an explicit mode
+  ---
+  duration_ms: 7.11175
+  type: 'test'
+  ...
+# Subtest: 16: uninstall preserves a later hook added to the same matcher and rejects symlinked settings
+ok 8 - 16: uninstall preserves a later hook added to the same matcher and rejects symlinked settings
+  ---
+  duration_ms: 4.168417
+  type: 'test'
+  ...
+# Subtest: 9: aliases come from all four pack rows, including a locally renamed directory
+ok 9 - 9: aliases come from all four pack rows, including a locally renamed directory
+  ---
+  duration_ms: 1.75975
+  type: 'test'
+  ...
+# Subtest: 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
+ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
+  ---
+  duration_ms: 1510.258375
+  type: 'test'
+  ...
+# 256 MiB, 100 warm decisions: p95=1.125ms
+# 256 MiB, 20 complete hook processes: p95=35.124ms
+# Subtest: 8: exact refusal, one line per conversation in oldest-first order
+ok 11 - 8: exact refusal, one line per conversation in oldest-first order
+  ---
+  duration_ms: 1.223083
+  type: 'test'
+  ...
+# Subtest: 10,13: at most three refusals per message; duplicate call is identical and counted once
+ok 12 - 10,13: at most three refusals per message; duplicate call is identical and counted once
+  ---
+  duration_ms: 0.531417
+  type: 'test'
+  ...
+# Subtest: 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
+ok 13 - 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
+  ---
+  duration_ms: 0.098042
+  type: 'test'
+  ...
+# Subtest: 12: long calls record tool name and waiting at start or while running, never the command
+ok 14 - 12: long calls record tool name and waiting at start or while running, never the command
+  ---
+  duration_ms: 1.079709
+  type: 'test'
+  ...
+# Subtest: 15: observe records would refuse, off and incomplete catch-up never refuse
+ok 15 - 15: observe records would refuse, off and incomplete catch-up never refuse
+  ---
+  duration_ms: 0.13825
+  type: 'test'
+  ...
+# Subtest: 9: exact measured read-only tool names each pass
+ok 16 - 9: exact measured read-only tool names each pass
+  ---
+  duration_ms: 0.060375
+  type: 'test'
+  ...
+# Subtest: 9 table row: Read is allowed during a wait
+ok 17 - 9 table row: Read is allowed during a wait
+  ---
+  duration_ms: 0.077625
+  type: 'test'
+  ...
+# Subtest: 9 table row: Glob is allowed during a wait
+ok 18 - 9 table row: Glob is allowed during a wait
+  ---
+  duration_ms: 0.062458
+  type: 'test'
+  ...
+# Subtest: 9 table row: Grep is allowed during a wait
+ok 19 - 9 table row: Grep is allowed during a wait
+  ---
+  duration_ms: 0.073375
+  type: 'test'
+  ...
+# Subtest: 9 table row: WebFetch is allowed during a wait
+ok 20 - 9 table row: WebFetch is allowed during a wait
+  ---
+  duration_ms: 0.09625
+  type: 'test'
+  ...
+# Subtest: 9 table row: WebSearch is allowed during a wait
+ok 21 - 9 table row: WebSearch is allowed during a wait
+  ---
+  duration_ms: 0.063791
+  type: 'test'
+  ...
+# Subtest: 9 table row: ListMcpResources is allowed during a wait
+ok 22 - 9 table row: ListMcpResources is allowed during a wait
+  ---
+  duration_ms: 0.067417
+  type: 'test'
+  ...
+# Subtest: 9 table row: ReadMcpResource is allowed during a wait
+ok 23 - 9 table row: ReadMcpResource is allowed during a wait
+  ---
+  duration_ms: 0.036208
+  type: 'test'
+  ...
+# Subtest: 9 table row: ToolSearch is allowed during a wait
+ok 24 - 9 table row: ToolSearch is allowed during a wait
+  ---
+  duration_ms: 0.033958
+  type: 'test'
+  ...
+# Subtest: 9 table row: TaskGet is allowed during a wait
+ok 25 - 9 table row: TaskGet is allowed during a wait
+  ---
+  duration_ms: 0.043834
+  type: 'test'
+  ...
+# Subtest: 9 table row: TaskList is allowed during a wait
+ok 26 - 9 table row: TaskList is allowed during a wait
+  ---
+  duration_ms: 0.036583
+  type: 'test'
+  ...
+# Subtest: 9 table row: TaskOutput is allowed during a wait
+ok 27 - 9 table row: TaskOutput is allowed during a wait
+  ---
+  duration_ms: 0.042291
+  type: 'test'
+  ...
+# Subtest: 9: imported channel aliases, own verbs and handoff pass; shell composition is work
+ok 28 - 9: imported channel aliases, own verbs and handoff pass; shell composition is work
+  ---
+  duration_ms: 0.151
+  type: 'test'
+  ...
+# Subtest: 13: cursor reads appended complete rows once and preserves partial rows
+ok 29 - 13: cursor reads appended complete rows once and preserves partial rows
+  ---
+  duration_ms: 3.554542
+  type: 'test'
+  ...
+# Subtest: 13: rotation recovers an unread archived row without repeating the cursor row
+ok 30 - 13: rotation recovers an unread archived row without repeating the cursor row
+  ---
+  duration_ms: 2.978542
+  type: 'test'
+  ...
+# Subtest: 11: malformed rows and sequence gaps fail measurement
+ok 31 - 11: malformed rows and sequence gaps fail measurement
+  ---
+  duration_ms: 1.451792
+  type: 'test'
+  ...
+# Subtest: 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
+ok 32 - 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
+  ---
+  duration_ms: 0.290875
+  type: 'test'
+  ...
+# Subtest: 4: only the mayor outbound in the same conversation clears a wait
+ok 33 - 4: only the mayor outbound in the same conversation clears a wait
+  ---
+  duration_ms: 0.132917
+  type: 'test'
+  ...
+# Subtest: 1: pack has no service or dependencies and six explicit commands
+ok 34 - 1: pack has no service or dependencies and six explicit commands
+  ---
+  duration_ms: 3.746958
+  type: 'test'
+  ...
+# Subtest: 18: fragment is byte for byte the specified standing rule
+ok 35 - 18: fragment is byte for byte the specified standing rule
+  ---
+  duration_ms: 0.294459
+  type: 'test'
+  ...
+# Subtest: 19: README documents both prompt options, modes, limitations and verification
+ok 36 - 19: README documents both prompt options, modes, limitations and verification
+  ---
+  duration_ms: 0.33675
+  type: 'test'
+  ...
+# Subtest: review 1: an empty replacement cannot hide a subsequently published archive
+not ok 37 - review 1: an empty replacement cannot hide a subsequently published archive
+  ---
+  duration_ms: 4.527
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:23:1'
+  failureType: 'testCodeFailure'
+  error: 'event_sequence_gap'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    parseRows (<worktree>/reachable/reachable.cjs:33:43)
+    readEvents (<worktree>/reachable/reachable.cjs:82:22)
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:30:20)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+# Subtest: review 2: Stop fences unread messages; Post keeps arrivals while catching up
+not ok 38 - review 2: Stop fences unread messages; Post keeps arrivals while catching up
+  ---
+  duration_ms: 29.615834
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:32:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    false !== true
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:43:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+# Subtest: review 3: every interrupted lock stage is recoverable
+not ok 39 - review 3: every interrupted lock stage is recoverable
+  ---
+  duration_ms: 1.896583
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:45:1'
+  failureType: 'testCodeFailure'
+  error: 'state_busy'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    withLock (<worktree>/reachable/reachable.cjs:274:23)
+    command (<worktree>/reachable/reachable.cjs:482:10)
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:50:16)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: review 4: archive replay advances in bounded chunks without dropping rows
+not ok 40 - review 4: archive replay advances in bounded chunks without dropping rows
+  ---
+  duration_ms: 801.39975
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:53:1'
+  failureType: 'testCodeFailure'
+  error: 'one invocation must not parse a whole archive'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:63:12)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: review 5: retained historical pack caches do not mask a new pack roll
+not ok 41 - review 5: retained historical pack caches do not mask a new pack roll
+  ---
+  duration_ms: 6.305041
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:69:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    true !== false
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:73:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: review 6: resolved manifests determine aliases for every supported source form
+not ok 42 - review 6: resolved manifests determine aliases for every supported source form
+  ---
+  duration_ms: 7.542875
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:76:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + []
+    - [
+    -   'talk-0',
+    -   'talk-1',
+    -   'talk-2',
+    -   'talk-3',
+    -   'talk-4',
+    -   'talk-5',
+    -   'talk-6',
+    -   'talk-7',
+    -   'escape'
+    - ]
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 'talk-0'
+    1: 'talk-1'
+    2: 'talk-2'
+    3: 'talk-3'
+    4: 'talk-4'
+    5: 'talk-5'
+    6: 'talk-6'
+    7: 'talk-7'
+    8: 'escape'
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:96:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: review 7: a save exceeding the deadline cannot leave a cached refusal
+not ok 43 - review 7: a save exceeding the deadline cannot leave a cached refusal
+  ---
+  duration_ms: 2009.361458
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:98:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + {
+    +   hookSpecificOutput: {
+    +     hookEventName: 'PreToolUse',
+    +     permissionDecision: 'deny',
+    +     permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+    +   }
+    + }
+    - {}
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    hookSpecificOutput:
+      hookEventName: 'PreToolUse'
+      permissionDecision: 'deny'
+      permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:107:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 6,15: workers and subagents do no I/O; an uninstalled city stays off
+ok 44 - 6,15: workers and subagents do no I/O; an uninstalled city stays off
+  ---
+  duration_ms: 3.336709
+  type: 'test'
+  ...
+# Subtest: 2,14,15: modes, pass, exemptions and private atomic state
+ok 45 - 2,14,15: modes, pass, exemptions and private atomic state
+  ---
+  duration_ms: 12.677875
+  type: 'test'
+  ...
+# Subtest: 11: unreadable log, invalid state and backwards clock fail open and log one error
+ok 46 - 11: unreadable log, invalid state and backwards clock fail open and log one error
+  ---
+  duration_ms: 3.917917
+  type: 'test'
+  ...
+# Subtest: 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
+ok 47 - 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
+  ---
+  duration_ms: 6.179833
+  type: 'test'
+  ...
+# Subtest: 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
+ok 48 - 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
+  ---
+  duration_ms: 4.707708
+  type: 'test'
+  ...
+1..48
+# tests 48
+# suites 0
+# pass 41
+# fail 7
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2925.818166
