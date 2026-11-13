@@ -600,7 +600,7 @@ func TestCoalescedLedgerCompatibility(t *testing.T) {
 		Raised           time.Time `json:"raised,omitzero"`
 		RaisedEnd        time.Time `json:"raised_end,omitzero"`
 	}
-	for _, state := range []string{"held", "delivered", "pending"} {
+	for _, state := range []string{"held", "delivered", "pending", "withdrawn_owner"} {
 		t.Run(state, func(t *testing.T) {
 			f := windowSetup(t, "8s")
 			if state == "pending" {
@@ -609,7 +609,16 @@ func TestCoalescedLedgerCompatibility(t *testing.T) {
 			for i := 0; i < 3; i++ {
 				f.send(t, i, "message.created", nil)
 			}
-			if state != "held" {
+			if state == "withdrawn_owner" {
+				f.gc.CityNotRunning = true
+				f.now = f.now.Add(8 * time.Second)
+				_ = f.p.Poll(context.Background())
+				m := message()
+				m.Name = space + "/messages/m002"
+				f.now = f.now.Add(time.Second)
+				f.handle(t, event("withdraw-owner", "message.deleted", m))
+				f.gc.CityNotRunning = false
+			} else if state != "held" {
 				f.advance(t, 8*time.Second)
 				f.turns(t, 1)
 			} else {
@@ -643,6 +652,12 @@ func TestCoalescedLedgerCompatibility(t *testing.T) {
 			want := 1
 			if state == "held" {
 				want = 3
+			} else if state == "withdrawn_owner" {
+				want = 2
+				text := joinTurns(f.gc.Inbound())
+				if strings.Contains(text, "body-002") || strings.Count(text, "body-000") != 1 || strings.Count(text, "body-001") != 1 || len(f.l.Unresolved) != 1 {
+					t.Fatal("rollback lost a survivor or delivered withdrawn text")
+				}
 			}
 			f.turns(t, want)
 		})
