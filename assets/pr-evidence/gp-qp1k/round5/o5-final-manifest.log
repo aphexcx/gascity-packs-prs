@@ -1,0 +1,3 @@
+run=1 load=2-node-cpu-workers command=pnpm exec node --test --test-concurrency=1 test/never-silent-integration.test.js exit=0
+run=2 load=2-node-cpu-workers command=pnpm exec node --test --test-concurrency=1 test/never-silent-integration.test.js exit=0
+run=3 load=2-node-cpu-workers command=pnpm exec node --test --test-concurrency=1 test/never-silent-integration.test.js exit=1

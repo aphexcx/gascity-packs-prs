@@ -1,0 +1,5 @@
+=== RUN   TestReleasedCursorlessHistoryCannotReplayAfterHold
+    history_upgrade_test.go:156: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages
+--- PASS: TestReleasedCursorlessHistoryCannotReplayAfterHold (1.78s)
+PASS
+ok  	gchat-adapter/internal/app	2.086s

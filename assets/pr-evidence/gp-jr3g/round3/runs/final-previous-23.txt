@@ -1,0 +1,8 @@
+=== RUN   TestRetainedHistoryKeepsReleasedEventIdentity
+=== RUN   TestRetainedHistoryKeepsReleasedEventIdentity/batch=false
+--- PASS: TestRetainedHistoryKeepsReleasedEventIdentity/batch=false (0.07s)
+=== RUN   TestRetainedHistoryKeepsReleasedEventIdentity/batch=true
+--- PASS: TestRetainedHistoryKeepsReleasedEventIdentity/batch=true (0.08s)
+--- PASS: TestRetainedHistoryKeepsReleasedEventIdentity (0.15s)
+PASS
+ok  	gchat-adapter/internal/catchup	0.335s

@@ -1,0 +1,12 @@
+=== RUN   TestHistoryNoticeStaleSnapshotProbe
+=== RUN   TestHistoryNoticeStaleSnapshotProbe/current-admission
+    history_notice_test.go:473: owner=0 mail=0 expected=1
+    history_notice_test.go:475: stale decision: owner=0 mail=0 expected=1
+--- FAIL: TestHistoryNoticeStaleSnapshotProbe/current-admission (0.25s)
+=== RUN   TestHistoryNoticeStaleSnapshotProbe/backup-restore
+    history_notice_test.go:473: owner=1 mail=1 expected=0
+    history_notice_test.go:475: stale decision: owner=1 mail=1 expected=0
+--- FAIL: TestHistoryNoticeStaleSnapshotProbe/backup-restore (0.30s)
+--- FAIL: TestHistoryNoticeStaleSnapshotProbe (0.54s)
+FAIL
+FAIL	gchat-adapter/internal/app	0.774s

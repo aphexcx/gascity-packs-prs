@@ -1,0 +1,1 @@
+pnpm exec node --test --test-reporter=tap --test-concurrency=1 exit=1

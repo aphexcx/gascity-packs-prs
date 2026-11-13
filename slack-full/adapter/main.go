@@ -318,6 +318,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"github.com/sjarmak/gc-slack-adapter/internal/neversilent"
 )
 
 const (
@@ -397,6 +399,7 @@ func (c config) tryAcquireDispatchSlot() (release func(), capacity int, ok bool)
 }
 
 type config struct {
+	neverSilent         *neversilent.Engine
 	publicListen        string
 	internalListen      string // unused when serviceSocket is set
 	serviceSocket       string // when set, bind a UDS here for /publish instead of internalListen
@@ -1763,6 +1766,10 @@ func main() {
 		log.Fatalf("handle alias registry: %v", err)
 	}
 	log.Printf("handle alias registry: store=%s", cfg.handleAliasStorePath)
+	cfg.neverSilent, err = newNeverSilent(cfg, identityReg, aliasReg)
+	if err != nil {
+		log.Fatalf("never-silent: %v", err)
+	}
 
 	threadReg, err := newThreadSessionRegistry(cfg.threadSessionsStorePath)
 	if err != nil {
@@ -1980,27 +1987,7 @@ func main() {
 	if err := os.MkdirAll(cfg.inboundDeadLetterDir, 0o700); err != nil {
 		log.Printf("inbound dead-letter dir %q could not be created at startup (%v) — writes will retry creating it", cfg.inboundDeadLetterDir, err)
 	}
-	cfg.coalescer.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
-		path, err := writeInboundDeadLetter(deliverCfg.inboundDeadLetterDir, channel, batch, cause)
-		if err != nil {
-			// The write retries on a backoff (parkDeadLetter); log the
-			// error once per DISTINCT failure, not per attempt (gp-sgu7
-			// contract 3) — the coalescer's own parked/retry lines mark
-			// the state changes.
-			if deliverCfg.postFailures.changed("dead-letter:"+channel, err.Error()) {
-				log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) parked out of the delivery path; the write retries with backoff: %v",
-					channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
-			}
-			return false
-		}
-		deliverCfg.postFailures.clear("dead-letter:" + channel)
-		if err := deliverCfg.inboundRecovery.importDeadLetters(); err != nil {
-			log.Printf("inbound dead-letter index refresh: %v", err)
-		}
-		log.Printf("coalesce: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand once the rejection cause is fixed",
-			channel, len(batch), path)
-		return true
-	}
+	cfg.coalescer.deadLetter = inboundDeadLetterSink(deliverCfg)
 	log.Printf("inbound coalescer: window=%s (0 disables) policy_channels=%d spool=%q dead_letter_dir=%q",
 		cfg.coalesceWindow, deliveryPolicy.Len(), cfg.coalesceSpoolPath, cfg.inboundDeadLetterDir)
 
@@ -2038,6 +2025,7 @@ func main() {
 	internalMux.HandleFunc("GET /publish-receipt", handlePublishReceipt(cfg.publishReceipts))
 	internalMux.HandleFunc("/publish-file", handlePublishFile(cfg, identityReg))
 	internalMux.HandleFunc("/react", handleReact(cfg))
+	internalMux.HandleFunc("GET /never-silent/status", cfg.neverSilentStatus)
 	internalMux.HandleFunc("POST /identity", handleIdentity(identityReg))
 	internalMux.HandleFunc("DELETE /identity", handleIdentityDelete(identityReg))
 	internalMux.HandleFunc("POST /handle-alias", handleHandleAlias(aliasReg))
@@ -2061,6 +2049,12 @@ func main() {
 	internalMux.HandleFunc("POST /internal/inbound/redrive", cfg.inboundRecovery.handleRedrive)
 
 	startup := &startupGate{}
+	// A saved outage must be reported even while gc refuses registration.
+	// New work and spool replay still wait at the existing registration barrier.
+	noticeCtx, stopNotices := context.WithCancel(context.Background())
+	defer stopNotices()
+	go cfg.runNeverSilent(noticeCtx)
+
 	if cfg.registerOnStart {
 		startup.attempt.Store(1)
 	}
@@ -2764,7 +2758,11 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			// Slack accepted this timestamp even if it truncated the body.
 			// Preserve the warning and report readback separately; re-posting
 			// would only create another partial message.
+			receipt.sourceSessionID = identitySessionID
 			cfg.publishReceipts.recordPosted(req.IdempotencyKey, &receipt, post)
+			if at, ok := ingestionPublishTime(slackResp.TS); ok {
+				cfg.recordNeverSilentWords(req.Conversation.ConversationID, req.ReplyToMessageID, identitySessionID, slackResp.TS, post.Text, at)
+			}
 			target.messageTS = slackResp.TS
 			receipt.readbackTarget = target
 			receipt.sourceSessionID = identitySessionID
@@ -2956,6 +2954,7 @@ func handlePublishFile(cfg config, reg *identityRegistry) http.HandlerFunc {
 
 		receipt.Delivered = true
 		receipt.FileID = urlResp.FileID
+		cfg.recordNeverSilentWords(req.Conversation.ConversationID, req.ReplyToMessageID, identitySessionID, urlResp.FileID, req.InitialComment, time.Now())
 		// Busy-reaction lifecycle, remove side: a threaded file upload
 		// may be the agent's entire reply — it must clear the pending
 		// busy mark exactly like a text publish (hw-94w5k codex r1).
@@ -3281,11 +3280,21 @@ func handleReact(cfg config) http.HandlerFunc {
 		default:
 			receipt.Delivered = true
 		}
+		// already_reacted is successful delivery of the requested state, but
+		// it is not a new session action and must not answer a newer request.
 		if receipt.Delivered && !req.Remove {
-			cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
+			act := ingestionSessionAct{
 				Kind: "reaction", Source: "session_react", Channel: req.Conversation.ConversationID,
 				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
-			})
+			}
+			if cfg.neverSilent.Enabled() {
+				act.Timestamp = time.Now()
+				act.NoticeNoActivity = err != nil || !slackResp.OK
+				if !act.NoticeNoActivity {
+					cfg.noticeError(cfg.neverSilent.Act(act.Channel, "", act.SessionID, act.Timestamp))
+				}
+			}
+			cfg.inboundJournal.recordSessionAct(act)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(receipt)
@@ -3305,7 +3314,10 @@ func handleReact(cfg config) http.HandlerFunc {
 // own ts (messageTS). Either way, replies in that thread now reach the
 // posting session even when it is bound mention-only.
 func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sessionID string) {
-	if at, ok := ingestionPublishTime(messageTS); ok && replyTo != "" && sessionID != "" {
+	if at, ok := ingestionPublishTime(messageTS); ok && sessionID != "" {
+		cfg.noticeError(cfg.neverSilent.Act(conversationID, replyTo, sessionID, at))
+	}
+	if at, ok := ingestionPublishTime(messageTS); ok && sessionID != "" {
 		cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 			Kind: "reply", Source: "session_publish", Channel: conversationID,
 			MessageTS: messageTS, ThreadTS: replyTo, SessionID: sessionID, Timestamp: at,
@@ -4042,6 +4054,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// adapter holds a message where the notice can still replace it.
 	if msg.Subtype == "message_deleted" {
 		if msg.DeletedTS != "" {
+			cfg.noticeError(cfg.neverSilent.Forget(neverSilentID(msg.Channel, msg.DeletedTS)))
 			if n := cfg.coalescer.markDeleted(msg.Channel, msg.DeletedTS); n > 0 {
 				log.Printf("inbound: chan=%s ts=%s deleted by sender before delivery — %d buffered cop(y/ies) replaced with a deletion notice",
 					msg.Channel, msg.DeletedTS, n)
@@ -4443,6 +4456,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		textForChannel = minimalReminder(cfg, inbound, text, filesBlock, anchor)
 	}
 	inbound.injectionWindows = []injectionWindow{contextWindow}
+	cfg.trackNeverSilent(inbound, env.EventID, convKind == "dm" || msg.ChannelType == "mpim" || target != "" || botMentioned)
 	// botMentioned/convKind/willBuffer were computed ahead of the
 	// thread-context preamble (the channel-claim gate needs them).
 	//
@@ -6784,8 +6798,12 @@ func renderAliasDispatch(cfg config, msg externalInboundMessage, handle string) 
 // and whether gc ACCEPTED the injection.
 func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessages ...externalInboundMessage) (result deliveryReceipt, accepted bool) {
 	started := time.Now().UTC()
+	var observationError error
 	defer func() {
 		if !accepted || len(journalMessages) == 0 {
+			if len(journalMessages) > 0 {
+				cfg.observeNeverSilent(journalMessages[0], deliveryReceipt{members: []deliveryReceiptMember{{SessionID: sessionID}}}, observationError)
+			}
 			return
 		}
 		msg := journalMessages[0]
@@ -6809,6 +6827,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 		cfg.gcAPIBase, url.PathEscape(cfg.cityName), url.PathEscape(sessionID))
 	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
+		observationError = err
 		log.Printf("alias dispatch: build request: %v", err)
 		return deliveryReceipt{}, false
 	}
@@ -6825,6 +6844,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 	req.Header.Set("X-GC-Delivery-Receipt", "require")
 	resp, err := gcForwardClient.Do(req)
 	if err != nil {
+		observationError = err
 		log.Printf("alias dispatch: POST %s: %v", target, err)
 		return deliveryReceipt{}, false
 	}
@@ -6833,6 +6853,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 	if resp.StatusCode >= 400 {
 		// The body is gc's and can be large or carry newlines; bounded and
 		// sanitized like every other gc string that reaches a log line.
+		observationError = &inboundPostError{Status: resp.StatusCode, Body: string(respBody)}
 		log.Printf("alias dispatch: %s -> %s: %s", target, resp.Status, sanitizeReceiptLogValue(string(respBody), receiptFollowUpLogLimit))
 		return deliveryReceipt{postStatus: resp.StatusCode}, false
 	}
@@ -6973,6 +6994,34 @@ func postInbound(cfg config, msg externalInboundMessage) error {
 	return err
 }
 
+// inboundDeadLetterSink persists a rejected batch before updating its observers.
+func inboundDeadLetterSink(deliverCfg config) func(string, []pendingChannelInbound, error) bool {
+	return func(channel string, batch []pendingChannelInbound, cause error) bool {
+		path, err := writeInboundDeadLetter(deliverCfg.inboundDeadLetterDir, channel, batch, cause)
+		if err != nil {
+			// The write retries on a backoff (parkDeadLetter); log the
+			// error once per DISTINCT failure, not per attempt (gp-sgu7
+			// contract 3) — the coalescer's own parked/retry lines mark
+			// the state changes.
+			if deliverCfg.postFailures.changed("dead-letter:"+channel, err.Error()) {
+				log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) parked out of the delivery path; the write retries with backoff: %v",
+					channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
+			}
+			return false
+		}
+		deliverCfg.postFailures.clear("dead-letter:" + channel)
+		if err := deliverCfg.inboundRecovery.importDeadLetters(); err != nil {
+			log.Printf("inbound dead-letter index refresh: %v", err)
+		}
+		for _, member := range batch {
+			deliverCfg.stopNeverSilent(member.inbound, permanentDeliveryFailure(cause))
+		}
+		log.Printf("coalesce: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand once the rejection cause is fixed",
+			channel, len(batch), path)
+		return true
+	}
+}
+
 // postInboundWithReceipt forwards one inbound and returns gc's delivery
 // receipt alongside the transport outcome (gp-32q). A nil error means
 // gc ACCEPTED the payload; whether it REACHED the session is the
@@ -6991,6 +7040,8 @@ func postInboundWithReceipt(cfg config, msg externalInboundMessage) (receipt del
 				cfg.receiptObserver(receipt)
 			}
 			cfg.inboundRecovery.observe(receipt)
+		} else {
+			cfg.observeNeverSilent(msg, receipt, postErr)
 		}
 	}()
 	msg = redactInboundMessage(msg)

@@ -1,0 +1,15 @@
+Auto-merging gchat/CHANGELOG.md
+Auto-merging gchat/README.md
+Auto-merging gchat/adapter/internal/app/app.go
+Auto-merging gchat/adapter/internal/app/workers.go
+Auto-merging gchat/adapter/internal/config/config.go
+Auto-merging gchat/adapter/internal/inbound/inbound.go
+Auto-merging gchat/adapter/internal/ledger/ledger.go
+Auto-merging gchat/adapter/internal/server/server.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/server/server.go
+Auto-merging gchat/commands/status.sh
+CONFLICT (content): Merge conflict in gchat/commands/status.sh
+Auto-merging gchat/tests/test_commands.py
+Recorded preimage for 'gchat/adapter/internal/server/server.go'
+Recorded preimage for 'gchat/commands/status.sh'
+Automatic merge failed; fix conflicts and then commit the result.

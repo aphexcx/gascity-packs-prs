@@ -1,0 +1,1 @@
+pnpm exec node --test --test-concurrency=1 --test-reporter=tap --test-name-pattern='^\(6b\)'	exit=0

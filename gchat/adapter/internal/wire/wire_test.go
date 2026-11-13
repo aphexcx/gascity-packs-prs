@@ -152,8 +152,8 @@ func TestDeliveryMembersJSON(t *testing.T) {
 	if d.ReceiptID != "ir-1-2" || d.Status != "pending" || !d.Terminal || d.DeliveredBytes != 220 || d.ExpectedBytes != 240 || len(d.Members) != 2 {
 		t.Fatalf("delivery: %+v", d)
 	}
-	want := []DeliveryMember{{Status: "pending", Terminal: true, DeliveredBytes: 120, ExpectedBytes: 120, Error: "draft ownership lost"},
-		{Status: "held", DeliveredBytes: 100, ExpectedBytes: 120}}
+	want := []DeliveryMember{{SessionID: "s-1", Status: "pending", Terminal: true, DeliveredBytes: 120, ExpectedBytes: 120, Error: "draft ownership lost"},
+		{SessionID: "s-2", Status: "held", DeliveredBytes: 100, ExpectedBytes: 120}}
 	if !reflect.DeepEqual(d.Members, want) {
 		t.Fatalf("members:\n got %+v\nwant %+v", d.Members, want)
 	}

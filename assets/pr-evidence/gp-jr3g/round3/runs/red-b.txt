@@ -1,0 +1,58 @@
+=== RUN   TestRetiredAttemptEndsItsNotice
+=== RUN   TestRetiredAttemptEndsItsNotice/unresolved/noticed=false
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/0 mail=1/0 local=1/0 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/unresolved/noticed=false (0.22s)
+=== RUN   TestRetiredAttemptEndsItsNotice/unresolved/noticed=true
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/1 mail=1/2 local=1/1 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/unresolved/noticed=true (0.22s)
+=== RUN   TestRetiredAttemptEndsItsNotice/intent/noticed=false
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/0 mail=1/0 local=1/0 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/intent/noticed=false (0.19s)
+=== RUN   TestRetiredAttemptEndsItsNotice/intent/noticed=true
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/1 mail=1/2 local=1/1 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/intent/noticed=true (0.23s)
+=== RUN   TestRetiredAttemptEndsItsNotice/delivered/noticed=false
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/0 mail=1/0 local=1/0 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/delivered/noticed=false (0.20s)
+=== RUN   TestRetiredAttemptEndsItsNotice/delivered/noticed=true
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/1 mail=1/2 local=1/1 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/delivered/noticed=true (0.23s)
+=== RUN   TestRetiredAttemptEndsItsNotice/queued/noticed=false
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/0 mail=1/0 local=1/0 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/queued/noticed=false (0.24s)
+=== RUN   TestRetiredAttemptEndsItsNotice/queued/noticed=true
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/1 mail=1/2 local=1/1 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/queued/noticed=true (0.23s)
+=== RUN   TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=false
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/0 mail=1/0 local=1/0 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=false (0.21s)
+=== RUN   TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=true
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/1 mail=1/2 local=1/1 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=true (0.26s)
+=== RUN   TestRetiredAttemptEndsItsNotice/restore/noticed=false
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/0 mail=1/0 local=1/0 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/restore/noticed=false (0.22s)
+=== RUN   TestRetiredAttemptEndsItsNotice/restore/noticed=true
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+    history_notice_test.go:385: after load: posts=1/1 mail=1/2 local=1/1 open=1/0
+--- FAIL: TestRetiredAttemptEndsItsNotice/restore/noticed=true (0.27s)
+=== RUN   TestRetiredAttemptEndsItsNotice/cursor/noticed=false
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/cursor/noticed=false (0.19s)
+=== RUN   TestRetiredAttemptEndsItsNotice/cursor/noticed=true
+    history_notice_test.go:383: posts=1 mail=1 local=1 open=1 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/cursor/noticed=true (0.23s)
+--- FAIL: TestRetiredAttemptEndsItsNotice (3.13s)
+FAIL
+FAIL	gchat-adapter/internal/app	3.480s

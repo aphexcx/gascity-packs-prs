@@ -1,0 +1,4 @@
+=== RUN   TestHistoryFloorLedgerCompatibility
+--- PASS: TestHistoryFloorLedgerCompatibility (0.25s)
+PASS
+ok  	gchat-adapter/internal/ledger	0.470s

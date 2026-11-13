@@ -1,0 +1,1 @@
+pnpm exec node --test --test-reporter=tap --test-concurrency=1 --test-name-pattern='committed proof replay' never-silent.test.js exit=0

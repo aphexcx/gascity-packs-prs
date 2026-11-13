@@ -32,6 +32,9 @@ func TestRegistrationProcessHelper(t *testing.T) {
 		// Only the isolated test process changes the production 20-second client.
 		gcForwardClient.Timeout = 100 * time.Millisecond
 	}
+	if base := os.Getenv("SLACK_TEST_API_BASE"); base != "" {
+		slackAPIBase = base
+	}
 	main()
 }
 

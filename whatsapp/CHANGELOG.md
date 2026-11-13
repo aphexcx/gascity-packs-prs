@@ -9,6 +9,7 @@
 - The gateway switch closes existing sockets on the next message or inbox
   read; a per-box switch restores polling immediately on restart. No D1
   migration, and no deployment is included in this change.
+- Add opt-in never-silent owner notices, durable outage mail and health/status reporting for newly addressed human messages.
 
 ## Unreleased (gp-tu0b)
 

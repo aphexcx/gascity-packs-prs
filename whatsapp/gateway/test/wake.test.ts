@@ -129,6 +129,34 @@ describe("held connection", () => {
     });
   });
 
+  it("an adopted status wakes once while a lost-answer replay keeps the accepted send attempt", async () => {
+    const { h, city, ids } = await joined();
+    const peer = await open(city);
+    h.graph.hooks.onSend = async (wamid) => {
+      expect((await h.webhook(statusAs(wamid, "delivered", ids, h.clock.now))).status).toBe(200);
+    };
+    const body = { to: ids.user, type: "text", text: "invented reply", idempotency_key: uniq() };
+    const before = h.graph.sends().length;
+    const wake = receive(peer.socket);
+    const first = await h.call("POST", "/v1/send", { token: city.token, body,
+      headers: { "x-gc-send-attempt": "example-original-attempt" } });
+    expect(first.status).toBe(200);
+    expect((await wake).data).toBe("wake");
+    expect(first.headers.get("x-gc-replayed")).toBe("false");
+    expect(first.headers.get("x-gc-send-attempt")).toBe("example-original-attempt");
+    // Treat the first answer as lost; a retry's proposed attempt cannot turn old words into new activity.
+    const replay = await h.call("POST", "/v1/send", { token: city.token, body,
+      headers: { "x-gc-send-attempt": "example-retry-attempt" } });
+    expect(replay.status).toBe(200);
+    expect(replay.body).toEqual(first.body);
+    expect(replay.headers.get("x-gc-replayed")).toBe("true");
+    expect(replay.headers.get("x-gc-send-attempt")).toBe("example-original-attempt");
+    await barrier(peer.socket);
+    expect(peer.received.filter((frame) => frame === "wake")).toHaveLength(1);
+    expect(h.graph.sends()).toHaveLength(before + 1);
+    expect((await h.held(city)).filter((row) => row.kind === "status" && row.wamid === first.body.message_id)).toHaveLength(1);
+  });
+
   it("wakes committed rows even when a later webhook batch fails", async () => {
     const flaky = flakyDb();
     const { h, city, ids } = await joined(harness(flaky.db));

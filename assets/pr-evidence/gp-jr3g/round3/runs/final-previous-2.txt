@@ -1,0 +1,14 @@
+=== RUN   TestFloorFollowsTheFirstSuccessfulConnection
+=== RUN   TestFloorFollowsTheFirstSuccessfulConnection/503
+--- PASS: TestFloorFollowsTheFirstSuccessfulConnection/503 (2.21s)
+=== RUN   TestFloorFollowsTheFirstSuccessfulConnection/403
+--- PASS: TestFloorFollowsTheFirstSuccessfulConnection/403 (2.20s)
+=== RUN   TestFloorFollowsTheFirstSuccessfulConnection/create
+--- PASS: TestFloorFollowsTheFirstSuccessfulConnection/create (2.20s)
+=== RUN   TestFloorFollowsTheFirstSuccessfulConnection/reload
+--- PASS: TestFloorFollowsTheFirstSuccessfulConnection/reload (4.18s)
+=== RUN   TestFloorFollowsTheFirstSuccessfulConnection/24h
+--- PASS: TestFloorFollowsTheFirstSuccessfulConnection/24h (2.19s)
+--- PASS: TestFloorFollowsTheFirstSuccessfulConnection (12.98s)
+PASS
+ok  	gchat-adapter/internal/app	13.185s

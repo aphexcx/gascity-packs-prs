@@ -1,0 +1,11 @@
+whatsapp/CHANGELOG.md
+whatsapp/README.md
+whatsapp/adapter/src/inbound.js
+whatsapp/adapter/src/index.js
+whatsapp/adapter/test/fakes.js
+whatsapp/commands/status.sh
+whatsapp/commands/status/help.md
+whatsapp/gateway/README.md
+whatsapp/gateway/src/gateway.ts
+whatsapp/gateway/test/gateway.test.ts
+whatsapp/tests/test_pack.py

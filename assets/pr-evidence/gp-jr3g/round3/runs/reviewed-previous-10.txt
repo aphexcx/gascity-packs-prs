@@ -1,0 +1,8 @@
+=== RUN   TestNeverReadSpaceReportsNoLoss
+=== RUN   TestNeverReadSpaceReportsNoLoss/start=false
+--- PASS: TestNeverReadSpaceReportsNoLoss/start=false (0.17s)
+=== RUN   TestNeverReadSpaceReportsNoLoss/start=true
+--- PASS: TestNeverReadSpaceReportsNoLoss/start=true (0.11s)
+--- PASS: TestNeverReadSpaceReportsNoLoss (0.28s)
+PASS
+ok  	gchat-adapter/internal/catchup	0.464s

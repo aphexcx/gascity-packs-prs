@@ -1,0 +1,10 @@
+=== RUN   TestBoundedActWithoutTimeUsesPublishTime
+=== RUN   TestBoundedActWithoutTimeUsesPublishTime/old
+--- PASS: TestBoundedActWithoutTimeUsesPublishTime/old (0.05s)
+=== RUN   TestBoundedActWithoutTimeUsesPublishTime/new
+--- PASS: TestBoundedActWithoutTimeUsesPublishTime/new (0.06s)
+=== RUN   TestBoundedActWithoutTimeUsesPublishTime/none
+--- PASS: TestBoundedActWithoutTimeUsesPublishTime/none (0.04s)
+--- PASS: TestBoundedActWithoutTimeUsesPublishTime (0.16s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.444s

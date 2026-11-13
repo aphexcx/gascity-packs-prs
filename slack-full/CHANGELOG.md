@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Peer rendering parts survive recovery, completed payloads compact away, and
   large histories or torn append tails no longer disable adapter startup.
   Incomplete liveness dead letters remain missed for manual recovery from Slack.
+- Add opt-in never-silent owner notices, durable outage mail and health/status reporting for newly addressed human messages.
 
 - **Session-proven inbound ingestion receipts** (gp-41p6): local deliveries
   receive `ingested` only after the complete payload appears in a rendered

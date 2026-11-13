@@ -69,6 +69,8 @@ class FakeGC:
     def get(self, path):
         url = urllib.parse.urlsplit(path)
         q = dict(urllib.parse.parse_qsl(url.query))
+        if url.path == "/svc/slack/never-silent/status":
+            return {"enabled": False, "health": {"state": "unknown"}, "outages": [], "owner_lines_seven_days": 0}
         if url.path == "/sessions":
             return {"items": [{"id": "s-mayor", "alias": "mayor", "session_name": "mayor"}]}
         if url.path == "/beads":

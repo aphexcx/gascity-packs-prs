@@ -1,0 +1,22 @@
+=== RUN   TestCursorlessSpaceStartsWhereItWasFirstSeen
+=== RUN   TestCursorlessSpaceStartsWhereItWasFirstSeen/unreadable
+    history_bound_test.go:90: turns=1
+--- PASS: TestCursorlessSpaceStartsWhereItWasFirstSeen/unreadable (0.73s)
+=== RUN   TestCursorlessSpaceStartsWhereItWasFirstSeen/no-interval
+    history_bound_test.go:90: turns=1
+--- PASS: TestCursorlessSpaceStartsWhereItWasFirstSeen/no-interval (0.49s)
+=== RUN   TestCursorlessSpaceStartsWhereItWasFirstSeen/next-listing
+    history_bound_test.go:90: turns=1
+--- PASS: TestCursorlessSpaceStartsWhereItWasFirstSeen/next-listing (0.16s)
+=== RUN   TestCursorlessSpaceStartsWhereItWasFirstSeen/queued
+    history_bound_test.go:90: turns=1
+--- PASS: TestCursorlessSpaceStartsWhereItWasFirstSeen/queued (0.40s)
+=== RUN   TestCursorlessSpaceStartsWhereItWasFirstSeen/old-floor
+    history_bound_test.go:90: turns=1
+--- PASS: TestCursorlessSpaceStartsWhereItWasFirstSeen/old-floor (0.44s)
+=== RUN   TestCursorlessSpaceStartsWhereItWasFirstSeen/outage-dm
+    history_bound_test.go:90: turns=1
+--- PASS: TestCursorlessSpaceStartsWhereItWasFirstSeen/outage-dm (0.56s)
+--- PASS: TestCursorlessSpaceStartsWhereItWasFirstSeen (2.79s)
+PASS
+ok  	gchat-adapter/internal/catchup	3.065s

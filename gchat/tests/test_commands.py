@@ -198,6 +198,13 @@ class ProxyFixture(unittest.TestCase):
 
 
 class ProxyCommandsTest(ProxyFixture):
+    def test_reaction_preserves_session_attribution(self):
+        self.env["GC_SESSION_ID"] = "example-session"
+        self.respond("/react", {"ok": True})
+        result = self.run_command("react", "--message", "spaces/AAAA/messages/1", "--emoji", "eyes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][3]["session_id"], "example-session")
+
     def test_large_body_streams_without_argv_limit(self):
         body = self.root / "large.txt"
         body.write_text("text\n" * 300000)
@@ -368,6 +375,30 @@ class ProxyCommandsTest(ProxyFixture):
         result = self.run_command("status")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Coalescing: 8s; held acts: 3", result.stdout.splitlines())
+
+    def test_status_prints_history_before_never_silent(self):
+        value = {"health": {"state": "ready"},
+                 "history_floor": "2030-01-02T03:04:05Z",
+                 "never_silent": {"enabled": True, "outages": []}}
+        self.respond("/status", value)
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        index = lines.index("Last event: none")
+        self.assertEqual(lines[index + 1],
+            "History: first start skipped messages written before 2030-01-02T03:04:05Z; gc gchat read still reads them")
+        self.assertTrue(lines[index + 2].startswith("Never silent: "))
+        self.assertEqual(json.loads(lines[index + 2].removeprefix("Never silent: ")),
+                         value["never_silent"])
+        self.assertTrue(lines[index + 3].startswith("Backlog: "))
+        result = self.run_command("status", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), value)
+        self.respond("/status", {"health": {"state": "ready"}})
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("History:", result.stdout)
+        self.assertNotIn("Never silent:", result.stdout)
 
     def test_status_text_names_the_history_floor(self):
         value = {"health": {"state": "ready"}, "history_floor": "2030-01-02T03:04:05Z"}

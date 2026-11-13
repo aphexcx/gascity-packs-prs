@@ -1,0 +1,8 @@
+=== RUN   TestOldActNeverDownloadsAttachments
+=== RUN   TestOldActNeverDownloadsAttachments/message.created
+--- PASS: TestOldActNeverDownloadsAttachments/message.created (0.05s)
+=== RUN   TestOldActNeverDownloadsAttachments/message.updated
+--- PASS: TestOldActNeverDownloadsAttachments/message.updated (0.04s)
+--- PASS: TestOldActNeverDownloadsAttachments (0.08s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.272s

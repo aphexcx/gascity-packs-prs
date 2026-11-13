@@ -21,6 +21,7 @@ printf '%s\n' "$result" | jq -r '
     "Last event: \(.last_event_time // "none")",
     (if .history_floor then "History: first start skipped messages written before \(.history_floor); gc gchat read still reads them" else empty end),
     (if .coalesce_window then "Coalescing: \(.coalesce_window); held acts: \(.held_acts // 0)" else empty end),
+    (if .never_silent then "Never silent: \(.never_silent | tojson)" else empty end),
     "Backlog: \(.backlog // 0); pending: \(.pending // 0); unresolved: \(.unresolved // 0); unrecorded: \(.unrecorded // 0); quarantine: \(.quarantine // 0)" +
         (if .stuck != null then "; stuck: \(.stuck)" else "" end),
     (if .subscription_retry then "Subscription retry: \(.subscription_retry | tojson)" else empty end),

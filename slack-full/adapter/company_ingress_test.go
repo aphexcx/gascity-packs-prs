@@ -75,6 +75,9 @@ func newFakeGC(t *testing.T) *fakeGC {
 			}
 		}
 		w.WriteHeader(status)
+		if status == http.StatusOK {
+			_, _ = w.Write([]byte(`{"status":"delivered"}`))
+		}
 	}))
 	t.Cleanup(f.server.Close)
 	return f

@@ -30,6 +30,7 @@ type companyPostResult struct {
 	detail      string
 	requestID   string
 	eventCursor string
+	noticeKind  string
 }
 
 type companyAsyncAccepted struct {
@@ -136,6 +137,7 @@ func (g *companyGateway) persistCompanyMessageAcceptance(r *IngressReceipt, key 
 	td.RequestID = accepted.requestID
 	td.EventCursor = accepted.eventCursor
 	td.Status = companyTargetPending
+	td.NoticeKind = "pending"
 	td.Detail = companyDetailAwaitingMessage
 	snapshot := *td
 	return g.commitReceipt(r, func(cur *IngressReceipt) {
@@ -156,6 +158,7 @@ func (g *companyGateway) settleCompanyAsyncTarget(td *TargetDelivery) companyPos
 		return companyPostResult{disposition: postDefinitive, detail: td.Detail}
 	}
 	result := g.awaitCompanyMessageResult(*td)
+	td.NoticeKind = result.noticeKind
 	td.UpdatedAt = g.now().UTC()
 	switch result.disposition {
 	case postDelivered:
@@ -268,7 +271,7 @@ func decodeCompanyMessageEvent(data, requestID string) (companyPostResult, bool)
 		if json.Unmarshal(env.Payload, &payload) != nil || payload.RequestID != requestID {
 			return companyPostResult{}, false
 		}
-		return companyPostResult{disposition: postDelivered}, true
+		return companyPostResult{disposition: postDelivered, noticeKind: "delivered"}, true
 	case companyAsyncFailureEvent:
 		var payload companyAsyncFailure
 		if json.Unmarshal(env.Payload, &payload) != nil || payload.RequestID != requestID || payload.Operation != companyAsyncMessageOperation {

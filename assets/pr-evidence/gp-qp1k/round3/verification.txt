@@ -1,0 +1,84 @@
+Go: go1.27.3 darwin/arm64
+Node: v24.21.0 (pnpm exec node --version)
+
+gchat-full
+  test events: {'pass': 1887, 'fail': 8}
+  top-level tests: {'pass': 677, 'fail': 5}
+  packages: {'pass': 19, 'fail': 3}
+  FAILED: TestRealGCContract
+  FAILED: TestGenerationRegistersBeforeInstallingChat
+  FAILED: TestNeverSilentNewAddressedMessagesOnly/new_dm
+  FAILED: TestNeverSilentNewAddressedMessagesOnly
+  FAILED: TestShutdownCheckpointsBeforeDrainingStalledRequestBody/post-drain-save
+  FAILED: TestShutdownCheckpointsBeforeDrainingStalledRequestBody
+  FAILED: TestSubscriptionRefusalRetriesWithoutSignIn/404
+  FAILED: TestSubscriptionRefusalRetriesWithoutSignIn
+  contract_test.go:242: outbound result: {Receipt:{Conversation:{ScopeID: Provider: AccountID: ConversationID: ParentConversationID: Kind:} Metadata:map[] Delivered:false MessageID: FailureKind: RetryAfter:0} TranscriptEntry:<nil>} gc API: HTTP 422: validation-failed: no active binding for conversation gchat/spaces/room
+  glue_test.go:73: Chat installed before registration completed: 200 []
+  never_silent_test.go:151: posts=0 mails=0 want=1
+  shutdown_test.go:63: condition did not become true
+  subscription_test.go:354: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
+
+gchat-correction
+  test events: {'pass': 17}
+  top-level tests: {'pass': 5}
+  packages: {'pass': 3}
+
+gchat-final
+  test events: {'pass': 1892, 'fail': 2, 'skip': 2}
+  top-level tests: {'pass': 679, 'fail': 2, 'skip': 2}
+  packages: {'pass': 21, 'fail': 1}
+  FAILED: TestMissingTokenReplacementResumes
+  FAILED: TestShutdownSavesBeforeDrainingStuckPublish
+  app_test.go:235: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
+  shutdown_test.go:152: condition did not become true
+
+slack-full
+  test events: {'pass': 13187, 'skip': 3, 'fail': 1}
+  top-level tests: {'pass': 1518, 'skip': 3, 'fail': 1}
+  packages: {'pass': 2, 'fail': 1}
+  FAILED: TestRegistrationStartupRetriesCityNotRunning
+  registration_startup_test.go:167: health never became "registering: attempt 1"; last=""; log:
+
+whatsapp-full
+  not ok 226 - (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt
+  # tests 328
+  # pass 327
+  # fail 1
+  # cancelled 0
+  # skipped 0
+
+whatsapp-class
+  # tests 68
+  # pass 68
+  # fail 0
+  # cancelled 0
+  # skipped 0
+
+whatsapp-isolated
+  not ok 15 - (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt
+  # tests 18
+  # pass 17
+  # fail 1
+  # cancelled 0
+  # skipped 0
+
+whatsapp-isolated-final
+  # tests 18
+  # pass 18
+  # fail 0
+  # cancelled 0
+  # skipped 0
+
+whatsapp-python
+  57 passed in 21.25s
+
+slack-isolated
+  --- PASS: TestRegistrationStartupRetriesCityNotRunning (3.06s)
+
+gchat-isolated-final
+  --- PASS: TestMissingTokenReplacementResumes (3.11s)
+  --- PASS: TestShutdownSavesBeforeDrainingStuckPublish (1.14s)
+
+Formatting: Google Chat clean; Slack reports only unchanged company_thread_ambient.go.
+Both Go vet checks passed. See each completion manifest for exact commands and exit codes.
