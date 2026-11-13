@@ -34,7 +34,7 @@ async function setup(t, { enabled = false } = {}) {
   const gateway = createGatewayClient({ url: gw.url, credential: CREDENTIAL });
   const r = { dir, clock, gw, gateway, ledger, notices, logs, transcripts, callbacks, stateDir };
   r.restart = () => {
-    r.publisher = createPublisher({ stateDir, city: 'test-city', gateway, ledger, notices, clock: clock.now,
+    r.publisher = createPublisher({ stateDir, city: 'test-city', cityDir: dir, gateway, ledger, notices, clock: clock.now,
       log: (line) => logs.push(line), gc: { recordOutbound: async (body) => {
         transcripts.push(body);
         const answer = await r.publisher.handlePublish(JSON.stringify(body));
@@ -178,6 +178,49 @@ for (const emoji of ['👀', '']) test(`CLI reaction ${emoji ? 'placement' : 're
   await r.react(body);
   assert.equal(r.transcripts.length, 1);
   assert.equal(r.gw.sends.length, 1);
+  r.clock.advance(240000);
+  await r.notices.poll();
+  assert.deepEqual(r.notices.status().outages, []);
+});
+
+for (const verb of ['text', 'file', 'update']) test(`in-flight key ownership: rejected ${verb} never poisons a reaction receipt`, async (t) => {
+  const r = await setup(t);
+  const file = path.join(r.dir, 'fixture.txt');
+  fs.writeFileSync(file, 'fixture file');
+  const window = r.gateway.window;
+  let release, entered;
+  const held = new Promise((resolve) => { release = resolve; });
+  const started = new Promise((resolve) => { entered = resolve; });
+  r.gateway.window = async () => { entered(); await held; return window(); };
+  const reaction = r.react();
+  await started;
+  const publish = () => verb === 'update'
+    ? r.publisher.handlePublishUpdate(JSON.stringify({ to: OWNER, text: 'fixture update', session_id: 's-mayor', idempotency_key: 'react-key' }))
+    : r.publisher.handlePublish(JSON.stringify({ ...request(), text: verb === 'file' ? undefined : 'fixture reply', ...(verb === 'file' ? { file } : {}) }));
+  try { assert.equal((await publish()).status, 409); } finally { release(); }
+  assert.equal((await reaction).json.delivered, true);
+  assert.equal((await publish()).status, 409, 'a rejected verb never inherits the reaction receipt');
+  assert.deepEqual(r.gw.sends.map((s) => s.type), ['reaction']);
+});
+
+for (const verb of ['text', 'reaction', 'file']) test(`unsent attempt: ${verb} retry attributes the actual sending session`, async (t) => {
+  const r = await setup(t, { enabled: true });
+  const file = path.join(r.dir, 'fixture.txt');
+  fs.writeFileSync(file, 'fixture file');
+  const publish = (session_id) => verb === 'reaction' ? r.react(request({ session_id }))
+    : r.publisher.handlePublish(JSON.stringify({ ...request({ session_id }), text: verb === 'file' ? undefined : 'fixture reply',
+      ...(verb === 'file' ? { file, caption: 'fixture reply' } : {}) }));
+  const method = verb === 'file' ? 'window' : 'send';
+  const original = r.gateway[method];
+  r.gateway[method] = async () => { throw Object.assign(new Error('not dispatched'), { noAnswer: true, notSent: true }); };
+  assert.equal((await publish('s-first')).json.delivered, false);
+  r.gateway[method] = original;
+  r.clock.advance(1000);
+  r.notices.track({ id: MESSAGE, conversation: OWNER, targets: ['s-retry'] });
+  r.notices.result(MESSAGE, 'failed');
+  assert.equal((await publish('s-retry')).json.delivered, true);
+  const state = JSON.parse(fs.readFileSync(path.join(r.stateDir, 'never-silent.json')));
+  assert.equal(state.acts.at(-1).session, 's-retry');
   r.clock.advance(240000);
   await r.notices.poll();
   assert.deepEqual(r.notices.status().outages, []);
