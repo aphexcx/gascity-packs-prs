@@ -1,0 +1,17 @@
+=== RUN   TestNeverSilentReactionJournal
+=== RUN   TestNeverSilentReactionJournal/off_already_reacted
+2026/11/12 16:39:11 react: op=reactions.add conv=example-channel ts=example-message emoji=eyes
+    never_silent_reaction_journal_test.go:56: journal reaction acts=0, want 1
+=== RUN   TestNeverSilentReactionJournal/on_already_reacted
+2026/11/12 16:39:11 react: op=reactions.add conv=example-channel ts=example-message emoji=eyes
+    never_silent_reaction_journal_test.go:56: journal reaction acts=0, want 1
+=== RUN   TestNeverSilentReactionJournal/on_fresh
+2026/11/12 16:39:11 react: op=reactions.add conv=example-channel ts=example-message emoji=eyes
+    never_silent_reaction_journal_test.go:100: reconciled: engine acts=2 want=1
+--- FAIL: TestNeverSilentReactionJournal (0.17s)
+    --- FAIL: TestNeverSilentReactionJournal/off_already_reacted (0.01s)
+    --- FAIL: TestNeverSilentReactionJournal/on_already_reacted (0.03s)
+    --- FAIL: TestNeverSilentReactionJournal/on_fresh (0.13s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	0.405s
+FAIL

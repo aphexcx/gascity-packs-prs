@@ -1,0 +1,260 @@
+✖ gateway send replay header distinguishes fresh, replayed and legacy answers (1.925708ms)
+✔ conversation.test.js (44.801709ms)
+✔ deadack.test.js (43.198083ms)
+✔ evidence.test.js (45.00725ms)
+✔ files-out.test.js (44.349958ms)
+✔ gate.test.js (42.486125ms)
+✔ journal.test.js (43.211292ms)
+✔ keeper.test.js (46.188167ms)
+✔ media.test.js (44.788791ms)
+✔ never-silent-integration.test.js (46.032292ms)
+▶ never-silent activity journal failures remain retryable for every send kind
+  ✖ text: before-dispatch (12.808208ms)
+  ✖ text: after-acceptance (25.060458ms)
+  ✖ captioned-file: before-dispatch (131.451208ms)
+  ✖ captioned-file: after-acceptance (138.353083ms)
+  ✖ update-template: before-dispatch (7.247875ms)
+  ✖ update-template: after-acceptance (23.34025ms)
+✖ never-silent activity journal failures remain retryable for every send kind (339.00825ms)
+▶ never-silent expired gateway keys still recognize fresh words
+  ✖ text (223.59375ms)
+  ✖ captioned-file (466.060541ms)
+  ✖ update-template (263.833709ms)
+✖ never-silent expired gateway keys still recognize fresh words (953.784334ms)
+✔ outbound.test.js (52.41ms)
+✔ pipeline.test.js (46.703416ms)
+✔ readings.test.js (49.003792ms)
+✔ recovery.test.js (49.960375ms)
+✔ render.test.js (35.64475ms)
+✔ restore.test.js (47.312375ms)
+✔ review.test.js (49.562125ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 16
+ℹ fail 12
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2119.894291
+
+✖ failing tests:
+
+test at contract.test.js:32:1
+✖ gateway send replay header distinguishes fresh, replayed and legacy answers (1.925708ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + undefined
+  - false
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/contract.test.js:40:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:195:74
+✖ text: before-dispatch (12.808208ms)
+  AssertionError [ERR_ASSERTION]: local storage can recover without changing the send key
+  + actual - expected
+
+  + 'permanent'
+  - 'transient'
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:212:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:195:66)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'permanent',
+    expected: 'transient',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:195:74
+✖ text: after-acceptance (25.060458ms)
+  AssertionError [ERR_ASSERTION]: local storage can recover without changing the send key
+  + actual - expected
+
+  + 'permanent'
+  - 'transient'
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:212:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:195:66)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'permanent',
+    expected: 'transient',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:195:74
+✖ captioned-file: before-dispatch (131.451208ms)
+  AssertionError [ERR_ASSERTION]: local storage can recover without changing the send key
+  + actual - expected
+
+  + 'permanent'
+  - 'transient'
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:212:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:195:66)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'permanent',
+    expected: 'transient',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:195:74
+✖ captioned-file: after-acceptance (138.353083ms)
+  AssertionError [ERR_ASSERTION]: local storage can recover without changing the send key
+  + actual - expected
+
+  + 'permanent'
+  - 'transient'
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:212:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:195:66)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'permanent',
+    expected: 'transient',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:195:74
+✖ update-template: before-dispatch (7.247875ms)
+  AssertionError [ERR_ASSERTION]: local storage can recover without changing the send key
+  + actual - expected
+
+  + 'permanent'
+  - 'transient'
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:212:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:195:66)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'permanent',
+    expected: 'transient',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:195:74
+✖ update-template: after-acceptance (23.34025ms)
+  AssertionError [ERR_ASSERTION]: local storage can recover without changing the send key
+  + actual - expected
+
+  + 'permanent'
+  - 'transient'
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:212:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:195:66)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'permanent',
+    expected: 'transient',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:223:77
+✖ text (223.59375ms)
+  AssertionError [ERR_ASSERTION]: fresh retry words answer the newer message after key expiry
+  + actual - expected
+
+    [
+  +   1,
+  +   1
+  -   0,
+  -   0
+    ]
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:250:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:223:69)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 1, 1 ],
+    expected: [ 0, 0 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:223:77
+✖ captioned-file (466.060541ms)
+  AssertionError [ERR_ASSERTION]: fresh retry words answer the newer message after key expiry
+  + actual - expected
+
+    [
+  +   1,
+  +   1
+  -   0,
+  -   0
+    ]
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:250:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:223:69)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 1, 1 ],
+    expected: [ 0, 0 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at never-silent.test.js:223:77
+✖ update-template (263.833709ms)
+  AssertionError [ERR_ASSERTION]: fresh retry words answer the newer message after key expiry
+  + actual - expected
+
+    [
+  +   1,
+  +   1
+  -   0,
+  -   0
+    ]
+
+      at TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:250:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://<workspace>/whatsapp/adapter/test/never-silent.test.js:223:69)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 1, 1 ],
+    expected: [ 0, 0 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

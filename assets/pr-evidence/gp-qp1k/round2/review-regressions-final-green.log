@@ -1,0 +1,52 @@
+✔ gateway send replay header distinguishes fresh, replayed and legacy answers (2.266042ms)
+✔ conversation.test.js (49.162416ms)
+✔ deadack.test.js (49.090959ms)
+✔ evidence.test.js (52.89475ms)
+✔ files-out.test.js (50.758417ms)
+✔ gate.test.js (55.380417ms)
+✔ journal.test.js (51.343167ms)
+✔ keeper.test.js (52.0625ms)
+✔ media.test.js (49.127375ms)
+✔ never-silent-integration.test.js (49.835541ms)
+▶ never-silent lost-answer replay class
+  ✔ text: definite-failure across restart (228.06175ms)
+  ✔ text: health across restart (188.985958ms)
+  ✔ text: refused-connection-control across restart (176.802083ms)
+  ✔ captioned-file: definite-failure across restart (458.246375ms)
+  ✔ captioned-file: health across restart (454.277959ms)
+  ✔ captioned-file: refused-connection-control across restart (480.370041ms)
+  ✔ update-template: definite-failure across restart (331.514416ms)
+  ✔ update-template: health across restart (292.941333ms)
+  ✔ update-template: refused-connection-control across restart (257.452291ms)
+✔ never-silent lost-answer replay class (2869.99225ms)
+▶ never-silent activity journal failures remain retryable for every send kind
+  ✔ text: before-dispatch (94.8635ms)
+  ✔ text: after-acceptance (109.268ms)
+  ✔ captioned-file: before-dispatch (330.951084ms)
+  ✔ captioned-file: after-acceptance (341.029125ms)
+  ✔ update-template: before-dispatch (125.719334ms)
+  ✔ update-template: after-acceptance (140.379458ms)
+✔ never-silent activity journal failures remain retryable for every send kind (1142.966917ms)
+▶ never-silent expired gateway keys still recognize fresh words
+  ✔ text: fresh answer received (263.720667ms)
+  ✔ text: fresh answer lost (268.432042ms)
+  ✔ captioned-file: fresh answer received (506.334459ms)
+  ✔ captioned-file: fresh answer lost (608.939834ms)
+  ✔ update-template: fresh answer received (272.328084ms)
+  ✔ update-template: fresh answer lost (281.866625ms)
+✔ never-silent expired gateway keys still recognize fresh words (2202.382791ms)
+✔ outbound.test.js (50.101042ms)
+✔ pipeline.test.js (52.217792ms)
+✔ readings.test.js (50.524792ms)
+✔ recovery.test.js (49.911666ms)
+✔ render.test.js (35.95925ms)
+✔ restore.test.js (48.025959ms)
+✔ review.test.js (47.25275ms)
+ℹ tests 41
+ℹ suites 0
+ℹ pass 41
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7115.874334

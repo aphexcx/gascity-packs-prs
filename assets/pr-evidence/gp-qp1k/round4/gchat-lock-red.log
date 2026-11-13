@@ -1,0 +1,21 @@
+=== RUN   TestNeverSilentGateLockLoss
+=== RUN   TestNeverSilentGateLockLoss/no-credentials/missing
+    never_silent_gate_test.go:145: replacement unchanged=false owner lines=0 operator mails=1
+    never_silent_gate_test.go:147: watch wrote state or emitted effects after lock loss
+=== RUN   TestNeverSilentGateLockLoss/no-credentials/replaced
+    never_silent_gate_test.go:145: replacement unchanged=false owner lines=0 operator mails=1
+    never_silent_gate_test.go:147: watch wrote state or emitted effects after lock loss
+=== RUN   TestNeverSilentGateLockLoss/credentials-running/missing
+    never_silent_gate_test.go:145: replacement unchanged=false owner lines=0 operator mails=1
+    never_silent_gate_test.go:147: watch wrote state or emitted effects after lock loss
+=== RUN   TestNeverSilentGateLockLoss/credentials-running/replaced
+    never_silent_gate_test.go:145: replacement unchanged=false owner lines=0 operator mails=1
+    never_silent_gate_test.go:147: watch wrote state or emitted effects after lock loss
+--- FAIL: TestNeverSilentGateLockLoss (70.78s)
+    --- FAIL: TestNeverSilentGateLockLoss/no-credentials/missing (17.20s)
+    --- FAIL: TestNeverSilentGateLockLoss/no-credentials/replaced (17.19s)
+    --- FAIL: TestNeverSilentGateLockLoss/credentials-running/missing (18.19s)
+    --- FAIL: TestNeverSilentGateLockLoss/credentials-running/replaced (18.20s)
+FAIL
+FAIL	gchat-adapter/internal/app	71.088s
+FAIL

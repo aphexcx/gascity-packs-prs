@@ -1,0 +1,2 @@
+env -u GC_BIN go test -p=1 -json ./... exit=1
+env -u GC_BIN go vet ./... exit=0

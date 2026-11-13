@@ -1,0 +1,299 @@
+TAP version 13
+1..0
+# Subtest: contract.test.js
+ok 1 - contract.test.js
+  ---
+  duration_ms: 62.086459
+  type: 'test'
+  ...
+1..0
+# Subtest: conversation.test.js
+ok 2 - conversation.test.js
+  ---
+  duration_ms: 61.262917
+  type: 'test'
+  ...
+1..0
+# Subtest: deadack.test.js
+ok 3 - deadack.test.js
+  ---
+  duration_ms: 71.565
+  type: 'test'
+  ...
+1..0
+# Subtest: evidence.test.js
+ok 4 - evidence.test.js
+  ---
+  duration_ms: 91.799875
+  type: 'test'
+  ...
+1..0
+# Subtest: files-out.test.js
+ok 5 - files-out.test.js
+  ---
+  duration_ms: 74.8625
+  type: 'test'
+  ...
+1..0
+# Subtest: gate.test.js
+ok 6 - gate.test.js
+  ---
+  duration_ms: 95.383875
+  type: 'test'
+  ...
+1..0
+# Subtest: journal.test.js
+ok 7 - journal.test.js
+  ---
+  duration_ms: 251.607833
+  type: 'test'
+  ...
+1..0
+# Subtest: keeper.test.js
+ok 8 - keeper.test.js
+  ---
+  duration_ms: 218.202375
+  type: 'test'
+  ...
+1..0
+# Subtest: media.test.js
+ok 9 - media.test.js
+  ---
+  duration_ms: 53.869417
+  type: 'test'
+  ...
+# Subtest: never-silent integration: outage watch survives registration 503 and a second restart
+ok 10 - never-silent integration: outage watch survives registration 503 and a second restart
+  ---
+  duration_ms: 1267.640291
+  type: 'test'
+  ...
+# first-restart: registration 503; owner lines=1 operator mails=1
+# second-restart: registration 503; owner lines=1 operator mails=1
+# Subtest: never-silent lost-answer replay class across switch enablement
+    # Subtest: text: definite-failure: initially off
+    ok 1 - text: definite-failure: initially off
+      ---
+      duration_ms: 312.181083
+      type: 'test'
+      ...
+    # Subtest: text: definite-failure: initially on
+    ok 2 - text: definite-failure: initially on
+      ---
+      duration_ms: 323.03275
+      type: 'test'
+      ...
+    # Subtest: text: definite-failure: initially foreign-attempt
+    ok 3 - text: definite-failure: initially foreign-attempt
+      ---
+      duration_ms: 284.272958
+      type: 'test'
+      ...
+    # Subtest: text: uncertain-stop: initially off
+    ok 4 - text: uncertain-stop: initially off
+      ---
+      duration_ms: 319.840584
+      type: 'test'
+      ...
+    # Subtest: text: uncertain-stop: initially on
+    ok 5 - text: uncertain-stop: initially on
+      ---
+      duration_ms: 240.554208
+      type: 'test'
+      ...
+    # Subtest: text: uncertain-stop: initially foreign-attempt
+    ok 6 - text: uncertain-stop: initially foreign-attempt
+      ---
+      duration_ms: 212.090458
+      type: 'test'
+      ...
+    # Subtest: text: health: initially off
+    ok 7 - text: health: initially off
+      ---
+      duration_ms: 208.648084
+      type: 'test'
+      ...
+    # Subtest: text: health: initially on
+    ok 8 - text: health: initially on
+      ---
+      duration_ms: 249.571209
+      type: 'test'
+      ...
+    # Subtest: text: health: initially foreign-attempt
+    ok 9 - text: health: initially foreign-attempt
+      ---
+      duration_ms: 176.685666
+      type: 'test'
+      ...
+    # Subtest: captioned-file: definite-failure: initially off
+    ok 10 - captioned-file: definite-failure: initially off
+      ---
+      duration_ms: 429.97325
+      type: 'test'
+      ...
+    # Subtest: captioned-file: definite-failure: initially on
+    ok 11 - captioned-file: definite-failure: initially on
+      ---
+      duration_ms: 457.459042
+      type: 'test'
+      ...
+    # Subtest: captioned-file: definite-failure: initially foreign-attempt
+    ok 12 - captioned-file: definite-failure: initially foreign-attempt
+      ---
+      duration_ms: 422.728292
+      type: 'test'
+      ...
+    # Subtest: captioned-file: uncertain-stop: initially off
+    ok 13 - captioned-file: uncertain-stop: initially off
+      ---
+      duration_ms: 396.915166
+      type: 'test'
+      ...
+    # Subtest: captioned-file: uncertain-stop: initially on
+    ok 14 - captioned-file: uncertain-stop: initially on
+      ---
+      duration_ms: 441.827416
+      type: 'test'
+      ...
+    # Subtest: captioned-file: uncertain-stop: initially foreign-attempt
+    ok 15 - captioned-file: uncertain-stop: initially foreign-attempt
+      ---
+      duration_ms: 397.820916
+      type: 'test'
+      ...
+    # Subtest: captioned-file: health: initially off
+    ok 16 - captioned-file: health: initially off
+      ---
+      duration_ms: 389.210166
+      type: 'test'
+      ...
+    # Subtest: captioned-file: health: initially on
+    ok 17 - captioned-file: health: initially on
+      ---
+      duration_ms: 405.006875
+      type: 'test'
+      ...
+    # Subtest: captioned-file: health: initially foreign-attempt
+    ok 18 - captioned-file: health: initially foreign-attempt
+      ---
+      duration_ms: 392.3555
+      type: 'test'
+      ...
+    # Subtest: update-template: definite-failure: initially off
+    ok 19 - update-template: definite-failure: initially off
+      ---
+      duration_ms: 202.189417
+      type: 'test'
+      ...
+    # Subtest: update-template: definite-failure: initially on
+    ok 20 - update-template: definite-failure: initially on
+      ---
+      duration_ms: 262.187791
+      type: 'test'
+      ...
+    # Subtest: update-template: definite-failure: initially foreign-attempt
+    ok 21 - update-template: definite-failure: initially foreign-attempt
+      ---
+      duration_ms: 219.112334
+      type: 'test'
+      ...
+    # Subtest: update-template: uncertain-stop: initially off
+    ok 22 - update-template: uncertain-stop: initially off
+      ---
+      duration_ms: 212.994084
+      type: 'test'
+      ...
+    # Subtest: update-template: uncertain-stop: initially on
+    ok 23 - update-template: uncertain-stop: initially on
+      ---
+      duration_ms: 336.869167
+      type: 'test'
+      ...
+    # Subtest: update-template: uncertain-stop: initially foreign-attempt
+    ok 24 - update-template: uncertain-stop: initially foreign-attempt
+      ---
+      duration_ms: 215.947583
+      type: 'test'
+      ...
+    # Subtest: update-template: health: initially off
+    ok 25 - update-template: health: initially off
+      ---
+      duration_ms: 197.487541
+      type: 'test'
+      ...
+    # Subtest: update-template: health: initially on
+    ok 26 - update-template: health: initially on
+      ---
+      duration_ms: 244.735208
+      type: 'test'
+      ...
+    # Subtest: update-template: health: initially foreign-attempt
+    ok 27 - update-template: health: initially foreign-attempt
+      ---
+      duration_ms: 4106.049208
+      type: 'test'
+      ...
+    1..27
+ok 11 - never-silent lost-answer replay class across switch enablement
+  ---
+  duration_ms: 12060.641
+  type: 'test'
+  ...
+1..0
+# Subtest: outbound.test.js
+ok 12 - outbound.test.js
+  ---
+  duration_ms: 52.336042
+  type: 'test'
+  ...
+1..0
+# Subtest: pipeline.test.js
+ok 13 - pipeline.test.js
+  ---
+  duration_ms: 55.678458
+  type: 'test'
+  ...
+1..0
+# Subtest: readings.test.js
+ok 14 - readings.test.js
+  ---
+  duration_ms: 55.685042
+  type: 'test'
+  ...
+1..0
+# Subtest: recovery.test.js
+ok 15 - recovery.test.js
+  ---
+  duration_ms: 54.412667
+  type: 'test'
+  ...
+1..0
+# Subtest: render.test.js
+ok 16 - render.test.js
+  ---
+  duration_ms: 37.848708
+  type: 'test'
+  ...
+1..0
+# Subtest: restore.test.js
+ok 17 - restore.test.js
+  ---
+  duration_ms: 64.363875
+  type: 'test'
+  ...
+1..0
+# Subtest: review.test.js
+ok 18 - review.test.js
+  ---
+  duration_ms: 65.583125
+  type: 'test'
+  ...
+1..18
+# tests 45
+# suites 0
+# pass 45
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 12637.684333

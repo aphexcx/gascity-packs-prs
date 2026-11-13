@@ -1,0 +1,50 @@
+✖ A: notice clock and immediate mail do not wait for the held inbox poll (2652.097208ms)
+ℹ pin: mail at stop; line at +180000 ms; no additional inbox read; tick 250 ms
+✖ A: continuous failed receipts notify at three minutes without an inbox read (2534.182458ms)
+▶ B: wake and poll carry the same admission and receipt result into notices
+  ✔ wake (7629.92325ms)
+  ✔ poll (2937.104166ms)
+✔ B: wake and poll carry the same admission and receipt result into notices (10567.82075ms)
+✔ C: dropping and reconnecting a held link preserves the outage and notice marks (3768.434042ms)
+✔ D: a lost wake starts no outage before arrival and uses the adapter arrival clock (3168.709875ms)
+ℹ pin: provider sent +0; adapter admitted +300000; first owner line +480000 ms
+ℹ tests 7
+ℹ suites 0
+ℹ pass 5
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 22744.298125
+
+✖ failing tests:
+
+test at test/never-silent-held-link.test.js:58:1
+✖ A: notice clock and immediate mail do not wait for the held inbox poll (2652.097208ms)
+  Error: ENOTEMPTY, Directory not empty: $FIXTURE '$FIXTURE'
+      at Object.rmSync (node:fs:1282:18)
+      at Object.close (file://$REPO/whatsapp/adapter/test/fakes.js:689:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestHook.run (node:internal/test_runner/test:1409:7)
+      at async Test.runHook (node:internal/test_runner/test:1289:9)
+      at async after (node:internal/test_runner/test:1342:9)
+      at async Test.run (node:internal/test_runner/test:1428:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    errno: 66,
+    code: 'ENOTEMPTY',
+    path: '$FIXTURE',
+    syscall: 'rm'
+  }
+
+test at test/never-silent-held-link.test.js:70:1
+✖ A: continuous failed receipts notify at three minutes without an inbox read (2534.182458ms)
+  SyntaxError: Unexpected end of JSON input
+      at parse (<anonymous>)
+      at Array.map (<anonymous>)
+      at r.remote (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:18:56)
+      at waitFor.what (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:52:25)
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:30:25)
+      at async lineAtBound (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:52:3)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:80:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)

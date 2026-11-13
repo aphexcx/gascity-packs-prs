@@ -1,0 +1,36 @@
+✔ contract.test.js (49.25175ms)
+✔ conversation.test.js (48.617917ms)
+✔ deadack.test.js (46.739292ms)
+✔ evidence.test.js (47.797833ms)
+✔ files-out.test.js (49.824958ms)
+✔ gate.test.js (48.735291ms)
+✔ journal.test.js (48.059416ms)
+✔ keeper.test.js (51.108334ms)
+✔ media.test.js (46.642625ms)
+✔ never-silent-integration.test.js (45.217334ms)
+▶ never-silent lost-answer replay class
+  ✔ text: definite-failure across restart (237.603334ms)
+  ✔ text: health across restart (179.801875ms)
+  ✔ text: refused-connection-control across restart (162.769125ms)
+  ✔ captioned-file: definite-failure across restart (453.1165ms)
+  ✔ captioned-file: health across restart (408.840084ms)
+  ✔ captioned-file: refused-connection-control across restart (397.451792ms)
+  ✔ update-template: definite-failure across restart (242.068375ms)
+  ✔ update-template: health across restart (197.613875ms)
+  ✔ update-template: refused-connection-control across restart (203.489709ms)
+✔ never-silent lost-answer replay class (2484.374416ms)
+✔ outbound.test.js (46.521167ms)
+✔ pipeline.test.js (46.596ms)
+✔ readings.test.js (50.078375ms)
+✔ recovery.test.js (50.839333ms)
+✔ render.test.js (38.46375ms)
+✔ restore.test.js (47.24425ms)
+✔ review.test.js (49.215625ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2792.667625

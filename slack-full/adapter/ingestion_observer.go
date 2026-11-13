@@ -725,6 +725,9 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 		key = ingestionAlertID(ingestionAlertMembers(rows))
 	}
 	subject, body := ingestionAlertMessage(rows)
+	if notice := o.cfg.neverSilent.OwnerLine(rows[0].Channel); notice != "" {
+		body += fmt.Sprintf("\nThe owner was told: %q\n", notice)
+	}
 	if len(body) > ingestionAlertBatchBudget {
 		return ingestionNotifyRefusal{fmt.Errorf("ingestion alert exceeds %d-byte mail budget", ingestionAlertBatchBudget)}
 	}

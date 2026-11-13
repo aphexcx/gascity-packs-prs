@@ -30,6 +30,7 @@ import (
 	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/markdown"
+	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/wire"
 	"github.com/BurntSushi/toml"
@@ -90,6 +91,7 @@ type Server struct {
 	chat            *chat.Client
 	gc              *gcclient.Client
 	poll            func(context.Context) error
+	neverSilent     *neversilent.Engine
 	mux             *http.ServeMux
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -181,7 +183,17 @@ func (s *Server) SetClients(c *chat.Client, g *gcclient.Client) {
 	s.gc = g
 }
 func (s *Server) SetPoll(p func(context.Context) error) { s.mu.Lock(); defer s.mu.Unlock(); s.poll = p }
-func (s *Server) Health() Health                        { s.mu.RLock(); defer s.mu.RUnlock(); return s.health }
+func (s *Server) SetNeverSilent(e *neversilent.Engine) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.neverSilent = e
+}
+func (s *Server) notices() *neversilent.Engine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.neverSilent
+}
+func (s *Server) Health() Health { s.mu.RLock(); defer s.mu.RUnlock(); return s.health }
 func (s *Server) clients() (*chat.Client, *gcclient.Client) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -646,15 +658,25 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		if i == 0 && send.Upload != nil {
 			attachments = []*api.Attachment{{AttachmentDataRef: &api.AttachmentDataRef{ResourceName: send.Upload.ResourceName, AttachmentUploadToken: send.Upload.UploadToken}}}
 		}
-		name, thread, e := c.CreateMessageWithAttachments(ctx, send.Space, part.Text, send.Thread, part.RequestID, named, attachments)
+		name, thread, sentAt, e := c.CreateMessageWithAttachmentsAndTime(ctx, send.Space, part.Text, send.Thread, part.RequestID, named, attachments)
 		if e != nil {
 			return s.failure(p, e), e
 		}
 		send.Parts[i].MessageName = name
 		send.Thread = thread
+		if strings.TrimSpace(part.Text) != "" && !sentAt.IsZero() {
+			actThread := thread
+			if p.ReplyToMessageID == "" {
+				actThread = ""
+			}
+			if err := s.notices().Act(send.Space, actThread, p.SessionID, sentAt); err != nil {
+				s.opts.Logger.Warn("never-silent: could not record session reply")
+			}
+		}
 		if err = s.update(ctx, func(l *ledger.Ledger) error {
 			current := l.Sends[send.Key]
 			current.Parts[i].MessageName = name
+			current.Parts[i].SentAt = sentAt
 			current.Thread = thread
 			m := l.Messages[name]
 			if m == nil {
@@ -696,6 +718,11 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 }
 
 func (s *Server) named(ctx context.Context, space string) (bool, error) {
+	c, _ := s.clients()
+	return s.namedWithClient(ctx, c, space)
+}
+
+func (s *Server) namedWithClient(ctx context.Context, c *chat.Client, space string) (bool, error) {
 	l, err := s.snapshot(ctx)
 	if err != nil {
 		return false, err
@@ -703,7 +730,6 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 	if v := l.Spaces[space]; v != nil && v.ChatType != "" {
 		return v.ChatType == "SPACE", nil
 	}
-	c, _ := s.clients()
 	spaces, err := c.ListSpaces(ctx)
 	if err != nil {
 		return false, err
@@ -734,6 +760,26 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 		}
 	}
 	return false, &googleapi.Error{Code: http.StatusNotFound, Message: "space not found in identity inventory"}
+}
+
+// PostNotice is separate from publishing and its session/reply bookkeeping.
+func (s *Server) PostNotice(ctx context.Context, m neversilent.Message, line string) error {
+	c, _ := s.clients()
+	return s.PostNoticeWithClient(ctx, c, m, line)
+}
+
+// PostNoticeWithClient lets the service's outage watch use its provider client
+// before registration without enabling normal publishing or inbound work.
+func (s *Server) PostNoticeWithClient(ctx context.Context, c *chat.Client, m neversilent.Message, line string) error {
+	if c == nil {
+		return errors.New("Chat credentials are not available for the owner notice")
+	}
+	named, err := s.namedWithClient(ctx, c, m.Conversation)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.CreateNotice(ctx, m.Conversation, line, m.Thread, named, m.CanPost)
+	return err
 }
 
 type commandRequest struct {
@@ -1297,9 +1343,10 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var v struct {
-		Message string `json:"message"`
-		Emoji   string `json:"emoji"`
-		Remove  bool   `json:"remove"`
+		Message   string `json:"message"`
+		Emoji     string `json:"emoji"`
+		Remove    bool   `json:"remove"`
+		SessionID string `json:"session_id"`
 	}
 	if err := body(w, r, &v); err != nil || v.Message == "" || v.Emoji == "" {
 		problem(w, 400, errors.New("message and emoji are required"))
@@ -1316,6 +1363,14 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		problem(w, 502, err)
 		return
+	}
+	if !v.Remove && v.SessionID != "" {
+		space, _, valid := strings.Cut(v.Message, "/messages/")
+		if valid {
+			if err := s.notices().Act(space, "", v.SessionID, time.Now()); err != nil {
+				s.opts.Logger.Warn("never-silent: could not record session reaction")
+			}
+		}
 	}
 	respond(w, 200, map[string]any{"name": name, "removed": v.Remove})
 }
@@ -1645,6 +1700,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
 	status["pending"], status["deliveries"], status["stuck"] = inFlight, deliveries, stuck
+	status["never_silent"] = s.notices().Status()
 	if !l.HistoryFloor.IsZero() {
 		status["history_floor"] = l.HistoryFloor
 	}
@@ -1703,6 +1759,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 			c.Status = "committed"
 			c.Reason = "operator accepted"
 		}
+		c.NoticeResolved = true
 		l.Changes[v.ID] = c
 		delete(l.Unresolved, v.ID)
 		return nil
@@ -1712,6 +1769,10 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := map[string]string{"id": v.ID, "action": v.Action}
+	if err := s.notices().Forget(v.ID); err != nil {
+		problem(w, 500, err)
+		return
+	}
 	if v.Action == "replay" {
 		if err := poll(r.Context()); err != nil {
 			s.ObserveGCError(err)

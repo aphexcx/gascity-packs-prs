@@ -1,0 +1,16 @@
+{
+  "counts": {
+    "test_pass": 1,
+    "package_pass": 1
+  },
+  "failures": [],
+  "skipped": [],
+  "packages": [
+    {
+      "Package": "gchat-adapter/internal/puller",
+      "Action": "pass",
+      "Elapsed": 3.336
+    }
+  ],
+  "failure_output": []
+}

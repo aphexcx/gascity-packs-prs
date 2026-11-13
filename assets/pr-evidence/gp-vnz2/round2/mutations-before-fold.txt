@@ -1,0 +1,13 @@
+pack copied from 68a34b147f6b3acb484e49abe8bde6f5faf8914d; base skill from b04ae9380fc5472aa4900785866841b90201aaca; test file follow-through/tests/test_follow_through_skill.py
+mutation: none (the skill and the test as written)
+  failed: none
+  10 passed in 2.19s
+  exit 0
+mutation: a third raise whose subject is a variable passed by shorthand
+  failed: none
+  10 passed in 2.18s
+  exit 0
+mutation: a third raise described in the Reminders section with no rule of its own
+  failed: none
+  11 passed in 2.23s
+  exit 0

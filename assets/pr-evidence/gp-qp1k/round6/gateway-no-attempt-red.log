@@ -1,0 +1,33 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 $REPO/whatsapp/gateway
+
+ ❯ test/wake.test.ts (34 tests | 1 failed | 33 skipped) 321ms
+     × an adopted status wakes once while a lost-answer replay keeps the accepted send attempt 321ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/wake.test.ts > held connection > an adopted status wakes once while a lost-answer replay keeps the accepted send attempt
+AssertionError: expected null to be 'example-original-attempt' // Object.is equality
+
+- Expected:
+"example-original-attempt"
+
++ Received:
+null
+
+ ❯ test/wake.test.ts:146:52
+    144|     expect((await wake).data).toBe("wake");
+    145|     expect(first.headers.get("x-gc-replayed")).toBe("false");
+    146|     expect(first.headers.get("x-gc-send-attempt")).toBe("example-origi…
+       |                                                    ^
+    147|     // Treat the first answer as lost; a retry's proposed attempt cann…
+    148|     const replay = await h.call("POST", "/v1/send", { token: city.toke…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 5 skipped (6)
+      Tests  1 failed | 307 skipped (308)
+   Start at  22:53:08
+   Duration  1.78s (transform 531ms, setup 1.66s, import 760ms, tests 321ms, environment 1ms)

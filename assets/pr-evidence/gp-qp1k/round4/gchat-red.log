@@ -1,0 +1,35 @@
+=== RUN   TestNeverSilentGateLockLoss
+=== RUN   TestNeverSilentGateLockLoss/no-credentials/missing
+    never_silent_gate_test.go:121: never-silent requires durable state and an owner sender
+=== RUN   TestNeverSilentGateLockLoss/no-credentials/replaced
+    never_silent_gate_test.go:121: never-silent requires durable state and an owner sender
+=== RUN   TestNeverSilentGateLockLoss/credentials-running/missing
+    never_silent_gate_test.go:121: never-silent requires durable state and an owner sender
+=== RUN   TestNeverSilentGateLockLoss/credentials-running/replaced
+    never_silent_gate_test.go:121: never-silent requires durable state and an owner sender
+--- FAIL: TestNeverSilentGateLockLoss (26.72s)
+    --- FAIL: TestNeverSilentGateLockLoss/no-credentials/missing (6.18s)
+    --- FAIL: TestNeverSilentGateLockLoss/no-credentials/replaced (6.17s)
+    --- FAIL: TestNeverSilentGateLockLoss/credentials-running/missing (7.19s)
+    --- FAIL: TestNeverSilentGateLockLoss/credentials-running/replaced (7.18s)
+=== RUN   TestNeverSilentGateCredentialHold
+=== RUN   TestNeverSilentGateCredentialHold/space-known
+    never_silent_gate_test.go:213: credential held: reserved=true owner lines=0 operator mails=1
+    never_silent_gate_test.go:215: credential hold spent a reservation or held operator mail
+    never_silent_gate_test.go:222: after sign-in: owner lines=0 operator mails=1
+    never_silent_gate_test.go:224: want exactly one owner line after sign-in and one operator mail overall
+=== RUN   TestNeverSilentGateCredentialHold/space-unknown
+    never_silent_gate_test.go:213: credential held: reserved=true owner lines=0 operator mails=1
+    never_silent_gate_test.go:215: credential hold spent a reservation or held operator mail
+    never_silent_gate_test.go:222: after sign-in: owner lines=0 operator mails=1
+    never_silent_gate_test.go:224: want exactly one owner line after sign-in and one operator mail overall
+--- FAIL: TestNeverSilentGateCredentialHold (116.26s)
+    --- FAIL: TestNeverSilentGateCredentialHold/space-known (58.15s)
+    --- FAIL: TestNeverSilentGateCredentialHold/space-unknown (58.11s)
+=== RUN   TestNeverSilentGateReconcilesBeforeRegistration
+    never_silent_gate_test.go:265: registration refused=4 reconciled=false owner lines=1 operator mails=1
+    never_silent_gate_test.go:267: watch must reconcile the resolved message locally before any notice
+--- FAIL: TestNeverSilentGateReconcilesBeforeRegistration (12.07s)
+FAIL
+FAIL	gchat-adapter/internal/app	155.366s
+FAIL

@@ -13,10 +13,27 @@ WA_VERB=status
 wa_require curl
 wa_require jq
 
-case "${1:-}" in -h|--help) sed -n '2,9p' "$0"; exit 0 ;; esac
+json=false
+case "${1:-}" in
+  -h|--help) printf '%s\n' 'Usage: gc whatsapp status [--json]'; exit 0 ;;
+  --json) json=true; shift ;;
+  '') ;;
+  *) wa_die 'Usage: gc whatsapp status [--json]' ;;
+esac
+[ "$#" -eq 0 ] || wa_die 'Usage: gc whatsapp status [--json]'
 
 wa_call GET /status
 [ "$WA_STATUS" = 200 ] || wa_die "adapter answered HTTP $WA_STATUS to /status"
+if [ "$json" = true ]; then
+  printf '%s\n' "$WA_BODY" | jq '
+    def last4: tostring | gsub("[^0-9A-Za-z]"; "") | .[-4:];
+    def windows: to_entries | map({conversation_last4: (.key | last4)} +
+      (.value | {window_closes_at, consent, update_day, marks_fired, lapses_7d}));
+    .keeper.conversations = ((.keeper.conversations // {}) | windows) |
+    .ledger.conversations = ((.ledger.conversations // {}) | windows) |
+    .inbound.gaps = [.inbound.gaps[]? | {conversation_last4: (.conversation_id | last4), watermark_sequence, head_sequence}]'
+  exit 0
+fi
 printf '%s' "$WA_BODY" | jq -r '
   def t: if . == null then "-" elif type == "number" then (. / 1000 | floor | todate) else (tostring | sub("\\.[0-9]+Z$"; "Z")) end;
   def last4: tostring | gsub("[^0-9A-Za-z]"; "") | .[-4:];
@@ -25,6 +42,8 @@ printf '%s' "$WA_BODY" | jq -r '
   "Last poll:     \(.inbound.last_poll_at | t)\(if (.inbound.last_poll_error // "") != "" then " (error: \(.inbound.last_poll_error))" else "" end)",
   "Entries:       \(.inbound.entries | to_entries | map("\(.key) \(.value)") | join(", ") | if . == "" then "none" else . end); acks owed \(.inbound.acks_owed)\(if (.inbound.binds_owed // 0) > 0 then " (\(.inbound.binds_owed) held for a keeper bind)" else "" end)",
   "Dead letters:  \(.inbound.dead_letters)",
+  "Never silent:  \(.never_silent.enabled // false); health \(.never_silent.health.state // "unknown") age \(.never_silent.health.age_seconds // "-")s \(.never_silent.health.reason // ""); owner lines \(.never_silent.owner_lines_seven_days // 0) (7 d)",
+  (.never_silent.outages[]? | "  \(.cause) since \(.start), \(.conversations) conversations, \(.messages) messages; owners told \(.owners_told // 0); mail sent \(.mail_sent)"),
   "Terminal holds: \(.inbound.held | length)",
   (.inbound.held[] | "  \(.ref)  conversation ...\(.conversation_last4 // .wa_id_last4)  receipt \(.receipt_id)  since \(.held_at | t)  (gc whatsapp inbound resolve <ref> --delivered|--dead)"),
   "Restore gaps:  \(.inbound.gaps | length)",

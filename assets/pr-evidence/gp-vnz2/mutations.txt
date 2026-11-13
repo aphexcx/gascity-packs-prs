@@ -1,0 +1,45 @@
+mutation: the skill file is missing (red first)
+  failed: test_every_flag_in_the_skill_is_one_its_verb_takes, test_skill_front_matter_names_it_follow_through, test_skill_has_no_em_dash, test_skill_names_every_shipped_verb_and_no_other, test_the_sentences_the_founders_rule_on_are_there, test_verbs_list_gives_each_verb_its_help_line
+  6 failed, 1 passed in 2.16s
+mutation: none (the skill as written)
+  failed: none
+  7 passed in 2.26s
+mutation: front matter name is not follow-through
+  failed: test_skill_front_matter_names_it_follow_through
+  1 failed, 6 passed in 2.20s
+mutation: a shipped verb (status) is missing
+  failed: test_skill_names_every_shipped_verb_and_no_other, test_verbs_list_gives_each_verb_its_help_line
+  2 failed, 5 passed in 3.80s
+mutation: the skill names a verb the pack does not ship (tick)
+  failed: test_skill_names_every_shipped_verb_and_no_other
+  1 failed, 6 passed in 2.20s
+mutation: a flag its verb does not take (--wake-id)
+  failed: test_every_flag_in_the_skill_is_one_its_verb_takes
+  1 failed, 6 passed in 2.08s
+mutation: a verb's help line differs
+  failed: test_verbs_list_gives_each_verb_its_help_line
+  1 failed, 6 passed in 2.15s
+mutation: a two-line description
+  failed: test_skill_front_matter_names_it_follow_through
+  1 failed, 6 passed in 2.26s
+mutation: the no-second-follow-up sentence is softened
+  failed: test_the_sentences_the_founders_rule_on_are_there
+  1 failed, 6 passed in 2.21s
+mutation: the major-feature sentence is gone
+  failed: test_the_sentences_the_founders_rule_on_are_there
+  1 failed, 6 passed in 2.24s
+mutation: an em dash
+  failed: test_skill_has_no_em_dash
+  1 failed, 6 passed in 2.04s
+mutation: codex r1 MAJOR: a verb with a suffix (add_item)
+  failed: test_skill_names_every_shipped_verb_and_no_other
+  1 failed, 6 passed in 2.09s
+mutation: codex r1 MAJOR: a verb with a digit (status2)
+  failed: test_skill_names_every_shipped_verb_and_no_other, test_verbs_list_gives_each_verb_its_help_line
+  2 failed, 5 passed in 2.24s
+mutation: codex r1 MAJOR: an unshipped verb after two spaces
+  failed: test_skill_names_every_shipped_verb_and_no_other
+  1 failed, 6 passed in 2.12s
+mutation: codex r1 MINOR: flag-shaped words inside quoted reminder text
+  failed: none
+  7 passed in 2.09s

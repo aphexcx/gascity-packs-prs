@@ -198,6 +198,13 @@ class ProxyFixture(unittest.TestCase):
 
 
 class ProxyCommandsTest(ProxyFixture):
+    def test_reaction_preserves_session_attribution(self):
+        self.env["GC_SESSION_ID"] = "example-session"
+        self.respond("/react", {"ok": True})
+        result = self.run_command("react", "--message", "spaces/AAAA/messages/1", "--emoji", "eyes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][3]["session_id"], "example-session")
+
     def test_large_body_streams_without_argv_limit(self):
         body = self.root / "large.txt"
         body.write_text("text\n" * 300000)

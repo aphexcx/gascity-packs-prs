@@ -1,0 +1,41 @@
+=== RUN   TestNeverSilentGateLockLoss
+=== RUN   TestNeverSilentGateLockLoss/no-credentials/missing
+    never_silent_gate_test.go:145: replacement unchanged=true owner lines=0 operator mails=0
+=== RUN   TestNeverSilentGateLockLoss/no-credentials/replaced
+    never_silent_gate_test.go:145: replacement unchanged=true owner lines=0 operator mails=0
+=== RUN   TestNeverSilentGateLockLoss/credentials-running/missing
+    never_silent_gate_test.go:145: replacement unchanged=true owner lines=0 operator mails=0
+=== RUN   TestNeverSilentGateLockLoss/credentials-running/replaced
+    never_silent_gate_test.go:145: replacement unchanged=true owner lines=0 operator mails=0
+--- PASS: TestNeverSilentGateLockLoss (79.76s)
+    --- PASS: TestNeverSilentGateLockLoss/no-credentials/missing (17.29s)
+    --- PASS: TestNeverSilentGateLockLoss/no-credentials/replaced (17.32s)
+    --- PASS: TestNeverSilentGateLockLoss/credentials-running/missing (23.27s)
+    --- PASS: TestNeverSilentGateLockLoss/credentials-running/replaced (21.88s)
+=== RUN   TestNeverSilentGateCredentialHold
+=== RUN   TestNeverSilentGateCredentialHold/space-known
+    never_silent_gate_test.go:213: credential held: reserved=false owner lines=0 operator mails=1
+    never_silent_gate_test.go:222: after sign-in: owner lines=1 operator mails=1
+=== RUN   TestNeverSilentGateCredentialHold/space-unknown
+    never_silent_gate_test.go:213: credential held: reserved=false owner lines=0 operator mails=1
+    never_silent_gate_test.go:222: after sign-in: owner lines=1 operator mails=1
+--- PASS: TestNeverSilentGateCredentialHold (120.16s)
+    --- PASS: TestNeverSilentGateCredentialHold/space-known (61.46s)
+    --- PASS: TestNeverSilentGateCredentialHold/space-unknown (58.69s)
+=== RUN   TestNeverSilentGateReconcilesBeforeRegistration
+    never_silent_gate_test.go:265: registration refused=4 reconciled=true owner lines=0 operator mails=0
+--- PASS: TestNeverSilentGateReconcilesBeforeRegistration (12.31s)
+=== RUN   TestNeverSilentStartsBeforeRegistration
+=== RUN   TestNeverSilentStartsBeforeRegistration/first-restart
+    never_silent_startup_test.go:94: registration 503s=3 owner lines=1 operator mails=1
+=== RUN   TestNeverSilentStartsBeforeRegistration/second-restart
+    never_silent_startup_test.go:94: registration 503s=3 owner lines=1 operator mails=1
+--- PASS: TestNeverSilentStartsBeforeRegistration (14.37s)
+    --- PASS: TestNeverSilentStartsBeforeRegistration/first-restart (8.21s)
+    --- PASS: TestNeverSilentStartsBeforeRegistration/second-restart (6.04s)
+=== RUN   TestNeverSilentCredentialsArriveAfterFirstPoll
+    never_silent_startup_test.go:150: without credentials: owner lines=0 operator mails=1
+    never_silent_startup_test.go:154: credentials ready, registration still 503: owner lines=1 operator mails=1
+--- PASS: TestNeverSilentCredentialsArriveAfterFirstPoll (10.34s)
+PASS
+ok  	gchat-adapter/internal/app	237.210s

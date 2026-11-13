@@ -1,0 +1,407 @@
+$ python3 -I breaks.py <clone>/follow-through <tmp>/breaks
+# at 2f96198d; each break is a fresh copy of the pack with one edit to the skill, and the skill's test run in it:
+# python3 -m pytest tests/test_follow_through_skill.py -q -p no:cacheprovider --tb=no -rf (through uv run --with pytest --with pyyaml --with jsonschema when python3 has no pytest)
+== HEAD unchanged
+failing: none
+counts: 41 passed in 2.16s
+exit: 0
+verdict: GREEN
+
+== B01a never for work you owe: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never for work you owe]
+counts: 1 failed, 40 passed in 2.25s
+exit: 1
+verdict: RED on its row
+
+== B01b never for work you owe: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never for work you owe]
+counts: 1 failed, 40 passed in 2.20s
+exit: 1
+verdict: RED on its row
+
+== B02a never for small talk: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never for small talk]
+counts: 1 failed, 40 passed in 2.23s
+exit: 1
+verdict: RED on its row
+
+== B02b never for small talk: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never for small talk]
+counts: 1 failed, 40 passed in 2.19s
+exit: 1
+verdict: RED on its row
+
+== B03a unsure means out: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[unsure means out]
+counts: 1 failed, 40 passed in 2.22s
+exit: 1
+verdict: RED on its row
+
+== B03b unsure means out: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[unsure means out]
+counts: 1 failed, 40 passed in 2.00s
+exit: 1
+verdict: RED on its row
+
+== B04a none in, nothing sent: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[none in, nothing sent]
+counts: 1 failed, 40 passed in 2.02s
+exit: 1
+verdict: RED on its row
+
+== B04b none in, nothing sent: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[none in, nothing sent]
+counts: 1 failed, 40 passed in 2.30s
+exit: 1
+verdict: RED on its row
+
+== B05a one follow-up: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[one follow-up]
+counts: 1 failed, 40 passed in 2.14s
+exit: 1
+verdict: RED on its row
+
+== B05b one follow-up: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[one follow-up]
+counts: 1 failed, 40 passed in 2.25s
+exit: 1
+verdict: RED on its row
+
+== B06a no blame: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no blame]
+counts: 1 failed, 40 passed in 2.19s
+exit: 1
+verdict: RED on its row
+
+== B06b no blame: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no blame]
+counts: 1 failed, 40 passed in 2.19s
+exit: 1
+verdict: RED on its row
+
+== B07a no "just checking in": sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no "just checking in"]
+counts: 1 failed, 40 passed in 2.16s
+exit: 1
+verdict: RED on its row
+
+== B07b no "just checking in": sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no "just checking in"]
+counts: 1 failed, 40 passed in 2.08s
+exit: 1
+verdict: RED on its row
+
+== B08a nothing added: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[nothing added]
+counts: 1 failed, 40 passed in 2.00s
+exit: 1
+verdict: RED on its row
+
+== B08b nothing added: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[nothing added]
+counts: 1 failed, 40 passed in 2.00s
+exit: 1
+verdict: RED on its row
+
+== B09a only on the pack's mail: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[only on the pack's mail]
+counts: 1 failed, 40 passed in 1.99s
+exit: 1
+verdict: RED on its row
+
+== B09b only on the pack's mail: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[only on the pack's mail]
+counts: 1 failed, 40 passed in 2.21s
+exit: 1
+verdict: RED on its row
+
+== B10a never with consent off: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never with consent off]
+counts: 1 failed, 40 passed in 2.21s
+exit: 1
+verdict: RED on its row
+
+== B10b never with consent off: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never with consent off]
+counts: 1 failed, 40 passed in 2.00s
+exit: 1
+verdict: RED on its row
+
+== B11a the daytime bound: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[the daytime bound]
+counts: 1 failed, 40 passed in 2.27s
+exit: 1
+verdict: RED on its row
+
+== B11b the daytime bound: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[the daytime bound]
+counts: 1 failed, 40 passed in 2.20s
+exit: 1
+verdict: RED on its row
+
+== B12a outside the hours, nothing: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[outside the hours, nothing]
+counts: 1 failed, 40 passed in 2.28s
+exit: 1
+verdict: RED on its row
+
+== B12b outside the hours, nothing: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[outside the hours, nothing]
+counts: 1 failed, 40 passed in 2.14s
+exit: 1
+verdict: RED on its row
+
+== B13a unrecorded consent is off: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[unrecorded consent is off]
+counts: 1 failed, 40 passed in 2.08s
+exit: 1
+verdict: RED on its row
+
+== B13b unrecorded consent is off: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[unrecorded consent is off]
+counts: 1 failed, 40 passed in 2.23s
+exit: 1
+verdict: RED on its row
+
+== B14a ask once, in their conversation: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[ask once, in their conversation]
+counts: 1 failed, 40 passed in 2.19s
+exit: 1
+verdict: RED on its row
+
+== B14b ask once, in their conversation: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[ask once, in their conversation]
+counts: 1 failed, 40 passed in 2.19s
+exit: 1
+verdict: RED on its row
+
+== B15a stop at once: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[stop at once]
+counts: 1 failed, 40 passed in 2.24s
+exit: 1
+verdict: RED on its row
+
+== B15b stop at once: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[stop at once]
+counts: 1 failed, 40 passed in 2.21s
+exit: 1
+verdict: RED on its row
+
+== B16a the zone never guessed: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[the zone never guessed]
+counts: 1 failed, 40 passed in 2.26s
+exit: 1
+verdict: RED on its row
+
+== B16b the zone never guessed: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[the zone never guessed]
+counts: 1 failed, 40 passed in 2.21s
+exit: 1
+verdict: RED on its row
+
+== B17a a reminder never only in the session: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[a reminder never only in the session]
+counts: 1 failed, 40 passed in 2.27s
+exit: 1
+verdict: RED on its row
+
+== B17b a reminder never only in the session: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[a reminder never only in the session]
+counts: 1 failed, 40 passed in 2.14s
+exit: 1
+verdict: RED on its row
+
+== B18a told set only once stored: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[told set only once stored]
+counts: 1 failed, 40 passed in 2.23s
+exit: 1
+verdict: RED on its row
+
+== B18b told set only once stored: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[told set only once stored]
+counts: 1 failed, 40 passed in 2.02s
+exit: 1
+verdict: RED on its row
+
+== B19a cancelled only on the verb's word: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[cancelled only on the verb's word]
+counts: 1 failed, 40 passed in 2.24s
+exit: 1
+verdict: RED on its row
+
+== B19b cancelled only on the verb's word: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[cancelled only on the verb's word]
+counts: 1 failed, 40 passed in 2.24s
+exit: 1
+verdict: RED on its row
+
+== B20a no free text after the window: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no free text after the window]
+counts: 1 failed, 40 passed in 2.25s
+exit: 1
+verdict: RED on its row
+
+== B20b no free text after the window: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no free text after the window]
+counts: 1 failed, 40 passed in 2.19s
+exit: 1
+verdict: RED on its row
+
+== B21a never the update template: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never the update template]
+counts: 1 failed, 40 passed in 2.22s
+exit: 1
+verdict: RED on its row
+
+== B21b never the update template: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never the update template]
+counts: 1 failed, 40 passed in 2.23s
+exit: 1
+verdict: RED on its row
+
+== B22a no unasked news: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no unasked news]
+counts: 1 failed, 40 passed in 2.19s
+exit: 1
+verdict: RED on its row
+
+== B22b no unasked news: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no unasked news]
+counts: 1 failed, 40 passed in 2.20s
+exit: 1
+verdict: RED on its row
+
+== B23a a major feature only: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[a major feature only]
+counts: 1 failed, 40 passed in 1.97s
+exit: 1
+verdict: RED on its row
+
+== B23b a major feature only: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[a major feature only]
+counts: 1 failed, 40 passed in 2.01s
+exit: 1
+verdict: RED on its row
+
+== B24a no message on the no-daytime-hours mail: sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no message on the no-daytime-hours mail]
+counts: 1 failed, 40 passed in 2.23s
+exit: 1
+verdict: RED on its row
+
+== B24b no message on the no-daytime-hours mail: sentence reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no message on the no-daytime-hours mail]
+counts: 1 failed, 40 passed in 2.23s
+exit: 1
+verdict: RED on its row
+
+== M01 consent sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never with consent off]
+counts: 1 failed, 40 passed in 1.99s
+exit: 1
+verdict: RED
+
+== M02 20:00 changed to 22:00 in both places
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[the daytime bound]
+counts: 1 failed, 40 passed in 1.96s
+exit: 1
+verdict: RED
+
+== M03 a second follow-up allowed, the pinned sentence kept
+failing: none
+counts: 41 passed in 2.09s
+exit: 0
+verdict: GREEN
+
+== M03b the pinned no-second-follow-up sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[one follow-up]
+counts: 1 failed, 40 passed in 2.16s
+exit: 1
+verdict: RED
+
+== M04 the update template allowed after the window
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never the update template]
+counts: 1 failed, 40 passed in 2.24s
+exit: 1
+verdict: RED
+
+== M05 a flag renamed (--summary to --title)
+failing: test_every_flag_in_the_skill_is_one_its_verb_takes
+counts: 1 failed, 40 passed in 2.17s
+exit: 1
+verdict: RED
+
+== M06 the outside-hours send-nothing sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[outside the hours, nothing]
+counts: 1 failed, 40 passed in 2.26s
+exit: 1
+verdict: RED
+
+== M07 the whole section When you may not write removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never with consent off]; test_each_founders_rule_stands_word_for_word_in_its_section[only on the pack's mail]; test_each_founders_rule_stands_word_for_word_in_its_section[outside the hours, nothing]; test_each_founders_rule_stands_word_for_word_in_its_section[the daytime bound]
+counts: 4 failed, 37 passed in 2.20s
+exit: 1
+verdict: RED
+
+== M08 the whole WhatsApp section removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[never the update template]; test_each_founders_rule_stands_word_for_word_in_its_section[no free text after the window]
+counts: 2 failed, 39 passed in 2.27s
+exit: 1
+verdict: RED
+
+== M09 the zone may be guessed from the box
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[the zone never guessed]
+counts: 1 failed, 40 passed in 1.95s
+exit: 1
+verdict: RED
+
+== M10 the pinned major-feature sentence removed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[a major feature only]
+counts: 1 failed, 40 passed in 1.99s
+exit: 1
+verdict: RED
+
+== M11 a follow-up may be written from the list, without a mail
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[only on the pack's mail]
+counts: 1 failed, 40 passed in 2.02s
+exit: 1
+verdict: RED
+
+== M12 the reminder's arriving-twice rule removed
+failing: test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: reminder due]
+counts: 1 failed, 40 passed in 2.21s
+exit: 1
+verdict: RED
+
+== M13 ask for consent every week, in any conversation
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[ask once, in their conversation]
+counts: 1 failed, 40 passed in 2.22s
+exit: 1
+verdict: RED
+
+== M14 consent never recorded counts as on
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[unrecorded consent is off]
+counts: 1 failed, 40 passed in 1.94s
+exit: 1
+verdict: RED
+
+== M15 the pinned sentence kept and contradicted in the next sentence
+failing: none
+counts: 41 passed in 2.03s
+exit: 0
+verdict: GREEN
+
+== M16 the rote section for the third mail in place of this round's
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no message on the no-daytime-hours mail]
+counts: 1 failed, 40 passed in 2.29s
+exit: 1
+verdict: RED
+
+== M16-as-written the rote section added beside this round's
+failing: none
+counts: 41 passed in 2.23s
+exit: 0
+verdict: GREEN
+
+founders' rule breaks red on their own row: 48 of 48
+exit 0

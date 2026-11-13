@@ -808,7 +808,32 @@ describe("City side: send", () => {
     expect(one.status).toBe(200);
     expect(two.status).toBe(200);
     expect(two.body).toEqual(one.body);
+    expect(one.headers.get("x-gc-replayed")).toBe("false");
+    expect(two.headers.get("x-gc-replayed")).toBe("true");
     expect(t.graph.sends()).toHaveLength(before + 1);
+  });
+
+  it("the replay header follows actual retention cleanup, not the caller's elapsed time", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const wa = await t.join(city);
+    const body = { to: wa, idempotency_key: uniq(), type: "text", text: "example reply" };
+    const sendAttempt = (id: string) => t.call("POST", "/v1/send", { token: city.token, body, headers: { "x-gc-send-attempt": id } });
+    const first = await sendAttempt("example-first-attempt");
+    expect(first.status).toBe(200);
+    expect(first.headers.get("x-gc-send-attempt")).toBe("example-first-attempt");
+    t.clock.now += 31 * DAY;
+    const old = await sendAttempt("example-later-attempt");
+    expect(old.body).toEqual(first.body);
+    expect(old.headers.get("x-gc-replayed")).toBe("true");
+    expect(old.headers.get("x-gc-send-attempt")).toBe("example-first-attempt");
+    await t.gateway.maintain();
+    await t.say(wa, "example new input");
+    const fresh = await sendAttempt("example-fresh-attempt");
+    expect(fresh.status).toBe(200);
+    expect(fresh.body.message_id).not.toBe(first.body.message_id);
+    expect(fresh.headers.get("x-gc-replayed")).toBe("false");
+    expect(fresh.headers.get("x-gc-send-attempt")).toBe("example-fresh-attempt");
   });
 
   it("the same idempotency_key in two cities is two sends (the key is per city)", async () => {

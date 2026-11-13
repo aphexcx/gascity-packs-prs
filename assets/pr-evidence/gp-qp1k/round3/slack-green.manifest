@@ -1,0 +1,1 @@
+go test . -run ^TestNeverSilentStartsBeforeRegistration$ -count=1 -v	exit=0
