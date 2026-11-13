@@ -375,8 +375,11 @@ the key; when the owner was deleted, the newest survivor owns the replacement.
 The edit or deletion follows that delivery. When gc had recorded a turn before
 it refused it, gc's saved transcript keeps that first text; the adapter sends
 the current text and then the withdrawal; a gc change is needed for the saved
-row itself. History reads still use each
-message's own text. A rollback delivers held messages individually and keeps
+row itself. History reads still use each message's own text. With coalescing
+enabled, a withdrawn record has no replayable payload: replay returns
+`stored turn is malformed; cannot replay` (HTTP 400), leaves the original
+withdrawal reason in status, and makes no POST, including after a rollback to
+0.5.0. Use `--accept` to settle that record. A rollback delivers held messages individually and keeps
 delivered groups completed. A frozen group in flight remains one delivery on
 the older reader: pending receipts are polled, and an interrupted POST becomes
 one unresolved record, requiring the usual explicit replay or acceptance.

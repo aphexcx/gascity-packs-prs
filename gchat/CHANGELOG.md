@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Coalesced retries refresh withdrawn members before posting, preserve literal edit prefixes in history, quote body from-line prefixes, isolate malformed held records, and count retried catch-up acts against the budget.
+- Withdrawn window-on deliveries retain their message history but cannot be replayed, including by a rolled-back 0.5.0 reader; replay leaves the withdrawal reason intact and operators can accept the record.
 
 - Room chatter now waits a per-space window (default eight seconds) and arrives
   as one turn, with each message's full from line. DMs, mentions and replies in

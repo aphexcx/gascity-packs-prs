@@ -90,8 +90,19 @@ func TestCoalescedLedgerCompatibility(t *testing.T) {
 				if state == "empty_replayed" {
 					want = 2
 				}
-				if len(posts) != want || len(withdrawn) != want {
+				// The current reader recovers held deletions as one turn; older
+				// readers deliver them separately. Both must deliver both acts.
+				if len(posts) < 1 || len(posts) > want || len(withdrawn) != want {
 					t.Errorf("healthy posts=%d retired=%d want=%d", len(posts), len(withdrawn), want)
+				}
+				if state == "empty_replayed" {
+					deletions := 0
+					for _, post := range posts {
+						deletions += strings.Count(post.Text, "\ndeleted")
+					}
+					if deletions != 2 {
+						t.Errorf("healthy deletion acts=%d want=2", deletions)
+					}
 				}
 				for _, post := range posts {
 					old := strings.Contains(post.Text, "body-00")
