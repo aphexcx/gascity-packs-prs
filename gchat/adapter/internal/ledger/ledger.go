@@ -39,22 +39,26 @@ func (e *RecoveryError) Unwrap() error        { return e.Err }
 
 type Ledger struct {
 	saveGuard func() error
+	fresh     bool
 
 	Version        int    `json:"version"`
 	IdentityUserID string `json:"identity_user_id,omitempty"`
 	IdentitySeed   string `json:"identity_seed,omitempty"`
 	// IdentityDomainID is the Workspace domain the identity belongs to, as Chat
 	// reports it on the identity's own messages; senders in it are the organization.
-	IdentityDomainID string                   `json:"identity_domain_id,omitempty"`
-	Subscription     SubscriptionState        `json:"subscription"`
-	Spaces           map[string]*SpaceState   `json:"spaces"`
-	Transport        TransportDedup           `json:"transport"`
-	Messages         map[string]*MessageState `json:"messages"`
-	Changes          map[string]*ChangeState  `json:"changes"`
-	Sends            map[string]*SendState    `json:"sends"`
-	Unresolved       map[string]*ChangeState  `json:"unresolved"`
-	Quarantine       []QuarantinedEvent       `json:"quarantine"`
-	Counters         map[string]int64         `json:"counters"`
+	IdentityDomainID string `json:"identity_domain_id,omitempty"`
+	// HistoryFloor bounds automatic history on a new installation or reset.
+	// Old ledgers omit it and retain their existing recovery behavior.
+	HistoryFloor time.Time                `json:"history_floor,omitzero"`
+	Subscription SubscriptionState        `json:"subscription"`
+	Spaces       map[string]*SpaceState   `json:"spaces"`
+	Transport    TransportDedup           `json:"transport"`
+	Messages     map[string]*MessageState `json:"messages"`
+	Changes      map[string]*ChangeState  `json:"changes"`
+	Sends        map[string]*SendState    `json:"sends"`
+	Unresolved   map[string]*ChangeState  `json:"unresolved"`
+	Quarantine   []QuarantinedEvent       `json:"quarantine"`
+	Counters     map[string]int64         `json:"counters"`
 }
 
 type SubscriptionState struct {
@@ -260,7 +264,9 @@ func Load(path string, established bool) (*Ledger, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && !established {
-			return New(), nil
+			l := New()
+			l.fresh = true
+			return l, nil
 		}
 		return nil, &RecoveryError{Path: path, Err: err}
 	}
@@ -280,6 +286,10 @@ func Load(path string, established bool) (*Ledger, error) {
 	}
 	return l, nil
 }
+
+// Fresh reports that Load found neither a file nor an established marker.
+// It is not inferred from the ledger contents and is never persisted.
+func (l *Ledger) Fresh() bool { return l.fresh }
 
 func (l *Ledger) validate() error {
 	if l == nil || l.Version != 1 {

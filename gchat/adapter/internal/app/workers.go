@@ -88,6 +88,11 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	// resolve --replay answers a request: it runs the pass, not the raise.
 	a.s.SetPoll(proc.Pass)
 	defer a.s.SetPoll(nil)
+	// A first sign-in may arrive long after process startup. Persist its bound
+	// before reconciliation can record or adopt the first subscription.
+	if err = a.advanceHistoryFloor(); err != nil {
+		return err
+	}
 	if err = a.retry(ctx, "subscription", func() error {
 		var e error
 		if reloaded {
@@ -156,6 +161,21 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 			}
 		}
 	}
+}
+
+func (a *application) advanceHistoryFloor() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.l.HistoryFloor.IsZero() || a.l.Subscription.Name != "" {
+		return nil
+	}
+	next := a.l.Clone()
+	next.HistoryFloor = time.Now().UTC().Add(-a.cfg.FirstStartWindow())
+	if err := next.Save(a.cfg.Endpoints.StateFile); err != nil {
+		return err
+	}
+	a.l.Replace(next)
+	return nil
 }
 
 func newPubSub(ctx context.Context, cfg *config.Config, source *token.Source) (*pubsub.Client, error) {

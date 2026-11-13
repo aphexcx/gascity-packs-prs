@@ -59,6 +59,9 @@ Dedup suppresses repeats across restarts while the prior notice remains in the
 recipient's mailbox. Startup registers once; a healthy run resets connection
 restart backoff for the next interruption.
 
+A first start begins at its first connection, optionally including up to a week
+with `first_start_history`; older messages stay readable with `gc gchat read`
+but are not turns. A restart with a ledger keeps recovering from its cursors.
 Catch-up runs at startup and after subscription recovery. Unfinished intervals
 retry with backoff. Once an hour the adapter performs a full history sweep:
 one paginated spaces inventory plus message and space-event history lists for
@@ -75,8 +78,10 @@ while it is held, including under gc when the shell has no `GC_SERVICE_SOCKET`.
 Never delete the lock file to bypass a running service. If it was removed or
 replaced, restart the service: ownership loss permanently revokes the old
 process's saves, even if the path later reappears. The standalone socket
-defaults to `adapter.sock` beside the ledger. Reset reports that gap messages
-may be lost or duplicated; the CLI replaces the ledger only while holding the lock. Use `gc gchat state` for recovery through the running service's proxy.
+defaults to `adapter.sock` beside the ledger. Reset takes the same first-start
+bound and warns that earlier messages will not be delivered; restore keeps the
+backup's bound and cursors. The CLI replaces the ledger only while holding the
+lock. Use `gc gchat state` for recovery through the running service's proxy.
 
 The OAuth listener requests an ephemeral loopback port; bind failure ends that
 auth attempt with an actionable error. It does not retry another port inside

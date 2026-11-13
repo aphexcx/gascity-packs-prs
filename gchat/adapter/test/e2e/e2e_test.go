@@ -877,7 +877,9 @@ func scenariosRecovery(t *testing.T) {
 	})
 	t.Run("three thousand missed messages drain over several passes with the backlog visible in status", func(t *testing.T) {
 		f := newFixture(t)
-		f.history(3000, "spaces/room", time.Now().Add(-time.Minute))
+		f.ready()
+		f.stop()
+		f.history(3000, "spaces/room", time.Now())
 		f.start()
 		f.health("catching-up", 10*time.Second)
 		var backlog int
@@ -987,7 +989,9 @@ func scenariosRecovery(t *testing.T) {
 	t.Run("a live event arriving while catch-up runs does not move the frozen cursors, equal timestamps across a page boundary are not skipped, and a restart in the middle of draining a backlog resumes from the persisted progress", func(t *testing.T) {
 		f := newFixture(t)
 		f.cfg.Settings.CatchupBudget = 5
-		f.history(23, "spaces/room", time.Now().Add(-time.Minute))
+		f.ready()
+		f.stop()
+		f.history(23, "spaces/room", time.Now())
 		entered, release := make(chan struct{}, 1), make(chan struct{})
 		var once sync.Once
 		t.Cleanup(func() { once.Do(func() { close(release) }) })
@@ -1550,7 +1554,7 @@ func scenariosOperations(t *testing.T) {
 				}
 				var result map[string]string
 				f.request("/state", map[string]string{"action": action, "file": backup}, &result)
-				if action == "reset" && !strings.Contains(result["reason"], "lost or duplicated") {
+				if action == "reset" && !strings.Contains(result["reason"], "will not be delivered") {
 					t.Fatal("reset omitted possible loss")
 				}
 				f.health("ready", 10*time.Second)

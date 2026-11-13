@@ -1431,7 +1431,7 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			return saved, false
 		}
 		switch change.Reason {
-		case "local", "own", "wake_policy":
+		case "local", "own", "wake_policy", "before_history_floor":
 			return saved, false
 		}
 		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
@@ -1643,6 +1643,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
 	status["pending"], status["deliveries"], status["stuck"] = inFlight, deliveries, stuck
+	if !l.HistoryFloor.IsZero() {
+		status["history_floor"] = l.HistoryFloor
+	}
 	if s.opts.SubscriptionStatus != nil {
 		failures, next, state, err := s.opts.SubscriptionStatus()
 		kind, code := logCause(err)
@@ -1760,6 +1763,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if s.pendingState == nil {
 		l := ledger.New()
+		cfg := s.configuration()
+		l.HistoryFloor = time.Now().UTC().Add(-cfg.FirstStartWindow())
 		if v.Action == "restore" {
 			l, err = ledger.Load(v.File, true)
 			if err != nil {
@@ -1789,7 +1794,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	s.pendingState = nil
 	reason := "state restored"
 	if v.Action == "reset" {
-		reason = "state reset; messages from the gap may be lost or duplicated"
+		reason = "state reset; messages written before the reset history bound will not be delivered (gc gchat read still reads them); use state restore to keep them"
 	}
 	respond(w, 200, map[string]string{"state": s.Health().State, "reason": reason})
 }

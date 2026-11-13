@@ -71,6 +71,12 @@
 - Docs only: the README's sample owners line uses an invented given name. No
   code change.
 
+- First start and state reset begin history at the first connection, with an
+  optional `first_start_history` window of up to 168 hours. Earlier messages
+  remain readable with `gc gchat read` and do not become turns or queued rows.
+  Status shows the saved `history_floor`; restarts with a ledger keep recovering
+  from their cursors. Old ledgers retain their existing behavior.
+
 ## 0.5.0 — 2026-11-09
 
 - Prefer a prebuilt adapter on PATH (or GC_GCHAT_ADAPTER_BIN) before building;

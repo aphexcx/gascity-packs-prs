@@ -202,6 +202,12 @@ expires: a path the agent was handed keeps working until someone removes it,
 so a full store needs a decision, not a background sweep. The root-level `catchup_budget` setting defaults to
 50 records per space per pass; it is a budget, not a truncation limit.
 
+The root-level `first_start_history` setting optionally includes a short history
+window on first start or reset. It is a Go duration string, from `"0s"` to
+`"168h"` inclusive; write `"24h"` for a day, not `"1d"`. Omit it to start at
+the current time. Set it before the first connection; changing it after a
+subscription has been recorded does not change the saved history bound.
+
 Optional endpoint/path overrides for tests and private deployments:
 `GCHAT_CHAT_API_BASE`, `GCHAT_EVENTS_API_BASE`, `GCHAT_PUBSUB_ENDPOINT`,
 `GCHAT_OAUTH_AUTH_URL`, `GCHAT_OAUTH_TOKEN_URL`, `GCHAT_PEOPLE_API_BASE`,
@@ -434,6 +440,14 @@ turn; check the default route or binding. Quarantine holds malformed events.
 
 ### Catch-up and restart recovery
 
+A first start with no ledger and no established marker begins at the current
+time. The bound moves to the first connection if sign-in was delayed. Older
+messages in rooms and direct messages are not turns, queued rows or delivery
+mails; `gc gchat read` still reads them. `first_start_history` can include up to
+a week before that start. Status names the saved bound. A restart with a ledger
+still recovers everything since its last cursor, with the existing overlap and
+event-retention limits. Existing ledgers gain no new bound.
+
 Catch-up runs on startup and subscription recovery, retries unfinished work
 with backoff, and stops when caught up. A recovered message that gc keeps
 refusing, or that waits behind an earlier one of its space, does not keep
@@ -497,8 +511,12 @@ free space for the current file and its replacement, and back up the JSON rather
 than depending on its indentation.
 
 Use `gc gchat state restore /absolute/path/backup.json` to request recovery
-through the service, or explicitly choose `gc gchat state reset`, which warns
-that messages from the gap may be lost or duplicated. These proxy commands are
+through the service to keep its saved history bound and recovery cursors, or
+explicitly choose `gc gchat state reset`. Reset starts at the current time,
+minus the optional `first_start_history` window, and moves that bound to its
+first connection. Messages before the bound will not be delivered;
+`gc gchat read` still reads them. Use restore to retain recovery of the gap.
+These proxy commands are
 accepted only in `recovery-required` and refuse while delivery is in flight.
 If reconciliation fails, retry the same restore/reset request.
 

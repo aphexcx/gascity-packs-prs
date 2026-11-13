@@ -772,6 +772,17 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if c.Kind == "message.deleted" {
 		state.Deleted = true
 	}
+	if c.Kind == "message.created" && !l.HistoryFloor.IsZero() {
+		created, err := time.Parse(time.RFC3339Nano, m.CreateTime)
+		if err == nil && created.Before(l.HistoryFloor) {
+			// A create payload may already include a later edit. Only consume
+			// the create here so that edit can still arrive as a new act.
+			if previous == nil {
+				state.Revision = created
+			}
+			return p.record(c, id, wire.InboundMessage{}, &state, nil, "before_history_floor", catchUp, "")
+		}
+	}
 	// The identity's own messages tell which Workspace domain is the
 	// organization; a sender in it is a colleague even without an address.
 	learnedDomain := ""
@@ -788,7 +799,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	forwarded := false
 	for _, change := range l.Changes {
-		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && !strings.HasPrefix(change.Reason, "space unavailable") {
+		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "before_history_floor" && !strings.HasPrefix(change.Reason, "space unavailable") {
 			forwarded = true
 			break
 		}

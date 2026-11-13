@@ -45,7 +45,7 @@ func TestStateOfflineRestoreAndReset(t *testing.T) {
 			if saved.Counters["restored"] != want || saved.Counters["original"] != 0 || !ledger.Established(filepath.Dir(env)) {
 				t.Fatalf("unexpected ledger/marker after %s: %+v", action, saved)
 			}
-			if action == "reset" && !strings.Contains(stderr.String(), "messages from the gap may be lost or duplicated") {
+			if action == "reset" && !strings.Contains(stderr.String(), "messages written before the reset history bound will not be delivered") {
 				t.Fatalf("reset warning missing: %q", &stderr)
 			}
 			if !strings.Contains(stdout.String(), "state ") {

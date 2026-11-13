@@ -20,7 +20,7 @@ import (
 	"gchat-adapter/internal/ledger"
 )
 
-const resetWarning = "messages from the gap may be lost or duplicated"
+const resetWarning = "messages written before the reset history bound will not be delivered (gc gchat read still reads them); use state restore to keep them"
 
 func runState(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	force := false
@@ -140,6 +140,7 @@ func changeState(ctx context.Context, cfg *config.Config, action, backup string,
 		return fmt.Errorf("secure state socket: %w", err)
 	}
 	l := ledger.New()
+	l.HistoryFloor = time.Now().UTC().Add(-cfg.FirstStartWindow())
 	if action == "restore" {
 		l, err = ledger.Load(backup, true)
 		if err != nil {

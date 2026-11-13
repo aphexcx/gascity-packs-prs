@@ -130,7 +130,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 			listed[space.Name] = true
 			s := l.Spaces[space.Name]
 			if s == nil {
-				s = &ledger.SpaceState{Wake: string(r.opts.Config.Wake(space.Name))}
+				s = &ledger.SpaceState{Wake: string(r.opts.Config.Wake(space.Name)), MessageCursor: l.HistoryFloor, EventCursor: l.HistoryFloor}
 				l.Spaces[space.Name] = s
 			}
 			if s.Wake == "" {
@@ -165,7 +165,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 				clockAhead = append(clockAhead, name)
 				continue
 			}
-			p := r.begin(s, now)
+			p := r.begin(s, now, l.HistoryFloor)
 			p.ListingAbsent = !listed[name]
 			s.PageToken = encode(p)
 			if p.Reported {
@@ -186,13 +186,19 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 	return err
 }
 
-func (r *Runner) begin(s *ledger.SpaceState, upper time.Time) progress {
+func (r *Runner) begin(s *ledger.SpaceState, upper, floor time.Time) progress {
 	p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
 	if p.MessageLower.Before(s.JoinedAt) {
 		p.MessageLower = s.JoinedAt
 	}
 	if p.EventLower.Before(s.JoinedAt) {
 		p.EventLower = s.JoinedAt
+	}
+	if p.MessageLower.Before(floor) {
+		p.MessageLower = floor
+	}
+	if p.EventLower.Before(floor) {
+		p.EventLower = floor
 	}
 	// Request the full retained event window. Message history has no 28-day
 	// limit. Report only a known cursor older than the retention boundary.
@@ -525,7 +531,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 				continue
 			}
 			switch c.Reason {
-			case "own", "local", "wake_policy", "space unavailable", "parent unavailable":
+			case "own", "local", "wake_policy", "before_history_floor", "space unavailable", "parent unavailable":
 				continue
 			}
 			*budget--
@@ -576,7 +582,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			s.MessageCursor, s.EventCursor = s.FrozenUpper, s.FrozenUpper
 			s.PageToken, s.FrozenUpper = "", time.Time{}
 			if p.NextUpper.After(s.MessageCursor) {
-				next := r.begin(s, p.NextUpper)
+				next := r.begin(s, p.NextUpper, l.HistoryFloor)
 				next.ListingAbsent = p.ListingAbsent
 				s.PageToken = encode(next)
 				reported = next.Reported

@@ -52,8 +52,13 @@ func TestFloorBoundsEveryNewSpace(t *testing.T) {
 	f.addMessage("spaces/later", 2, floor.Add(time.Second))
 	f.freeze(t)
 	f.pass(t, 1, 0)
-	if len(f.opts.Ledger.Counters) != 0 || strings.Contains(f.logs.String(), "WARN") {
-		t.Fatalf("history loss reported: %v %s", f.opts.Ledger.Counters, &f.logs)
+	for name, count := range f.opts.Ledger.Counters {
+		if strings.HasPrefix(name, "unrecoverable:") && count != 0 {
+			t.Fatalf("history loss reported: %s=%d", name, count)
+		}
+	}
+	if strings.Contains(f.logs.String(), "WARN") {
+		t.Fatalf("history warning: %s", &f.logs)
 	}
 }
 

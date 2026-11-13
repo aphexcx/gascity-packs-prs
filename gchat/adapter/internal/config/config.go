@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -97,10 +98,11 @@ type Settings struct {
 	Defaults struct {
 		Wake WakePolicy `toml:"wake,omitempty"`
 	} `toml:"defaults,omitempty"`
-	Identities    []Identity `toml:"identity"`
-	Spaces        []Space    `toml:"space"`
-	Media         Media      `toml:"media,omitempty"`         // as decoded; effective values are in Endpoints
-	CatchupBudget int        `toml:"catchup_budget,omitzero"` // per space per pass, default 50
+	Identities        []Identity `toml:"identity"`
+	Spaces            []Space    `toml:"space"`
+	Media             Media      `toml:"media,omitempty"`               // as decoded; effective values are in Endpoints
+	CatchupBudget     int        `toml:"catchup_budget,omitzero"`       // per space per pass, default 50
+	FirstStartHistory *string    `toml:"first_start_history,omitempty"` // optional history window, at most one week
 }
 
 type Config struct {
@@ -320,6 +322,16 @@ func (c *Config) CatchupBudget() int {
 	return 50
 }
 
+// FirstStartWindow is used only when creating or moving a history floor.
+// Load validates the duration before a Config is used by the service or CLI.
+func (c *Config) FirstStartWindow() time.Duration {
+	if c.Settings.FirstStartHistory == nil {
+		return 0
+	}
+	d, _ := time.ParseDuration(*c.Settings.FirstStartHistory)
+	return d
+}
+
 // Identities returns a fresh slice with resolved token paths, or the default
 // identity when none are configured. Settings is never modified.
 func (c *Config) Identities() []Identity {
@@ -376,6 +388,15 @@ func (c *Config) validateSettings(mediaMaxBytes int64, mediaMaxAttachments int, 
 	}
 	if catchupBudget <= 0 {
 		return fmt.Errorf("catchup_budget must be positive")
+	}
+	if c.Settings.FirstStartHistory != nil {
+		d, err := time.ParseDuration(*c.Settings.FirstStartHistory)
+		if err != nil {
+			return fmt.Errorf("first_start_history must be a Go duration; write 24h for one day: %w", err)
+		}
+		if d < 0 || d > 168*time.Hour {
+			return fmt.Errorf("first_start_history must be between 0s and 168h")
+		}
 	}
 	return nil
 }

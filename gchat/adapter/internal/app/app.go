@@ -270,6 +270,9 @@ func (a *application) run(ctx context.Context) error {
 		a.mu.Lock()
 		*a.l = *l
 		a.l.SetSaveGuard(a.checkStateLock)
+		if l.Fresh() {
+			a.l.HistoryFloor = time.Now().UTC().Add(-a.cfg.FirstStartWindow())
+		}
 		err = a.l.Save(a.cfg.Endpoints.StateFile)
 		a.mu.Unlock()
 		if err != nil {
