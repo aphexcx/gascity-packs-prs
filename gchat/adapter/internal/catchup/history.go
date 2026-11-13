@@ -69,5 +69,6 @@ func startSpace(l *ledger.Ledger, cfg *config.Config, name string, s *ledger.Spa
 		kept = append(kept, raw)
 	}
 	s.Backlog = kept
+	inbound.RetireSpaceHistory(l, cfg, name, log)
 	return nil
 }

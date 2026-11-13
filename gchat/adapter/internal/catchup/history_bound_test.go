@@ -150,6 +150,140 @@ func TestBoundedQueueRetiresSavedDelivery(t *testing.T) {
 	}
 }
 
+func TestCursorlessMigrationRetiresDetachedAttempts(t *testing.T) {
+	for _, kind := range []string{"message.created", "message.updated", "message.deleted", "reaction.created", "reaction.deleted"} {
+		for _, status := range []string{"intent", "pending", "unresolved"} {
+			t.Run(kind+"/"+status, func(t *testing.T) {
+				f := setup(t)
+				l := f.opts.Ledger
+				start := frozen.Add(-time.Minute)
+				patchHistory(t, l, map[string]any{"spaces_listed_at": start})
+				f.addSpace("spaces/dm", false)
+				name := "spaces/dm/messages/old"
+				id := name
+				if kind == "message.deleted" {
+					id += "#deleted"
+				} else if strings.HasPrefix(kind, "reaction.") {
+					id += "/reactions/one#" + strings.TrimPrefix(kind, "reaction.")
+				}
+				// Updates can own the base ID. A later revision must not hide
+				// the earlier saved attempt from migration.
+				l.Messages[name] = &ledger.MessageState{Revision: start.Add(-time.Second), Deleted: kind == "message.deleted"}
+				w := wire.InboundMessage{ProviderMessageID: id, Conversation: wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/dm", Kind: "dm"}, Actor: wire.Actor{ID: "users/222", DisplayName: "Reader"}, Text: "[from: Reader <users/222> | external]\nold queued body", ReceivedAt: start.Add(-time.Minute)}
+				l.Changes[id] = &ledger.ChangeState{ID: id, Space: "spaces/dm", Message: name, Kind: kind, Status: status, Created: w.ReceivedAt, Event: encode(w), ProvenanceFramed: true}
+				if status == "unresolved" {
+					l.Unresolved[id] = l.Changes[id]
+				}
+				l.Spaces["spaces/dm"] = &ledger.SpaceState{Kind: "dm", Wake: "all"}
+				f.freeze(t)
+				if err := f.p.Pass(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				if len(f.gc.Inbound()) != 0 || len(l.Unresolved) != 0 {
+					t.Errorf("turns=%d unresolved=%d", len(f.gc.Inbound()), len(l.Unresolved))
+				}
+				for _, record := range l.Changes {
+					var saved wire.InboundMessage
+					_ = json.Unmarshal([]byte(record.Event), &saved)
+					if record.Status != "committed" || record.Reason != "local" || strings.Contains(saved.Text, "old queued body") || saved.Actor != w.Actor || saved.Text != "[from: Reader <users/222> | external]" {
+						t.Errorf("saved attempt survived or lost its frame: status=%s reason=%s text=%q", record.Status, record.Reason, saved.Text)
+					}
+				}
+				if l.Messages[name].Deleted {
+					t.Error("retired old deletion still suppresses new acts")
+				}
+			})
+		}
+	}
+}
+
+func TestCursorlessMigrationRetiresEveryUpdateRevision(t *testing.T) {
+	for _, status := range []string{"intent", "pending", "unresolved"} {
+		t.Run(status, func(t *testing.T) {
+			f := setup(t)
+			l := f.opts.Ledger
+			start := frozen.Add(-time.Minute)
+			patchHistory(t, l, map[string]any{"spaces_listed_at": start})
+			f.addSpace("spaces/dm", false)
+			m := f.addMessage("spaces/dm", 0, frozen.Add(-time.Hour))
+			s := &ledger.SpaceState{Kind: "dm", Wake: "all"}
+			l.Spaces["spaces/dm"] = s
+			for i := range 2 {
+				update := *m
+				at := start.Add(time.Duration(i-2) * time.Second)
+				update.LastUpdateTime = at.Format(time.RFC3339Nano)
+				c := puller.Change{Kind: "message.updated", Space: "spaces/dm", Message: &update}
+				id := m.Name
+				if i == 1 {
+					id += "#updated#" + update.LastUpdateTime
+				}
+				w := wire.InboundMessage{ProviderMessageID: id, Conversation: wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/dm", Kind: "dm"}, Text: "old update", ReceivedAt: at}
+				l.Changes[id] = &ledger.ChangeState{ID: id, Space: "spaces/dm", Message: m.Name, Kind: c.Kind, Status: status, Created: at, Event: encode(w)}
+				if status == "unresolved" {
+					l.Unresolved[id] = l.Changes[id]
+				}
+				l.Messages[m.Name] = &ledger.MessageState{Revision: at}
+				s.Backlog = append(s.Backlog, encode(queuedChange{Change: c, At: at, Handled: true}))
+			}
+			f.freeze(t)
+			if err := f.p.Pass(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.gc.Inbound()) != 0 || len(l.Unresolved) != 0 {
+				t.Fatalf("old updates survived: turns=%d unresolved=%d", len(f.gc.Inbound()), len(l.Unresolved))
+			}
+			for _, c := range l.Changes {
+				if c.Status != "committed" || c.Reason != "local" {
+					t.Fatalf("old revision survived: %s %s", c.Status, c.Reason)
+				}
+			}
+			m.LastUpdateTime = frozen.Format(time.RFC3339Nano)
+			if out, err := f.p.HandleChange(t.Context(), puller.Change{Kind: "message.updated", Space: "spaces/dm", Message: m}); out != puller.Ack || err != nil {
+				t.Fatal(out, err)
+			}
+			if len(f.gc.Inbound()) != 1 {
+				t.Fatal("migration consumed a later update")
+			}
+		})
+	}
+}
+
+func TestRetainedHistoryKeepsReleasedEventIdentity(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("batch=%t", batch), func(t *testing.T) {
+			f := setup(t)
+			f.addSpace("spaces/room", true)
+			m := f.addMessage("spaces/room", 0, frozen.Add(-2*time.Hour))
+			m.LastUpdateTime = frozen.Add(-time.Minute).Format(time.RFC3339Nano)
+			at := frozen.Add(-30 * time.Second)
+			// The released writer keyed retained history by envelope time.
+			legacy := queuedChange{Change: puller.Change{Kind: "message.updated", Space: "spaces/room", Message: m}, At: at}
+			id := unavailableID(legacy)
+			f.opts.Ledger.Changes[id] = &ledger.ChangeState{ID: id, Space: "spaces/room", Message: m.Name, Kind: "catchup.unavailable", Status: "committed", Reason: "space unavailable"}
+			typeName, key := "message.v1.updated", "messageUpdatedEventData"
+			var payload any = map[string]any{"message": m}
+			if batch {
+				typeName, key = "message.v1.batchUpdated", "messageBatchUpdatedEventData"
+				payload = map[string]any{"messages": []map[string]any{{"message": m}}}
+			}
+			var event api.SpaceEvent
+			patchHistory(t, &event, map[string]any{"name": "spaces/room/spaceEvents/retained", "eventType": "google.workspace.chat." + typeName, "eventTime": at.Format(time.RFC3339Nano), key: payload})
+			f.google.SpaceEvents["spaces/room"] = []*api.SpaceEvent{&event}
+			f.freeze(t)
+			_, _, err := f.r.Pass(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(f.gc.Inbound()) != 0 {
+				t.Fatalf("retained event redelivered after upgrade: %d turns", len(f.gc.Inbound()))
+			}
+			if len(f.opts.Ledger.Unresolved) != 0 {
+				t.Fatal("retained event was quarantined instead of deduplicated")
+			}
+		})
+	}
+}
+
 func TestNeverReadSpaceReportsNoLoss(t *testing.T) {
 	for _, started := range []bool{false, true} {
 		t.Run(fmt.Sprintf("start=%t", started), func(t *testing.T) {

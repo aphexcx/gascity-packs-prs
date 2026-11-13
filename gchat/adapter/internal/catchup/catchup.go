@@ -817,7 +817,13 @@ func unavailableID(item queuedChange) string {
 	} else if item.Change.Reaction != nil {
 		resource = item.Change.Reaction.Name
 	}
-	key := encode([]string{item.Change.Kind, resource, item.At.UTC().Format(time.RFC3339Nano)})
+	// The released key used the envelope time. At may now be the resource's
+	// time for ordering, while old queued rows still have only At.
+	at := item.Change.EventTime
+	if at.IsZero() {
+		at = item.At
+	}
+	key := encode([]string{item.Change.Kind, resource, at.UTC().Format(time.RFC3339Nano)})
 	return fmt.Sprintf("catchup:unavailable:%x", sha256.Sum256([]byte(key)))
 }
 

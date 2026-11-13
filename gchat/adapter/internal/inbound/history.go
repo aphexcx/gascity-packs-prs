@@ -92,9 +92,12 @@ func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
 		id = c.Message.Name
 		switch c.Kind {
 		case "message.updated":
-			base, state := l.Changes[id], l.Messages[id]
-			if base == nil || base.Kind != c.Kind || state == nil || !state.Revision.Equal(c.ActTime()) {
-				id += "#updated#" + c.Message.LastUpdateTime
+			baseID := id
+			id += "#updated#" + c.Message.LastUpdateTime
+			if l.Changes[id] == nil {
+				if base := l.Changes[baseID]; base != nil && base.Kind == c.Kind && base.Created.Before(ledger.HistoryBound(l.Spaces[c.Space], l.HistoryFloor)) {
+					id = baseID
+				}
 			}
 		case "message.deleted":
 			id += "#deleted"
@@ -107,6 +110,59 @@ func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
 		delete(l.Unresolved, id)
 		if c.Kind == "message.deleted" {
 			if state := l.Messages[c.Message.Name]; state != nil {
+				state.Deleted = false
+			}
+		}
+	}
+}
+
+// RetireSpaceHistory handles attempts that outlived their catch-up queue row.
+// An attempt recorded before a newly installed bound necessarily predates it;
+// its Created time is an upper bound on the act, not a replacement event time.
+// Existing cursors never call this migration, and committed deliveries survive.
+func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) {
+	bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
+	if bound.IsZero() {
+		return
+	}
+	for id, old := range l.Changes {
+		if old.Space != space || old.Status == "committed" || (!old.Created.IsZero() && !old.Created.Before(bound)) ||
+			(!strings.HasPrefix(old.Kind, "message.") && !strings.HasPrefix(old.Kind, "reaction.")) {
+			continue
+		}
+		var w wire.InboundMessage
+		_ = json.Unmarshal([]byte(old.Event), &w)
+		frame, framed := provenance.FrameOf(w.Text)
+		if !old.ProvenanceFramed || !framed {
+			user := &api.User{Name: w.Actor.ID, DisplayName: w.Actor.DisplayName}
+			frame = provenance.Frame(HistorySpeaker(l, cfg, puller.Change{Message: &api.Message{Sender: user}}))
+		}
+		w.Text, w.Attachments = frame, nil
+		if old.CatchUp {
+			w.Text = "[catch-up]\n" + w.Text
+		}
+		retained := *old
+		if old.Kind != "message.created" {
+			retained.ID += "#history#" + old.Kind + "#" + old.Created.UTC().Format(time.RFC3339Nano)
+		}
+		w.ProviderMessageID = retained.ID
+		raw, _ := json.Marshal(w)
+		retained.Event = string(raw)
+		retained.Status, retained.Reason, retained.Cause = "committed", "local", "before_history_floor"
+		retained.ReceiptID, retained.NextAttempt = "", time.Time{}
+		retained.ProvenanceFramed = true
+		if old.Created.IsZero() {
+			retained.Cause = "history_time_missing"
+			l.Counters["history_time_missing:"+space]++
+			if log != nil {
+				log.Warn("inbound act has no usable history time", "space", space, "kind", old.Kind)
+			}
+		}
+		delete(l.Changes, id)
+		delete(l.Unresolved, id)
+		l.Changes[retained.ID] = &retained
+		if old.Kind == "message.deleted" {
+			if state := l.Messages[old.Message]; state != nil {
 				state.Deleted = false
 			}
 		}
