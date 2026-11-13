@@ -355,6 +355,18 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 				}
 				events, next, err = r.opts.Chat.ListSpaceEventsPage(ctx, name, lower, s.FrozenUpper, eventTypes, p.Token)
 				for _, event := range events {
+					// The retention fallback widens the provider query, never
+					// the installation's hard bound. Filter before expanding a
+					// batch or retaining any of its items in the backlog.
+					if event != nil && !l.HistoryFloor.IsZero() {
+						bound := l.HistoryFloor
+						if s.JoinedAt.After(bound) {
+							bound = s.JoinedAt
+						}
+						if at, parseErr := time.Parse(time.RFC3339Nano, event.EventTime); parseErr == nil && at.Before(bound) {
+							continue
+						}
+					}
 					page = append(page, expandEvent(name, event)...)
 				}
 			}

@@ -785,10 +785,11 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if c.Kind == "message.created" && !l.HistoryFloor.IsZero() {
 		created, err := time.Parse(time.RFC3339Nano, m.CreateTime)
 		if err == nil && created.Before(l.HistoryFloor) {
-			// A create payload may already include a later edit. Only consume
-			// the create here so that edit can still arrive as a new act.
-			state.Revision = created
-			if previous != nil && previous.Revision.After(created) {
+			// Consume the create ID without claiming to have retained its
+			// content revision. This leaves later edits deliverable and lets
+			// older readers reject the frame-only record as cached content.
+			state.Revision = time.Time{}
+			if previous != nil {
 				state.Revision = previous.Revision
 			}
 			kind := ""
