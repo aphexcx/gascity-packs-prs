@@ -782,6 +782,147 @@ describe("City side: statuses of the city's sends", () => {
   });
 });
 
+describe("quoted replies", () => {
+  for (const [type, mime] of [["text", ""], ["image", "image/jpeg"], ["audio", "audio/mpeg"], ["video", "video/mp4"], ["document", "text/plain"]]) {
+    it(`accepts context on ${type} and preserves the message-id-only body`, async () => {
+      const t = setup(), city = await t.enrollCity(), owner = await t.join(city);
+      const inbound = await t.say(owner, "fixture input");
+      let content: Record<string, unknown> = { text: "fixture reply" };
+      if (type !== "text") {
+        const uploaded = await t.call("POST", "/v1/uploads", { token: city.token, raw: "fixture", headers: {
+          "content-type": mime!, "content-length": "7", "x-filename": "fixture.bin",
+          "x-content-sha256": "a".repeat(64), "idempotency-key": uniq(),
+        } });
+        expect(uploaded.status).toBe(200);
+        content = { media: { id: uploaded.body.media_id } };
+      }
+      const response = await t.send(city, { to: owner, idempotency_key: uniq(), type, ...content, context: { message_id: inbound.wamid } });
+      expect(response.status).toBe(200);
+      expect(Object.keys(response.body)).toEqual(["message_id"]);
+      expect(response.headers.get("x-gc-quoted")).toBe("true");
+      expect(t.graph.sends().at(-1)!.body!.context).toEqual({ message_id: inbound.wamid });
+    });
+  }
+
+  for (const context of [null, [], "id", {}, { message_id: "" }, { message_id: 1 }, { message_id: "x".repeat(257) }, { message_id: "id", extra: true }]) {
+    it(`refuses malformed context ${JSON.stringify(context).slice(0, 45)} before sending`, async () => {
+      const t = setup(), city = await t.enrollCity(), owner = await t.join(city);
+      const before = t.graph.sends().length;
+      const response = await t.send(city, { to: owner, idempotency_key: uniq(), type: "text", text: "reply", context });
+      expect(response).toMatchObject({ status: 400, body: { error: "bad_request" } });
+      expect(t.graph.sends()).toHaveLength(before);
+    });
+  }
+
+  it("ignores context on templates and reactions", async () => {
+    const t = setup(), city = await t.enrollCity(), owner = await t.join(city);
+    const inbound = await t.say(owner, "fixture input");
+    for (const content of [{ type: "template", template: { name: "dynasty_update", language: "en_US", params: ["reply"] } },
+      { type: "reaction", reaction: { message_id: inbound.wamid, emoji: "" } }]) {
+      const response = await t.send(city, { to: owner, idempotency_key: uniq(), ...content, context: false });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-gc-quoted")).toBeNull();
+      expect(t.graph.sends().at(-1)!.body!.context).toBeUndefined();
+    }
+  });
+
+  it("recognizes acknowledged inbound, joined and own-send ids", async () => {
+    const t = setup(), city = await t.enrollCity(), owner = await t.join(city);
+    const inbound = await t.say(owner, "fixture input");
+    const joined = (await t.inbox(city)).body.deliveries.find((d: any) => d.kind === "joined").message.id;
+    const sent = await t.send(city, { to: owner, idempotency_key: uniq(), type: "text", text: "fixture first" });
+    await t.ack(city, (await t.held(city)).map((d) => d.id));
+    for (const message_id of [inbound.wamid, joined, sent.body.message_id]) {
+      const response = await t.send(city, { to: owner, idempotency_key: uniq(), type: "text", text: "fixture reply", context: { message_id } });
+      expect(response.headers.get("x-gc-quoted")).toBe("true");
+      const reaction = await t.send(city, { to: owner, idempotency_key: uniq(), type: "reaction", reaction: { message_id, emoji: "👀" } });
+      expect(reaction.status).toBe(200);
+    }
+  });
+
+  it("unknown, foreign, synthetic and expired targets send plain; reactions refuse without spending a key", async () => {
+    const t = setup(), a = await t.enrollCity(), owner = await t.join(a);
+    const b = await t.enrollCity(), other = await t.join(b);
+    const foreign = await t.say(other, "fixture foreign input");
+    const expired = await t.say(owner, "fixture old input");
+    t.clock.now += 8 * DAY + 1;
+    await t.gateway.maintain();
+    const current = await t.say(owner, "fixture new input");
+    for (const message_id of [foreign.wamid, expired.wamid, "wamid.made-up", "keeper:fixture:1", "wamid.failed:status:failed"]) {
+      const plain = await t.send(a, { to: owner, idempotency_key: uniq(), type: "text", text: "reply", context: { message_id } });
+      expect(plain.status).toBe(200);
+      expect(plain.headers.get("x-gc-quoted")).toBe("false");
+      expect(plain.headers.get("x-gc-quote-reason")).toBe("unknown_message");
+      expect(t.graph.sends().at(-1)!.body!.context).toBeUndefined();
+      const key = uniq(), before = t.graph.sends().length;
+      const refused = await t.send(a, { to: owner, idempotency_key: key, type: "reaction", reaction: { message_id, emoji: "👀" } });
+      expect(refused).toMatchObject({ status: 422, body: { error: "unknown_message" } });
+      expect(t.graph.sends()).toHaveLength(before);
+      expect((await t.send(a, { to: owner, idempotency_key: key, type: "reaction", reaction: { message_id: current.wamid, emoji: "👀" } })).status).toBe(200);
+    }
+    // The foreign message above has aged out; a fresh foreign message must also be refused.
+    const freshForeign = await t.say(other, "fixture current foreign input");
+    const plain = await t.send(a, { to: owner, idempotency_key: uniq(), type: "text", text: "reply", context: { message_id: freshForeign.wamid } });
+    expect(plain.headers.get("x-gc-quote-reason")).toBe("unknown_message");
+    expect((await t.send(a, { to: owner, idempotency_key: uniq(), type: "reaction", reaction: { message_id: freshForeign.wamid, emoji: "👀" } })).status).toBe(422);
+  });
+
+  it("falls back once after a definite refusal and replays without another send", async () => {
+    const t = setup(), city = await t.enrollCity(), owner = await t.join(city);
+    const inbound = await t.say(owner, "fixture input"), before = t.graph.sends().length;
+    const request = { to: owner, idempotency_key: uniq(), type: "text", text: "reply", context: { message_id: inbound.wamid } };
+    t.graph.failNext({ status: 400, body: { error: { code: 131009 } } });
+    const sent = await t.send(city, request);
+    expect(sent.status).toBe(200);
+    expect(sent.headers.get("x-gc-quoted")).toBe("false");
+    expect(sent.headers.get("x-gc-quote-reason")).toBe("meta_refused");
+    expect(t.graph.sends()).toHaveLength(before + 2);
+    expect(t.graph.sends().at(-2)!.body!.context).toEqual(request.context);
+    expect(t.graph.sends().at(-1)!.body!.context).toBeUndefined();
+    const replay = await t.send(city, request);
+    expect(replay.body).toEqual(sent.body);
+    expect(replay.headers.get("x-gc-quoted")).toBe("unknown");
+    expect(t.graph.sends()).toHaveLength(before + 2);
+  });
+
+  for (const [failure, status, error] of [
+    [{ status: 400, body: { error: { code: 131047 } } }, 422, "window_closed"],
+    [{ status: 429, body: { error: { code: 4 } } }, 502, "meta_error"],
+    ["network", 502, "outcome_unknown"],
+    [{ status: 500, body: {} }, 502, "outcome_unknown"],
+    [{ status: 200, body: {} }, 502, "outcome_unknown"],
+  ] as const) it(`does not fall back for ${JSON.stringify(failure)}`, async () => {
+    const t = setup(), city = await t.enrollCity(), owner = await t.join(city);
+    const inbound = await t.say(owner, "fixture input"), before = t.graph.sends().length;
+    t.graph.failNext(failure);
+    const response = await t.send(city, { to: owner, idempotency_key: uniq(), type: "text", text: "reply", context: { message_id: inbound.wamid } });
+    expect(response).toMatchObject({ status, body: { error } });
+    expect(t.graph.sends()).toHaveLength(before + 1);
+  });
+
+  it("returns the fallback attempt's error when both attempts fail", async () => {
+    const t = setup(), city = await t.enrollCity(), owner = await t.join(city);
+    const inbound = await t.say(owner, "fixture input"), before = t.graph.sends().length;
+    t.graph.failNext({ status: 400, body: { error: { code: 131009 } } }, { status: 400, body: { error: { code: 131047 } } });
+    const response = await t.send(city, { to: owner, idempotency_key: uniq(), type: "text", text: "reply", context: { message_id: inbound.wamid } });
+    expect(response).toMatchObject({ status: 422, body: { error: "window_closed" } });
+    expect(t.graph.sends()).toHaveLength(before + 2);
+  });
+
+  it("pin: requests without context keep the original body and omit quote headers", async () => {
+    const t = setup(), city = await t.enrollCity(), owner = await t.join(city);
+    const request = { to: owner, idempotency_key: uniq(), type: "text", text: "reply" };
+    const sent = await t.send(city, request), replay = await t.send(city, request);
+    expect(sent.status).toBe(200);
+    expect(Object.keys(sent.body)).toEqual(["message_id"]);
+    expect(replay.body).toEqual(sent.body);
+    for (const answer of [sent, replay]) {
+      expect(answer.headers.get("x-gc-quoted")).toBeNull();
+      expect(answer.headers.get("x-gc-quote-reason")).toBeNull();
+    }
+  });
+});
+
 describe("City side: send", () => {
   it("a send to an unbound phone, or to another city's phone, answers 403 without a Graph call", async () => {
     const t = setup();

@@ -469,6 +469,43 @@ def test_publish_sends_the_extmsg_shape_with_cli_origin_and_session(fake, tmp_pa
     assert body['idempotency_key'].startswith('whatsapp-cli-')
 
 
+@pytest.mark.parametrize('mode', ['text', 'file', 'update'])
+@pytest.mark.parametrize('flag', ['--reply-to', '--reply-to=wamid.example'])
+def test_publish_quote_flag_reaches_adapter(fake, mode, flag):
+    route = '/publish-update' if mode == 'update' else '/publish'
+    adapter = fake({f'POST {route}': (200, {'delivered': True})})
+    flags = [flag, 'wamid.example'] if flag == '--reply-to' else [flag]
+    content = ['--file', '/fixture.txt'] if mode == 'file' else ['--text', 'fixture reply']
+    result = verb('publish.sh', '--to', 'example-owner', *flags, *content,
+                  *(['--update'] if mode == 'update' else []), WHATSAPP_ADAPTER_URL=adapter.url)
+    assert result.returncode == 0, result.stderr
+    assert adapter.requests[0][2]['reply_to_message_id'] == 'wamid.example'
+
+
+@pytest.mark.parametrize('quoted,reason,line', [
+    ('false', 'unknown_message', 'sent without the quote (unknown_message)'),
+    ('false', 'gateway_without_quotes', 'sent without the quote (gateway_without_quotes)'),
+    ('false', 'invalid_id', 'sent without the quote (invalid_id)'),
+    ('false', 'template', 'sent without the quote (template)'),
+    ('false', 'meta_refused', 'sent without the quote (meta_refused)'),
+    ('unknown', 'replayed', 'sent; the gateway did not say whether the quote was applied'),
+])
+def test_publish_quote_warning_still_exits_zero(fake, quoted, reason, line):
+    adapter = fake({'POST /publish': (200, {'delivered': True, 'metadata': {'quoted': quoted, 'quote_reason': reason}})})
+    result = verb('publish.sh', '--to', 'example-owner', '--text', 'fixture', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert result.returncode == 0
+    assert f'gc whatsapp publish: {line}' in result.stderr
+
+
+def test_publish_quote_empty_or_absent_is_omitted_and_missing_value_is_usage_error(fake):
+    adapter = fake({'POST /publish': (200, {'delivered': True})})
+    for args in [[], ['--reply-to', '']]:
+        result = verb('publish.sh', '--to', 'example-owner', '--text', 'fixture', *args, WHATSAPP_ADAPTER_URL=adapter.url)
+        assert result.returncode == 0
+        assert 'reply_to_message_id' not in adapter.requests[-1][2]
+    assert verb('publish.sh', '--to', 'example-owner', '--text', 'fixture', '--reply-to').returncode == 2
+
+
 def test_publish_window_closed_prints_the_hint(fake):
     adapter = fake({'POST /publish': (200, {'delivered': False, 'failure_kind': 'permanent',
                                             'metadata': {'reason': 'window_closed', 'hint': 'use gc whatsapp publish --update'}})})
