@@ -25,6 +25,7 @@ text_set=false
 text_file_set=false
 caption_file_set=false
 update=false
+reply_to=""
 idempotency_key=""
 session="${GC_SESSION_ID:-}"
 while [ "$#" -gt 0 ]; do
@@ -42,6 +43,8 @@ while [ "$#" -gt 0 ]; do
     --caption-file) [ "$#" -ge 2 ] || wa_usage_error "--caption-file needs a value"; caption_file="$2"; caption_file_set=true; shift 2 ;;
     --caption-file=*) caption_file="${1#*=}"; caption_file_set=true; shift ;;
     --update) update=true; shift ;;
+    --reply-to) [ "$#" -ge 2 ] || wa_usage_error "--reply-to needs a value"; reply_to="$2"; shift 2 ;;
+    --reply-to=*) reply_to="${1#*=}"; shift ;;
     --idempotency-key) [ "$#" -ge 2 ] || wa_usage_error "--idempotency-key needs a value"; idempotency_key="$2"; shift 2 ;;
     --idempotency-key=*) idempotency_key="${1#*=}"; shift ;;
     --session) [ "$#" -ge 2 ] || wa_usage_error "--session needs a value"; session="$2"; shift 2 ;;
@@ -84,16 +87,18 @@ echo "gc whatsapp publish: idempotency key $idempotency_key (rerun with --idempo
 
 city="${GC_CITY_NAME:-}"
 if [ "$update" = true ]; then
-  body=$(jq -n --arg to "$to" --arg text "$text" --arg key "$idempotency_key" --arg session "$session" \
-    '{to: $to, text: $text, idempotency_key: $key} + (if $session != "" then {session_id: $session} else {} end)')
+  body=$(jq -n --arg to "$to" --arg text "$text" --arg key "$idempotency_key" --arg session "$session" --arg reply_to "$reply_to" \
+    '{to: $to, text: $text, idempotency_key: $key} + (if $session != "" then {session_id: $session} else {} end)
+     + (if $reply_to != "" then {reply_to_message_id: $reply_to} else {} end)')
   wa_call POST /publish-update "$body"
 else
   body=$(jq -n --arg city "$city" --arg to "$to" --arg text "$text" --arg key "$idempotency_key" --arg session "$session" \
-    --arg file "$file" --arg caption "$caption" --arg caption_file "$caption_file" \
+    --arg file "$file" --arg caption "$caption" --arg caption_file "$caption_file" --arg reply_to "$reply_to" \
     '{conversation: {scope_id: $city, provider: "whatsapp", account_id: "dynasty", conversation_id: $to, kind: "dm"},
       idempotency_key: $key, metadata: {origin: "cli"}}
      + (if $file != "" then {file: $file} + (if $caption_file != "" then {caption_file: $caption_file} else {caption: $caption} end) else {text: $text} end)
-     + (if $session != "" then {session_id: $session} else {} end)')
+     + (if $session != "" then {session_id: $session} else {} end)
+     + (if $reply_to != "" then {reply_to_message_id: $reply_to} else {} end)')
   wa_call POST /publish "$body"
 fi
 
@@ -110,4 +115,12 @@ if [ "$delivered" = "false" ]; then
   [ -n "$hint" ] && echo "gc whatsapp publish: $hint" >&2
   exit 1
 fi
+quoted=$(printf '%s' "$WA_BODY" | jq -r '.metadata.quoted // empty')
+case "$quoted" in
+  false)
+    reason=$(printf '%s' "$WA_BODY" | jq -r '.metadata.quote_reason // "unknown"')
+    echo "gc whatsapp publish: sent without the quote ($reason)" >&2 ;;
+  unknown)
+    echo 'gc whatsapp publish: sent; the gateway did not say whether the quote was applied' >&2 ;;
+esac
 printf '%s\n' "$WA_BODY"

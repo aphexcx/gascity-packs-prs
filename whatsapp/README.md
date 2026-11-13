@@ -182,6 +182,34 @@ A template never opens or extends the window; only the owner's next message
 does. Whether a text is an actual update is the mayor's skill rule (Afik:
 "only if there is an actual update").
 
+## Quoted replies
+
+The reply line under every inbound message now includes
+`gc whatsapp publish --to <conversation_id> --reply-to <message_id> --text-file <path>`.
+It quotes that message on the first part of a text, or on the file's message.
+Leave the flag off subsequent messages of the same answer. The first call's
+quote is retained when its idempotency key is retried, without changing the
+send keys. An invalid id goes plain, including an unexpanded placeholder
+from an older gc. A keeper or delivery-failure id goes plain when the gateway
+does not recognize it. Templates accept the flag but cannot quote.
+
+Only a receipt that requested a quote adds the strings `metadata.quoted`
+and `metadata.quote_reason`. Quoted is `true` when the gateway sent context
+(with an empty reason), `false` for `invalid_id`, `template`,
+`gateway_without_quotes`, `unknown_message` or `meta_refused`, and `unknown`
+with reason `replayed` when only a stored gateway answer is available.
+The command still exits 0 after a successful send and explains a missing
+or uncertain quote on stderr. Meta may omit a quote bubble for a deleted or
+archived target even after accepting the context.
+
+The adapter and gateway can ship in either order. An older gateway ignores
+context and sends plain; the command reports that. Quotes reach a phone only
+when both are updated. Nothing changes on a box until its pack is updated
+and its adapter restarts. Gateway deployment is separate from this change,
+and migration 0005 must precede deployment of the current gateway. There is
+no new migration. Quoted replies use the same 24-hour window and never reopen
+it. Nothing automatic is enabled.
+
 ## Hand reactions
 
 `gc whatsapp react --to <conversation_id> --message <message_id> --emoji 👀`
@@ -300,6 +328,7 @@ Operator mail contains only city, adapter, cause, times, aggregate counts and ag
 | Verb | What it does |
 | --- | --- |
 | `gc whatsapp publish --to <conversation_id> --text-file <path>` | free-form text inside the window |
+| `gc whatsapp publish --to <conversation_id> --reply-to <message_id> --text-file <path>` | quote the inbound message on the first part of the reply |
 | `gc whatsapp react --to <conversation_id> --message <message_id> --emoji <emoji>` | place a hand reaction inside the window; an empty emoji removes it |
 | `gc whatsapp publish --to <conversation_id> --file <path> [--caption-file <path>]` | one allowed file inside the window; upload/send resume under the printed key |
 | `gc whatsapp publish --update --to <conversation_id> --text "..."` | the update template outside the window |

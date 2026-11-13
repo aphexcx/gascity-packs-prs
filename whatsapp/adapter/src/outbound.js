@@ -149,6 +149,16 @@ export const textChunkKey = (key, to, text, index) => `text:${sha256Hex(JSON.str
 export const templateKey = (key, to, { name, language, params }) => `template:${sha256Hex(JSON.stringify([key, to, name, language, params]))}`;
 export const reactionKey = (key, to, messageId, emoji) => `reaction:${sha256Hex(JSON.stringify([key, to, messageId, emoji]))}`;
 const validMessageId = (id) => typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\s\x00-\x1f\x7f{}]/u.test(id);
+const requestedQuote = (id) => id === undefined || id === '' ? null
+  : validMessageId(id) ? { message_id: id } : { reason: 'invalid_id' };
+const quoteContext = (quote) => quote?.message_id ? { context: { message_id: quote.message_id } } : {};
+function quoteMetadata(quote, answer) {
+  if (!quote) return {};
+  if (quote.reason) return { quoted: 'false', quote_reason: quote.reason };
+  if (answer.quoted === 'true') return { quoted: 'true', quote_reason: '' };
+  if (answer.quoted === 'unknown') return { quoted: 'unknown', quote_reason: 'replayed' };
+  return { quoted: 'false', quote_reason: answer.quote_reason || 'gateway_without_quotes' };
+}
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -528,7 +538,8 @@ export function createPublisher({
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer, activity;
       try {
-        ({ answer, activity } = await sendWithActivity({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] },
+        ({ answer, activity } = await sendWithActivity({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i],
+          ...(i === 0 ? quoteContext(entry.quote) : {}) },
           conversationId, entry.session_id ?? sessionId));
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
@@ -540,6 +551,7 @@ export function createPublisher({
       }
       const messageId = str(answer.message_id);
       entry.message_ids[i] = messageId;
+      if (i === 0) entry.quote_result = quoteMetadata(entry.quote, answer);
       entry.delivered = i + 1;
       entry.activities ??= [];
       if (activity) entry.activities.push(activity);
@@ -552,7 +564,7 @@ export function createPublisher({
       conversation,
       delivered: true,
       idempotency_key: key,
-      metadata: { chunks: String(chunks.length), message_ids: entry.message_ids.join(',') },
+      metadata: { chunks: String(chunks.length), message_ids: entry.message_ids.join(','), ...entry.quote_result },
     };
     progress.save(key, entry);
     log(`publish to …${lastFour(conversationId)} delivered (${chunks.length} chunk${chunks.length === 1 ? '' : 's'})`);
@@ -619,6 +631,12 @@ export function createPublisher({
       return cli ? withTranscript(answer, { key, sessionId, conversationId, text }) : answer;
     }
     const context = { conversationId, conversation, key, chunks: 1, delivered: 0 };
+    if (!existing) {
+      const reserved = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
+        transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [],
+        session_id: sessionId, quote: requestedQuote(pub.reply_to_message_id) };
+      if (!progress.save(key, reserved)) return failure({ progressSave: true }, context);
+    }
     const answer = await once(key, { conversationId, textSha, endpoint: 'file' }, conversation,
       () => chain(conversationId, () => toOwner(context, async (to, closes) => {
         let entry = progress.get(key);
@@ -652,7 +670,7 @@ export function createPublisher({
           // The gateway checks that key before the window and grant. This sentinel
           // is not a gateway UUID handle, so even a window reopening during the
           // request cannot cause a new Meta send. No upload is made for the probe.
-          const request = { to, idempotency_key: `file-send:${operation}`, type: file.kind,
+          const request = { to, idempotency_key: `file-send:${operation}`, type: file.kind, ...quoteContext(entry.quote),
             media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } };
           const { answer: sent, activity } = caption.trim()
             ? await sendWithActivity(request, conversationId, entry.session_id ?? sessionId)
@@ -662,7 +680,8 @@ export function createPublisher({
           entry.delivered = 1;
           entry.message_ids = [sent.message_id];
           entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
-            metadata: { chunks: '1', message_ids: sent.message_id, file_name: file.name, file_bytes: String(file.size), file_sha256: file.sha256 } };
+            metadata: { chunks: '1', message_ids: sent.message_id, file_name: file.name, file_bytes: String(file.size), file_sha256: file.sha256,
+              ...quoteMetadata(entry.quote, sent) } };
           if (activity) entry.activity = activity;
           progress.save(key, entry);
           killPoint('after-media-receipt', key);
@@ -736,6 +755,12 @@ export function createPublisher({
         }
       }
 
+      if (!entry) {
+        const reserved = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha,
+          chunks: chunkText(pub.text).length, delivered: 0, message_ids: [], session_id: sessionId,
+          quote: requestedQuote(pub.reply_to_message_id) };
+        if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId, conversation, key, chunks: reserved.chunks, delivered: 0 });
+      }
       const answer = await once(key, { conversationId, textSha, endpoint: 'publish' }, conversation,
         () => chain(conversationId, () => toOwner(
           { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
@@ -850,7 +875,8 @@ export function createPublisher({
         conversation,
         delivered: true,
         idempotency_key: key,
-        metadata: { template: UPDATE_TEMPLATE, language: updateLanguage, ...(journaled ? {} : { journaled: 'false' }) },
+        metadata: { template: UPDATE_TEMPLATE, language: updateLanguage, ...(journaled ? {} : { journaled: 'false' }),
+          ...quoteMetadata(existing?.quote, answer) },
       },
     };
     progress.save(key, entry);
@@ -887,6 +913,11 @@ export function createPublisher({
         }
       }
 
+      if (!entry) {
+        const reserved = { endpoint: 'update', conversation_id: to, text_sha256: textSha,
+          quote: requestedQuote(body.reply_to_message_id) ? { reason: 'template' } : null };
+        if (!progress.save(key, reserved)) return failure({ progressSave: true }, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
+      }
       // The recipient first (an unbound owner's conversation is not_bound,
       // whatever the box's ledger says of its window), then the window.
       const windowOpen = () => {

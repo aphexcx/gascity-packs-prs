@@ -28,11 +28,17 @@ phone. Write the reply to a file, then send it, as the reply line under each
 message says:
 
 ```
-gc whatsapp publish --to <conversation_id> --text-file <path>
+gc whatsapp publish --to <conversation_id> --reply-to <message_id> --text-file <path>
 ```
 
 `gc whatsapp publish --to <conversation_id> --text "message"` works for a simple
 string. Use the file for anything with quotes or code.
+
+The reply line quotes the message it sits under. Keep the quote on the first
+message of an answer and leave it off the ones that follow; a long reply
+automatically quotes only its first part. A file can carry the quote too.
+If the quote could not be applied, the command says so on stderr and the
+message still went. A template cannot carry a quote.
 
 Answer promptly, even if it is only "on it". The owner sees the blue ticks
 and "typing…" as soon as the message reaches you, so silence after that
@@ -87,6 +93,9 @@ when a message arrives.
 A reaction needs the open 24-hour window and does not reopen it. If it is
 refused, use words by the window rule below; a reaction cannot use a template.
 When `gc whatsapp react` fails, the reaction was not placed, so say the same thing in words.
+
+A reaction to an old, deleted, missing or reaction message may be accepted
+and then fail; that failure arrives as a delivery-failed line.
 
 - **A reaction comes first.** On a channel where you can react, your first
   answer to a message addressed to you is the reaction from the first table
