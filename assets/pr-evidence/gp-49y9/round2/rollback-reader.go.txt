@@ -13,7 +13,7 @@ import (
 
 // Compiled with the actual released loader and processor by the overlay runner.
 func TestCoalescedLedgerCompatibility(t *testing.T) {
-	for _, state := range []string{"owner_deleted", "member_deleted", "member_edited", "empty_replayed", "folded_deleted_replayed", "folded_edited_replayed"} {
+	for _, state := range []string{"owner_deleted", "member_deleted", "member_edited", "empty_replayed", "folded_deleted_replayed", "folded_edited_replayed", "edit_owner_replayed"} {
 		t.Run(state, func(t *testing.T) {
 			f := setup(t)
 			l, err := ledger.Load(filepath.Join(os.Getenv("GCHAT_ROLLBACK_FIXTURES"), state+".json"), true)
@@ -52,7 +52,11 @@ func TestCoalescedLedgerCompatibility(t *testing.T) {
 					t.Errorf("replay posts=%d unresolved=%d want=%d", len(posts), len(l.Unresolved), want)
 				}
 				for _, post := range posts {
-					if strings.Contains(post.Text, "body-00") || strings.Contains(post.Text, "folded-text") {
+					withdrawn := strings.Contains(post.Text, "body-00")
+					if state == "edit_owner_replayed" {
+						withdrawn = strings.Contains(post.Text, "body-001")
+					}
+					if withdrawn || strings.Contains(post.Text, "folded-text") {
 						t.Errorf("released replay sent withdrawn text: %s", post.Text)
 					}
 				}
