@@ -304,11 +304,21 @@ func (p *Processor) Pass(ctx context.Context) error {
 		return err
 	}
 	defer p.leave()
+	l, err := p.snapshot()
+	if err != nil {
+		return err
+	}
+	// Older writers may have recorded a withdrawal without refreshing an
+	// already-stopped copy. Clean it before any member can change on resume.
+	if invalidateWithdrawnCopies(l, "") {
+		if err := p.update(func(current *ledger.Ledger) { invalidateWithdrawnCopies(current, "") }); err != nil {
+			return err
+		}
+	}
 	var failures []error
 	if err := p.flushWindows(ctx); err != nil {
 		failures = append(failures, err)
 	}
-	var l *ledger.Ledger
 	if err := p.opts.NeverSilent.WithHistory(func() error {
 		var err error
 		l, err = p.snapshot()
@@ -1099,6 +1109,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			l.Messages[name] = state
 		}
 		if c.Kind == "message.updated" || c.Kind == "message.deleted" {
+			invalidateWithdrawnCopies(l, c.Space)
 			for _, owner := range l.Changes {
 				if owner.Space == c.Space {
 					refreshed = p.refreshMerged(l, owner) || refreshed

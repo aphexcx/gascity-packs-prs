@@ -93,7 +93,9 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 		return true
 	}
 	raw, _ := json.Marshal(w)
-	created := owner.Created
+	// Retirement mutates the old owner. Capture the turn's delivery state
+	// first, so changing its key cannot erase an ambiguous POST or a bound.
+	delivery := *owner
 	for _, c := range removed {
 		c.MemberOf, c.Members = "", nil
 		c.HeldUntil = time.Time{}
@@ -109,9 +111,11 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 		if c.ID == anchor {
 			c.MemberEvent, c.MemberKind = copy.Event, copy.Kind
 			c.Event, c.Kind, c.MemberOf = string(raw), "coalesced", ""
-			c.Status, c.Created = "intent", created
+			c.Status, c.Created = "intent", delivery.Created
 			if anchor != owner.ID {
-				c.Reason, c.Cause, c.NextAttempt = "", "", time.Time{}
+				c.Attempts, c.Fragment = delivery.Attempts, delivery.Fragment
+				c.Reason, c.Cause = delivery.Reason, delivery.Cause
+				c.NextAttempt, c.Posted = delivery.NextAttempt, delivery.Posted
 			}
 		} else {
 			c.Status, c.Reason = "committed", "coalesced"
@@ -127,6 +131,38 @@ func retireWithdrawn(l *ledger.Ledger, c *ledger.ChangeState, at time.Time) {
 	c.MemberEvent, c.MemberKind = c.OriginalEvent(), c.OriginalKind()
 	c.Event, c.Kind = "", c.MemberKind
 	markUnresolved(l, c.ID, c, reasonWithdrawn, at)
+}
+
+// invalidateWithdrawnCopies leaves the delivery and its diagnostics intact,
+// but removes frozen payloads that a resolve handler or an older reader could
+// POST. Run before intent refresh changes the shared member snapshots. The
+// shape matters even after coalescing is disabled; ordinary singles stay as-is.
+func invalidateWithdrawnCopies(l *ledger.Ledger, space string) bool {
+	changed := false
+	for _, records := range []map[string]*ledger.ChangeState{l.Changes, l.Unresolved} {
+		for _, c := range records {
+			if (space != "" && c.Space != space) || c.Event == "" || (c.Status != "pending" && c.Status != "unresolved") {
+				continue
+			}
+			if len(c.Members) == 0 && c.MemberEvent == "" && c.Kind != "coalesced" {
+				continue
+			}
+			withdrawn := superseded(l, c)
+			for _, id := range c.Members {
+				if member := l.Changes[id]; member != nil && superseded(l, member) {
+					withdrawn = true
+					break
+				}
+			}
+			if !withdrawn {
+				continue
+			}
+			c.MemberEvent, c.MemberKind = c.OriginalEvent(), c.OriginalKind()
+			c.Event = ""
+			changed = true
+		}
+	}
+	return changed
 }
 
 func currentEdit(l *ledger.Ledger, message string, revision time.Time) *ledger.ChangeState {

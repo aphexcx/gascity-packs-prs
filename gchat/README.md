@@ -371,15 +371,24 @@ before that space's catch-up. A merged turn has one receipt, retry record and
 unresolved id, with its member count in status. Resolve that id once to replay
 the saved current text or accept every member. Before a retry, deleted members
 are removed and edited members use their current text. A surviving owner keeps
-the key; when the owner was deleted, the newest survivor owns the replacement.
+the key; when the owner was deleted, the newest survivor owns the replacement,
+including the turn's attempt count, fragment marker and retry schedule. A
+fragment still has at most four POSTs across all owner keys. After an unknown
+outcome, the surviving turn ends unresolved for the operator to inspect and
+accept or replay; an owner change never makes that turn automatically sendable.
+The deleted owner's retired record has no replayable payload and can be accepted.
 The edit or deletion follows that delivery. When gc had recorded a turn before
 it refused it, gc's saved transcript keeps that first text; the adapter sends
 the current text and then the withdrawal; a gc change is needed for the saved
-row itself. History reads still use each message's own text. With coalescing
-enabled, a withdrawn record has no replayable payload: replay returns
-`stored turn is malformed; cannot replay` (HTTP 400), leaves the original
-withdrawal reason in status, and makes no POST, including after a rollback to
-0.5.0. Use `--accept` to settle that record. A rollback delivers held messages individually and keeps
+row itself. History reads still use each message's own text. Any pending or
+already unresolved merged or folded copy containing withdrawn text loses its
+replayable payload, even if it stopped for another reason or coalescing is now
+off. Its prior reason and cause remain intact. Pending receipts are still
+polled; a failed receipt may rebuild a replacement with current survivors.
+Replaying an unresolved record whose payload was cleared returns
+`stored turn is malformed; cannot replay` (HTTP 400), preserves its reason,
+and makes no POST, including after a rollback to 0.5.0. Use `--accept` to settle
+that record. A rollback delivers held messages individually and keeps
 delivered groups completed. A frozen group in flight remains one delivery on
 the older reader: pending receipts are polled, and an interrupted POST becomes
 one unresolved record, requiring the usual explicit replay or acceptance.

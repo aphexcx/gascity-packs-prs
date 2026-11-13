@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Class is the principal class the constitution names.
@@ -155,7 +156,18 @@ func Render(s Speaker, body string) string {
 func QuoteMergedHeaders(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
+		// Fold only the comparison: invisible format characters and unusual
+		// spaces must not disguise a body line as transport-authored framing.
+		visible := strings.Map(func(r rune) rune {
+			if unicode.Is(unicode.Cf, r) {
+				return -1
+			}
+			if unicode.Is(unicode.Zs, r) || r == '\t' {
+				return ' '
+			}
+			return r
+		}, line)
+		trimmed := strings.TrimSpace(visible)
 		if mergedHeader.MatchString(trimmed) || (i > 0 && strings.HasPrefix(trimmed, "[from: ")) {
 			lines[i] = "> " + line
 		}

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Owner changes preserve delivery uncertainty, fragment limits and retry state; withdrawals clear every pending or unresolved merged/folded payload, and merged body headers are quoted as they display through Unicode format characters and spaces.
+
 - Coalesced retries refresh withdrawn members before posting, preserve literal edit prefixes in history, quote body from-line prefixes, isolate malformed held records, and count retried catch-up acts against the budget.
 - Withdrawn window-on deliveries retain their message history but cannot be replayed, including by a rolled-back 0.5.0 reader; replay leaves the withdrawal reason intact and operators can accept the record.
 
