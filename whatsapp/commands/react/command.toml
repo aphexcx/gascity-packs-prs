@@ -1,0 +1,2 @@
+description = "Place or remove a reaction on one WhatsApp message"
+run = "../react.sh"

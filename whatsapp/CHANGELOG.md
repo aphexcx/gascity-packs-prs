@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (gp-bod9)
+
+- Add `gc whatsapp react --to --message --emoji` for hand reactions and
+  removal with an empty emoji. It uses the existing gateway route, records
+  a transcript and preserves the 24-hour window. After a pack update and
+  adapter restart the mayor can react; nothing automatic is switched on.
+
 ## Unreleased (gp-60dl)
 
 - A hibernating WebSocket per city wakes the adapter to read its existing

@@ -182,6 +182,23 @@ A template never opens or extends the window; only the owner's next message
 does. Whether a text is an actual update is the mayor's skill rule (Afik:
 "only if there is an actual update").
 
+## Hand reactions
+
+`gc whatsapp react --to <conversation_id> --message <message_id> --emoji 👀`
+places a reaction; `--emoji ""` removes it. Use the inbound "Message id:"
+line. The emoji is a character, not a catalog name. All three flags are
+required, and the command needs session attribution just like a publish.
+It prints a resume key before sending and records the delivered reaction in
+the transcript. Reuse that key after a transport error; changing its message
+or emoji is a conflict. A reaction is recorded as the mayor's act when
+`NEVER_SILENT` is on.
+
+A reaction needs the open 24-hour window and never reopens it. It cannot
+use the update template. A refusal exits 1 with a reason and a hint; say the
+same thing in words by the window rule. Nothing reacts automatically: this
+command acts only when the mayor runs it. A box gains it after updating its
+pack and restarting the adapter. No gateway update is needed for this command.
+
 ## Files out
 
 `gc whatsapp publish --to <conversation_id> --file <path>` sends one image,
@@ -283,6 +300,7 @@ Operator mail contains only city, adapter, cause, times, aggregate counts and ag
 | Verb | What it does |
 | --- | --- |
 | `gc whatsapp publish --to <conversation_id> --text-file <path>` | free-form text inside the window |
+| `gc whatsapp react --to <conversation_id> --message <message_id> --emoji <emoji>` | place a hand reaction inside the window; an empty emoji removes it |
 | `gc whatsapp publish --to <conversation_id> --file <path> [--caption-file <path>]` | one allowed file inside the window; upload/send resume under the printed key |
 | `gc whatsapp publish --update --to <conversation_id> --text "..."` | the update template outside the window |
 | `gc whatsapp invite [--proactive-consent] [--hours "Mon-Fri 09:00-18:00"] [--tz <zone>]` | a 6-digit, 24-hour invite code and the two lines the owner is told |

@@ -72,10 +72,21 @@ place, and only once the fact is true:
 | 📝 | `memo` | "Noted, and saved where I will find it again." |
 | ⚠️ | `warning` | "It did not work; my reply says why." |
 
-You cannot place a reaction on WhatsApp yet. The adapter may place one
-from the first table when a message arrives. Until you can, a message that
-only thanks, confirms, agrees or closes a topic still gets an answer from
-you in words (a reaction from them still rarely needs one).
+You can place a reaction with:
+
+```
+gc whatsapp react --to <conversation_id> --message <message_id> --emoji 👀
+```
+
+Use the id on the "Message id:" line under the message. In an owner's
+`[reaction EMOJI to ID]` line, ID is the message the owner reacted to.
+The flag takes the emoji character itself. An empty value (`--emoji ""`)
+takes your reaction back. The adapter may place one from the first table
+when a message arrives.
+
+A reaction needs the open 24-hour window and does not reopen it. If it is
+refused, use words by the window rule below; a reaction cannot use a template.
+When `gc whatsapp react` fails, the reaction was not placed, so say the same thing in words.
 
 - **A reaction comes first.** On a channel where you can react, your first
   answer to a message addressed to you is the reaction from the first table

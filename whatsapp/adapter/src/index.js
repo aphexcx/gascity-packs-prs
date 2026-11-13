@@ -140,6 +140,7 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
     'GET /healthz': async () => ({ status: 200, json: health() }),
     'POST /publish': async (body) => publisher.handlePublish(body),
     'POST /publish-update': async (body) => publisher.handlePublishUpdate(body),
+    'POST /react': async (body) => publisher.handleReact(body),
     'GET /status': async () => ({
       status: 200,
       json: { inbound: inbound.status(), keeper: keeper.status(), ledger: ledger.snapshot(), health: health(), never_silent: notices?.status() },

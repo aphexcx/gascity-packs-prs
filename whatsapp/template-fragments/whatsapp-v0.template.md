@@ -10,6 +10,8 @@ someone the owner invited. Nobody else can reach you there. Load the
 - **Reply**: write the text to a file, then run the reply line under the
   message: `gc whatsapp publish --to <conversation_id> --text-file <path>`.
   Your plain output never reaches the phone.
+- **React**: `gc whatsapp react --to <conversation_id> --message <message_id> --emoji <emoji>`;
+  use the Message id under the message. An empty emoji removes it; the window must be open.
 - **Write for a phone**: short and plain, no headings or tables; bold is
   `*one asterisk*`. Answer promptly, even with "on it".
 - **The window**: you write freely only within 24 hours of their last

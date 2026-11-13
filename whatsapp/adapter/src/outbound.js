@@ -147,6 +147,8 @@ const sha256Hex = (s) => crypto.createHash('sha256').update(String(s)).digest('h
 // retry still gets the gateway's first answer (its REPEATED KEY rule).
 export const textChunkKey = (key, to, text, index) => `text:${sha256Hex(JSON.stringify([key, to, text]))}:${index}`;
 export const templateKey = (key, to, { name, language, params }) => `template:${sha256Hex(JSON.stringify([key, to, name, language, params]))}`;
+export const reactionKey = (key, to, messageId, emoji) => `reaction:${sha256Hex(JSON.stringify([key, to, messageId, emoji]))}`;
+const validMessageId = (id) => typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\s\x00-\x1f\x7f{}]/u.test(id);
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -382,7 +384,7 @@ export function createPublisher({
   }
 
   // failure maps a gateway error to gc's receipt, answered 200.
-  function failure(err, { conversationId, conversation, key, chunks, delivered }) {
+  function failure(err, { conversationId, conversation, key, chunks, delivered, reaction = false }) {
     let kind = 'permanent';
     let reason = 'gateway_refused';
     let hint = '';
@@ -392,6 +394,14 @@ export function createPublisher({
       hint = 'The 24-hour WhatsApp window for this conversation is closed: Meta refuses a free-form message until the owner writes again. '
         + `An actual update goes as the approved template: gc whatsapp publish --update --to ${conversationId} --text "<the update>". `
         + 'Otherwise wait for the owner\'s next message; this reply can then be retried with the same idempotency key.';
+      if (reaction) hint = 'The 24-hour WhatsApp window for this conversation is closed, and a reaction is a free-form message: it was not placed. '
+        + 'Say it in words by the window rule, or wait for the owner\'s next message.';
+    } else if (reaction && err?.status === 422 && err.json?.error === 'unknown_message') {
+      reason = 'unknown_message';
+      hint = 'The reaction was not placed: the message is unknown to this gateway or older than its record. Say it in words by the window rule.';
+    } else if (reaction && err?.json?.error === 'meta_error' && err.json.meta_status >= 400 && err.json.meta_status < 500 && err.json.meta_status !== 429) {
+      gatewayError = 'meta_error';
+      hint = 'The reaction was not placed: Meta refused it. The message may be gone or too old. Say it in words by the window rule.';
     } else if (err?.status === 409 && err.json?.error === 'ambiguous_recipient') {
       // PR 76's rule R1 (gp-0g2s): `to` names two owners of this city and the
       // gateway sent nothing. Since gp-g02t a send names the owner's user id
@@ -452,6 +462,7 @@ export function createPublisher({
     log(`send to …${lastFour(conversationId)} failed at chunk ${delivered + 1}/${chunks}: ${reason} (${err?.status ?? 'no answer'})`);
     const metadata = { reason, chunks: String(chunks), chunks_delivered: String(delivered) };
     if (gatewayError) metadata.gateway_error = gatewayError;
+    if (reaction && gatewayError === 'meta_error' && err.json.meta_code != null) metadata.meta_code = String(err.json.meta_code);
     if (hint) metadata.hint = hint;
     if (err?.recipient) metadata.recipient = err.recipient; // refused here: the gateway answered nothing
     else if (Number.isInteger(err?.status)) metadata.gateway_status = String(err.status);
@@ -737,6 +748,63 @@ export function createPublisher({
     }
   }
 
+  async function handleReact(raw) {
+    try {
+      let body;
+      try { body = JSON.parse(raw); } catch { return bad('invalid JSON'); }
+      if (!isObject(body)) return bad('the body must be a JSON object');
+      const metadata = isObject(body.metadata) ? body.metadata : {};
+      const sessionId = str(body.session_id) || str(metadata.source_session_id);
+      if (!sessionId) return bad(ATTRIBUTION_ERROR);
+      const conversationId = str(body.conversation?.conversation_id);
+      if (!conversationId) return bad('conversation.conversation_id is required');
+      if (!validMessageId(body.message_id)) return bad('message_id must be 1 to 256 characters without whitespace, controls or braces');
+      if (typeof body.emoji !== 'string' || body.emoji.length > 32 || /[a-z0-9\s\x00-\x1f\x7f]/i.test(body.emoji)) {
+        return bad('emoji takes the emoji character itself (or an empty string to remove it), at most 32 UTF-16 units, without ASCII letters, digits or whitespace');
+      }
+      if (body.idempotency_key !== undefined && (typeof body.idempotency_key !== 'string' || !body.idempotency_key)) return bad('idempotency_key must be a non-empty string when given');
+      const key = body.idempotency_key || `whatsapp-reaction-${crypto.randomUUID()}`;
+      const conversation = { ...conversationRef(city, conversationId), ...body.conversation, conversation_id: conversationId };
+      const textSha = sha256Hex(JSON.stringify([body.message_id, body.emoji]));
+      const text = body.emoji ? `[reaction ${body.emoji} to ${body.message_id}]` : `[reaction removed from ${body.message_id}]`;
+      const existing = progress.get(key);
+      if (existing && (existing.endpoint !== 'reaction' || entryConversation(existing) !== conversationId || existing.text_sha256 !== textSha)) return conflict(conversation, key);
+      let answer;
+      if (existing?.receipt) answer = { status: 200, json: clone(existing.receipt) };
+      else {
+        const context = { conversationId, conversation, key, chunks: 1, delivered: 0, reaction: true };
+        answer = await once(key, { conversationId, textSha, endpoint: 'reaction' }, conversation,
+          () => chain(conversationId, () => toOwner(context, async (to) => {
+            const entry = progress.get(key) ?? { endpoint: 'reaction', conversation_id: conversationId, text_sha256: textSha,
+              transcript_sha256: sha256Hex(text), session_id: sessionId };
+            progress.save(key, entry);
+            try {
+              const { answer: sent, activity } = await sendWithActivity({ to, idempotency_key: reactionKey(key, conversationId, body.message_id, body.emoji),
+                type: 'reaction', reaction: { message_id: body.message_id, emoji: body.emoji } }, conversationId, entry.session_id);
+              entry.activity = activity;
+              entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
+                metadata: { reaction: body.emoji ? 'placed' : 'removed', reacted_to: body.message_id } };
+              progress.save(key, entry);
+              ledger?.noteSend?.(conversationId, { type: 'reaction', message_id: sent.message_id, at: activity?.at ?? clock() });
+              restoreActivity(activity);
+              log(`reaction to …${lastFour(conversationId)} ${body.emoji ? 'placed' : 'removed'}`);
+              return { status: 200, json: entry.receipt };
+            } catch (err) {
+              if (err?.status === 422 && err.json?.error === 'window_closed') {
+                ledger?.noteWindowClosed?.(conversationId, clock());
+                try { onWindowClosed(conversationId); } catch { log('reaction window-closed hook failed'); }
+              }
+              return failure(err, context);
+            }
+          })));
+      }
+      return metadata.origin === 'cli' ? withTranscript(answer, { key, sessionId, conversationId, text }) : answer;
+    } catch {
+      log('reaction failed inside the adapter');
+      return { status: 500, json: { delivered: false, failure_kind: 'transient', error: 'internal adapter error; retry with the same idempotency key' } };
+    }
+  }
+
   async function sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId }) {
     const existing = progress.get(key);
     if (existing?.receipt) return { status: 200, json: existing.receipt };
@@ -859,7 +927,7 @@ export function createPublisher({
     });
   }
 
-  return { handlePublish, handlePublishUpdate, notice };
+  return { handlePublish, handlePublishUpdate, handleReact, notice };
 }
 
 // The outbound transcript line for an update: the template is Meta-side
