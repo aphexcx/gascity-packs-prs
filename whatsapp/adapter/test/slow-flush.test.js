@@ -5,13 +5,14 @@
 // from the fake gateway handing out a delivery to the fake city receiving its
 // POST, and from a publish request to the fake gateway receiving its send.
 // Each stays under 100 ms (the median of three, so one slow scheduling slot
-// on a loaded host is not read as a flush on the path). A publish of many
-// chunks is measured chunk by chunk: each chunk's send follows the previous
-// one within the limit, so flushes piling up in Node's pool never delay a
-// later chunk's marker create.
+// on a loaded host is not read as a flush on the path). A second test holds
+// every stopwatch and marker flush (a stuck disk, holding threads of Node's
+// pool) and requires every chunk of a long publish to be sent while they are
+// held: structural, so it does not move with the host's load.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -69,28 +70,59 @@ for (const mode of ['', 'eyes']) {
       assert.equal(answer.json.delivered, true, `publish ${n} delivered`);
       return marks.sent.get(text) - start;
     };
-    const chunked = async (n) => {
-      const tag = `synthetic-chunked-${n}-`;
-      const text = Array.from({ length: 2800 }, (_, i) => `${tag}${i}`).join(' ');
-      const start = performance.now();
-      const answer = await adapterRequest(r.socket, 'POST', '/publish', { session_id: 'session-example', conversation: { conversation_id: OWNER }, text, idempotency_key: `publish-example-chunked-${n}` });
-      assert.equal(answer.json.delivered, true, `chunked publish ${n} delivered`);
-      const times = marks.texts.filter((s) => s.text.includes(tag)).map((s) => s.at);
-      assert.ok(times.length > 4, `chunked publish ${n} sent ${times.length} chunks`);
-      return Math.max(...times.map((at, i) => at - (i ? times[i - 1] : start)));
-    };
     await deliver('warm');
     const deliveries = []; const sends = [];
     for (let i = 0; i < SAMPLES; i++) deliveries.push(await deliver(i));
     for (let i = 0; i < SAMPLES; i++) sends.push(await publish(i));
-    const chunks = [];
-    for (let i = 0; i < SAMPLES; i++) chunks.push(await chunked(i));
     const shown = (values) => values.map((v) => `${Math.round(v)} ms`).join(', ');
     // The control: the preload did slow the stopwatch's and the markers' flushes.
     await waitFor(() => slowed() > 0, { what: 'a slowed flush (the preload in effect)' });
-    t.diagnostic(`delivery: ${shown(deliveries)}; send: ${shown(sends)}; longest gap between chunks: ${shown(chunks)}; slowed flushes: ${slowed()}`);
+    t.diagnostic(`delivery: ${shown(deliveries)}; send: ${shown(sends)}; slowed flushes: ${slowed()}`);
     assert.ok(median(deliveries) < LIMIT_MS, `a delivery waited on a flush: ${shown(deliveries)}`);
     assert.ok(median(sends) < LIMIT_MS, `a send waited on a flush: ${shown(sends)}`);
-    assert.ok(median(chunks) < LIMIT_MS, `a later chunk's send waited on flushes in the pool: ${shown(chunks)}`);
+  });
+}
+
+// Every chunk of a long publish is sent while the stopwatch's and the markers'
+// flushes are held. Each held flush occupies a thread of Node's four-thread
+// pool, as a stuck disk does; a send waits only for its marker's create, which
+// needs a free pool thread. Flushes made in parallel would take every thread
+// and stall the publish; on one chain they hold at most one.
+for (const mode of ['', 'eyes']) {
+  test(`every chunk of a publish is sent while the flushes are held (ACK_REACTION=${mode || 'unset'})`, async (t) => {
+    const r = await rig({ extra: { NODE_OPTIONS: `--import=${PRELOAD}`, ...(mode ? { ACK_REACTION: mode } : {}) } });
+    const fifo = path.join(r.dir, 'hold.fifo');
+    const released = path.join(r.dir, 'released');
+    execFileSync('mkfifo', [fifo]);
+    const release = async () => {
+      fs.writeFileSync(released, '');
+      // Each open by a writer frees every reader blocked in open; closing it
+      // ends their reads. Repeat until no reader holds the pipe (ENXIO).
+      for (let i = 0; i < 200; i++) {
+        let fd;
+        try { fd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); } catch { break; }
+        fs.closeSync(fd);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+    t.after(async () => { await release(); await r.close(); });
+    const heldLog = path.join(r.dir, 'held-flushes.log');
+    const held = () => (fs.existsSync(heldLog) ? fs.readFileSync(heldLog, 'utf8').split('\n').filter((l) => l === 'held').length : 0);
+    r.start({ WA_HOLD_FSYNC_FIFO: fifo, WA_HOLD_FSYNC_RELEASED: released, WA_SLOW_FSYNC_LOG: heldLog });
+    await waitFor(() => r.gc.registrations.length === 1, { what: 'the registration' });
+    // The owner writes first, which opens the conversation's window.
+    const warm = r.gw.addText(OWNER, 'message-example-held', 'synthetic held');
+    await waitFor(() => r.gw.acked.has(warm), { what: 'the ack of the owner\'s message' });
+    const tag = 'synthetic-held-';
+    const text = Array.from({ length: 2800 }, (_, i) => `${tag}${i}`).join(' ');
+    // A liveness bound, not a speed limit: a stalled publish never answers.
+    const stalled = new Promise((resolve) => { setTimeout(() => resolve({ json: { delivered: 'stalled' } }), 20000).unref(); });
+    const answer = await Promise.race([adapterRequest(r.socket, 'POST', '/publish', { session_id: 'session-example', conversation: { conversation_id: OWNER }, text, idempotency_key: 'publish-example-held' }), stalled]);
+    const chunks = r.gw.sends.filter((s) => s.type === 'text' && String(s.text).includes(tag)).length;
+    t.diagnostic(`chunks sent: ${chunks}; flushes held: ${held()}; released: ${fs.existsSync(released)}`);
+    assert.equal(fs.existsSync(released), false, 'the flushes were still held');
+    assert.ok(held() > 0, 'a flush was held (the preload in effect)');
+    assert.equal(answer.json.delivered, true, `every chunk sent while the flushes were held (${chunks} sent)`);
+    assert.ok(chunks > 4, `a publish of many chunks (${chunks})`);
   });
 }

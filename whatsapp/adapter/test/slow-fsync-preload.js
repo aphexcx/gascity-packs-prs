@@ -9,6 +9,11 @@
 // WA_SLOW_FSYNC_MATCH replaces the path rule ('.' slows every flush).
 // WA_SLOW_FSYNC_LOG names a file that gets one line per slowed flush, so a
 // test can show the preload took effect.
+// HOLD MODE: with WA_HOLD_FSYNC_FIFO (a named pipe) set, an asynchronous
+// slowed flush is held instead of slowed: it opens the pipe for reading and
+// reads it to its end, which blocks one thread of Node's pool until the test
+// releases it, as a stuck disk would. Once the file WA_HOLD_FSYNC_RELEASED
+// exists, flushes are no longer held.
 //
 // Not every flush: the inbound journal's write-ahead flush before the POST to
 // the city is the base's own design (journal.js), so slowing it would slow
@@ -36,7 +41,14 @@ let iterations = 20000;
   const t0 = performance.now(); crypto.pbkdf2Sync('slow', 'flush', iterations, 32, 'sha512');
   iterations = Math.max(1000, Math.round(iterations * ms / Math.max(performance.now() - t0, 0.5)));
 }
-const later = () => pbkdf2('slow', 'flush', iterations, 32, 'sha512');
+const timed = () => pbkdf2('slow', 'flush', iterations, 32, 'sha512');
+const hold = async () => {
+  if (fs.existsSync(process.env.WA_HOLD_FSYNC_RELEASED || '')) return;
+  slowed('held');
+  const pipe = await popen(process.env.WA_HOLD_FSYNC_FIFO, 'r');
+  try { await pipe.readFile(); } finally { await pipe.close(); }
+};
+const later = () => (process.env.WA_HOLD_FSYNC_FIFO ? hold() : timed());
 const appendFileSync = fs.appendFileSync;
 const slowed = (what) => { if (process.env.WA_SLOW_FSYNC_LOG) appendFileSync(process.env.WA_SLOW_FSYNC_LOG, `${what}\n`); };
 
