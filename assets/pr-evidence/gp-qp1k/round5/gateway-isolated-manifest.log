@@ -1,0 +1,1 @@
+command=pnpm exec vitest run test/bsuid-orders.test.ts exit=1

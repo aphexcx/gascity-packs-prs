@@ -1,0 +1,528 @@
+pnpm wrapper: verify-deps off for test (round 3)
+$ node --test --test-concurrency=2 'test/*.test.js'
+✔ gateway send replay header distinguishes fresh, replayed and legacy answers (2.158625ms)
+✔ the fake gateway serves v1 plus the additive files-out route (0.336625ms)
+✔ every contract route answers on the fake through the adapter's client (23.878458ms)
+✔ shape 1 (a NULL wa_id): a message from an owner the gateway knows by user id alone is acknowledged, filed under its conversation_id with that id as the actor, and opens the window the mayor's reply and update read (1116.478208ms)
+✔ shape 1 (a NULL wa_id): a join from an owner known by user id alone binds the invite's keeper fields to its conversation_id and is acknowledged (1440.403333ms)
+✔ shape 2 (a number change): two deliveries of one conversation_id from two numbers land in ONE gc conversation, in order on one chain, under one watermark (1400.742083ms)
+✔ shape 3 (a recycled number): owner B on the number owner A was bound by never shares A's gc conversation; the mayor's reply and update in B's conversation go to B's id (2018.036958ms)
+✔ the recipient (C1): owner A is unbound and B shows A's number now: the mayor's reply and update in A's conversation reach nobody, never B (647.842583ms)
+✖ the recipient (M2): owner A is still bound and B shows A's number: the mayor's reply and update in A's conversation reach A's user id, never refused 409 (21301.485875ms)
+✔ the recipient: `--to` naming a number that is no conversation id (one an owner shows) is refused with a hint naming the conversation id, and nothing is sent (236.495917ms)
+✔ the recipient: an owner PR 73 bound by number alone (PR 76's window lists it with user_id null) is not bound, and nothing is sent (358.474542ms)
+✔ the keeper's verbs match a user-id conversation whole: consent for one never changes another with the same digits; an id with no digits is found; a typed number never matches a user id (777.578667ms)
+✔ the journal: a received line the PR 74 adapter wrote (wa_id only, its gc conversation) is read as that conversation; its acceptance raises that conversation's watermark and counts in the boundary of the owner's next delivery; its ack goes with no second post (332.986916ms)
+✔ the contract: a PR 73 delivery (no conversation_id field) is filed under its wa_id; a delivery naming conversation_id null is left unacknowledged and never filed under its wa_id (740.185958ms)
+✔ (12a) a dead-letter transition whose ack fails (500, then nothing), a compaction, a SIGKILL, a restart: the dead line survives, the ack is re-sent and confirmed, no new POST (2920.982667ms)
+ℹ rejected: 2 failed ack(s), then the ack confirmed after the restart; POSTs 1, none after
+▶ (12b) the same across every dead reason
+  ✔ pending_deadline (6632.85875ms)
+  ℹ pending_deadline: 2 failed ack(s), then the ack confirmed after the restart; POSTs 1, none after
+  ✔ in_doubt (12105.899458ms)
+  ℹ in_doubt: 2 failed ack(s), then the ack confirmed after the restart; POSTs 2, none after
+  ✔ redelivery_no_route (6431.539583ms)
+  ℹ redelivery_no_route: 2 failed ack(s), then the ack confirmed after the restart; POSTs 2, none after
+  ✔ held_terminal (1661.44475ms)
+  ℹ held_terminal: 2 failed ack(s), then the ack confirmed after the restart; POSTs 1, none after
+  ✔ repost_bound (2642.127875ms)
+  ℹ repost_bound: 2 failed ack(s), then the ack confirmed after the restart; POSTs 4, none after
+  ✔ rejected (4678.284292ms)
+  ℹ rejected: 2 failed ack(s), then the ack confirmed after the restart; POSTs 1, none after
+  ✔ no_route (1879.162583ms)
+  ℹ no_route: 2 failed ack(s), then the ack confirmed after the restart; POSTs 1, none after
+✔ (12b) the same across every dead reason (36033.143166ms)
+✔ (12c) a kill between the dead-letter file line and the dead journal line: the restart repeats the transition with no second dead-letter line, then acks (2021.651792ms)
+✔ FOUND: format conversation and a user turn with the header and the last id line (0.548666ms)
+✔ a format text answer is a snapshot and is NOT FOUND whatever the pane shows (the gate r6 first finding) (0.0575ms)
+✔ a tool result, an assistant turn or an output turn quoting the id is NOT FOUND (0.071541ms)
+✔ a later paste whose BODY quotes the id line while its own id line names another wamid is NOT FOUND (0.056916ms)
+✔ the header must name whatsapp/<conversation_id> exactly (0.074584ms)
+✔ verdicts: the terminal flag is read first; partial kept apart; no_route; unsupported (0.432208ms)
+✔ the read-back schedule: 5 s for 10 min, 60 s to the hour, then 5 min, no cutoff (0.050958ms)
+✔ image: upload, journal, send, transcript and retry (524.467875ms)
+✔ document: upload, journal, send, transcript and retry (427.148ms)
+✔ audio: upload, journal, send, transcript and retry (403.506042ms)
+✔ video: upload, journal, send, transcript and retry (441.012834ms)
+✔ refuses denied path .gc/services/photo.jpg without contacting gateway (50.541625ms)
+✔ refuses denied path .gc/keys/photo.jpg without contacting gateway (39.415917ms)
+✔ refuses denied path secrets/photo.jpg without contacting gateway (39.651375ms)
+✔ refuses denied path nested/secrets/photo.jpg without contacting gateway (37.5575ms)
+✔ refuses denied path .ssh/photo.jpg without contacting gateway (20.77725ms)
+✔ refuses denied path .config/photo.jpg without contacting gateway (12.391542ms)
+✔ refuses denied path key.env without contacting gateway (24.031958ms)
+✔ refuses denied path key.pem without contacting gateway (24.304541ms)
+✔ refuses denied path id_photo.jpg without contacting gateway (24.060708ms)
+✔ symlink escapes, denied aliases and denied resolved targets fail closed (1953.418208ms)
+✔ custom roots never exempt denied paths; invalid and empty configuration fails closed (1281.571459ms)
+✔ a parent-directory swap cannot authorize the descriptor of a secret file (148.892292ms)
+✔ hard links and unavailable descriptor inspection fail closed (81.65425ms)
+✔ a file changed during the read is refused before upload (94.222667ms)
+✔ the after-read descriptor check catches a moved parent despite stable pathname checks (154.93025ms)
+✔ the update endpoint refuses files and captions even with otherwise valid template text (43.104542ms)
+✔ checks signatures against extensions, actual size, captions and changed files before upload (984.469083ms)
+✔ caption files use the same allow-list and their text enters the transcript (981.394667ms)
+✔ closed window uploads nothing, failed upload sends nothing, retry recovers (758.656458ms)
+✔ an unwritable journal before upload pauses the file send until the same key can be saved (1246.321375ms)
+✔ an unwritable journal after upload pauses the file send until the same key can be saved (924.8395ms)
+✔ a removed journal recovers a lost send reply after 25 hours without uploading (956.906625ms)
+✔ a unreadable journal recovers a lost send reply after 25 hours without uploading (1116.038416ms)
+✔ a recovery probe cannot send when the window reopens between lookup and probe (496.378042ms)
+✔ a recovery probe with an unknown send outcome never claims nothing was sent (111.298208ms)
+✔ signature parsing distinguishes audio/video tracks and rejects non-Opus Ogg (0.242666ms)
+✔ legacy Office follows later directory sectors for WordDocument (0.4495ms)
+✔ legacy Office follows later directory sectors for Workbook (0.104583ms)
+✔ legacy Office follows later directory sectors for PowerPoint Document (0.08375ms)
+✔ legacy Office identifies root streams and ignores embedded Office storage children (0.09725ms)
+✔ file receipts survive age and count pruning to recover after the window closes (922.195792ms)
+✔ a day-29 send with a lost reply survives day-31 pruning and a closed window (1847.621417ms)
+✔ an expired journal handle is permanent, but a completed send is still recovered (1655.767208ms)
+✔ image survives SIGKILL at before-media-upload with one upload and one send (2945.654791ms)
+✔ image survives SIGKILL at after-media-upload with one upload and one send (2931.987417ms)
+✔ image survives SIGKILL at after-media-journal with one upload and one send (3196.434333ms)
+✔ image survives SIGKILL at after-media-send with one upload and one send (2979.472042ms)
+✔ image survives SIGKILL at after-media-receipt with one upload and one send (1683.010916ms)
+✔ document survives SIGKILL at before-media-upload with one upload and one send (1911.401ms)
+✔ document survives SIGKILL at after-media-upload with one upload and one send (2194.572917ms)
+✔ document survives SIGKILL at after-media-journal with one upload and one send (1939.543834ms)
+✔ document survives SIGKILL at after-media-send with one upload and one send (968.948625ms)
+✔ document survives SIGKILL at after-media-receipt with one upload and one send (845.041541ms)
+✔ audio survives SIGKILL at before-media-upload with one upload and one send (909.355083ms)
+✔ audio survives SIGKILL at after-media-upload with one upload and one send (1030.793125ms)
+✔ audio survives SIGKILL at after-media-journal with one upload and one send (935.590208ms)
+✔ audio survives SIGKILL at after-media-send with one upload and one send (914.668417ms)
+✔ audio survives SIGKILL at after-media-receipt with one upload and one send (814.808958ms)
+✖ video survives SIGKILL at before-media-upload with one upload and one send (30150.677ms)
+✔ video survives SIGKILL at after-media-upload with one upload and one send (898.365833ms)
+✔ video survives SIGKILL at after-media-journal with one upload and one send (832.219875ms)
+✔ video survives SIGKILL at after-media-send with one upload and one send (856.370708ms)
+✔ video survives SIGKILL at after-media-receipt with one upload and one send (847.210417ms)
+✔ gate r1 MAJOR 1 (inbound.js:420): a rollback detected while its head read is held stays detected however far acceptances advance that watermark meanwhile; B's in-doubt entry takes the marked path (3491.3495ms)
+ℹ gap: watermark 2, head 4; A's watermark now 4
+✔ gate r1 MAJOR 1 (inbound.js:420): a rollback detected whose head read FAILS stays detected while acceptances advance that watermark; the gap is written with the head unknown (3882.002334ms)
+✔ gate r1 MAJOR 1 (inbound.js:420): a crash while the detection's head read is held, after acceptances advanced that watermark: the restart still holds the gap; B's in-doubt entry takes the marked path (3662.259917ms)
+✔ gate r1 MAJOR 2: ONE classifier decides what a new rid is, fresh only on positive proof (the table) (0.759541ms)
+✔ gate r1 MAJOR 2: the classification rides IN the received line; the fold applies it from that one line, live and on replay (415.944958ms)
+✔ gate r1 MAJOR 2 (inbound.js:284): a delivery older than the journal's genesis, a crash at the first append after its received line (before the round: the classification's own line), a restart: the in-doubt rule from zero, never a plain post (1971.7775ms)
+✔ gate r1 MAJOR 2 (inbound.js:284): the same delivery when the append after its received line FAILS and the engine runs on: never a plain post (2347.613375ms)
+✔ gate r1 MAJOR 2 (the same two writes): a delivery a lost journal dead-lettered, the append after its received line FAILS: dead and acked, never posted again (2350.939ms)
+✔ gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template's receipt (670.428ms)
+✔ gate r1 MAJOR 3 (outbound.js:398): the reverse, a two-chunk text keyed K, then an update keyed K:1: the template is SENT, never answered with chunk 1's receipt (631.452375ms)
+✔ self-review r1 NOTE 5 (the MAJOR 3 class): a caller key reused for ANOTHER text once the progress store forgot it is SENT, text and template alike, never answered with the first message's receipt (1243.856958ms)
+✔ Opus read r2 MAJOR 1 (outbound.js:116-117): a caller key the store forgot, reused for the SAME text or update to ANOTHER owner inside the gateway's 30 days, is SENT to that owner under its own message id, never answered with the first owner's (979.091ms)
+✔ Opus read r2 MAJOR 1 (outbound.js:116-117): a caller key the store forgot, reused for ANOTHER long text whose first 4,096-character chunk equals the earlier text's, sends the WHOLE text, every chunk under its own message id (438.766ms)
+✔ ADDENDUM 1, the 409 guard (gp-g02t): where the window names no user id (PR 73's shape) the send names the number; a 409 ambiguous_recipient there is refused once, gateway_refused with the ambiguity named; never a second send, nothing sent (25.420792ms)
+✔ ADDENDUM 1 (the round's self-review r1 MAJOR, gp-g02t): a recycled number's new owner B writes; gc files it under B's conversation_id, and the mayor's reply and update there reach B and never the old owner A (1147.649333ms)
+✔ gate r1 MINOR (inbound.js:197): a join whose keeper bind fails is not retired: held at the gateway and in the journal across a restart, bound and acked once the keeper heals (1888.071166ms)
+✔ Fable read r1 MINOR 1 (inbound.js:50): an order moves the window ledger as the gateway counts it (its reading 7); a system notice does not (1142.2275ms)
+✔ the PR 74 received line (wa_id only) folds as its gc conversation, beside the new lines, through a compaction and a replay (299.469708ms)
+✔ the fold derives each state from the last progress line (205.655708ms)
+✔ every line is replayed in order after a restart, a torn tail dropped (82.719583ms)
+✔ accepted lines raise the watermark; a watermark line sets it; clear and rebase (133.807125ms)
+✔ THE GATE r7 RULE 2: compaction drops only acknowledged rids and keeps a dead rid whose ack is unconfirmed (280.765041ms)
+✔ the dead-letter store writes one line per rid and indexes the files at start (37.751375ms)
+✔ gp-g02t: each owner's dead letters keep its own file: two user ids that differ only by a period never share one; a name never hides or leaves the directory (71.905208ms)
+✔ (10a) no hours: the four nudges fire at the close minus 60, 30, 15 and 5 (06:58 07:28 07:43 07:53 for a close at 07:58), each once, is_bot true (14088.027167ms)
+ℹ window_closes_at 2026-11-11 07:58:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:60 fired 2026-11-11 06:58:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:30 fired 2026-11-11 07:28:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:43:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+ℹ keeper:15550001111:2026-11-10:update fired 2026-11-10 10:00:00 America/Chicago
+ℹ keeper.json mode 600
+✔ (10b) an inbound between the 60 and the 30 cancels the old close, empties the fired set, and the new close fires 06:08 06:38 06:53 07:03 (9025.848667ms)
+ℹ new window_closes_at 2026-11-12 07:08:00 America/Chicago
+ℹ keeper:15550001111:2026-11-12T13:08:00.000Z:60 fired 2026-11-12 06:08:00 America/Chicago
+ℹ keeper:15550001111:2026-11-12T13:08:00.000Z:30 fired 2026-11-12 06:38:00 America/Chicago
+ℹ keeper:15550001111:2026-11-12T13:08:00.000Z:15 fired 2026-11-12 06:53:00 America/Chicago
+ℹ keeper:15550001111:2026-11-12T13:08:00.000Z:5 fired 2026-11-12 07:03:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+✔ (10c) hours shift: close at 02:00 under Mon-Fri 09:00-18:00 fires 17:00 17:30 17:45 17:55 the day before, shifted text (8391.350583ms)
+ℹ window_closes_at 2026-11-11 02:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T05:00:00.000Z:60 fired 2026-11-10 17:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T05:00:00.000Z:30 fired 2026-11-10 17:30:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T05:00:00.000Z:15 fired 2026-11-10 17:45:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T05:00:00.000Z:5 fired 2026-11-10 17:55:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-10 16:00:00 America/Sao_Paulo
+✔ (10c) hours unshifted: the owner wrote 09:30 Tue, close 09:28 Wed: the 60 and 30 drop, the 15 and 5 fire at 09:13 and 09:23 (14052.553584ms)
+ℹ window_closes_at 2026-11-11 09:28:00 America/Sao_Paulo; 08:28 and 08:58 fall before the 09:00 open
+ℹ keeper:5511999990001:2026-11-11T12:28:00.000Z:15 fired 2026-11-11 09:13:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T12:28:00.000Z:5 fired 2026-11-11 09:23:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-10 16:00:00 America/Sao_Paulo
+✔ (10c) hours crossing midnight: 18:00-02:00 and a close at 03:00 fire 01:00 01:30 01:45 01:55 (9480.103041ms)
+ℹ window_closes_at 2026-11-11 03:00:00 America/Sao_Paulo; close of business 02:00
+ℹ keeper:5511999990001:2026-11-11T06:00:00.000Z:60 fired 2026-11-11 01:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T06:00:00.000Z:30 fired 2026-11-11 01:30:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T06:00:00.000Z:15 fired 2026-11-11 01:45:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11T06:00:00.000Z:5 fired 2026-11-11 01:55:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-11 00:00:00 America/Sao_Paulo
+✔ (10c) hours, no span before the close: a close on Saturday under Mon-Fri 09:00-18:00 raises no mark and counts one lapse (16022.434208ms)
+ℹ window_closes_at 2026-11-14 19:58:00 America/Sao_Paulo; events 0; lapses 1
+✔ (10c) quiet rule: the business wrote 16:20 Fri after the 16:00 update, so no ladder mark that day (7712.499333ms)
+ℹ keeper:5511999990001:2026-11-13T19:58:00.000Z:60 fired 2026-11-13 15:58:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-13:update fired 2026-11-13 16:00:00 America/Sao_Paulo
+ℹ new close 2026-11-14 16:18:00; ladder shifted at 2026-11-13 17:00:00, 2026-11-13 17:30:00, 2026-11-13 17:45:00, 2026-11-13 17:55:00; silent [{"mark":60,"why":"quiet"},{"mark":30,"why":"quiet"},{"mark":15,"why":"quiet"},{"mark":5,"why":"quiet"}]
+✔ (10d) no nudge after the close: one lapse, the next update says "Window closed since 07:58", a refused nudge is counted, no template sent (2219.969875ms)
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+ℹ gateway calls by the keeper: window
+✔ (10d) a keeper down across the close raises no overdue nudge after it and counts one lapse (175.366208ms)
+ℹ back at 08:30 America/Chicago after the 07:58 close: events 0
+✔ (10e) no hours: the daily update fires once per local day at 10:00 in the recorded zone, else the city's (1717.468667ms)
+ℹ keeper:15550001111:2026-11-10:update fired 2026-11-10 10:00:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-10 10:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11:update fired 2026-11-11 10:00:00 America/Sao_Paulo
+✔ gp-g02t: a conversation the last good window read no longer lists (its owner unbound) raises nothing, and after a restart before any good read still nothing (72854.859042ms)
+✔ (10e) hours: the daily update fires two hours before the close of business (16:00 under 09:00-18:00), clamped inside a short span, none on Sunday (42541.815292ms)
+ℹ keeper:5511999990001:2026-11-13:update fired 2026-11-13 16:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-14:update fired 2026-11-14 10:00:00 America/Sao_Paulo
+✔ (10e) a SIGKILL between the update's state write and its post, then a restart the same day: the update is never raised twice (1837.403584ms)
+ℹ child exit null signal SIGKILL
+ℹ keeper:15550001111:2026-11-11:update fired 2026-11-11 10:00:00 America/Chicago
+✔ (10e) the update posted, then a SIGKILL and a restart the same day: not raised again (1664.580791ms)
+ℹ keeper:15550001111:2026-11-10:update fired 2026-11-10 10:00:00 America/Chicago
+✔ (10f) a SIGKILL between the 30 and the 15 marks and a restart: the 15 and the 5 fire, the 60 and the 30 do not fire again (931.834083ms)
+ℹ child killed at 2026-11-11 07:35:00 America/Chicago: signal SIGKILL
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:60 fired 2026-11-11 06:58:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:30 fired 2026-11-11 07:28:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:43:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+✔ (10f) a SIGKILL between the 30's state write and its post: the 30 is lost and never raised twice; the 15 and the 5 fire after the restart (275.359542ms)
+ℹ child killed at 2026-11-11 07:28:00 America/Chicago: signal SIGKILL
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:43:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+✔ (10f) a keeper down across the 60, 30 and 15 marks fires only the latest overdue one on restart (with the true minutes left), then the 5 (85.176041ms)
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:50:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+✔ (10b) a failed window read after a delivery is retried on the ladder (1, 5, 15, 60 s) in clock time, never every tick; keeper.json keeps the last good read and the error; the ladder holds until the clock is fresh (454.377834ms)
+ℹ 4 reads while failing, ms after 06:57:30: 250, 1250, 6250, 21250; log: keeper: window read failed (HTTP 503 from http://127.0.0.1:57967/v1/window); retry 1 in 1s
+ℹ after the gateway recovered: window_read_ok_at 2026-11-11T14:30:00.000Z, error null
+✔ (10g) without recorded consent: no event at all through a whole window and the next day's update hour (363.639625ms)
+ℹ events 0; keeper off/off
+✔ (10g) consent --off mid-window stops the remaining marks; --on resumes from the next mark (213.850458ms)
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:60 fired 2026-11-11 06:58:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:15 fired 2026-11-11 07:43:00 America/Chicago
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:5 fired 2026-11-11 07:53:00 America/Chicago
+✔ (10h) a keeper event answered 500 is retried on the ladder in clock time (+1 s, +5 s) until delivered (70.329375ms)
+ℹ attempts at 2026-11-11 06:58:00, 2026-11-11 06:58:01, 2026-11-11 06:58:06 America/Chicago
+✔ (10h) an event answered no_route, answered 400 or dropped with no answer is counted on the keeper row and never re-raised for that mark (204.963625ms)
+ℹ undelivered (7 d) 3
+✔ (10h) a keeper event answered 500 every time is dropped after the ladder (1, 5, 15, 60 s) and counted (314.805958ms)
+ℹ attempts at 2026-11-10 10:00:00, 2026-11-10 10:00:01, 2026-11-10 10:00:06, 2026-11-10 10:00:21, 2026-11-10 10:01:21 America/Chicago
+✔ (r2 M2) consent and hours name the phone by its digits ("+55 11 99999-0001" is 5511999990001); an unknown phone is refused 404, no row created (120.560834ms)
+ℹ +55 11 99999-0009: 404 no conversation ending 0009 is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded
+ℹ +55 11 99999-0009: 404 no conversation ending 0009 is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded
+ℹ 15550009999: 404 no conversation ending 9999 is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded
+ℹ 15550009999: 404 no conversation ending 9999 is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded
+✔ (r2 m3) a delivery noted while a window read is in flight owes the next read: the stale answer never clears it, and the old close raises no nudge (66.521875ms)
+ℹ reads from 06:57:59: 2026-11-11 06:57:59, 2026-11-11 06:57:59
+✔ (r2 m4) a state write that fails before an event is raised undoes the record in memory: the nudge is raised at the first tick that can write it, never shown as fired while lost (57.180375ms)
+ℹ keeper:15550001111:2026-11-11T13:58:00.000Z:60 fired 2026-11-11 07:00:00 America/Chicago
+✔ (r2 m5) a failed write in setConsent, setHours, bindInvite or recordInvite throws and leaves memory as the disk has it (60.969125ms)
+ℹ before {"wa":["on",null],"br":null,"pending":1}; after the failed writes {"wa":["on",null],"br":null,"pending":1}
+✔ (r2 m6) bindInvite is idempotent: a second sight of the same join is a no-op true (consent --off stands), a code binds one phone only (84.437584ms)
+✔ (r2 m7) a keeper event answered pending is accepted (gc took it); partial, failed and no_route are counted undelivered (194.011791ms)
+ℹ undelivered: 30 delivery partial; 15 delivery failed; 5 delivery no_route
+✔ (r2 m8) the quiet rule compares business days: under 18:00-02:00 the owner writing at 00:30 Wed (Tuesday's span, after Tuesday's update) does not silence Wednesday's marks (1163.722084ms)
+ℹ new close 2026-11-12 00:28:00; ladder unshifted; silent []
+ℹ keeper:5511999990001:2026-11-10:update fired 2026-11-11 00:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-12T03:28:00.000Z:60 fired 2026-11-11 23:28:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-12T03:28:00.000Z:30 fired 2026-11-11 23:58:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-11:update fired 2026-11-12 00:00:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-12T03:28:00.000Z:15 fired 2026-11-12 00:13:00 America/Sao_Paulo
+ℹ keeper:5511999990001:2026-11-12T03:28:00.000Z:5 fired 2026-11-12 00:23:00 America/Sao_Paulo
+✔ (r2 n13) a window read whose last_inbound_at went BACK is ignored: the fired set stands and no mark is raised twice (49.494042ms)
+ℹ keeper: …1111: the gateway's last_inbound_at went back (2026-11-10T14:00:00.000Z after 2026-11-10T15:00:00.000Z); read ignored
+✔ (r2 n14) consent --off while the day's update is being posted: the ladder does not run for that phone in the same pass (88.852625ms)
+✔ (zoned) business hours parse: day ranges, lists, midnight crossing, inherited days (0.17825ms)
+✔ (zoned) bad business hours and bad zones are refused with a clear message (1.107458ms)
+✔ (zoned) a wall time to an instant: plain, a DST gap moves forward, a DST fold takes the earlier (0.15875ms)
+ℹ America/Sao_Paulo {"year":2026,"month":11,"day":10} +1020 min -> 2026-11-10T20:00:00.000Z
+ℹ America/Chicago {"year":2026,"month":11,"day":10} +600 min -> 2026-11-10T16:00:00.000Z
+ℹ America/Chicago {"year":2026,"month":3,"day":8} +150 min -> 2026-03-08T08:30:00.000Z
+ℹ America/Chicago {"year":2026,"month":11,"day":1} +90 min -> 2026-11-01T06:30:00.000Z
+ℹ America/Sao_Paulo {"year":2026,"month":11,"day":10} +1560 min -> 2026-11-11T05:00:00.000Z
+✔ held: a runtime without WebSocket polls at its original interval (280.623ms)
+✔ held: an owed keeper bind retries at the original cadence without another inbox read (351.113875ms)
+✔ held: URL conversion strips query and credentials, with no subprotocol (0.788708ms)
+✔ held: credential travels only in the upgrade header (157.226125ms)
+✔ held: a wake delivers and acknowledges within two real seconds despite a ten-minute poll (204.274ms)
+✔ held: a wake during an in-flight read queues exactly one further read (960.474208ms)
+✔ held: a quiet connection reads only once each safety interval (2479.001334ms)
+✔ held: every reconnect reads a delivery whose wake was lost (367.606583ms)
+✔ held: route missing and explicit off retain the ordinary polling cadence (566.193083ms)
+✔ held: a missed pong closes the socket within forty clock seconds and resumes polling (953.291209ms)
+✔ held: reconnect attempts follow 1, 5, 15, 60, then 300 seconds without a loop (884.690416ms)
+✔ held: the inbox 401 stops all further polls and reconnects (815.233667ms)
+✔ held: offline for an hour loses no delivery and posts each once after restart (669.139292ms)
+✔ held: wake, reconnect and safety reads of a held row cause one post (914.136333ms)
+✔ held: SIGKILL after received during a wake read recovers exactly once (346.955875ms)
+✔ held: a closed socket resumes the ordinary poll without waiting for the held interval (313.91425ms)
+✔ held: 4503 rollback close immediately resumes polling and posts the held delivery once (402.436792ms)
+✔ media saved with the webhook's mime and the sha256 checked (79.390417ms)
+✔ a sha256 mismatch is refused with a note and nothing is saved (9.893917ms)
+✔ a transcript inline for a voice note with a fake Scribe, cached beside the file (46.187125ms)
+✔ the degrade note without a key (16.969709ms)
+✔ a Scribe failure degrades to the saved-not-transcribed note (16.049625ms)
+✔ a quota breach rejects the save with the in-message note (2.059625ms)
+✔ the free-disk floor and the size cap reject the save with the in-message note (2.121ms)
+✔ a re-hydrate of the same media reuses the file without a second download (16.523333ms)
+✔ nothing logged carries a phone number in clear, a wamid, a path, a transcript or the key (29.150083ms)
+✔ a gateway failure never rejects: ok false with a one-line note (1.81575ms)
+✔ A: notice clock and immediate mail do not wait for the held inbox poll (2341.113917ms)
+ℹ pin: mail at stop; line at +180000 ms; no additional inbox read; tick 250 ms
+✔ A: continuous failed receipts notify at three minutes without an inbox read (2160.141417ms)
+▶ B: wake and poll carry the same admission and receipt result into notices
+  ✔ wake (2590.61025ms)
+  ✔ poll (6603.073667ms)
+✔ B: wake and poll carry the same admission and receipt result into notices (9194.326375ms)
+✔ C: dropping and reconnecting a held link preserves the outage and notice marks (3613.987708ms)
+✔ D: a lost wake starts no outage before arrival and uses the adapter arrival clock (2920.648625ms)
+ℹ pin: provider sent +0; adapter admitted +300000; first owner line +480000 ms
+✔ never-silent integration: outage watch survives registration 503 and a second restart (1303.813333ms)
+ℹ first-restart: registration 503; owner lines=1 operator mails=1
+ℹ second-restart: registration 503; owner lines=1 operator mails=1
+✔ never-silent integration: captioned reply activity survives primary receipt SIGKILL without replay (1367.467333ms)
+✔ never-silent integration: primary delivered resolution clears a stale sidecar stop after restart (5113.039333ms)
+✔ never-silent integration: terminal whole-paste pending remains delivered across restart (3539.530917ms)
+✔ never-silent integration: refused message posts once without reply bookkeeping and mails fake gc (4028.617542ms)
+ℹ ["mail","send","--context","example-operator","mayor","--dedup","never-silent:f0338d86-a86f-4c57-8f56-f41479fbe906","-s","never-silent: test-city: whatsapp: not_delivered","-m","city: test-city\nchannel: whatsapp\ncause: not_delivered — the message did not land and will not without recovery\nstarted: 2026-11-04T15:00:00.000Z\nconversations: 1\nmessages: 1\noldest_age_seconds: 0\nowners_told: true (1 conversations)\nstatus: gc whatsapp status --json\n"]
+✔ never-silent integration: whole-paste pending uses health; attributed words suppress a line (2723.548167ms)
+✔ never-silent integration: crash after admission or terminal acceptance retains notice eligibility (1675.119334ms)
+✔ never-silent rechecks eligibility inside the publisher queue after session words (409.638292ms)
+✔ never-silent health: the four states and every unknown case (21.139041ms)
+✔ never-silent text, partial text and template recovery keeps original activity time and session (1293.85825ms)
+▶ never-silent provider replay after progress expiry does not answer a newer request
+  ✔ age (264.957584ms)
+  ✔ count (123100.906625ms)
+✔ never-silent provider replay after progress expiry does not answer a newer request (123366.298625ms)
+▶ never-silent lost-answer replay class
+  ✔ text: definite-failure across restart (249.537167ms)
+  ✔ text: health across restart (309.142375ms)
+  ✔ text: refused-connection-control across restart (277.524708ms)
+  ✔ captioned-file: definite-failure across restart (599.376083ms)
+  ✔ captioned-file: health across restart (553.877292ms)
+  ✔ captioned-file: refused-connection-control across restart (510.685791ms)
+  ✔ update-template: definite-failure across restart (407.522584ms)
+  ✔ update-template: health across restart (368.208875ms)
+  ✔ update-template: refused-connection-control across restart (325.996959ms)
+✔ never-silent lost-answer replay class (3602.836792ms)
+▶ never-silent lost-answer replay class across switch enablement
+  ✔ text: definite-failure: initially off (343.467292ms)
+  ✔ text: definite-failure: initially on (385.473542ms)
+  ✔ text: definite-failure: initially foreign-attempt (328.799292ms)
+  ✔ text: uncertain-stop: initially off (320.944458ms)
+  ✔ text: uncertain-stop: initially on (372.744209ms)
+  ✔ text: uncertain-stop: initially foreign-attempt (329.218417ms)
+  ✔ text: health: initially off (281.820083ms)
+  ✔ text: health: initially on (202.765791ms)
+  ✔ text: health: initially foreign-attempt (169.939041ms)
+  ✔ captioned-file: definite-failure: initially off (423.955125ms)
+  ✔ captioned-file: definite-failure: initially on (556.002583ms)
+  ✔ captioned-file: definite-failure: initially foreign-attempt (553.600875ms)
+  ✔ captioned-file: uncertain-stop: initially off (553.825875ms)
+  ✔ captioned-file: uncertain-stop: initially on (598.047708ms)
+  ✔ captioned-file: uncertain-stop: initially foreign-attempt (576.6175ms)
+  ✔ captioned-file: health: initially off (547.311ms)
+  ✔ captioned-file: health: initially on (575.706459ms)
+  ✔ captioned-file: health: initially foreign-attempt (517.142583ms)
+  ✔ update-template: definite-failure: initially off (353.79625ms)
+  ✔ update-template: definite-failure: initially on (377.510042ms)
+  ✔ update-template: definite-failure: initially foreign-attempt (203.358208ms)
+  ✔ update-template: uncertain-stop: initially off (222.132167ms)
+  ✔ update-template: uncertain-stop: initially on (276.206125ms)
+  ✔ update-template: uncertain-stop: initially foreign-attempt (251.514834ms)
+  ✔ update-template: health: initially off (278.304375ms)
+  ✔ update-template: health: initially on (342.1005ms)
+  ✔ update-template: health: initially foreign-attempt (313.681208ms)
+✔ never-silent lost-answer replay class across switch enablement (10259.887875ms)
+▶ never-silent committed proof replay repairs the template activity after a notice write fault
+  ✔ text: definite-failure (367.348083ms)
+  ✔ text: uncertain-stop (390.35025ms)
+  ✔ text: health (341.450708ms)
+  ✔ captioned-file: definite-failure (786.3355ms)
+  ✔ captioned-file: uncertain-stop (4530.088958ms)
+  ✔ captioned-file: health (754.701792ms)
+  ✔ update-template: definite-failure (556.304666ms)
+  ✔ update-template: uncertain-stop (612.733916ms)
+  ✔ update-template: health (549.333083ms)
+✔ never-silent committed proof replay repairs the template activity after a notice write fault (8890.500125ms)
+▶ never-silent activity journal failures remain retryable for every send kind
+  ✔ text: before-dispatch (155.858125ms)
+  ✔ text: after-acceptance (156.765583ms)
+  ✔ captioned-file: before-dispatch (356.633958ms)
+  ✔ captioned-file: after-acceptance (371.703375ms)
+  ✔ update-template: before-dispatch (186.728792ms)
+  ✔ update-template: after-acceptance (125.3285ms)
+✔ never-silent activity journal failures remain retryable for every send kind (1354.218125ms)
+▶ never-silent expired gateway keys still recognize fresh words
+  ✔ text: fresh answer received (317.012167ms)
+  ✔ text: fresh answer lost (305.6055ms)
+  ✔ captioned-file: fresh answer received (574.700791ms)
+  ✔ captioned-file: fresh answer lost (825.390375ms)
+  ✔ update-template: fresh answer received (475.736208ms)
+  ✔ update-template: fresh answer lost (424.055625ms)
+✔ never-silent expired gateway keys still recognize fresh words (2923.205417ms)
+✔ never-silent durable episodes aggregate twelve messages in four conversations (1899.279625ms)
+ℹ [{"subject":"never-silent: example-city: whatsapp: not_delivered","body":"city: example-city\nchannel: whatsapp\ncause: not_delivered — the message did not land and will not without recovery\nstarted: 2026-11-12T08:03:00.000Z\nconversations: 4\nmessages: 12\noldest_age_seconds: 180\nowners_told: true (4 conversations)\nstatus: gc whatsapp status --json\n","key":"never-silent:9982f00f-3965-4cd1-bcff-45189c86ee7a"},{"subject":"never-silent: example-city: whatsapp: not_delivered cleared","body":"city: example-city\nchannel: whatsapp\ncause: not_delivered — the message did not land and will not without recovery\nstarted: 2026-11-12T08:03:00.000Z\nended: 2026-11-12T08:03:01.000Z\n","key":"never-silent:9982f00f-3965-4cd1-bcff-45189c86ee7a:cleared"}]
+✔ never-silent pending resets every failure streak and never means down (878.658834ms)
+✔ never-silent unknown stop mails at once but a session reply suppresses the owner line (392.566209ms)
+✔ never-silent an attributed reply suppresses unknown delivery even when no receipt named the target (164.023958ms)
+✔ never-silent health states post the exact owner lines only after delivery (817.584084ms)
+ℹ I can't answer yet because no Claude account is signed in for me. The team that runs me has been told.
+ℹ I've reached my usage limit for now and can't answer until it resets. The team that runs me has been told.
+ℹ I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.
+✔ never-silent marks precede owner posts, refusal still mails, no reminders (391.976375ms)
+✔ never-silent mail retry marks survive restart and remote mail has no customer canaries (461.548625ms)
+✔ never-silent is off by default and missing context sends no operator mail (244.875083ms)
+✔ never-silent clear mail survives an expired start mail (302.028042ms)
+✔ never-silent local cause-one mail survives owner refusal and unknown grace (597.122417ms)
+✔ chunking at 4096 keeps a surrogate pair whole (1.102459ms)
+✔ chunking at 4096 prefers a newline past the midpoint (0.891208ms)
+✔ a gateway key names the caller key, the recipient and the WHOLE message: each operand moves it, the same message keeps it (0.351333ms)
+✔ the same idempotency key yields one gateway send and the same receipt (214.750625ms)
+✔ a progress entry written before gp-g02t (its conversation under wa_id) still answers its receipt to the same key and conversation, and conflicts for another (152.50925ms)
+✔ a mid-chunk failure resumes at the failed chunk (218.942208ms)
+✔ window_closed maps to the permanent error with the hint naming the update verb (49.895208ms)
+✔ 403 not bound maps to permanent with reason not_bound; a 401 maps to auth (20.06425ms)
+✔ publish without session attribution is refused (110.509041ms)
+✔ sends to one conversation are serialized: a second publish waits for every chunk of the first (4192.2285ms)
+✔ a CLI publish records the outbound transcript through gc with the same idempotency key; gc's call-back is answered without a re-send (403.369708ms)
+✔ /publish-update refused when the window is open (409) (54.610834ms)
+✔ /publish-update refused when the text is empty (400) (11.335833ms)
+✔ /publish-update journaled to updates.jsonl when sent (94.9865ms)
+✔ an update with a session records its outbound transcript through gc under the same key; the call-back never re-sends (98.147875ms)
+✔ a template send leaves the window closed: a /publish right after it still maps to window_closed with the hint, and the owner's next inbound reopens it (268.681167ms)
+✔ nothing logged carries message text, a phone number in clear or the credential (411.24825ms)
+✔ the ledger opens the window only on an inbound (24 hours minus the 120-second margin), never on a send of any type (184.464791ms)
+✔ the gateway's window_closed closes the ledger's window until the next inbound (208.040083ms)
+✔ registers with gc as provider whatsapp, account dynasty, with the reply instructions (202.294042ms)
+✔ on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status (335.370083ms)
+✔ two senders deliver in order within each sender and independently across senders (607.122917ms)
+✔ a 500 from gc retries on the ladder and then delivers once (704.595208ms)
+✔ a 404 retries (gc answers it during a city restart) (490.635833ms)
+✔ a 400 dead-letters one 0600 line with the envelope and the chain moves on (287.454875ms)
+✔ the ack names delivery ids, follows the accepted line on disk, and never comes on a pending verdict (801.212959ms)
+✔ a failed-status delivery posts as <wamid>:status:failed beside the outbound record; other statuses are acked without a POST (254.483458ms)
+✔ a failed receipt reposts three times, then dead-letters and acks: four POSTs in all (1028.556333ms)
+✔ a partial receipt reposts three times, then dead-letters and acks: four POSTs in all (1058.676959ms)
+✔ a no_route receipt dead-letters the envelope and acks at once with no repost (417.565416ms)
+✔ every acknowledged entry is compacted away; the watermark stays (519.027208ms)
+✔ a 401 stops polling and sets the doctor fact (1195.36675ms)
+✔ (keeper r2 m6) a kill between a join's received line and its keeper bind loses nothing: the restart binds the invite at startup, consent ON (565.862ms)
+ℹ after the restart: keeper on, consent true
+ℹ 2026-11-13T05:03:11.601Z m-f2da224122 (…0002): joined with no invite code; the keeper stays OFF for that conversation until gc whatsapp consent --on
+✔ (keeper r2 M2, n10) /consent and /hours match a phone by its digits and answer its last four; an unknown phone is 404 and records nothing; hours "" clears (403.897125ms)
+ℹ unknown phone: 404 no conversation ending 0009 is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded
+✔ the journal is 0600 in a 0700 directory and holds the full envelope before the POST (268.428583ms)
+✔ instants: epoch seconds, epoch milliseconds and ISO strings all read as the same instant (0.479291ms)
+✔ a send answered 502 outcome_unknown is a permanent failure telling the mayor to check the chat and resend under a fresh key (19.967708ms)
+✔ a send answered 409 in_flight is transient: retry with the same key (6.922959ms)
+✔ a send answered 502 meta_error (Meta refused; nothing sent) is transient: the same key sends on a retry (4.352625ms)
+✔ (1) killed after the poll and before the received line: the restart re-reads the held delivery; one POST (536.425666ms)
+ℹ POSTs for wamid.K1: 1
+✔ (2) killed after received and before posted: one POST (423.916834ms)
+✔ (3) killed after posted, gc recorded and pasted, before accepted, the log empty: one marked copy, one record, never a third (1619.83725ms)
+ℹ marked copy text: "[redelivery wamid.K3: a first copy may have reached you; if you already answered it, do nothing]\nthree"
+✔ (3b) killed after posted with the request never reaching gc: the probe NOT FOUND, every watermark intact: exactly one plain POST (586.206833ms)
+✔ (3c) as (3) with the paste in the session log as a user turn: acked, exactly one POST (774.754958ms)
+✔ (3d) as (3) with NO log and the id only in the PANE (format text): NOT FOUND, one marked copy, never acked on the snapshot (798.020125ms)
+✔ (3e) a tool-result turn, an assistant turn and a later paste whose BODY quotes the id: NOT FOUND, the marked copy (795.477ms)
+✔ (3f) the snapshot probe line survives a SIGKILL, a restart and a compaction (the probes row reads it) (4951.416833ms)
+✔ (4) the response lost without a kill: the entry stays posted; after the grace one marked copy; two POSTs, one record, no third (5970.288375ms)
+✔ (5) killed after a delivered receipt and before the ack: the restart acks from the journal with no second POST (355.130666ms)
+✔ (6) killed while the receipt was pending; gc resolves it delivered: the restart reads it back, acks, one POST (356.403125ms)
+✔ (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt (579.764833ms)
+✔ (6c) the fork head's fan-out dedup answers the marked copy no_route (suppression), the log empty: dead-lettered redelivery_no_route, acked, never as delivered (5421.120833ms)
+✔ (6d) a concluded receipt whose delivery is pending stays on the schedule; when gc forgets it the in-doubt rule sends one marked copy (622.690708ms)
+✔ (6e) the lost response without a kill never re-posts on the ladder: one POST until the grace has passed (5292.377375ms)
+✔ (7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST (646.233ms)
+ℹ posted boundary 1, accepted sequence N=2
+✖ (7b) the same with two later messages accepted at N+1 and N+2 before the receipt was lost (22108.993083ms)
+✔ (7c) no_route on the marked copy, the suppression meaning, the log CARRYING the paste: acked as delivered, no dead letter, two POSTs, one paste (5380.637875ms)
+✔ (7d) the empty-membership meaning: the same outcome, and the two no_route answers byte-identical but for the receipt id (10689.563667ms)
+ℹ both no_route answers: {"delivery":{"status":"no_route","delivered_bytes":0,"expected_bytes":0},"Duplicate":true}
+✔ (7e) as (7c) with the id only in the PANE: NOT FOUND, dead-lettered redelivery_no_route, acked, never as delivered (5423.758834ms)
+✔ (8) a failure concluding after one hour: read inside the hour after the conclusion, reposted plain, two POSTs, acked (2881.258ms)
+ℹ pending 90 min of advanced clock, concluded failed, reposted inside the hour after
+✔ (8b) the same with the adapter killed through the conclusion and restarted 70 min after it: unknown, the record from the posted boundary, one marked copy (4712.990042ms)
+✔ (8c) the terminal hold, then unknown, then 24 h: no further POST, no read-back, the gateway holds it; resolve --dead and --delivered (1798.103166ms)
+✔ (8d) the hold across a SIGKILL, and a kill between the accepted (terminal) line and the held_terminal line, restarted 70 min later (2647.652292ms)
+✔ (9) the pending deadline: pending 24 h across a kill and restart; dead-lettered pending_deadline with the read count; held until that ack; one POST (2478.089916ms)
+ℹ dead letter: reason pending_deadline, read_count 28
+✔ the owner's key: PR 76's conversation_id when the field is there (null or empty is no key, never the number); the contract v1's wa_id only when it is not (0.781667ms)
+✔ PR 76: the conversation and the actor are the owner's conversation_id whatever number the delivery shows; the media directory too (1.237042ms)
+✔ text: the envelope, the actor, the dedup key and the message time (0.151292ms)
+✔ the profile name falls back to the number the delivery shows (0.102875ms)
+✔ image and document: the attachment record and the saved-path block (0.249542ms)
+✔ voice note: transcribed inline (0.098875ms)
+✔ location, reaction, button reply, list reply, quick-reply button, unsupported (0.206375ms)
+✔ a failed status: provider_message_id <wamid>:status:failed and the error line (0.120041ms)
+✔ joined: "<name> joined from <last four digits>", or no number shown (0.13125ms)
+✔ the marked copy carries the one marker line before the text (0.628458ms)
+✔ a reply carries reply_to_message_id from the context (0.101875ms)
+✔ (11a) accepted pending at N, the store restored below it, the log empty: no plain post; the gap on disk BEFORE the one marked copy (433.968125ms)
+ℹ watermark N=2, store head after the restore 1
+✔ (11b) as (11a) with the paste in the surviving session log: acked with no further POST, the gap still shown (446.001875ms)
+✔ (11c) the store re-issued sequence N to another id: the watermark reads behind, the same outcome as (11a) (684.334083ms)
+✔ (11d) a never-accepted entry in a conversation whose watermark reads behind: the marked path, two POSTs, the second marked (6481.575875ms)
+✔ (11d2) a never-accepted entry of B, B's watermark intact, while A's gap stands: the marked path, two POSTs, the second marked (5824.661792ms)
+✔ (11e) a never-accepted entry, every watermark intact and the probe NOT FOUND: the plain post, exactly one POST (941.27475ms)
+✔ (11f) the watermark survives compaction: an acked rid compacted away leaves the watermark, and a later restore still reads the gap (954.796708ms)
+✔ (11g) clear-gap prints the gap and the head, rebases the watermark; a SIGKILL and restart read no gap; a later message raises it as before (1731.555291ms)
+✔ (11h) THE GATE r7 RULE 1: a gc-only restore WHILE THE ADAPTER RUNS drops A's newer record, B's older watermark intact: B's in-doubt entry takes the marked path, A's gap on disk before B's POST (5447.785ms)
+ℹ A gap: watermark 2 vs store head 1; B's second POST marked
+✔ (11i) the all-watermark read is evidenced before (11e)'s plain post: every conversation's watermark read after the probe (984.982042ms)
+ℹ watermark reads between the probe and the plain POST: 0001@0, 0002@0
+✔ (11j) the scheduled read finds a restore with no in-doubt entry anywhere and shows the gap (677.325291ms)
+✔ M1: a journal lost with the box resolves a held delivery by the lookup from zero, never a plain first post (440.992125ms)
+✔ M1: a dead entry whose ack failed, its journal lost: the dead-letter file line keeps it dead, acked, never posted (1338.708917ms)
+✔ M1: a delivery that arrives after the journal began is posted plain at once (no lookup) (389.405083ms)
+✖ M2: an inbox page computed before the ack never brings an acknowledged delivery back to the no-entry branch (22240.68325ms)
+✔ Minor 1: the pending deadline reads the receipt first; a conclusion just before it is acted on (1140.251125ms)
+✔ Minor 2: a 2xx without a usable receipt is never acked on; the in-doubt rule decides (4925.67925ms)
+✔ Minor 4: gc refusing connections is "not sent": retried on the ladder, posted once when gc is back, never in doubt (667.39375ms)
+✔ Minor 6: an entry first posted before a clear-gap is never posted plain after it (5498.352709ms)
+✔ Minor 7: a transient media failure retries before the post; the message is posted once, with the file (528.065333ms)
+✔ Minor 9: acks go in batches of at most 100 ids (11186.682333ms)
+ℹ tests 362
+ℹ suites 0
+ℹ pass 358
+ℹ fail 3
+ℹ cancelled 1
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 570407.41525
+
+✖ failing tests:
+
+test at test/conversation.test.js:203:1
+✖ the recipient (M2): owner A is still bound and B shows A's number: the mayor's reply and update in A's conversation reach A's user id, never refused 409 (21301.485875ms)
+  Error: timed out waiting for the ack of delivery 2
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:32:38)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/conversation.test.js:211:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/files-out.test.js:432:3
+✖ video survives SIGKILL at before-media-upload with one upload and one send (30150.677ms)
+  'test timed out after 30000ms'
+
+test at test/recovery.test.js:292:1
+✖ (7b) the same with two later messages accepted at N+1 and N+2 before the receipt was lost (22108.993083ms)
+  Error: timed out waiting for the ack of delivery 4
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:32:38)
+      at async acceptedBefore (file://$REPO/whatsapp/adapter/test/recovery.test.js:267:3)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/recovery.test.js:300:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/review.test.js:81:1
+✖ M2: an inbox page computed before the ack never brings an acknowledged delivery back to the no-entry branch (22240.68325ms)
+  Error: timed out waiting for compacted once a later poll completed
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:32:38)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/review.test.js:88:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+[ELIFECYCLE] Test failed. See above for more details.
+[WARN]  Local package.json exists, but node_modules missing, did you mean to install?

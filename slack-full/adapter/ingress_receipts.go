@@ -214,6 +214,7 @@ type TargetDelivery struct {
 	Attempts       int       `json:"attempts"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Detail         string    `json:"detail,omitempty"`
+	NoticeKind     string    `json:"notice_kind,omitempty"` // narrower observation; never changes retry disposition
 	// RequestID and EventCursor durably correlate an accepted asynchronous gc
 	// session.message request with its terminal event. Once RequestID is set,
 	// recovery watches the event stream and must never POST the message again.
@@ -287,6 +288,7 @@ type IngressReceipt struct {
 	// on a legacy receipt admitted before this field existed; receiptRootTS falls
 	// back to body-derivation there (both shapes forever).
 	ThreadRootTS string `json:"thread_root_ts,omitempty"`
+	NeverSilent  bool   `json:"never_silent,omitempty"` // enabled at fresh human admission; absent on historical receipts
 	// ThreadParticipantAgent records the directory agent whose authenticated
 	// company-bot identity authored this message in a thread. It is written only
 	// after bots.info-backed corroboration, and lets later untagged human replies

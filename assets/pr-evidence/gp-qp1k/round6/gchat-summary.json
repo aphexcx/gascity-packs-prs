@@ -1,0 +1,141 @@
+{
+  "counts": {
+    "test_pass": 1902,
+    "package_pass": 21,
+    "test_fail": 1,
+    "package_fail": 1,
+    "test_skip": 2
+  },
+  "failures": [
+    {
+      "Package": "gchat-adapter/internal/puller",
+      "Test": "TestRunRotationsCloseAndReuseQuarantineHandles",
+      "Elapsed": 16.42
+    },
+    {
+      "Package": "gchat-adapter/internal/puller",
+      "Elapsed": 37.864
+    }
+  ],
+  "skipped": [
+    "TestRealGCContract",
+    "TestRealGCReplyReminder"
+  ],
+  "packages": [
+    {
+      "Package": "gchat-adapter/cmd/gc-gchat-adapter",
+      "Action": "pass",
+      "Elapsed": 16.094
+    },
+    {
+      "Package": "gchat-adapter/internal/app",
+      "Action": "pass",
+      "Elapsed": 335.849
+    },
+    {
+      "Package": "gchat-adapter/internal/catchup",
+      "Action": "pass",
+      "Elapsed": 73.242
+    },
+    {
+      "Package": "gchat-adapter/internal/chat",
+      "Action": "pass",
+      "Elapsed": 1.96
+    },
+    {
+      "Package": "gchat-adapter/internal/config",
+      "Action": "pass",
+      "Elapsed": 0.69
+    },
+    {
+      "Package": "gchat-adapter/internal/events",
+      "Action": "pass",
+      "Elapsed": 8.889
+    },
+    {
+      "Package": "gchat-adapter/internal/fakes/fakegc",
+      "Action": "pass",
+      "Elapsed": 0.619
+    },
+    {
+      "Package": "gchat-adapter/internal/fakes/fakegoogle",
+      "Action": "pass",
+      "Elapsed": 0.71
+    },
+    {
+      "Package": "gchat-adapter/internal/gcclient",
+      "Action": "pass",
+      "Elapsed": 0.277
+    },
+    {
+      "Package": "gchat-adapter/internal/inbound",
+      "Action": "pass",
+      "Elapsed": 98.768
+    },
+    {
+      "Package": "gchat-adapter/internal/ledger",
+      "Action": "pass",
+      "Elapsed": 1.2690000000000001
+    },
+    {
+      "Package": "gchat-adapter/internal/markdown",
+      "Action": "pass",
+      "Elapsed": 0.171
+    },
+    {
+      "Package": "gchat-adapter/internal/media",
+      "Action": "pass",
+      "Elapsed": 0.114
+    },
+    {
+      "Package": "gchat-adapter/internal/neversilent",
+      "Action": "pass",
+      "Elapsed": 6.471
+    },
+    {
+      "Package": "gchat-adapter/internal/principal",
+      "Action": "pass",
+      "Elapsed": 30.252
+    },
+    {
+      "Package": "gchat-adapter/internal/provenance",
+      "Action": "pass",
+      "Elapsed": 0.199
+    },
+    {
+      "Package": "gchat-adapter/internal/puller",
+      "Action": "fail",
+      "Elapsed": 37.864
+    },
+    {
+      "Package": "gchat-adapter/internal/server",
+      "Action": "pass",
+      "Elapsed": 110.155
+    },
+    {
+      "Package": "gchat-adapter/internal/token",
+      "Action": "pass",
+      "Elapsed": 2.296
+    },
+    {
+      "Package": "gchat-adapter/internal/wire",
+      "Action": "pass",
+      "Elapsed": 0.123
+    },
+    {
+      "Package": "gchat-adapter/test/contract",
+      "Action": "pass",
+      "Elapsed": 0.264
+    },
+    {
+      "Package": "gchat-adapter/test/e2e",
+      "Action": "pass",
+      "Elapsed": 690.376
+    }
+  ],
+  "failure_output": [
+    "=== RUN   TestRunRotationsCloseAndReuseQuarantineHandles",
+    "    rotation_unix_test.go:162: context deadline exceeded",
+    "--- FAIL: TestRunRotationsCloseAndReuseQuarantineHandles (16.42s)"
+  ]
+}

@@ -1,0 +1,14 @@
+=== RUN   TestNeverSilentStartsBeforeRegistration
+=== RUN   TestNeverSilentStartsBeforeRegistration/first-restart
+    never_silent_startup_test.go:94: registration 503s=3 owner lines=1 operator mails=1
+=== RUN   TestNeverSilentStartsBeforeRegistration/second-restart
+    never_silent_startup_test.go:94: registration 503s=3 owner lines=1 operator mails=1
+--- PASS: TestNeverSilentStartsBeforeRegistration (13.32s)
+    --- PASS: TestNeverSilentStartsBeforeRegistration/first-restart (6.09s)
+    --- PASS: TestNeverSilentStartsBeforeRegistration/second-restart (7.10s)
+=== RUN   TestNeverSilentCredentialsArriveAfterFirstPoll
+    never_silent_startup_test.go:150: without credentials: owner lines=0 operator mails=1
+    never_silent_startup_test.go:154: credentials ready, registration still 503: owner lines=1 operator mails=1
+--- PASS: TestNeverSilentCredentialsArriveAfterFirstPoll (10.46s)
+PASS
+ok  	gchat-adapter/internal/app	24.013s

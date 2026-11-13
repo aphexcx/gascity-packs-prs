@@ -1,0 +1,18 @@
+✔ never-silent integration: outage watch survives registration 503 and a second restart (1108.330958ms)
+ℹ first-restart: registration 503; owner lines=1 operator mails=1
+ℹ second-restart: registration 503; owner lines=1 operator mails=1
+✔ never-silent integration: captioned reply activity survives primary receipt SIGKILL without replay (1307.72175ms)
+✔ never-silent integration: primary delivered resolution clears a stale sidecar stop after restart (1880.141667ms)
+✔ never-silent integration: terminal whole-paste pending remains delivered across restart (967.962208ms)
+✔ never-silent integration: refused message posts once without reply bookkeeping and mails fake gc (1259.150583ms)
+ℹ ["mail","send","--context","example-operator","mayor","--dedup","never-silent:91c6ef20-f2ab-4cd1-9644-f442aac5bc2e","-s","never-silent: test-city: whatsapp: not_delivered","-m","city: test-city\nchannel: whatsapp\ncause: not_delivered — the message did not land and will not without recovery\nstarted: 2026-11-04T15:00:00.000Z\nconversations: 1\nmessages: 1\noldest_age_seconds: 0\nowners_told: true (1 conversations)\nstatus: gc whatsapp status --json\n"]
+✔ never-silent integration: whole-paste pending uses health; attributed words suppress a line (1338.479ms)
+✔ never-silent integration: crash after admission or terminal acceptance retains notice eligibility (6043.719125ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13958.166042

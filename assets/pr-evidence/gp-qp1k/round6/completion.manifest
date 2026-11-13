@@ -1,0 +1,29 @@
+slack: env -u GC_BIN -u NEVER_SILENT go vet ./...	exit=0
+status-pins: make test PYTEST_DIRS=whatsapp/tests PYTEST_ARGS="-q -k status_keeps_link_and_never_silent"	exit=0
+gchat: env -u GC_BIN -u NEVER_SILENT go vet ./...	exit=0
+adapter-pins: pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js	exit=1
+gateway-pin: pnpm test -- test -t adopted-status-wakes	exit=1
+adapter-pins-corrected: pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js	exit=1
+gateway-pin-corrected: pnpm exec vitest run test -t "an adopted status wakes once"	exit=0
+adapter-pins-green: pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js	exit=1
+status-no-link-red: make test PYTEST_DIRS=whatsapp/tests PYTEST_ARGS="-q -k status_keeps_link_and_never_silent"	exit=2
+gateway-no-wake-red: pnpm exec vitest run test -t "an adopted status wakes once" --testTimeout=5000	exit=1
+status-no-notice-red: make test PYTEST_DIRS=whatsapp/tests PYTEST_ARGS="-q -k status_keeps_link_and_never_silent"	exit=2
+gateway-no-attempt-red: pnpm exec vitest run test -t "an adopted status wakes once"	exit=1
+adapter-no-receipt-red: pnpm exec node --test --test-concurrency=1 --test-name-pattern=B: test/never-silent-held-link.test.js	exit=1
+slack: env -u GC_BIN -u NEVER_SILENT go test -p=1 -json ./... -count=1	exit=0
+adapter-pins-final: pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js	exit=0
+gateway-final: pnpm test	exit=0
+gateway-typecheck: pnpm typecheck	exit=0
+python-final: make test PYTEST_DIRS="slack-full/tests whatsapp/tests gchat/tests follow-through/tests"	exit=0
+gchat-rotation-isolated: env -u GC_BIN -u NEVER_SILENT go test -p=1 -json ./internal/puller -run ^TestRunRotationsCloseAndReuseQuarantineHandles$ -count=1	exit=0
+adapter-final: pnpm test (node --test --test-concurrency=2 test/*.test.js)	exit=1
+adapter-review-correction: pnpm exec node --test --test-concurrency=1 test/never-silent-held-link.test.js	exit=0
+notice-class-final: pnpm exec node --test --test-concurrency=1 test/never-silent.test.js	exit=0
+link-final: pnpm exec node --test --test-concurrency=1 test/link.test.js test/link-engine.test.js	exit=0
+adapter-affected-isolated: pnpm exec node --test --test-concurrency=1 test/conversation.test.js test/files-out.test.js test/recovery.test.js test/review.test.js	exit=1
+adapter-video-isolated: pnpm exec node --test --test-concurrency=1 --test-name-pattern="^video survives SIGKILL at after-media-receipt" test/files-out.test.js	exit=0
+gchat: env -u GC_BIN -u NEVER_SILENT go test -p=1 -json ./... -count=1 -timeout=30m	exit=1
+fetch-final: git fetch origin main gp-qp1k	exit=0
+evidence-diff-check: git diff --cached --check	exit=2
+evidence-diff-check-corrected: git diff --cached --check	exit=0

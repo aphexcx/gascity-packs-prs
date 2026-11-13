@@ -1,0 +1,32 @@
+never-silent integration: refused message posts once without reply bookkeeping and mails fake gc (818.644375ms)
+never-silent durable episodes aggregate twelve messages in four conversations (744.580416ms)
+never-silent health states post the exact owner lines only after delivery (344.233875ms)
+never-silent mail retry marks survive restart and remote mail has no customer canaries (247.365125ms)
+[
+  "mail",
+  "send",
+  "--context",
+  "example-operator",
+  "mayor",
+  "--dedup",
+  "never-silent:9e1362a2-748a-4b73-90ba-11d9eef1b58d",
+  "-s",
+  "never-silent: test-city: whatsapp: not_delivered",
+  "-m",
+  "city: test-city\nchannel: whatsapp\ncause: not_delivered \u2014 the message did not land and will not without recovery\nstarted: 2026-11-04T15:00:00.000Z\nconversations: 1\nmessages: 1\noldest_age_seconds: 0\nowners_told: true (1 conversations)\nstatus: gc whatsapp status --json\n"
+]
+[
+  {
+    "subject": "never-silent: example-city: whatsapp: not_delivered",
+    "body": "city: example-city\nchannel: whatsapp\ncause: not_delivered \u2014 the message did not land and will not without recovery\nstarted: 2026-11-12T08:03:00.000Z\nconversations: 4\nmessages: 12\noldest_age_seconds: 180\nowners_told: true (4 conversations)\nstatus: gc whatsapp status --json\n",
+    "key": "never-silent:4ac0d45e-aedf-4ac6-87b4-b3573770309c"
+  },
+  {
+    "subject": "never-silent: example-city: whatsapp: not_delivered cleared",
+    "body": "city: example-city\nchannel: whatsapp\ncause: not_delivered \u2014 the message did not land and will not without recovery\nstarted: 2026-11-12T08:03:00.000Z\nended: 2026-11-12T08:03:01.000Z\n",
+    "key": "never-silent:4ac0d45e-aedf-4ac6-87b4-b3573770309c:cleared"
+  }
+]
+I can't answer yet because no Claude account is signed in for me. The team that runs me has been told.
+I've reached my usage limit for now and can't answer until it resets. The team that runs me has been told.
+I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.

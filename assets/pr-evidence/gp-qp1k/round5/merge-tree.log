@@ -1,0 +1,27 @@
+5c1b780e27ae09d860297712d2a7bbe210465788
+gchat/CHANGELOG.md
+slack-full/CHANGELOG.md
+slack-full/adapter/inbound_dead_letter.go
+slack-full/adapter/main.go
+slack-full/adapter/receipt_follow_up.go
+whatsapp/CHANGELOG.md
+
+Auto-merging gchat/CHANGELOG.md
+CONFLICT (content): Merge conflict in gchat/CHANGELOG.md
+Auto-merging gchat/README.md
+Auto-merging slack-full/CHANGELOG.md
+CONFLICT (content): Merge conflict in slack-full/CHANGELOG.md
+Auto-merging slack-full/README.md
+Auto-merging slack-full/adapter/inbound_dead_letter.go
+CONFLICT (content): Merge conflict in slack-full/adapter/inbound_dead_letter.go
+Auto-merging slack-full/adapter/inbound_journal.go
+Auto-merging slack-full/adapter/main.go
+CONFLICT (content): Merge conflict in slack-full/adapter/main.go
+Auto-merging slack-full/adapter/receipt_follow_up.go
+CONFLICT (content): Merge conflict in slack-full/adapter/receipt_follow_up.go
+Auto-merging whatsapp/CHANGELOG.md
+CONFLICT (content): Merge conflict in whatsapp/CHANGELOG.md
+Auto-merging whatsapp/README.md
+Auto-merging whatsapp/gateway/README.md
+Auto-merging whatsapp/gateway/test/gateway.test.ts
+Auto-merging whatsapp/tests/test_pack.py

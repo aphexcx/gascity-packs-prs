@@ -1,0 +1,3 @@
+git diff --check 708ce3b8..HEAD -- gchat/adapter slack-full/adapter whatsapp/adapter	exit=0
+public evidence contains no local user-directory paths	exit=0
+git diff --cached --check (round3 evidence)	exit=0

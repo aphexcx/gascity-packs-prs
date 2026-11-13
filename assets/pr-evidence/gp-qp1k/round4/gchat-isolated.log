@@ -1,0 +1,13 @@
+=== RUN   TestCommandPreparationFailureSettlesExistingIntent
+=== RUN   TestCommandPreparationFailureSettlesExistingIntent/after-intent
+2026/11/12 09:03:29 WARN command_prepare failed operation=command_prepare space=spaces/room key=preparation message_id="" cause_kind=transient http_status=0
+=== RUN   TestCommandPreparationFailureSettlesExistingIntent/not-ready
+2026/11/12 09:03:29 WARN command_prepare failed operation=command_prepare space=spaces/room key=preparation message_id="" cause_kind=transient http_status=0
+=== RUN   TestCommandPreparationFailureSettlesExistingIntent/send-lock
+2026/11/12 09:03:29 WARN command_prepare failed operation=command_prepare space=spaces/room key=preparation message_id="" cause_kind=transient http_status=0
+--- PASS: TestCommandPreparationFailureSettlesExistingIntent (0.31s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/after-intent (0.05s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/not-ready (0.04s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/send-lock (0.23s)
+PASS
+ok  	gchat-adapter/internal/server	0.516s

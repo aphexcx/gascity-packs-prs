@@ -1,0 +1,4 @@
+command=gofmt -l . log=slack-1.log exit=0
+command=env -u GC_BIN -u NEVER_SILENT go vet ./... log=slack-2.log exit=0
+command=env -u GC_BIN -u NEVER_SILENT go test -p=1 -json ./... -count=1 log=slack-3.log exit=0
+command=env -u GC_BIN -u NEVER_SILENT go test -race -count=1 ./... log=slack-4.log exit=0

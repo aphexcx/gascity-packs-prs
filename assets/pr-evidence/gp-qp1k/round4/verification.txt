@@ -1,0 +1,93 @@
+Base: 1c9304c617a71b9ec4abc0618ca6a0a872a839ca
+Validated code commit: 4c9f757edc52fba5eac2ad30bc7426c74ef72dc7
+Go: go1.27.3 darwin/arm64
+Node: v24.21.0 (pnpm exec node --version)
+No unsupported-engine warning was emitted.
+Counts include parent tests and subtests, as reported by each runner.
+
+gchat-full
+env -u GC_BIN go test -p=1 -json ./... exit=1
+env -u GC_BIN go vet ./... exit=0
+Test events: {"fail": 5, "pass": 1898, "skip": 2}
+Packages: {"fail": 2, "pass": 20}
+Failed: TestCommandPreparationFailureSettlesExistingIntent/not-ready
+Failed: TestCommandPreparationFailureSettlesExistingIntent/send-lock
+Failed: TestCommandPreparationFailureSettlesExistingIntent
+Failed: gchat-adapter/internal/server
+Failed: TestEndToEnd/three_thousand_missed_messages_drain_over_several_passes_with_the_backlog_visible_in_status
+Failed: TestEndToEnd
+Failed: gchat-adapter/test/e2e
+
+slack-full
+env -u GC_BIN go test -p=1 -json ./... exit=0
+Test events: {"pass": 13188, "skip": 3}
+Packages: {"pass": 3}
+
+slack-vet
+env -u GC_BIN go vet ./... exit=0
+
+gchat-isolated
+env -u GC_BIN go test ./internal/server/ -run '^TestCommandPreparationFailureSettlesExistingIntent$' -count=1 -v exit=0
+TestCommandPreparationFailureSettlesExistingIntent: all three rows and parent pass isolated.
+The full run failed its not-ready and send-lock rows plus their parent; their unchanged fixture uses a 200 ms context deadline.
+
+gchat-catchup-isolated
+env -u GC_BIN go test ./test/e2e/ -run '^TestEndToEnd$/^three_thousand_missed_messages' -count=1 -timeout=30m -v exit=0
+    e2e_test.go:899: catch-up delivered 500/3000; retained backlog 2500
+    e2e_test.go:899: catch-up delivered 1000/3000; retained backlog 2000
+    e2e_test.go:899: catch-up delivered 1500/3000; retained backlog 1500
+    e2e_test.go:899: catch-up delivered 2000/3000; retained backlog 1000
+    e2e_test.go:899: catch-up delivered 2500/3000; retained backlog 500
+    e2e_test.go:899: catch-up delivered 3000/3000; retained backlog 0
+--- PASS: TestEndToEnd (324.18s)
+    --- PASS: TestEndToEnd/three_thousand_missed_messages_drain_over_several_passes_with_the_backlog_visible_in_status (324.18s)
+The unchanged catch-up case stopped at 2526/3000 in the full run when its package-derived deadline expired; isolation uses a 30-minute test timeout.
+
+whatsapp-red
+pnpm exec node --test --test-reporter=tap --test-concurrency=1 --test-name-pattern='committed proof replay' never-silent.test.js exit=1
+# tests 10
+# pass 6
+# fail 4
+# cancelled 0
+# skipped 0
+
+whatsapp-replay-final
+pnpm exec node --test --test-reporter=tap --test-concurrency=1 --test-name-pattern='committed proof replay' never-silent.test.js exit=0
+# tests 10
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+
+whatsapp-full
+pnpm exec node --test --test-reporter=tap --test-concurrency=1 exit=1
+# tests 338
+# pass 336
+# fail 2
+# cancelled 0
+# skipped 0
+Before expectation correction: only the template failed-result assertion and its parent failed.
+
+whatsapp-class-final
+pnpm exec node --test --test-reporter=tap --test-concurrency=1 never-silent.test.js exit=0
+# tests 78
+# pass 78
+# fail 0
+# cancelled 0
+# skipped 0
+
+whatsapp-full-final
+pnpm exec node --test --test-reporter=tap --test-concurrency=2 exit=0
+# tests 338
+# pass 338
+# fail 0
+# cancelled 0
+# skipped 0
+
+whatsapp-python
+make test PYTEST_DIRS=whatsapp/tests exit=0
+57 passed in 19.67s
+
+Fresh DEEP review of implementation commit 535332c3d84213fd5b831f5bc634942d1bea4b75:
+BLOCK: one incorrect test expectation; corrected at the validated code commit above.
+No other findings. See self-review-1.md. No second fresh review is claimed.

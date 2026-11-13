@@ -191,6 +191,7 @@ function createProgressStore({ file, clock, log, cap = 1024, ttlMs = 7 * DAY_MS 
 
   return {
     get: (key) => entries.get(key),
+    values: () => [...entries.values()],
     save(key, entry) {
       entry.updated_at = clock();
       entries.set(key, entry);
@@ -229,6 +230,7 @@ export function createPublisher({
   clock = () => Date.now(),
   log = () => {},
   ledger,
+  notices,
   onWindowClosed = () => {},
   updateLanguage = 'en_US',
   cityDir,
@@ -239,6 +241,116 @@ export function createPublisher({
   const progress = createProgressStore({ file: path.join(stateDir, PROGRESS_FILE), clock, log });
   const updatesFile = path.join(stateDir, UPDATES_FILE);
   const inflight = new Map(); // key -> { promise, conversationId, textSha, endpoint }
+
+  // Successful primary evidence retains its original sender and time. Recovery
+  // precedes notice polling and never attributes old words to a retry caller.
+  const activityByProof = new Map();
+  const activityAttempts = new Map();
+  const recoverActivity = notices?.status ? notices.status().enabled : Boolean(notices?.act);
+  // This history is independent of the seven-day/count-bounded progress cache.
+  // A gateway may still replay a proof after that cache has discarded its key.
+  const activityFile = path.join(stateDir, 'never-silent-outbound.json');
+  const validActivity = (a) => a?.conversation && a.proof && typeof a.session === 'string' && Number.isFinite(a.at);
+  if (recoverActivity) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(activityFile, 'utf8'));
+      for (const a of saved.activities ?? []) {
+        if (validActivity(a)) activityByProof.set(`${a.conversation}\0${a.proof}`, a);
+      }
+      for (const a of saved.attempts ?? []) {
+        if (typeof a?.key === 'string' && validActivity({ ...a, proof: a.key })) activityAttempts.set(a.key, a);
+      }
+    } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  }
+  function saveActivity(activities = [...activityByProof.values()], attempts = [...activityAttempts.values()]) {
+    if (!recoverActivity) return;
+    try { writeFileAtomic(activityFile, `${JSON.stringify({ activities, attempts })}\n`); }
+    catch (err) { throw Object.assign(err, { activitySave: true }); }
+  }
+  function rememberActivity(activity, attemptKey) {
+    const key = `${activity.conversation}\0${activity.proof}`;
+    const original = activityByProof.get(key);
+    if (original && !activityAttempts.has(attemptKey)) return original;
+    // Commit the proof and retire its pending attempt in the same durable write.
+    saveActivity(original ? [...activityByProof.values()] : [...activityByProof.values(), activity],
+      [...activityAttempts.values()].filter((a) => a.key !== attemptKey));
+    activityByProof.set(key, original ?? activity);
+    activityAttempts.delete(attemptKey);
+    return original ?? activity;
+  }
+  function restoreActivity(activity) {
+    if (!validActivity(activity)) return;
+    const original = rememberActivity(activity);
+    notices?.act(original.conversation, original.session, original.at);
+  }
+  async function sendWithActivity(request, conversation, session) {
+    const key = request.idempotency_key;
+    const previous = activityAttempts.get(key);
+    const current = { key, conversation, session, at: clock(), id: crypto.randomUUID() };
+    if (recoverActivity) {
+      // A crash or a lost answer after dispatch must retain the first possible
+      // send's attribution, even if primary progress was never saved. Keep each
+      // uncertain attempt so the gateway can identify the one it accepted after
+      // its earlier send-key record expired, even if that new answer is lost too.
+      const pending = previous ? { ...previous, retries: [...(previous.retries ?? []), current] } : current;
+      saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key).concat(pending));
+      activityAttempts.set(key, pending);
+    }
+    let answer;
+    try {
+      answer = await gateway.send(recoverActivity ? { ...request, activity_attempt_id: current.id } : request);
+      if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
+    } catch (err) {
+      // A later refusal cannot disprove an earlier ambiguous attempt. In-flight,
+      // unknown, malformed and generic 5xx answers are also not a refusal.
+      const refused = err?.notSent || err?.config || err?.auth
+        || (!err?.noAnswer && !err?.malformed && err?.status >= 400 && err.status < 500 && err.status !== 408
+          && !['in_flight', 'outcome_unknown'].includes(err.json?.error))
+        || (err?.json?.error === 'meta_error' && err.json.meta_status >= 400 && err.json.meta_status < 500);
+      if (recoverActivity && refused) {
+        saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key).concat(previous ? [previous] : []));
+        if (previous) activityAttempts.set(key, previous);
+        else activityAttempts.delete(key);
+      }
+      throw err;
+    }
+    // Only the gateway can distinguish replay from a fresh send after its
+    // idempotency record expired. Legacy gateways omit this optional signal;
+    // retain their earliest uncertain attribution rather than invent new words.
+    const pending = activityAttempts.get(key);
+    const accepted = answer.activity_attempt_id && [pending, ...(pending?.retries ?? [])].find((a) => a?.id === answer.activity_attempt_id);
+    if (answer.replayed === true && !accepted) {
+      // A replay without one of our attempt ids proves no words at the retry's
+      // time. Retire the speculative attempt without inventing activity.
+      if (recoverActivity) {
+        saveActivity([...activityByProof.values()], [...activityAttempts.values()].filter((a) => a.key !== key));
+        activityAttempts.delete(key);
+      }
+      // A completed attempt has left the pending map, but its committed proof
+      // still supplies the original activity. Reapply it if the notice-state
+      // write failed after the proof was saved; never use the retry's time.
+      const activity = activityByProof.get(`${conversation}\0${str(answer.message_id)}`);
+      return { answer, activity };
+    }
+    const attempt = accepted || (recoverActivity && answer.replayed === false ? current : pending);
+    const activity = rememberActivity({ conversation, session: attempt?.session ?? session,
+      proof: str(answer.message_id), at: attempt?.at ?? clock() }, key);
+    return { answer, activity };
+  }
+  if (recoverActivity) {
+    for (const activity of activityByProof.values()) restoreActivity(activity);
+    for (const entry of progress.values()) {
+      for (const activity of entry.activities ?? []) restoreActivity(activity);
+      restoreActivity(entry.activity);
+    }
+    try {
+      for (const line of fs.readFileSync(updatesFile, 'utf8').split('\n')) {
+        try { restoreActivity(JSON.parse(line).notice_activity); } catch (err) {
+          if (!(err instanceof SyntaxError)) throw err;
+        }
+      }
+    } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  }
 
   // Per-conversation serialization: two publishes to one owner never
   // interleave their chunks; different owners stay concurrent.
@@ -324,6 +436,10 @@ export function createPublisher({
       kind = 'transient';
       reason = 'in_flight';
       hint = 'The gateway is still sending this key to WhatsApp: retry shortly with the same idempotency key.';
+    } else if (err?.activitySave) {
+      kind = 'transient';
+      reason = 'outbound_activity_unavailable';
+      hint = 'The send is paused because its activity journal could not be saved. Restore state-directory writes, then retry with the same idempotency key.';
     } else if (err?.progressSave) {
       kind = 'transient';
       reason = 'outbound_progress_unavailable';
@@ -391,18 +507,18 @@ export function createPublisher({
     }
   }
 
-  async function sendChunks({ key, conversationId, to, text, textSha, conversation }) {
+  async function sendChunks({ key, conversationId, to, text, textSha, conversation, sessionId }) {
     const chunks = chunkText(text);
     let entry = progress.get(key);
     if (entry?.receipt) return { status: 200, json: entry.receipt };
     if (!entry) {
-      entry = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [] };
+      entry = { endpoint: 'publish', conversation_id: conversationId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [], session_id: sessionId };
     }
     for (let i = entry.delivered; i < chunks.length; i++) {
-      let answer;
+      let answer, activity;
       try {
-        answer = await gateway.send({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] });
-        if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
+        ({ answer, activity } = await sendWithActivity({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] },
+          conversationId, entry.session_id ?? sessionId));
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
         if (err?.status === 422 && err.json?.error === 'window_closed') {
@@ -414,8 +530,11 @@ export function createPublisher({
       const messageId = str(answer.message_id);
       entry.message_ids[i] = messageId;
       entry.delivered = i + 1;
-      ledger?.noteSend?.(conversationId, { type: 'text', message_id: messageId, at: clock() });
-      if (entry.delivered < chunks.length) progress.save(key, entry);
+      entry.activities ??= [];
+      if (activity) entry.activities.push(activity);
+      progress.save(key, entry);
+      ledger?.noteSend?.(conversationId, { type: 'text', message_id: messageId, at: activity?.at ?? clock() });
+      restoreActivity(activity);
     }
     entry.receipt = {
       message_id: entry.message_ids[chunks.length - 1],
@@ -494,7 +613,7 @@ export function createPublisher({
         let entry = progress.get(key);
         if (!entry) {
           entry = { endpoint: 'file', conversation_id: conversationId, text_sha256: textSha,
-            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [] };
+            transcript_sha256: sha256Hex(text), file: descriptor, caption, chunks: 1, delivered: 0, message_ids: [], session_id: sessionId };
         }
         const operation = sha256Hex(JSON.stringify([key, conversationId, textSha]));
         let uploading = false;
@@ -522,17 +641,22 @@ export function createPublisher({
           // The gateway checks that key before the window and grant. This sentinel
           // is not a gateway UUID handle, so even a window reopening during the
           // request cannot cause a new Meta send. No upload is made for the probe.
-          const sent = await gateway.send({ to, idempotency_key: `file-send:${operation}`, type: file.kind,
-            media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } });
+          const request = { to, idempotency_key: `file-send:${operation}`, type: file.kind,
+            media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } };
+          const { answer: sent, activity } = caption.trim()
+            ? await sendWithActivity(request, conversationId, entry.session_id ?? sessionId)
+            : { answer: await gateway.send(request) };
           killPoint('after-media-send', key);
           if (!str(sent?.message_id)) throw Object.assign(new Error('missing message id'), { noMessageId: true });
           entry.delivered = 1;
           entry.message_ids = [sent.message_id];
           entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
             metadata: { chunks: '1', message_ids: sent.message_id, file_name: file.name, file_bytes: String(file.size), file_sha256: file.sha256 } };
+          if (activity) entry.activity = activity;
           progress.save(key, entry);
           killPoint('after-media-receipt', key);
           ledger?.noteSend?.(conversationId, { type: file.kind, message_id: sent.message_id, at: clock() });
+          restoreActivity(entry.activity);
           return { status: 200, json: entry.receipt };
         } catch (err) {
           if (err?.status === 422 && err.json?.error === 'window_closed') ledger?.noteWindowClosed?.(conversationId, clock());
@@ -604,7 +728,7 @@ export function createPublisher({
       const answer = await once(key, { conversationId, textSha, endpoint: 'publish' }, conversation,
         () => chain(conversationId, () => toOwner(
           { conversationId, conversation, key, chunks: chunkText(pub.text).length, delivered: progress.get(key)?.delivered ?? 0 },
-          (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation }),
+          (to) => sendChunks({ key, conversationId, to, text: pub.text, textSha, conversation, sessionId }),
         )));
       return cli ? withTranscript(answer, { key, sessionId, conversationId, text: pub.text }) : answer;
     } catch (err) {
@@ -613,14 +737,13 @@ export function createPublisher({
     }
   }
 
-  async function sendUpdate({ key, to, recipient, text, textSha, conversation }) {
+  async function sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId }) {
     const existing = progress.get(key);
     if (existing?.receipt) return { status: 200, json: existing.receipt };
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
-    let answer;
+    let answer, activity;
     try {
-      answer = await gateway.send({ to: recipient, idempotency_key: templateKey(key, to, template), type: 'template', template });
-      if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
+      ({ answer, activity } = await sendWithActivity({ to: recipient, idempotency_key: templateKey(key, to, template), type: 'template', template }, to, sessionId));
     } catch (err) {
       return failure(err, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
     }
@@ -636,6 +759,7 @@ export function createPublisher({
         message_id: messageId,
         template: UPDATE_TEMPLATE,
         language: updateLanguage,
+        notice_activity: activity,
       });
     } catch (err) {
       journaled = false;
@@ -643,6 +767,7 @@ export function createPublisher({
     }
     // The send ledger only: a template never opens or extends the window.
     ledger?.noteSend?.(to, { type: 'template', message_id: messageId, at });
+    restoreActivity(activity);
     const entry = {
       endpoint: 'update',
       conversation_id: to,
@@ -650,6 +775,7 @@ export function createPublisher({
       transcript_sha256: sha256Hex(updateTranscriptText(text)),
       chunks: 1,
       delivered: 1,
+      activity,
       message_ids: [messageId],
       receipt: {
         message_id: messageId,
@@ -711,7 +837,7 @@ export function createPublisher({
       const answer = await once(key, { conversationId: to, textSha, endpoint: 'update' }, conversation,
         () => chain(to, () => toOwner(
           { conversationId: to, conversation, key, chunks: 1, delivered: 0 },
-          (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation })),
+          (recipient) => (ledger?.windowOpen?.(to) ? windowOpen() : sendUpdate({ key, to, recipient, text, textSha, conversation, sessionId })),
         )));
       return sessionId ? withTranscript(answer, { key, sessionId, conversationId: to, text: updateTranscriptText(text) }) : answer;
     } catch (err) {
@@ -720,7 +846,20 @@ export function createPublisher({
     }
   }
 
-  return { handlePublish, handlePublishUpdate };
+  // Owner notices deliberately bypass publish, transcript and reply bookkeeping.
+  // A refusal never becomes an update template or an automatic retry.
+  async function notice(conversationId, text, key, canPost = () => true) {
+    return chain(conversationId, async () => {
+      const recipient = await recipientFor(conversationId);
+      if (recipient.refused) throw new Error('never-silent recipient unavailable');
+      if (!canPost()) return false;
+      const answer = await gateway.send({ to: recipient.to, idempotency_key: key, type: 'text', text });
+      if (!str(answer?.message_id)) throw new Error('never-silent send uncertain');
+      return true;
+    });
+  }
+
+  return { handlePublish, handlePublishUpdate, notice };
 }
 
 // The outbound transcript line for an update: the template is Meta-side

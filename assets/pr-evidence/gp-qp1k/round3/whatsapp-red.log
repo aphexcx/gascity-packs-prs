@@ -1,0 +1,807 @@
+TAP version 13
+1..0
+# Subtest: contract.test.js
+ok 1 - contract.test.js
+  ---
+  duration_ms: 45.572041
+  type: 'test'
+  ...
+1..0
+# Subtest: conversation.test.js
+ok 2 - conversation.test.js
+  ---
+  duration_ms: 42.830667
+  type: 'test'
+  ...
+1..0
+# Subtest: deadack.test.js
+ok 3 - deadack.test.js
+  ---
+  duration_ms: 43.281167
+  type: 'test'
+  ...
+1..0
+# Subtest: evidence.test.js
+ok 4 - evidence.test.js
+  ---
+  duration_ms: 43.914292
+  type: 'test'
+  ...
+1..0
+# Subtest: files-out.test.js
+ok 5 - files-out.test.js
+  ---
+  duration_ms: 46.441333
+  type: 'test'
+  ...
+1..0
+# Subtest: gate.test.js
+ok 6 - gate.test.js
+  ---
+  duration_ms: 45.681958
+  type: 'test'
+  ...
+1..0
+# Subtest: journal.test.js
+ok 7 - journal.test.js
+  ---
+  duration_ms: 42.842666
+  type: 'test'
+  ...
+1..0
+# Subtest: keeper.test.js
+ok 8 - keeper.test.js
+  ---
+  duration_ms: 45.283041
+  type: 'test'
+  ...
+1..0
+# Subtest: media.test.js
+ok 9 - media.test.js
+  ---
+  duration_ms: 44.325458
+  type: 'test'
+  ...
+# Subtest: never-silent integration: outage watch survives registration 503 and a second restart
+ok 10 - never-silent integration: outage watch survives registration 503 and a second restart
+  ---
+  duration_ms: 1261.043834
+  type: 'test'
+  ...
+# first-restart: registration 503; owner lines=1 operator mails=1
+# second-restart: registration 503; owner lines=1 operator mails=1
+# Subtest: never-silent lost-answer replay class across switch enablement
+    # Subtest: text: definite-failure: initially off
+    not ok 1 - text: definite-failure: initially off
+      ---
+      duration_ms: 212.485792
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: text: definite-failure: initially on
+    ok 2 - text: definite-failure: initially on
+      ---
+      duration_ms: 260.866666
+      type: 'test'
+      ...
+    # Subtest: text: definite-failure: initially foreign-attempt
+    not ok 3 - text: definite-failure: initially foreign-attempt
+      ---
+      duration_ms: 262.349125
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: text: uncertain-stop: initially off
+    not ok 4 - text: uncertain-stop: initially off
+      ---
+      duration_ms: 188.122833
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: text: uncertain-stop: initially on
+    ok 5 - text: uncertain-stop: initially on
+      ---
+      duration_ms: 346.776584
+      type: 'test'
+      ...
+    # Subtest: text: uncertain-stop: initially foreign-attempt
+    not ok 6 - text: uncertain-stop: initially foreign-attempt
+      ---
+      duration_ms: 140.539042
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: text: health: initially off
+    not ok 7 - text: health: initially off
+      ---
+      duration_ms: 137.976084
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: text: health: initially on
+    ok 8 - text: health: initially on
+      ---
+      duration_ms: 200.974167
+      type: 'test'
+      ...
+    # Subtest: text: health: initially foreign-attempt
+    not ok 9 - text: health: initially foreign-attempt
+      ---
+      duration_ms: 165.6735
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: captioned-file: definite-failure: initially off
+    not ok 10 - captioned-file: definite-failure: initially off
+      ---
+      duration_ms: 351.864625
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: captioned-file: definite-failure: initially on
+    ok 11 - captioned-file: definite-failure: initially on
+      ---
+      duration_ms: 449.661375
+      type: 'test'
+      ...
+    # Subtest: captioned-file: definite-failure: initially foreign-attempt
+    not ok 12 - captioned-file: definite-failure: initially foreign-attempt
+      ---
+      duration_ms: 365.92325
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: captioned-file: uncertain-stop: initially off
+    not ok 13 - captioned-file: uncertain-stop: initially off
+      ---
+      duration_ms: 350.410833
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: captioned-file: uncertain-stop: initially on
+    ok 14 - captioned-file: uncertain-stop: initially on
+      ---
+      duration_ms: 438.845875
+      type: 'test'
+      ...
+    # Subtest: captioned-file: uncertain-stop: initially foreign-attempt
+    not ok 15 - captioned-file: uncertain-stop: initially foreign-attempt
+      ---
+      duration_ms: 384.992625
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: captioned-file: health: initially off
+    not ok 16 - captioned-file: health: initially off
+      ---
+      duration_ms: 364.831375
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: captioned-file: health: initially on
+    ok 17 - captioned-file: health: initially on
+      ---
+      duration_ms: 433.1555
+      type: 'test'
+      ...
+    # Subtest: captioned-file: health: initially foreign-attempt
+    not ok 18 - captioned-file: health: initially foreign-attempt
+      ---
+      duration_ms: 374.658958
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: update-template: definite-failure: initially off
+    not ok 19 - update-template: definite-failure: initially off
+      ---
+      duration_ms: 167.94725
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: update-template: definite-failure: initially on
+    ok 20 - update-template: definite-failure: initially on
+      ---
+      duration_ms: 291.115792
+      type: 'test'
+      ...
+    # Subtest: update-template: definite-failure: initially foreign-attempt
+    not ok 21 - update-template: definite-failure: initially foreign-attempt
+      ---
+      duration_ms: 193.676875
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: update-template: uncertain-stop: initially off
+    not ok 22 - update-template: uncertain-stop: initially off
+      ---
+      duration_ms: 172.940042
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: update-template: uncertain-stop: initially on
+    ok 23 - update-template: uncertain-stop: initially on
+      ---
+      duration_ms: 251.267792
+      type: 'test'
+      ...
+    # Subtest: update-template: uncertain-stop: initially foreign-attempt
+    not ok 24 - update-template: uncertain-stop: initially foreign-attempt
+      ---
+      duration_ms: 196.135209
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: update-template: health: initially off
+    not ok 25 - update-template: health: initially off
+      ---
+      duration_ms: 177.352583
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    # Subtest: update-template: health: initially on
+    ok 26 - update-template: health: initially on
+      ---
+      duration_ms: 226.917458
+      type: 'test'
+      ...
+    # Subtest: update-template: health: initially foreign-attempt
+    not ok 27 - update-template: health: initially foreign-attempt
+      ---
+      duration_ms: 185.9875
+      type: 'test'
+      location: 'whatsapp/adapter/test/never-silent.test.js:196:71'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+
+          [
+        +   0,
+        +   0
+        -   1,
+        -   1
+          ]
+
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 1
+        1: 1
+      actual:
+        0: 0
+        1: 0
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:231:16)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async TestContext.<anonymous> (file://whatsapp/adapter/test/never-silent.test.js:196:63)
+        async Test.run (node:internal/test_runner/test:1409:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+      ...
+    1..27
+not ok 11 - never-silent lost-answer replay class across switch enablement
+  ---
+  duration_ms: 7298.345584
+  type: 'test'
+  location: 'whatsapp/adapter/test/never-silent.test.js:193:1'
+  failureType: 'subtestsFailed'
+  error: '18 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..0
+# Subtest: outbound.test.js
+ok 12 - outbound.test.js
+  ---
+  duration_ms: 43.633542
+  type: 'test'
+  ...
+1..0
+# Subtest: pipeline.test.js
+ok 13 - pipeline.test.js
+  ---
+  duration_ms: 41.240958
+  type: 'test'
+  ...
+1..0
+# Subtest: readings.test.js
+ok 14 - readings.test.js
+  ---
+  duration_ms: 44.344916
+  type: 'test'
+  ...
+1..0
+# Subtest: recovery.test.js
+ok 15 - recovery.test.js
+  ---
+  duration_ms: 44.119959
+  type: 'test'
+  ...
+1..0
+# Subtest: render.test.js
+ok 16 - render.test.js
+  ---
+  duration_ms: 32.4485
+  type: 'test'
+  ...
+1..0
+# Subtest: restore.test.js
+ok 17 - restore.test.js
+  ---
+  duration_ms: 40.8115
+  type: 'test'
+  ...
+1..0
+# Subtest: review.test.js
+ok 18 - review.test.js
+  ---
+  duration_ms: 41.7235
+  type: 'test'
+  ...
+1..18
+# tests 45
+# suites 0
+# pass 26
+# fail 19
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7575.860584

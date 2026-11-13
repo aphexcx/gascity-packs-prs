@@ -577,6 +577,7 @@ type inboundDeadLetterRecord struct {
 	Attempts                  int                    `json:"attempts"`
 	Reason                    string                 `json:"reason"`
 	Inbound                   externalInboundMessage `json:"inbound"`
+	NoticeDefinite            bool                   `json:"notice_definite,omitempty"`
 	// AliasSessionID/AliasHandle/AliasBody are set only for a lost
 	// address-by-handle injection (gp-3yg): the aliased session it was
 	// meant for, the handle, and the exact rendered reminder. A hand
@@ -633,6 +634,7 @@ func writeInboundDeadLetter(dir, channel string, batch []pendingChannelInbound, 
 			Channel:        channel,
 			Attempts:       p.attempts,
 			Reason:         reason,
+			NoticeDefinite: permanentDeliveryFailure(cause),
 			Inbound:        p.inbound,
 		})
 	}

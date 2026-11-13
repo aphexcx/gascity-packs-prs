@@ -24,6 +24,7 @@ import (
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/media"
+	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/puller"
@@ -33,8 +34,9 @@ import (
 )
 
 type Options struct {
-	Config *config.Config
-	Ledger *ledger.Ledger
+	NeverSilent *neversilent.Engine
+	Config      *config.Config
+	Ledger      *ledger.Ledger
 	// LedgerMu must be the same mutex used by every other ledger consumer.
 	LedgerMu       *sync.Mutex
 	LedgerPath     string
@@ -275,6 +277,9 @@ func (p *Processor) Pass(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := ReconcileNeverSilent(l, p.opts.NeverSilent); err != nil {
+		return err
+	}
 	ids := make([]string, 0)
 	for id, c := range l.Changes {
 		if c.Status == "pending" || c.Status == "intent" {
@@ -460,15 +465,33 @@ func unresolvedCause(reason, waiting string) string {
 // no terminal hold, landed: gc vouches the whole message is in the terminal,
 // not that the agent read it. Anything else stays unresolved.
 func (p *Processor) concludedPending(id string, d wire.Delivery) error {
+	if err := p.opts.NeverSilent.Result(id, "pending", deliverySessions(d)); err != nil {
+		return err
+	}
 	terminal := d.Terminal
 	for _, m := range d.Members {
 		terminal = terminal || m.Terminal
 	}
 	if terminal {
+		if noticeWholePaste(d) {
+			at := p.opts.Now()
+			if err := p.update(func(l *ledger.Ledger) {
+				if c := l.Changes[id]; c != nil {
+					c.NoticeDelivered = true
+					markUnresolved(l, id, c, reasonHeld, at)
+				}
+			}); err != nil {
+				return err
+			}
+			return p.opts.NeverSilent.ResultAt(id, "delivered", deliverySessions(d), at)
+		}
 		return p.unresolved(id, reasonHeld)
 	}
 	if !landedWhole(d) {
 		return p.unresolved(id, reasonUnconcluded)
+	}
+	if err := p.opts.NeverSilent.Result(id, "delivered", deliverySessions(d)); err != nil {
+		return err
 	}
 	committed := false
 	err := p.update(func(l *ledger.Ledger) {
@@ -479,6 +502,7 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 		l.Counters["turns:"+c.Space]++
 		l.Counters["unconfirmed:"+c.Space]++
 		c.Status, c.Reason, c.Cause = "committed", reasonLanded, ""
+		c.NoticeAt = p.opts.Now()
 		committed = true
 	})
 	if err == nil && committed {
@@ -489,7 +513,16 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 
 func landedWhole(d wire.Delivery) bool {
 	for _, m := range d.Members {
-		if m.Terminal || (m.Status != "delivered" && (m.Status != "pending" || m.ExpectedBytes <= 0 || m.DeliveredBytes != m.ExpectedBytes)) {
+		if m.Terminal {
+			return false
+		}
+	}
+	return noticeWholePaste(d)
+}
+
+func noticeWholePaste(d wire.Delivery) bool {
+	for _, m := range d.Members {
+		if m.Status != "delivered" && (m.Status != "pending" || m.ExpectedBytes <= 0 || m.DeliveredBytes != m.ExpectedBytes) {
 			return false
 		}
 	}
@@ -771,6 +804,13 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	if c.Kind == "message.deleted" {
 		state.Deleted = true
+		for changeID, change := range l.Changes {
+			if change.Message == m.Name {
+				if err := p.opts.NeverSilent.Forget(changeID); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	// The identity's own messages tell which Workspace domain is the
 	// organization; a sender in it is a colleague even without an address.
@@ -842,6 +882,11 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
+		if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
+			return err
+		}
 	}
 	if err := p.record(c, id, w, &state, s, local, catchUp, learnedDomain); err != nil {
 		return err
@@ -1084,6 +1129,13 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			answered := errors.As(err, &responseErr)
 			var op *net.OpError
 			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429 || responseErr.StatusCode == 408 || stoppedCity(responseErr))) || (errors.As(err, &op) && op.Op == "dial") {
+				kind := "other"
+				if (answered && (responseErr.StatusCode >= 500 || stoppedCity(responseErr))) || (op != nil && op.Op == "dial") {
+					kind = "unreachable"
+				}
+				if noticeErr := p.opts.NeverSilent.Result(id, kind, nil); noticeErr != nil {
+					return noticeErr
+				}
 				if err := p.update(func(l *ledger.Ledger) {
 					if c := l.Changes[id]; c != nil {
 						c.Attempts--
@@ -1176,6 +1228,13 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 // across a restart too (gp-t542).
 func (p *Processor) outcome(id string, d wire.Delivery) error {
 	status := d.Status
+	noticeKind := status
+	if status == "held" && !fragment(d) {
+		noticeKind = "failed"
+	}
+	if err := p.opts.NeverSilent.Result(id, noticeKind, deliverySessions(d)); err != nil {
+		return err
+	}
 	if status == "pending" && d.ReceiptID == "" {
 		return p.unresolved(id, "pending delivery has no receipt")
 	}
@@ -1193,6 +1252,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 		if d.ReceiptID != "" {
 			c.ReceiptID = d.ReceiptID
 		}
+		c.NoticeAt = p.opts.Now()
 		switch status {
 		case "delivered", "no_route":
 			if c.Status != "committed" {
@@ -1211,7 +1271,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 			c.Fragment = c.Fragment || fragment(d)
 			if c.Fragment && c.Attempts >= firstPOSTs {
 				// One save: an intent record with four POSTs would read as due.
-				markUnresolved(l, id, c, reasonExhausted)
+				markUnresolved(l, id, c, reasonExhausted, p.opts.Now())
 				exhausted = true
 				return
 			}
@@ -1223,6 +1283,10 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 	})
 	if err == nil && exhausted {
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reasonExhausted)
+		err = p.opts.NeverSilent.Stop(id, false)
+	}
+	if err == nil && status == "no_route" {
+		err = p.opts.NeverSilent.Stop(id, true)
 	}
 	return err
 }
@@ -1246,13 +1310,31 @@ func fragment(d wire.Delivery) bool {
 
 // unresolved ends a change for an operator and records its cause.
 func (p *Processor) unresolved(id, reason string) error {
+	if reason == reasonWithdrawn {
+		if err := p.opts.NeverSilent.Forget(id); err != nil {
+			return err
+		}
+	} else {
+		l, err := p.snapshot()
+		if err != nil {
+			return err
+		}
+		c := l.Changes[id]
+		definite := strings.HasPrefix(reason, "gc rejected the POST:")
+		if c != nil && c.Reason == "retry" && !c.Fragment && (c.Cause == causeNotDelivered || c.Cause == causeDraftDeferred || c.Cause == causePendingInteraction || c.Cause == causeBehindEarlier) {
+			definite = true
+		}
+		if err := p.opts.NeverSilent.Stop(id, definite); err != nil {
+			return err
+		}
+	}
 	recorded := false
 	err := p.update(func(l *ledger.Ledger) {
 		c := l.Changes[id]
 		if c == nil {
 			return
 		}
-		markUnresolved(l, id, c, reason)
+		markUnresolved(l, id, c, reason, p.opts.Now())
 		recorded = true
 	})
 	if err == nil && recorded {
@@ -1262,12 +1344,23 @@ func (p *Processor) unresolved(id, reason string) error {
 }
 
 // markUnresolved runs inside an update; Changes and Unresolved hold the record.
-func markUnresolved(l *ledger.Ledger, id string, c *ledger.ChangeState, reason string) {
+func markUnresolved(l *ledger.Ledger, id string, c *ledger.ChangeState, reason string, at time.Time) {
+	c.NoticeAt = at
 	c.Status = "unresolved"
 	c.Reason = reason
 	c.Cause = unresolvedCause(reason, c.Cause)
 	c.NextAttempt = time.Time{}
 	l.Unresolved[id] = c
+}
+
+func deliverySessions(d wire.Delivery) []string {
+	var sessions []string
+	for _, m := range d.Members {
+		if m.SessionID != "" {
+			sessions = append(sessions, m.SessionID)
+		}
+	}
+	return sessions
 }
 
 func wait(ctx context.Context, d time.Duration) error {
