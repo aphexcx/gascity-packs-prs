@@ -1,0 +1,48 @@
+package inbound
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestExportRollbackLedgers(t *testing.T) {
+	for _, state := range []string{"owner_deleted", "member_deleted", "member_edited", "empty_replayed", "folded_deleted_replayed", "folded_edited_replayed"} {
+		t.Run(state, func(t *testing.T) {
+			f := windowSetup(t, "8s")
+			a := f.send(t, 1, "message.created", nil)
+			f.now = f.now.Add(time.Second)
+			b := a
+			if strings.HasPrefix(state, "folded_") {
+				a.Text, a.LastUpdateTime = "folded-text", f.now.Format(time.RFC3339Nano)
+				f.handle(t, event("fold", "message.updated", a))
+			} else {
+				b = f.send(t, 2, "message.created", nil)
+			}
+			f.gc.CityNotRunning = true
+			f.now = f.now.Add(8 * time.Second)
+			_ = f.p.Poll(context.Background())
+			if state == "owner_deleted" {
+				a = b
+			}
+			kind := "message.deleted"
+			if state == "member_edited" || state == "folded_edited_replayed" {
+				kind = "message.updated"
+				a.Text, a.LastUpdateTime = "current-text", f.now.Add(time.Second).Format(time.RFC3339Nano)
+			}
+			f.now = f.now.Add(time.Second)
+			f.handle(t, event("withdrawal", kind, a))
+			if state == "empty_replayed" {
+				f.now = f.now.Add(time.Second)
+				f.handle(t, event("last-deleted", "message.deleted", b))
+			}
+			_ = f.p.Poll(context.Background())
+			if err := f.l.Save(filepath.Join(os.Getenv("GCHAT_ROLLBACK_FIXTURES"), state+".json")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

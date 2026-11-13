@@ -1,0 +1,82 @@
+package inbound
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/ledger"
+)
+
+// Compiled with the actual released loader and processor by the overlay runner.
+func TestCoalescedLedgerCompatibility(t *testing.T) {
+	for _, state := range []string{"owner_deleted", "member_deleted", "member_edited", "empty_replayed", "folded_deleted_replayed", "folded_edited_replayed"} {
+		t.Run(state, func(t *testing.T) {
+			f := setup(t)
+			l, err := ledger.Load(filepath.Join(os.Getenv("GCHAT_ROLLBACK_FIXTURES"), state+".json"), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.l, f.opts.Ledger = l, l
+			f.opts.Now = func() time.Time { return time.Date(2026, 11, 1, 10, 0, 30, 0, time.UTC) }
+			replay := strings.HasSuffix(state, "_replayed")
+			if replay {
+				// Apply the released resolve handler's replay transition
+				// (server.go:1595-1605), then run its actual loader/processor.
+				for id, c := range l.Unresolved {
+					c.Status, c.Reason, c.Attempts, c.ReceiptID = "intent", "operator replay", 0, ""
+					c.Created = f.opts.Now()
+					l.Changes[id] = c
+					delete(l.Unresolved, id)
+				}
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if err := f.p.Poll(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			posts := f.gc.Inbound()
+			if replay {
+				want := 1
+				if state == "empty_replayed" {
+					want = 2
+				}
+				if len(posts) != want || len(l.Unresolved) != want {
+					t.Errorf("replay posts=%d unresolved=%d want=%d", len(posts), len(l.Unresolved), want)
+				}
+				for _, post := range posts {
+					if strings.Contains(post.Text, "body-00") || strings.Contains(post.Text, "folded-text") {
+						t.Errorf("released replay sent withdrawn text: %s", post.Text)
+					}
+				}
+				return
+			}
+			if len(posts) != 2 {
+				t.Fatalf("posts=%d want=2", len(posts))
+			}
+			text := posts[0].Text + "\n" + posts[1].Text
+			withdrawn, survivor, unresolved := "body-001", "body-002", 1
+			if state == "owner_deleted" {
+				withdrawn, survivor = survivor, withdrawn
+			}
+			if state == "member_edited" {
+				unresolved = 0
+				if !strings.Contains(posts[0].Text, "current-text") || !strings.HasSuffix(posts[1].Text, "\nedited: current-text") {
+					t.Fatal("edit must follow the refreshed delivery")
+				}
+			} else if !strings.HasSuffix(posts[1].Text, "\ndeleted") {
+				t.Fatal("deletion must follow survivor")
+			}
+			if strings.Contains(text, withdrawn) || strings.Count(text, survivor) != 1 || len(l.Unresolved) != unresolved {
+				t.Fatalf("withdrawn/duplicate text or wrong unresolved count: %s, %d", text, len(l.Unresolved))
+			}
+		})
+	}
+}
