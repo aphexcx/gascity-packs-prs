@@ -236,6 +236,8 @@ test('held: 4503 rollback close immediately resumes polling and posts the held d
 
 const SAFETY_MS = 300000; // WHATSAPP_HELD_POLL_MS at its default
 const linkView = ({ mode, state, reason }) => ({ mode, state, reason });
+// No read in flight: every inbox read the fake answered has completed in the box.
+const settled = (r) => waitFor(async () => (await status(r)).polls === polls(r), { timeoutMs: 2000, what: 'reads settled' });
 
 // Started, up, and its connect's read done; returns the inbox reads so far.
 async function heldAndQuiet(r) {
@@ -243,6 +245,7 @@ async function heldAndQuiet(r) {
   await up(r);
   await waitFor(async () => (await status(r)).polls >= 1);
   await sleep(100);
+  await settled(r);
   return polls(r);
 }
 
@@ -356,10 +359,15 @@ for (const lateMs of [1000, 3000]) {
     await acked(r, id);
     assert.equal((await status(r)).link.reason, 'unannounced_delivery');
     const tripped = polls(r);
+    const expected = Math.floor(lateMs / 2000);
     await r.pump(lateMs, { stepMs: 500, realMs: 40 });
+    // A loaded host may send the read due at 2 s after the clock passed it; wait for it in real time.
+    if (expected) await waitFor(() => polls(r) >= tripped + expected, { timeoutMs: 2000, what: 'the short reads' });
+    await settled(r);
+    await sleep(100);
     const extra = polls(r) - tripped;
     t.diagnostic(`late by ${lateMs} ms: ${extra} extra short read(s) before the wake`);
-    assert.equal(extra, Math.floor(lateMs / 2000));
+    assert.equal(extra, expected);
     r.gw.link.wake();
     await waitFor(() => polls(r) === tripped + extra + 1, { what: "the late wake's read" });
     await sleep(100);
@@ -369,6 +377,25 @@ for (const lateMs of [1000, 3000]) {
     assert.equal(r.gc.count(`wamid.test-late-wake-${lateMs}`), 1);
   });
 }
+
+// The self-review's MINOR: a read a wake asked for that fails is still owed as
+// announced; its retry, a timed read, must not trip the rule.
+test('held: the retry of a failed read that a wake asked for is still announced (gp-urx1)', async (t) => {
+  const r = await setup(t);
+  const reads = await heldAndQuiet(r);
+  const id = add(r, 'failed-wake-read');
+  r.gw.inboxFailures = 1;
+  r.gw.link.wake();
+  await waitFor(() => polls(r) === reads + 1, { what: "the wake's read, answered 503" });
+  await sleep(100);
+  await r.pumpUntil(() => r.gw.acked.has(id), { stepMs: 1000, realMs: 40, what: 'the retry that takes the delivery' });
+  await settled(r);
+  assert.deepEqual(linkView((await status(r)).link), { mode: 'held', state: 'up', reason: '' });
+  const after = polls(r);
+  await r.pump(10000, { stepMs: 1000, realMs: 15 });
+  assert.equal(polls(r), after);
+  assert.equal(r.gc.count('wamid.test-failed-wake-read'), 1);
+});
 
 // Item 2: the box's switch reads off in any case and with spaces; an unknown
 // value leaves the link on and is named once in the log at start (ruling B).

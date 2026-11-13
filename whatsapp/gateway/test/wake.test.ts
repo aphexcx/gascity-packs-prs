@@ -356,9 +356,11 @@ describe("held connection", () => {
     [undefined, "on"], ["", "on"], ["   ", "on"], ["on", "on"], ["ON", "on"], [" On ", "on"],
     ["off", "off"], ["OFF", "off"], ["Off", "off"], [" off", "off"], ["off ", "off"], ["\tOFF\n", "off"],
     ["false", "on"], ["0", "on"], ["no", "on"],
+    // Unquoted in wrangler.toml, Wrangler binds these as JSON, not as strings (the self-review's MAJOR).
+    [false, "on"], [0, "on"], [true, "on"],
   ] as const)("WAKE %j reads %s through the worker and the real object (gp-urx1)", async (value, reads) => {
     const city = await setup().enrollCity();
-    const settings = { ...env, WAKE: value };
+    const settings = { ...env, WAKE: value as unknown as string | undefined };
     const route = await worker.fetch(request(city.token, false), settings);
     expect(route.status).toBe(reads === "on" ? 426 : 404);
     const peer = await open(city);
