@@ -24,6 +24,9 @@ type ingestionSessionAct struct {
 	SessionID string    `json:"session_id,omitempty"`
 	Emoji     string    `json:"emoji,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
+	// NoticeNoActivity keeps a provider no-op as ingestion proof without
+	// importing it as fresh notice-engine activity. Omitted with the switch off.
+	NoticeNoActivity bool `json:"notice_no_activity,omitempty"`
 }
 
 const ingestionActCacheLimit = 4096

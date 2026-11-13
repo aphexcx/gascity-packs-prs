@@ -887,6 +887,7 @@ func deadLetterHeldAliasLoss(cfg config, inbound externalInboundMessage, session
 	if err := cfg.inboundRecovery.importDeadLetters(); err != nil {
 		log.Printf("inbound dead-letter index refresh: %v", err)
 	}
+	cfg.stopNeverSilent(inbound, false)
 	return true
 }
 
@@ -910,6 +911,9 @@ func deadLetterHeldLoss(cfg config, channel string, batch []pendingChannelInboun
 		channel, len(batch), path)
 	if err := cfg.inboundRecovery.importDeadLetters(); err != nil {
 		log.Printf("inbound dead-letter index refresh: %v", err)
+	}
+	for _, member := range batch {
+		cfg.stopNeverSilent(member.inbound, permanentDeliveryFailure(cause))
 	}
 	return true
 }

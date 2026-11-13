@@ -1,0 +1,33 @@
+=== RUN   TestNeverSilentStartsBeforeRegistration
+=== RUN   TestNeverSilentStartsBeforeRegistration/first-restart
+    never_silent_startup_test.go:58: health: registering: attempt 1
+    never_silent_startup_test.go:70: registration 503s=4 owner lines=0 operator mails=0
+    never_silent_startup_test.go:75: got owner lines=0 operator mails=0; want 1, 1
+    registration_startup_test.go:114: 2026/11/12 07:16:52 starting gc-slack-adapter public=127.0.0.1:58534 internal=uds:/tmp/slack-register-3053165765/internal.sock gc=http://127.0.0.1:58532 city=test-city dispatch_concurrency=50
+    registration_startup_test.go:114: 2026/11/12 07:16:52 identity registry: store=/tmp/slack-register-3053165765/identities.json
+    registration_startup_test.go:114: 2026/11/12 07:16:52 handle alias registry: store=/tmp/slack-register-3053165765/aliases.json
+    registration_startup_test.go:114: 2026/11/12 07:16:52 company gateway: directory=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/company_directory.json bindings=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/company_bindings.json dm_bindings=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/dm_bindings.json agent_apps=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/agent_apps.json ingress=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/chat-ingress self_bot="" dir_loaded=false bindings_loaded=false dm_bindings_loaded=false registered_agent_apps=0 verify_sessions=false store_ready=true
+    registration_startup_test.go:114: 2026/11/12 07:16:52 internal listener serving on UDS /tmp/slack-register-3053165765/internal.sock (gc proxy_process)
+    registration_startup_test.go:114: 2026/11/12 07:16:52 register adapter: attempt 1 failed (register failed: 503 Service Unavailable — ); next wait=1s
+    registration_startup_test.go:114: 2026/11/12 07:16:53 register adapter: attempt 2 failed (register failed: 503 Service Unavailable — ); next wait=2s
+    registration_startup_test.go:114: 2026/11/12 07:16:55 register adapter: attempt 3 failed (register failed: 503 Service Unavailable — ); next wait=4s
+    registration_startup_test.go:114: 2026/11/12 07:16:59 register adapter: attempt 4 failed (register failed: 503 Service Unavailable — ); next wait=8s
+=== RUN   TestNeverSilentStartsBeforeRegistration/second-restart
+    never_silent_startup_test.go:58: health: registering: attempt 1
+    never_silent_startup_test.go:70: registration 503s=4 owner lines=0 operator mails=0
+    never_silent_startup_test.go:75: got owner lines=0 operator mails=0; want 1, 1
+    registration_startup_test.go:114: 2026/11/12 07:17:04 starting gc-slack-adapter public=127.0.0.1:58858 internal=uds:/tmp/slack-register-4134787608/internal.sock gc=http://127.0.0.1:58532 city=test-city dispatch_concurrency=50
+    registration_startup_test.go:114: 2026/11/12 07:17:04 identity registry: store=/tmp/slack-register-4134787608/identities.json
+    registration_startup_test.go:114: 2026/11/12 07:17:04 handle alias registry: store=/tmp/slack-register-4134787608/aliases.json
+    registration_startup_test.go:114: 2026/11/12 07:17:04 company gateway: directory=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/company_directory.json bindings=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/company_bindings.json dm_bindings=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/dm_bindings.json agent_apps=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/agent_apps.json ingress=$TMPDIR/TestNeverSilentStartsBeforeRegistration2896803042/001/.gc/slack/chat-ingress self_bot="" dir_loaded=false bindings_loaded=false dm_bindings_loaded=false registered_agent_apps=0 verify_sessions=false store_ready=true
+    registration_startup_test.go:114: 2026/11/12 07:17:04 internal listener serving on UDS /tmp/slack-register-4134787608/internal.sock (gc proxy_process)
+    registration_startup_test.go:114: 2026/11/12 07:17:04 register adapter: attempt 1 failed (register failed: 503 Service Unavailable — ); next wait=1s
+    registration_startup_test.go:114: 2026/11/12 07:17:05 register adapter: attempt 2 failed (register failed: 503 Service Unavailable — ); next wait=2s
+    registration_startup_test.go:114: 2026/11/12 07:17:07 register adapter: attempt 3 failed (register failed: 503 Service Unavailable — ); next wait=4s
+    registration_startup_test.go:114: 2026/11/12 07:17:11 register adapter: attempt 4 failed (register failed: 503 Service Unavailable — ); next wait=8s
+--- FAIL: TestNeverSilentStartsBeforeRegistration (24.12s)
+    --- FAIL: TestNeverSilentStartsBeforeRegistration/first-restart (12.03s)
+    --- FAIL: TestNeverSilentStartsBeforeRegistration/second-restart (12.05s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	24.396s
+FAIL

@@ -8,6 +8,7 @@
   root and the same file in all three packs: the reactions an adapter may
   place when a message arrives, and those that claim a finished fact,
   which only the mayor places (gp-bis1).
+- Add opt-in never-silent owner notices, durable outage mail and health/status reporting for newly addressed human messages.
 
 - Answer a message with `--to` on reply-current, publish or upload. The adapter
   takes the space and thread from the message and refuses conflicting ids.

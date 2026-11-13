@@ -1,0 +1,49 @@
+✔ gateway send replay header distinguishes fresh, replayed and legacy answers (2.329583ms)
+✔ conversation.test.js (49.789416ms)
+✔ deadack.test.js (49.14075ms)
+✔ evidence.test.js (52.771583ms)
+✔ files-out.test.js (49.67325ms)
+✔ gate.test.js (52.735208ms)
+✔ journal.test.js (49.814791ms)
+✔ keeper.test.js (52.178083ms)
+✔ media.test.js (52.773916ms)
+✔ never-silent-integration.test.js (51.602958ms)
+▶ never-silent lost-answer replay class
+  ✔ text: definite-failure across restart (221.389708ms)
+  ✔ text: health across restart (212.063917ms)
+  ✔ text: refused-connection-control across restart (162.919958ms)
+  ✔ captioned-file: definite-failure across restart (458.71925ms)
+  ✔ captioned-file: health across restart (490.266041ms)
+  ✔ captioned-file: refused-connection-control across restart (504.877541ms)
+  ✔ update-template: definite-failure across restart (372.9975ms)
+  ✔ update-template: health across restart (321.367417ms)
+  ✔ update-template: refused-connection-control across restart (272.751833ms)
+✔ never-silent lost-answer replay class (3019.705ms)
+▶ never-silent activity journal failures remain retryable for every send kind
+  ✔ text: before-dispatch (101.101125ms)
+  ✔ text: after-acceptance (103.57875ms)
+  ✔ captioned-file: before-dispatch (333.742292ms)
+  ✔ captioned-file: after-acceptance (323.765291ms)
+  ✔ update-template: before-dispatch (116.66425ms)
+  ✔ update-template: after-acceptance (116.654125ms)
+✔ never-silent activity journal failures remain retryable for every send kind (1096.45525ms)
+▶ never-silent expired gateway keys still recognize fresh words
+  ✔ text (257.73925ms)
+  ✔ captioned-file (501.94725ms)
+  ✔ update-template (1600.598833ms)
+✔ never-silent expired gateway keys still recognize fresh words (2361.447834ms)
+✔ outbound.test.js (74.284083ms)
+✔ pipeline.test.js (46.419459ms)
+✔ readings.test.js (45.925833ms)
+✔ recovery.test.js (46.263584ms)
+✔ render.test.js (35.448917ms)
+✔ restore.test.js (45.234042ms)
+✔ review.test.js (46.15775ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 38
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7406.720041

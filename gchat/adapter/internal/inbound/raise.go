@@ -269,6 +269,9 @@ func (p *Processor) report(l *ledger.Ledger, c *ledger.ChangeState, now time.Tim
 		line("Reason", c.Reason)
 	}
 	line("Age", now.Sub(c.Created).Round(time.Second).String())
+	if notice := p.opts.NeverSilent.OwnerLine(c.Space); notice != "" {
+		fmt.Fprintf(&b, "The owner was told: %q\n", notice)
+	}
 	if waiting {
 		line("POSTs made", strconv.Itoa(c.Attempts))
 		bound := stop + " (" + hours(p.opts.RetryBound) + " after it was recorded)"

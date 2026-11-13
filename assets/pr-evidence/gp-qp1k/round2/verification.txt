@@ -1,0 +1,22 @@
+Final verification, Node v24.21.0 from pnpm exec node --version.
+
+whatsapp/adapter: pnpm test
+exit 0; tests 299; pass 299; fail 0; cancelled 0; skipped 0.
+
+whatsapp/adapter/test: pnpm exec node --test --test-concurrency=2 --test-name-pattern='never-silent lost-answer replay class'
+exit 0; tests 27; pass 27; fail 0. Nine scenario rows, one parent, 17 unmatched-file discovery entries.
+
+whatsapp/adapter/test: pnpm exec node --test --test-concurrency=1 --test-name-pattern='lost-answer replay class|activity journal failures|expired gateway keys|gateway send replay header'
+exit 0; tests 41; pass 41; fail 0. Twenty-one scenario rows, three parents, one header test, 16 discovery entries.
+
+whatsapp/gateway: pnpm test
+exit 0; test files 5 passed; tests 274 passed.
+
+whatsapp/gateway: pnpm typecheck
+exit 0; tsc -p tsconfig.json --noEmit.
+
+repository: make test PYTEST_DIRS=whatsapp/tests
+exit 0; 57 passed.
+
+Earlier concurrent adapter runs had 1/284 and 2/284 timing failures in unchanged tests.
+All three passed in isolation and in the final 299-test run. See README.md for names and timings.

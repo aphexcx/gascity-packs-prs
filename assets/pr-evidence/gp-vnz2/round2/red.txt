@@ -1,0 +1,28 @@
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) follow-through/tests -q -rA --tb=short
+.............F.                                                          [100%]
+=================================== FAILURES ===================================
+_ test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: reminder due] _
+follow-through/tests/test_follow_through_skill.py:145: in test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice
+    assert any(ARRIVING_TWICE.search(section) for section in own), \
+E   AssertionError: the skill's section for "follow-through: reminder due" has no rule for the same mail arriving a second time
+E   assert False
+E    +  where False = any(<generator object test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice.<locals>.<genexpr> at 0x10b336810>)
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED follow-through/tests/test_follow_through_pack.py::test_node_behavior_suite
+PASSED follow-through/tests/test_follow_through_pack.py::test_pack_has_only_local_commands_order_and_doctor
+PASSED follow-through/tests/test_follow_through_pack.py::test_20_python_suite_is_in_make_and_ci
+PASSED follow-through/tests/test_follow_through_pack.py::test_readme_explains_delivery_and_privacy
+PASSED follow-through/tests/test_follow_through_pack.py::test_command_order_and_doctor_work_through_a_directory_symlink
+PASSED follow-through/tests/test_follow_through_skill.py::test_skill_front_matter_names_it_follow_through
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_command_reader_takes_whole_words_and_quoted_values
+PASSED follow-through/tests/test_follow_through_skill.py::test_skill_names_every_shipped_verb_and_no_other
+PASSED follow-through/tests/test_follow_through_skill.py::test_verbs_list_gives_each_verb_its_help_line
+PASSED follow-through/tests/test_follow_through_skill.py::test_every_flag_in_the_skill_is_one_its_verb_takes
+PASSED follow-through/tests/test_follow_through_skill.py::test_the_sentences_the_founders_rule_on_are_there
+PASSED follow-through/tests/test_follow_through_skill.py::test_every_mail_subject_in_the_pack_is_read
+PASSED follow-through/tests/test_follow_through_skill.py::test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: follow-up due]
+PASSED follow-through/tests/test_follow_through_skill.py::test_skill_has_no_em_dash
+FAILED follow-through/tests/test_follow_through_skill.py::test_each_mail_the_pack_sends_has_a_rule_for_arriving_twice[follow-through: reminder due]
+1 failed, 14 passed in 56.46s
+make: *** [test] Error 1

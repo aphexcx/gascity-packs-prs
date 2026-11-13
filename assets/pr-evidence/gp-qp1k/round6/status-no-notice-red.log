@@ -1,0 +1,130 @@
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) whatsapp/tests -q -k status_keeps_link_and_never_silent
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+___ test_status_keeps_link_and_never_silent_in_plain_and_json[held-up-True] ____
+
+fake = <function fake.<locals>.make at 0x107401ee0>, enabled = True
+mode = 'held', state = 'up'
+
+    @pytest.mark.parametrize('enabled', [True, False])
+    @pytest.mark.parametrize('mode,state', [('held', 'up'), ('poll', 'disabled')])
+    def test_status_keeps_link_and_never_silent_in_plain_and_json(fake, enabled, mode, state):
+        link = {'mode': mode, 'state': state, 'since': 1800000000000,
+                'last_wake_at': None, 'wakes': 2, 'reconnects': 1, 'reason': ''}
+        notices = {'enabled': enabled, 'health': {'state': 'unknown', 'reason': 'unavailable'},
+                   'owner_lines_seven_days': 1 if enabled else 0,
+                   'outages': [{'cause': 'not_delivered', 'start': '2027-01-15T08:00:00Z',
+                                'conversations': 1, 'messages': 1, 'owners_told': 1,
+                                'mail_sent': True}] if enabled else []}
+        adapter = fake({'GET /status': (200, {
+            'health': {'gateway_auth': 'ok'}, 'never_silent': notices,
+            'inbound': {'link': link, 'last_poll_at': None, 'entries': {}, 'acks_owed': 0,
+                        'dead_letters': 0, 'held': [], 'gaps': []},
+            'keeper': {'conversations': {}}, 'ledger': {'conversations': {}},
+        })})
+        plain = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert plain.returncode == 0, plain.stderr
+        lines = plain.stdout.splitlines()
+        assert lines[lines.index('Enrolled:      yes') + 1].startswith(f'Gateway link:  {mode} ({state}')
+>       assert f'Never silent:  {str(enabled).lower()}; health unknown' in plain.stdout
+E       AssertionError: assert 'Never silent:  true; health unknown' in 'Enrolled:      yes\nGateway link:  held (up); since 2027-01-15T08:00:00Z; last wake -; wakes 2; reconnects 1\nLast po...1 messages; owners told 1; mail sent true\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n'
+E        +  where 'Enrolled:      yes\nGateway link:  held (up); since 2027-01-15T08:00:00Z; last wake -; wakes 2; reconnects 1\nLast po...1 messages; owners told 1; mail sent true\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n' = CompletedProcess(args=['$REPO/whatsapp/com...owners told 1; mail sent true\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n', stderr='').stdout
+
+whatsapp/tests/test_pack.py:859: AssertionError
+___ test_status_keeps_link_and_never_silent_in_plain_and_json[held-up-False] ___
+
+fake = <function fake.<locals>.make at 0x1074299e0>, enabled = False
+mode = 'held', state = 'up'
+
+    @pytest.mark.parametrize('enabled', [True, False])
+    @pytest.mark.parametrize('mode,state', [('held', 'up'), ('poll', 'disabled')])
+    def test_status_keeps_link_and_never_silent_in_plain_and_json(fake, enabled, mode, state):
+        link = {'mode': mode, 'state': state, 'since': 1800000000000,
+                'last_wake_at': None, 'wakes': 2, 'reconnects': 1, 'reason': ''}
+        notices = {'enabled': enabled, 'health': {'state': 'unknown', 'reason': 'unavailable'},
+                   'owner_lines_seven_days': 1 if enabled else 0,
+                   'outages': [{'cause': 'not_delivered', 'start': '2027-01-15T08:00:00Z',
+                                'conversations': 1, 'messages': 1, 'owners_told': 1,
+                                'mail_sent': True}] if enabled else []}
+        adapter = fake({'GET /status': (200, {
+            'health': {'gateway_auth': 'ok'}, 'never_silent': notices,
+            'inbound': {'link': link, 'last_poll_at': None, 'entries': {}, 'acks_owed': 0,
+                        'dead_letters': 0, 'held': [], 'gaps': []},
+            'keeper': {'conversations': {}}, 'ledger': {'conversations': {}},
+        })})
+        plain = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert plain.returncode == 0, plain.stderr
+        lines = plain.stdout.splitlines()
+        assert lines[lines.index('Enrolled:      yes') + 1].startswith(f'Gateway link:  {mode} ({state}')
+>       assert f'Never silent:  {str(enabled).lower()}; health unknown' in plain.stdout
+E       AssertionError: assert 'Never silent:  false; health unknown' in 'Enrolled:      yes\nGateway link:  held (up); since 2027-01-15T08:00:00Z; last wake -; wakes 2; reconnects 1\nLast po...      none; acks owed 0\nDead letters:  0\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n'
+E        +  where 'Enrolled:      yes\nGateway link:  held (up); since 2027-01-15T08:00:00Z; last wake -; wakes 2; reconnects 1\nLast po...      none; acks owed 0\nDead letters:  0\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n' = CompletedProcess(args=['$REPO/whatsapp/com...acks owed 0\nDead letters:  0\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n', stderr='').stdout
+
+whatsapp/tests/test_pack.py:859: AssertionError
+_ test_status_keeps_link_and_never_silent_in_plain_and_json[poll-disabled-True] _
+
+fake = <function fake.<locals>.make at 0x1074028e0>, enabled = True
+mode = 'poll', state = 'disabled'
+
+    @pytest.mark.parametrize('enabled', [True, False])
+    @pytest.mark.parametrize('mode,state', [('held', 'up'), ('poll', 'disabled')])
+    def test_status_keeps_link_and_never_silent_in_plain_and_json(fake, enabled, mode, state):
+        link = {'mode': mode, 'state': state, 'since': 1800000000000,
+                'last_wake_at': None, 'wakes': 2, 'reconnects': 1, 'reason': ''}
+        notices = {'enabled': enabled, 'health': {'state': 'unknown', 'reason': 'unavailable'},
+                   'owner_lines_seven_days': 1 if enabled else 0,
+                   'outages': [{'cause': 'not_delivered', 'start': '2027-01-15T08:00:00Z',
+                                'conversations': 1, 'messages': 1, 'owners_told': 1,
+                                'mail_sent': True}] if enabled else []}
+        adapter = fake({'GET /status': (200, {
+            'health': {'gateway_auth': 'ok'}, 'never_silent': notices,
+            'inbound': {'link': link, 'last_poll_at': None, 'entries': {}, 'acks_owed': 0,
+                        'dead_letters': 0, 'held': [], 'gaps': []},
+            'keeper': {'conversations': {}}, 'ledger': {'conversations': {}},
+        })})
+        plain = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert plain.returncode == 0, plain.stderr
+        lines = plain.stdout.splitlines()
+        assert lines[lines.index('Enrolled:      yes') + 1].startswith(f'Gateway link:  {mode} ({state}')
+>       assert f'Never silent:  {str(enabled).lower()}; health unknown' in plain.stdout
+E       AssertionError: assert 'Never silent:  true; health unknown' in 'Enrolled:      yes\nGateway link:  poll (disabled); since 2027-01-15T08:00:00Z; last wake -; wakes 2; reconnects 1\nL...1 messages; owners told 1; mail sent true\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n'
+E        +  where 'Enrolled:      yes\nGateway link:  poll (disabled); since 2027-01-15T08:00:00Z; last wake -; wakes 2; reconnects 1\nL...1 messages; owners told 1; mail sent true\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n' = CompletedProcess(args=['$REPO/whatsapp/com...owners told 1; mail sent true\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n', stderr='').stdout
+
+whatsapp/tests/test_pack.py:859: AssertionError
+_ test_status_keeps_link_and_never_silent_in_plain_and_json[poll-disabled-False] _
+
+fake = <function fake.<locals>.make at 0x107402660>, enabled = False
+mode = 'poll', state = 'disabled'
+
+    @pytest.mark.parametrize('enabled', [True, False])
+    @pytest.mark.parametrize('mode,state', [('held', 'up'), ('poll', 'disabled')])
+    def test_status_keeps_link_and_never_silent_in_plain_and_json(fake, enabled, mode, state):
+        link = {'mode': mode, 'state': state, 'since': 1800000000000,
+                'last_wake_at': None, 'wakes': 2, 'reconnects': 1, 'reason': ''}
+        notices = {'enabled': enabled, 'health': {'state': 'unknown', 'reason': 'unavailable'},
+                   'owner_lines_seven_days': 1 if enabled else 0,
+                   'outages': [{'cause': 'not_delivered', 'start': '2027-01-15T08:00:00Z',
+                                'conversations': 1, 'messages': 1, 'owners_told': 1,
+                                'mail_sent': True}] if enabled else []}
+        adapter = fake({'GET /status': (200, {
+            'health': {'gateway_auth': 'ok'}, 'never_silent': notices,
+            'inbound': {'link': link, 'last_poll_at': None, 'entries': {}, 'acks_owed': 0,
+                        'dead_letters': 0, 'held': [], 'gaps': []},
+            'keeper': {'conversations': {}}, 'ledger': {'conversations': {}},
+        })})
+        plain = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert plain.returncode == 0, plain.stderr
+        lines = plain.stdout.splitlines()
+        assert lines[lines.index('Enrolled:      yes') + 1].startswith(f'Gateway link:  {mode} ({state}')
+>       assert f'Never silent:  {str(enabled).lower()}; health unknown' in plain.stdout
+E       AssertionError: assert 'Never silent:  false; health unknown' in 'Enrolled:      yes\nGateway link:  poll (disabled); since 2027-01-15T08:00:00Z; last wake -; wakes 2; reconnects 1\nL...      none; acks owed 0\nDead letters:  0\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n'
+E        +  where 'Enrolled:      yes\nGateway link:  poll (disabled); since 2027-01-15T08:00:00Z; last wake -; wakes 2; reconnects 1\nL...      none; acks owed 0\nDead letters:  0\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n' = CompletedProcess(args=['$REPO/whatsapp/com...acks owed 0\nDead letters:  0\nTerminal holds: 0\nRestore gaps:  0\nWindow read:   last good -\nWindows:\n', stderr='').stdout
+
+whatsapp/tests/test_pack.py:859: AssertionError
+=========================== short test summary info ============================
+FAILED whatsapp/tests/test_pack.py::test_status_keeps_link_and_never_silent_in_plain_and_json[held-up-True]
+FAILED whatsapp/tests/test_pack.py::test_status_keeps_link_and_never_silent_in_plain_and_json[held-up-False]
+FAILED whatsapp/tests/test_pack.py::test_status_keeps_link_and_never_silent_in_plain_and_json[poll-disabled-True]
+FAILED whatsapp/tests/test_pack.py::test_status_keeps_link_and_never_silent_in_plain_and_json[poll-disabled-False]
+4 failed, 78 deselected in 2.16s
+make: *** [test] Error 1

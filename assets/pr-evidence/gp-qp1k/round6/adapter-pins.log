@@ -1,0 +1,65 @@
+✖ A: notice clock and immediate mail do not wait for the held inbox poll (20928.258125ms)
+▶ B: wake and poll carry the same admission and receipt result into notices
+  ✖ wake (20865.346833ms)
+  ✖ poll (20947.813959ms)
+✖ B: wake and poll carry the same admission and receipt result into notices (41813.784417ms)
+✖ C: dropping and reconnecting a held link preserves the outage and notice marks (20811.58875ms)
+✖ D: a lost wake starts no outage before arrival and uses the adapter arrival clock (21490.130333ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 0
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 105105.765416
+
+✖ failing tests:
+
+test at test/never-silent-held-link.test.js:57:1
+✖ A: notice clock and immediate mail do not wait for the held inbox poll (20928.258125ms)
+  Error: timed out waiting for receipt result and terminal stop
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:32:38)
+      at async admit (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:42:3)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:59:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/never-silent-held-link.test.js:70:45
+✖ wake (20865.346833ms)
+  Error: timed out waiting for receipt result and terminal stop
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:32:38)
+      at async admit (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:42:3)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:72:15)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:70:37)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/never-silent-held-link.test.js:70:45
+✖ poll (20947.813959ms)
+  Error: timed out waiting for receipt result and terminal stop
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:32:38)
+      at async admit (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:42:3)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:72:15)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:70:37)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/never-silent-held-link.test.js:86:1
+✖ C: dropping and reconnecting a held link preserves the outage and notice marks (20811.58875ms)
+  Error: timed out waiting for receipt result and terminal stop
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:32:38)
+      at async admit (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:42:3)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:88:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/never-silent-held-link.test.js:108:1
+✖ D: a lost wake starts no outage before arrival and uses the adapter arrival clock (21490.130333ms)
+  Error: timed out waiting for condition
+      at waitFor (file://$REPO/whatsapp/adapter/test/fakes.js:32:38)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:119:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)

@@ -598,6 +598,9 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	// subtype (channel_join, topic change, hidden edit/delete, …) is
 	// acked 200 and creates no receipt.
 	if !AdmissibleSubtype(ev.Subtype) {
+		if ev.Subtype == "message_deleted" && ev.DeletedTS != "" {
+			g.cfg.noticeError(g.cfg.neverSilent.Forget(neverSilentID(ev.Channel, ev.DeletedTS)))
+		}
 		w.WriteHeader(http.StatusOK)
 		return true
 	}
@@ -643,6 +646,7 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 		// is durable BEFORE it (citadel gate r7).
 		MentionOnlyLane: g.mentionOnlyAdmissionIntent(env, ev, room),
 	}
+	receipt.NeverSilent = g.neverSilentAdmission(env, ev)
 	created, existing, err := store.Admit(receipt)
 	if err != nil {
 		// Receipt-store write failure. 503 WITHOUT x-slack-no-retry so
@@ -1068,6 +1072,7 @@ func (g *companyGateway) deliverReceipt(origin ReceiptOrigin) deliverOutcome {
 		}
 		body := renderCompanyReminder(room, companyReminderAuthorClass(td.Kind), td.Kind, msg.Text, origin.TS, threadRootTS, hydration, r.Synthesis, &ptr)
 		result := g.postCompanyMessage(td, body)
+		td.NoticeKind = result.noticeKind
 		td.Attempts++
 		td.UpdatedAt = now
 		if result.disposition == postAccepted {
@@ -1602,7 +1607,7 @@ func (g *companyGateway) postCompanyMessage(td TargetDelivery, body string) comp
 	resp, err := g.deliverClient.Do(req)
 	if err != nil {
 		// Timeout / connection error: outcome unknown, retry.
-		return companyPostResult{disposition: postRetryable, detail: "POST: " + err.Error()}
+		return companyPostResult{disposition: postRetryable, detail: "POST: " + err.Error(), noticeKind: companyNoticeTransport(0, nil, err)}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusAccepted {
@@ -1623,30 +1628,47 @@ func (g *companyGateway) postCompanyMessage(td TargetDelivery, body string) comp
 		}
 		return companyPostResult{
 			disposition: postAccepted,
+			noticeKind:  "pending",
 			requestID:   requestID,
 			eventCursor: eventCursor,
 		}
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return companyPostResult{disposition: postDelivered}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, companyMaxAsyncResponseBodyBytes+1))
+		kind := "unknown"
+		var answer struct {
+			Status string `json:"status"`
+		}
+		if err == nil && len(body) <= companyMaxAsyncResponseBodyBytes && json.Unmarshal(body, &answer) == nil {
+			switch answer.Status {
+			case "delivered":
+				kind = "delivered"
+			case "pending", "accepted":
+				kind = "pending"
+			case "failed":
+				kind = "failed"
+			}
+		}
+		return companyPostResult{disposition: postDelivered, noticeKind: kind}
 	}
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, companyMaxErrorBodyBytesRead))
 	detail := fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	noticeKind := companyNoticeTransport(resp.StatusCode, respBody, nil)
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
 		// 404: the bound session does not exist. Recoverable — the caller keeps
 		// the target pending and runs the self-heal pipeline (re-resolve the
 		// stale binding, or materialize the cold session) rather than failing it.
-		return companyPostResult{disposition: postSessionMissing, detail: detail}
+		return companyPostResult{disposition: postSessionMissing, detail: detail, noticeKind: noticeKind}
 	case resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests:
 		// 408 / 429: transient, retry.
-		return companyPostResult{disposition: postRetryable, detail: detail}
+		return companyPostResult{disposition: postRetryable, detail: detail, noticeKind: noticeKind}
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		// Definitive 4xx: rejected on its merits, do not retry.
-		return companyPostResult{disposition: postDefinitive, detail: detail}
+		return companyPostResult{disposition: postDefinitive, detail: detail, noticeKind: noticeKind}
 	default:
 		// 5xx and anything else non-2xx: retry.
-		return companyPostResult{disposition: postRetryable, detail: detail}
+		return companyPostResult{disposition: postRetryable, detail: detail, noticeKind: noticeKind}
 	}
 }
 
@@ -2182,6 +2204,9 @@ func (g *companyGateway) commitReceipt(r *IngressReceipt, apply func(cur *Ingres
 			g.beforeReceiptUpdate()
 		}
 		err := store.Update(r)
+		if err == nil {
+			return g.observeCompanyNeverSilent(r)
+		}
 		if err == nil || !errors.Is(err, ErrStale) || retry == commitReceiptStaleRetries {
 			return err
 		}
@@ -2265,6 +2290,17 @@ func (g *companyGateway) recoverPending() error {
 	store := g.store()
 	if store == nil {
 		return errors.New("company: receipt store unavailable")
+	}
+	if g.cfg.neverSilent.Enabled() {
+		all, err := store.List()
+		if err != nil {
+			return err
+		}
+		for _, r := range all {
+			if err := g.observeCompanyNeverSilent(r); err != nil {
+				return err
+			}
+		}
 	}
 	pending, err := store.Pending()
 	if err != nil {

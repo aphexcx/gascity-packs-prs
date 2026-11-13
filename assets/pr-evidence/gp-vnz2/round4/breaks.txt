@@ -1,0 +1,46 @@
+$ env -u GC_BIN python3 -I breaks.py <clone>/follow-through <tmp>/breaks
+# at dceea462; each break is a fresh copy of the pack with its edits, and the skill's test run alone in it: python3 -m pytest tests/test_follow_through_skill.py -q -p no:cacheprovider --tb=no -rf (through uv run --with pytest --with pyyaml --with jsonschema when python3 has no pytest)
+== HEAD unchanged
+failing: none
+counts: 43 passed in 4.44s
+exit: 0
+verdict: GREEN
+
+== B1 entry 25's sentence removed from the Health bullet
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no making up for a stopped follow-up]; test_the_health_section_says_what_a_stopped_mail_of_each_kind_means[follow-up]
+message: AssertionError: no making up for a stopped follow-up (contract item 5): the section "Health" does not hold, word for word: For a stopped `follow-up`, send nothing, and never make up for it by writing to the owner yourself.
+message: AssertionError: the Health section never says what a stopped `follow-up` mail means
+counts: 2 failed, 41 passed in 4.41s
+exit: 1
+verdict: RED on the expected cases and no other
+
+== B2 entry 25 reversed
+failing: test_each_founders_rule_stands_word_for_word_in_its_section[no making up for a stopped follow-up]
+message: AssertionError: no making up for a stopped follow-up (contract item 5): the section "Health" does not hold, word for word: For a stopped `follow-up`, send nothing, and never make up for it by writing to the owner yourself.
+counts: 1 failed, 42 passed in 8.45s
+exit: 1
+verdict: RED on the expected cases and no other
+
+== B3 the sentence that status does not say which reminder stopped removed
+failing: test_the_stopped_reminder_rule_takes_every_overdue_reminder_of_its_conversation
+message: AssertionError: the Health section's stopped-reminder bullet does not say, word for word: ['Status does not say which reminder stopped.']
+counts: 1 failed, 42 passed in 4.65s
+exit: 1
+verdict: RED on the expected cases and no other
+
+== B4 every reminder of that conversation changed to one
+failing: test_the_stopped_reminder_rule_takes_every_overdue_reminder_of_its_conversation
+message: AssertionError: the Health section's stopped-reminder bullet does not say, word for word: ['for every reminder of that conversation still shown as set after its time']
+counts: 1 failed, 42 passed in 4.00s
+exit: 1
+verdict: RED on the expected cases and no other
+
+== B5 status names the reminder a stopped raise carries (the pack, in a copy)
+failing: test_the_stopped_reminder_rule_takes_every_overdue_reminder_of_its_conversation
+message: AssertionError: status now names the reminder reminder-<uuid>. The Health section's stopped-reminder bullet must then find the reminder by that id instead of taking every overdue reminder of the conversation, and this test changes with it.
+counts: 1 failed, 42 passed in 3.98s
+exit: 1
+verdict: RED on the expected cases and no other
+
+breaks red on exactly their expected cases: 5 of 5
+breaks.py exit 0

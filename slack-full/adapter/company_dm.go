@@ -44,6 +44,9 @@ func (g *companyGateway) tryHandleDMEvent(w http.ResponseWriter, r *http.Request
 	// Admissibility gate: the SAME subtype allowlist as rooms (no separate DM
 	// table). A non-admissible subtype is acked 200 and creates no receipt.
 	if !AdmissibleSubtype(ev.Subtype) {
+		if ev.Subtype == "message_deleted" && ev.DeletedTS != "" {
+			g.cfg.noticeError(g.cfg.neverSilent.Forget(neverSilentID(ev.Channel, ev.DeletedTS)))
+		}
 		w.WriteHeader(http.StatusOK)
 		return true
 	}
@@ -90,6 +93,7 @@ func (g *companyGateway) tryHandleDMEvent(w http.ResponseWriter, r *http.Request
 		ThreadRootTS: deriveHumanRootTS(decodeCompanyMessage(origin, env.Event)),
 		Event:        append(json.RawMessage(nil), env.Event...),
 	}
+	receipt.NeverSilent = g.neverSilentAdmission(env, ev)
 	created, _, err := store.Admit(receipt)
 	if err != nil {
 		log.Printf("company dm: admit failed origin=%+v: %v", origin, err)
@@ -346,6 +350,7 @@ func (g *companyGateway) deliverDMTargets(r *IngressReceipt, origin ReceiptOrigi
 		}
 		body := renderCompanyDMReminder(owner.Name, msg.Text, origin.TS, threadRootTS, hydration, &ptr)
 		result := g.postCompanyMessage(td, body)
+		td.NoticeKind = result.noticeKind
 		td.Attempts++
 		td.UpdatedAt = now
 		if result.disposition == postAccepted {

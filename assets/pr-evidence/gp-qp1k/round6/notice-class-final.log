@@ -1,0 +1,96 @@
+✔ never-silent rechecks eligibility inside the publisher queue after session words (478.0535ms)
+✔ never-silent health: the four states and every unknown case (35.9085ms)
+✔ never-silent text, partial text and template recovery keeps original activity time and session (1823.545041ms)
+▶ never-silent provider replay after progress expiry does not answer a newer request
+  ✔ age (296.533042ms)
+  ✔ count (172039.018834ms)
+✔ never-silent provider replay after progress expiry does not answer a newer request (172336.010708ms)
+▶ never-silent lost-answer replay class
+  ✔ text: definite-failure across restart (278.923584ms)
+  ✔ text: health across restart (395.141791ms)
+  ✔ text: refused-connection-control across restart (383.695667ms)
+  ✔ captioned-file: definite-failure across restart (884.17075ms)
+  ✔ captioned-file: health across restart (720.694708ms)
+  ✔ captioned-file: refused-connection-control across restart (719.852583ms)
+  ✔ update-template: definite-failure across restart (499.620167ms)
+  ✔ update-template: health across restart (434.846209ms)
+  ✔ update-template: refused-connection-control across restart (461.151917ms)
+✔ never-silent lost-answer replay class (4779.130792ms)
+▶ never-silent lost-answer replay class across switch enablement
+  ✔ text: definite-failure: initially off (320.220166ms)
+  ✔ text: definite-failure: initially on (358.444917ms)
+  ✔ text: definite-failure: initially foreign-attempt (375.716916ms)
+  ✔ text: uncertain-stop: initially off (496.892667ms)
+  ✔ text: uncertain-stop: initially on (347.311375ms)
+  ✔ text: uncertain-stop: initially foreign-attempt (345.037459ms)
+  ✔ text: health: initially off (292.801ms)
+  ✔ text: health: initially on (327.203375ms)
+  ✔ text: health: initially foreign-attempt (291.640666ms)
+  ✔ captioned-file: definite-failure: initially off (579.147917ms)
+  ✔ captioned-file: definite-failure: initially on (475.025167ms)
+  ✔ captioned-file: definite-failure: initially foreign-attempt (433.358083ms)
+  ✔ captioned-file: uncertain-stop: initially off (567.92625ms)
+  ✔ captioned-file: uncertain-stop: initially on (585.304917ms)
+  ✔ captioned-file: uncertain-stop: initially foreign-attempt (554.505541ms)
+  ✔ captioned-file: health: initially off (503.127083ms)
+  ✔ captioned-file: health: initially on (4667.616917ms)
+  ✔ captioned-file: health: initially foreign-attempt (547.400875ms)
+  ✔ update-template: definite-failure: initially off (380.305792ms)
+  ✔ update-template: definite-failure: initially on (414.780209ms)
+  ✔ update-template: definite-failure: initially foreign-attempt (362.624833ms)
+  ✔ update-template: uncertain-stop: initially off (352.439209ms)
+  ✔ update-template: uncertain-stop: initially on (396.96075ms)
+  ✔ update-template: uncertain-stop: initially foreign-attempt (355.044291ms)
+  ✔ update-template: health: initially off (295.633958ms)
+  ✔ update-template: health: initially on (274.135666ms)
+  ✔ update-template: health: initially foreign-attempt (193.473334ms)
+✔ never-silent lost-answer replay class across switch enablement (15096.543125ms)
+▶ never-silent committed proof replay repairs the template activity after a notice write fault
+  ✔ text: definite-failure (234.499791ms)
+  ✔ text: uncertain-stop (250.853625ms)
+  ✔ text: health (237.253292ms)
+  ✔ captioned-file: definite-failure (597.319208ms)
+  ✔ captioned-file: uncertain-stop (706.403ms)
+  ✔ captioned-file: health (579.311208ms)
+  ✔ update-template: definite-failure (404.487334ms)
+  ✔ update-template: uncertain-stop (567.785167ms)
+  ✔ update-template: health (390.2605ms)
+✔ never-silent committed proof replay repairs the template activity after a notice write fault (3969.240208ms)
+▶ never-silent activity journal failures remain retryable for every send kind
+  ✔ text: before-dispatch (130.795ms)
+  ✔ text: after-acceptance (129.996125ms)
+  ✔ captioned-file: before-dispatch (369.953375ms)
+  ✔ captioned-file: after-acceptance (384.341375ms)
+  ✔ update-template: before-dispatch (154.768ms)
+  ✔ update-template: after-acceptance (161.928458ms)
+✔ never-silent activity journal failures remain retryable for every send kind (1332.869542ms)
+▶ never-silent expired gateway keys still recognize fresh words
+  ✔ text: fresh answer received (342.649917ms)
+  ✔ text: fresh answer lost (339.79425ms)
+  ✔ captioned-file: fresh answer received (604.171625ms)
+  ✔ captioned-file: fresh answer lost (759.498167ms)
+  ✔ update-template: fresh answer received (234.497542ms)
+  ✔ update-template: fresh answer lost (217.574333ms)
+✔ never-silent expired gateway keys still recognize fresh words (2498.840458ms)
+✔ never-silent durable episodes aggregate twelve messages in four conversations (1197.924625ms)
+ℹ [{"subject":"never-silent: example-city: whatsapp: not_delivered","body":"city: example-city\nchannel: whatsapp\ncause: not_delivered — the message did not land and will not without recovery\nstarted: 2026-11-12T08:03:00.000Z\nconversations: 4\nmessages: 12\noldest_age_seconds: 180\nowners_told: true (4 conversations)\nstatus: gc whatsapp status --json\n","key":"never-silent:4a628eb0-a16c-4d7b-99a7-24705ba47c4b"},{"subject":"never-silent: example-city: whatsapp: not_delivered cleared","body":"city: example-city\nchannel: whatsapp\ncause: not_delivered — the message did not land and will not without recovery\nstarted: 2026-11-12T08:03:00.000Z\nended: 2026-11-12T08:03:01.000Z\n","key":"never-silent:4a628eb0-a16c-4d7b-99a7-24705ba47c4b:cleared"}]
+✔ never-silent pending resets every failure streak and never means down (768.358333ms)
+✔ never-silent unknown stop mails at once but a session reply suppresses the owner line (327.271833ms)
+✔ never-silent an attributed reply suppresses unknown delivery even when no receipt named the target (113.242875ms)
+✔ never-silent health states post the exact owner lines only after delivery (688.716542ms)
+ℹ I can't answer yet because no Claude account is signed in for me. The team that runs me has been told.
+ℹ I've reached my usage limit for now and can't answer until it resets. The team that runs me has been told.
+ℹ I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.
+✔ never-silent marks precede owner posts, refusal still mails, no reminders (298.170416ms)
+✔ never-silent mail retry marks survive restart and remote mail has no customer canaries (409.9775ms)
+✔ never-silent is off by default and missing context sends no operator mail (219.189125ms)
+✔ never-silent clear mail survives an expired start mail (371.998625ms)
+✔ never-silent local cause-one mail survives owner refusal and unknown grace (517.813291ms)
+ℹ tests 78
+ℹ suites 0
+ℹ pass 78
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 207318.744167

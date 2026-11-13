@@ -1,0 +1,38 @@
+✔ A: notice clock and immediate mail do not wait for the held inbox poll (2513.197417ms)
+ℹ pin: mail at stop; line at +180000 ms; no additional inbox read; tick 250 ms
+✖ A: continuous failed receipts notify at three minutes without an inbox read (2188.244583ms)
+▶ B: wake and poll carry the same admission and receipt result into notices
+  ✔ wake (2938.963209ms)
+  ✔ poll (7051.161792ms)
+✔ B: wake and poll carry the same admission and receipt result into notices (9991.085375ms)
+✔ C: dropping and reconnecting a held link preserves the outage and notice marks (3790.350209ms)
+✔ D: a lost wake starts no outage before arrival and uses the adapter arrival clock (3196.016375ms)
+ℹ pin: provider sent +0; adapter admitted +300000; first owner line +480000 ms
+ℹ tests 7
+ℹ suites 0
+ℹ pass 6
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21735.536875
+
+✖ failing tests:
+
+test at test/never-silent-held-link.test.js:69:1
+✖ A: continuous failed receipts notify at three minutes without an inbox read (2188.244583ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  0 !== 1
+
+      at lineAtBound (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:54:10)
+      at async TestContext.<anonymous> (file://$REPO/whatsapp/adapter/test/never-silent-held-link.test.js:79:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

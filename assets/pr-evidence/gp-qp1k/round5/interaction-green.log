@@ -1,0 +1,191 @@
+=== RUN   TestNeverSilentHoldLegacyWriters
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/uncertain
+2026/11/12 16:50:16 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkuncertain705226575/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/failed
+2026/11/12 16:50:16 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkfailed3981631766/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+=== RUN   TestNeverSilentHoldLegacyWriters/sink/refused
+2026/11/12 16:50:16 coalesce: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWriterssinkrefused975090728/001/dead/example-channel.jsonl — inspect and re-post by hand once the rejection cause is fixed
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/uncertain
+2026/11/12 16:50:17 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowupuncertain2019258551/001/dead/example-channel.jsonl — inspect and re-post by hand
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/failed
+2026/11/12 16:50:17 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowupfailed3718132631/001/dead/example-channel.jsonl — inspect and re-post by hand
+=== RUN   TestNeverSilentHoldLegacyWriters/followup/refused
+2026/11/12 16:50:18 receipt follow-up: chan=example-channel 1 message(s) written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersfollowuprefused3678562067/001/dead/example-channel.jsonl — inspect and re-post by hand
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/uncertain
+2026/11/12 16:50:18 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasuncertain352037943/001/dead/example-channel.jsonl — re-inject alias_body by hand
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/failed
+2026/11/12 16:50:19 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasfailed2075618304/001/dead/example-channel.jsonl — re-inject alias_body by hand
+=== RUN   TestNeverSilentHoldLegacyWriters/alias/refused
+2026/11/12 16:50:19 receipt follow-up: chan=example-channel lost injection for session=example-session handle=@example written to dead-letter file $TMPDIR/TestNeverSilentHoldLegacyWritersaliasrefused1106260043/001/dead/example-channel.jsonl — re-inject alias_body by hand
+--- PASS: TestNeverSilentHoldLegacyWriters (4.34s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/sink/uncertain (0.40s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/sink/failed (0.48s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/sink/refused (0.52s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/followup/uncertain (0.47s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/followup/failed (0.47s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/followup/refused (0.46s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/alias/uncertain (0.52s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/alias/failed (0.52s)
+    --- PASS: TestNeverSilentHoldLegacyWriters/alias/refused (0.51s)
+=== RUN   TestNeverSilentHoldPostBranches
+=== RUN   TestNeverSilentHoldPostBranches/refused_connections
+=== RUN   TestNeverSilentHoldPostBranches/whole_pending_concluded
+2026/11/12 16:50:20 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:20 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=- poll=true outcome=receipt=unsupported error=<nil>
+2026/11/12 16:50:20 inbound HOLD settled: chan=example-channel ts=100.000001 receipt=- by=2026-11-12T22:50:21Z dead-lettered-at=0001-01-01T00:00:00Z proof=terminal paste confirmed; submission unconfirmed
+--- PASS: TestNeverSilentHoldPostBranches (1.08s)
+    --- PASS: TestNeverSilentHoldPostBranches/refused_connections (0.52s)
+    --- PASS: TestNeverSilentHoldPostBranches/whole_pending_concluded (0.56s)
+=== RUN   TestNeverSilentHoldLadder
+=== RUN   TestNeverSilentHoldLadder/held
+2026/11/12 16:50:21 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:21 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:21 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:21 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:22 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:22 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+=== RUN   TestNeverSilentHoldLadder/failed
+2026/11/12 16:50:23 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:23 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:23 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:24 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:24 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:24 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+--- PASS: TestNeverSilentHoldLadder (4.20s)
+    --- PASS: TestNeverSilentHoldLadder/held (2.12s)
+    --- PASS: TestNeverSilentHoldLadder/failed (2.08s)
+=== RUN   TestNeverSilentHoldBound
+=== RUN   TestNeverSilentHoldBound/held
+2026/11/12 16:50:25 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:25 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:25 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:25 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:30 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:30 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:31 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:31 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 6 attempt(s) over 30m0s file=$TMPDIR/TestNeverSilentHoldBoundheld554696105/001/dead/example-channel.jsonl
+=== RUN   TestNeverSilentHoldBound/failed
+2026/11/12 16:50:31 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:31 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:32 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:32 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:32 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:33 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:33 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+2026/11/12 16:50:34 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 6 attempt(s) over 30m0s file=$TMPDIR/TestNeverSilentHoldBoundfailed3184130795/001/dead/example-channel.jsonl
+--- PASS: TestNeverSilentHoldBound (8.75s)
+    --- PASS: TestNeverSilentHoldBound/held (6.21s)
+    --- PASS: TestNeverSilentHoldBound/failed (2.55s)
+=== RUN   TestNeverSilentHoldLandedReplay
+=== RUN   TestNeverSilentHoldLandedReplay/rendered=true
+2026/11/12 16:50:34 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:34 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:34 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldLandedReplayrendered=true3280605597/001/dead/example-channel.jsonl
+2026/11/12 16:50:34 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:34 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=delivered receipt_verdict=vouched error=<nil>
+2026/11/12 16:50:34 inbound HOLD settled: chan=example-channel ts=100.000001 receipt=example-receipt by=2026-11-12T22:54:36Z dead-lettered-at=2026-11-12T22:51:35Z proof=terminal handoff confirmed
+=== RUN   TestNeverSilentHoldLandedReplay/rendered=false
+2026/11/12 16:50:36 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:36 coalesce: UNDELIVERED chan=example-channel batch=1 newest_ts=100.000001 gc accepted the batch but did not vouch that it reached the session after 1 re-post(s) — receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held
+2026/11/12 16:50:36 coalesced inbound POST failed: chan=example-channel batch=1: gc accepted the inbound but did not vouch that it reached the session (no delivery receipt)
+2026/11/12 16:50:36 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=gc accepted the inbound but did not vouch that it reached the session (no delivery receipt)
+2026/11/12 16:50:36 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldLandedReplayrendered=false950657950/001/dead/example-channel.jsonl
+2026/11/12 16:50:36 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:36 inbound (coalesced): chan=example-channel batch=1 newest_ts=100.000001 text=481ch receipt=example-receipt receipt_status=delivered receipt_verdict=vouched
+2026/11/12 16:50:36 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=delivered receipt_verdict=vouched error=<nil>
+2026/11/12 16:50:36 inbound HOLD settled: chan=example-channel ts=100.000001 receipt=example-receipt by=2026-11-12T22:54:38Z dead-lettered-at=2026-11-12T22:51:37Z proof=terminal handoff confirmed
+--- PASS: TestNeverSilentHoldLandedReplay (3.31s)
+    --- PASS: TestNeverSilentHoldLandedReplay/rendered=true (1.77s)
+    --- PASS: TestNeverSilentHoldLandedReplay/rendered=false (1.54s)
+=== RUN   TestNeverSilentHoldUnlandedReplay
+=== RUN   TestNeverSilentHoldUnlandedReplay/held
+2026/11/12 16:50:37 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:37 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:37 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldUnlandedReplayheld3809123339/001/dead/example-channel.jsonl
+2026/11/12 16:50:38 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:38 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+=== RUN   TestNeverSilentHoldUnlandedReplay/failed
+2026/11/12 16:50:39 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:39 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:39 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldUnlandedReplayfailed3054754041/001/dead/example-channel.jsonl
+2026/11/12 16:50:39 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:39 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=failed receipt_verdict=unconfirmed receipt_member_undelivered=example-session/failed error=<nil>
+=== RUN   TestNeverSilentHoldUnlandedReplay/http-503
+2026/11/12 16:50:40 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:40 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:40 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldUnlandedReplayhttp-5033162322122/001/dead/example-channel.jsonl
+2026/11/12 16:50:41 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:41 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=- poll=false outcome=receipt=unsupported error=503 Service Unavailable: {"code":"example-refusal"}
+=== RUN   TestNeverSilentHoldUnlandedReplay/http-429
+2026/11/12 16:50:42 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:42 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:42 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldUnlandedReplayhttp-4294037962487/001/dead/example-channel.jsonl
+2026/11/12 16:50:42 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:42 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=- poll=false outcome=receipt=unsupported error=429 Too Many Requests: {"code":"example-refusal"}
+=== RUN   TestNeverSilentHoldUnlandedReplay/timeout
+2026/11/12 16:50:44 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:44 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:44 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldUnlandedReplaytimeout345147268/001/dead/example-channel.jsonl
+2026/11/12 16:50:44 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:44 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=- poll=false outcome=receipt=unsupported error=Post "http://127.0.0.1:52663/v0/city/test-city/extmsg/inbound": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+=== RUN   TestNeverSilentHoldUnlandedReplay/http-422
+2026/11/12 16:50:45 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:45 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:45 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldUnlandedReplayhttp-4222295857578/001/dead/example-channel.jsonl
+2026/11/12 16:50:46 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:46 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=- poll=false outcome=receipt=unsupported error=422 Unprocessable Entity: {"code":"example-refusal"}
+=== RUN   TestNeverSilentHoldUnlandedReplay/pending
+2026/11/12 16:50:47 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:47 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=held receipt_verdict=unconfirmed receipt_member_undelivered=example-session/held error=<nil>
+2026/11/12 16:50:47 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 1m0s file=$TMPDIR/TestNeverSilentHoldUnlandedReplaypending1482495869/001/dead/example-channel.jsonl
+2026/11/12 16:50:51 inbound replay: trigger=vouch armed=1 left-unreplayed-for-age=0 oldest=0001-01-01T00:00:00Z
+2026/11/12 16:50:51 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=example-receipt poll=false outcome=receipt=example-receipt receipt_status=pending receipt_verdict=held error=<nil>
+--- PASS: TestNeverSilentHoldUnlandedReplay (14.23s)
+    --- PASS: TestNeverSilentHoldUnlandedReplay/held (1.63s)
+    --- PASS: TestNeverSilentHoldUnlandedReplay/failed (1.26s)
+    --- PASS: TestNeverSilentHoldUnlandedReplay/http-503 (1.60s)
+    --- PASS: TestNeverSilentHoldUnlandedReplay/http-429 (1.83s)
+    --- PASS: TestNeverSilentHoldUnlandedReplay/timeout (1.64s)
+    --- PASS: TestNeverSilentHoldUnlandedReplay/http-422 (1.47s)
+    --- PASS: TestNeverSilentHoldUnlandedReplay/pending (4.80s)
+=== RUN   TestNeverSilentHoldPermanentRefusal
+=== RUN   TestNeverSilentHoldPermanentRefusal/alias=false
+2026/11/12 16:50:52 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:52 inbound HOLD attempt: chan=example-channel ts=100.000001 alias= receipt=- poll=false outcome=receipt=unsupported error=422 Unprocessable Entity: {"code":"example-refusal"}
+2026/11/12 16:50:52 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 20s file=$TMPDIR/TestNeverSilentHoldPermanentRefusalalias=false2084273699/001/dead/example-channel.jsonl
+=== RUN   TestNeverSilentHoldPermanentRefusal/alias=true
+2026/11/12 16:50:52 inbound HOLD: chan=example-channel ts=100.000001 receipt=example-receipt retry_in=20s bound=30m0s
+2026/11/12 16:50:52 alias dispatch: http://127.0.0.1:52827/v0/city/test-city/session/example-session/messages -> 404 Not Found: {"code":"example-refusal"}
+2026/11/12 16:50:52 inbound HOLD attempt: chan=example-channel ts=100.000001 alias=example-session receipt=- poll=false outcome=receipt=unsupported error=404: alias redrive not accepted
+2026/11/12 16:50:52 inbound HOLD: LOSS chan=example-channel ts=100.000001 receipt=example-receipt dead-lettered after 1 attempt(s) over 20s file=$TMPDIR/TestNeverSilentHoldPermanentRefusalalias=true1917656158/001/dead/example-channel.jsonl
+--- PASS: TestNeverSilentHoldPermanentRefusal (1.49s)
+    --- PASS: TestNeverSilentHoldPermanentRefusal/alias=false (0.83s)
+    --- PASS: TestNeverSilentHoldPermanentRefusal/alias=true (0.67s)
+=== RUN   TestNeverSilentReactionJournal
+=== RUN   TestNeverSilentReactionJournal/off_already_reacted
+2026/11/12 16:50:53 react: op=reactions.add conv=example-channel ts=example-message emoji=eyes
+=== RUN   TestNeverSilentReactionJournal/on_already_reacted
+2026/11/12 16:50:53 react: op=reactions.add conv=example-channel ts=example-message emoji=eyes
+=== RUN   TestNeverSilentReactionJournal/on_fresh
+2026/11/12 16:50:53 react: op=reactions.add conv=example-channel ts=example-message emoji=eyes
+--- PASS: TestNeverSilentReactionJournal (0.12s)
+    --- PASS: TestNeverSilentReactionJournal/off_already_reacted (0.03s)
+    --- PASS: TestNeverSilentReactionJournal/on_already_reacted (0.03s)
+    --- PASS: TestNeverSilentReactionJournal/on_fresh (0.07s)
+=== RUN   TestNeverSilentRepeatedReactionIsNotNewActivity
+=== RUN   TestNeverSilentRepeatedReactionIsNotNewActivity/repeat=true
+2026/11/12 16:50:53 react: op=reactions.add conv=example-channel ts=old-message emoji=eyes
+2026/11/12 16:50:53 react: op=reactions.add conv=example-channel ts=old-message emoji=eyes
+2026/11/12 16:50:53 never-silent: operator context unset; no operator mail will be sent
+=== RUN   TestNeverSilentRepeatedReactionIsNotNewActivity/repeat=false
+2026/11/12 16:50:53 react: op=reactions.add conv=example-channel ts=old-message emoji=eyes
+2026/11/12 16:50:53 react: op=reactions.add conv=example-channel ts=old-message emoji=eyes
+--- PASS: TestNeverSilentRepeatedReactionIsNotNewActivity (0.51s)
+    --- PASS: TestNeverSilentRepeatedReactionIsNotNewActivity/repeat=true (0.27s)
+    --- PASS: TestNeverSilentRepeatedReactionIsNotNewActivity/repeat=false (0.24s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	38.259s
+=== RUN   TestIsStoppedReadsOnlyActiveStops
+--- PASS: TestIsStoppedReadsOnlyActiveStops (0.13s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter/internal/neversilent	0.239s

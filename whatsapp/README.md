@@ -89,7 +89,7 @@ points at all of them.
 | --- | --- |
 | `pack.toml` | one `proxy_process` service, `whatsapp`, private, `./adapter/run.sh`, health `/healthz` |
 | `city-fragment.toml` | `[[extmsg.default_route]] provider "whatsapp" agent "mayor"` (pack.toml cannot carry extmsg config) |
-| `adapter/` | Node 20+, plain `fetch`, no package dependency; `run.sh` sources the env file and execs `node src/index.js` |
+| `adapter/` | Node 20+, plain `fetch`, no package dependency; the held link needs a built-in WebSocket, and a box without one polls; `run.sh` sources the env file and execs `node src/index.js` |
 | `commands/` | `gc whatsapp publish`, `invite`, `consent`, `hours`, `enroll`, `status`, `inbound resolve`, `inbound clear-gap` |
 | `doctor/` | nine rows: env, dependencies, runtime, gateway, deadletters, held, restore, probes, keeper |
 | `tests/test_pack.py` | discovery, every doctor row failing closed, the verbs against a fake adapter |
@@ -116,6 +116,8 @@ at the adapter directory; a missing selected file never falls back to another.
 | `WHATSAPP_GATEWAY_CREDENTIAL` | the per-city credential (written by `gc whatsapp enroll`, 0600) |
 | `GC_CITY_NAME`, `GC_API_BASE_URL` | the city and its API (not controller-injected; check `gc status`) |
 | `WHATSAPP_POLL_MS` | inbox poll, default 2000 |
+| `WHATSAPP_HELD_CONNECTION` | held wake link, default on; off restores the ordinary poll |
+| `WHATSAPP_HELD_POLL_MS` | safety inbox read while the link is up, default 300000 |
 | `WHATSAPP_WATERMARK_CHECK_MS` | the all-watermark restore read, default 60000 |
 | `WHATSAPP_ROUTE_AGENT` | the default route's agent for the paste probe, default `mayor` |
 | `WHATSAPP_KEEPER_UPDATE_HOUR`, `WHATSAPP_CITY_TZ` | the keeper's daily update hour (default 10) and the city's zone |
@@ -311,6 +313,30 @@ nothing. The `consent` and `hours` verbs take a joined conversation's id (a
 user id whole, a number in any form) and print the last four digits the
 adapter matched. The mayor never replies to a keeper event; it publishes a real
 update or nothing.
+
+## Never silent (opt-in)
+
+Set `NEVER_SILENT=on` to enable notices for newly admitted human messages addressed to the mayor. It is off by default. Edits, deletions, reactions, bots and recovery traffic do not start notices. A busy mayor is never reported just for taking time to reply.
+
+The adapter knows `not_delivered` when it stops trying, or observes three continuous minutes of definite delivery failures or connection/dial errors, city-not-found responses or server errors. A successful HTTP response saying pending resets the failure wait. An uncertain stopped delivery raises operator mail immediately but waits three minutes without a session reply or reaction before telling the owner.
+
+The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
+
+Nothing in these packs writes that file yet. Its writer must run independently of gc's supervisor so evidence remains fresh when the supervisor fails. It must never call an asleep, drained or suspended session down: gc wakes those sessions for incoming messages. Until a writer exists, only not_delivered can fire.
+
+The owner receives one of these exact lines in the same conversation and thread, with the usual reply identity:
+
+- not_delivered or session_down: "I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back."
+- no_seat: "I can't answer yet because no Claude account is signed in for me. The team that runs me has been told."
+- seat_at_cap: "I've reached my usage limit for now and can't answer until it resets. The team that runs me has been told."
+
+A durable reservation permits at most one attempt per conversation in six hours. A refused post is logged once, and restart never repeats that attempt. There are no reminders or recovery messages to owners. Notices do not count as session replies. The local mayor also learns which fixed line was posted.
+
+Set `NEVER_SILENT_OPERATOR_CONTEXT` to the operator city's gc context. `NEVER_SILENT_OPERATOR_AGENT` defaults to mayor; `GC_BIN` defaults to gc. Without a context the adapter logs once when an outage starts and sends no remote mail. Each adapter/cause outage gets a start mail and a cleared mail, with durable sent marks and failed-send retries at most once a minute for 24 hours. Remote gc accepts `--dedup` but the pinned implementation does not forward it; the adapter's durable sent mark provides the guard.
+
+Operator mail contains only city, adapter, cause, times, aggregate counts and age, owner-notice counts, relevant health state/check time and a status command. It contains no customer text, name, address or conversation coordinates. Local state retains the coordinates needed to reply; those never leave the city in operator mail.
+
+`gc whatsapp status` and its `--json` output include enabled state, health and its age or unknown reason, open outages with aggregate counts and sent marks, and the number of owner lines posted in seven days.
 
 ## The verbs
 

@@ -1,0 +1,27 @@
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 $REPO/whatsapp/gateway
+
+ ❯ test/wake.test.ts (34 tests | 1 failed | 33 skipped) 5006ms
+     × an adopted status wakes once while a lost-answer replay keeps the accepted send attempt 5005ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/wake.test.ts > held connection > an adopted status wakes once while a lost-answer replay keeps the accepted send attempt
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/wake.test.ts:132:3
+    130|   });
+    131|
+    132|   it("an adopted status wakes once while a lost-answer replay keeps th…
+       |   ^
+    133|     const { h, city, ids } = await joined();
+    134|     const peer = await open(city);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 5 skipped (6)
+      Tests  1 failed | 307 skipped (308)
+   Start at  22:51:48
+   Duration  6.22s (transform 516ms, setup 1.52s, import 774ms, tests 5.01s, environment 1ms)

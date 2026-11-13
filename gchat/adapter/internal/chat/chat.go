@@ -152,9 +152,46 @@ func (c *Client) CreateMessage(ctx context.Context, space, text, thread, request
 	return c.CreateMessageWithAttachments(ctx, space, text, thread, requestID, named, nil)
 }
 
+// CreateNotice attempts an adapter-authored notice once. Its caller has already
+// reserved a durable cooldown mark; even a rate limit must not start a retry loop.
+func (c *Client) CreateNotice(ctx context.Context, space, text, thread string, named bool, allowed ...func() bool) (string, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	m := &googlechat.Message{Text: text}
+	if thread != "" {
+		m.Thread = &googlechat.Thread{Name: thread}
+	}
+	call := c.api.Spaces.Messages.Create(space, m)
+	if named && thread != "" {
+		call.MessageReplyOption("REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD")
+	}
+	if err := c.limits.WaitWrite(ctx, space); err != nil {
+		return "", "", err
+	}
+	if len(allowed) > 0 && allowed[0] != nil && !allowed[0]() {
+		return "", "", context.Canceled
+	}
+	result, err := call.Context(ctx).Do()
+	if err != nil {
+		return "", "", err
+	}
+	if result.Thread != nil {
+		thread = result.Thread.Name
+	}
+	return result.Name, thread, nil
+}
+
 // CreateMessageWithAttachments posts previously uploaded attachment references.
 // The same requestID must be reused on retries, including retries after restart.
 func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, thread, requestID string, named bool, attachments []*googlechat.Attachment) (name, threadName string, err error) {
+	name, threadName, _, err = c.CreateMessageWithAttachmentsAndTime(ctx, space, text, thread, requestID, named, attachments)
+	return name, threadName, err
+}
+
+// CreateMessageWithAttachmentsAndTime retains the provider's original creation
+// time, including a replay after Google accepted a request but local state was
+// not saved. An absent timestamp is unknown; the retry time is not evidence.
+func (c *Client) CreateMessageWithAttachmentsAndTime(ctx context.Context, space, text, thread, requestID string, named bool, attachments []*googlechat.Attachment) (name, threadName string, createdAt time.Time, err error) {
 	message := &googlechat.Message{Text: text, Attachment: attachments}
 	if thread != "" {
 		message.Thread = &googlechat.Thread{Name: thread}
@@ -179,7 +216,7 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 		return err
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", time.Time{}, err
 	}
 	if result.Thread != nil {
 		threadName = result.Thread.Name
@@ -191,7 +228,8 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 	if c.MessageCreated != nil {
 		c.MessageCreated(space, result.Name, threadName, result.CreateTime)
 	}
-	return result.Name, threadName, nil
+	createdAt, _ = time.Parse(time.RFC3339Nano, result.CreateTime)
+	return result.Name, threadName, createdAt, nil
 }
 
 func (c *Client) ListMessages(ctx context.Context, space string, since time.Time, thread string, page func([]*googlechat.Message) error) error {

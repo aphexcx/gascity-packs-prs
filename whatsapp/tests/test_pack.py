@@ -631,6 +631,10 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     assert ('Window read:   last good 2026-11-05T15:20:00Z; failing since 2026-11-05T15:21:00Z (3 attempt(s)): '
             'HTTP 503 from https://gw.invalid/v1/window') in out
     assert '5511900001234' not in out
+    encoded = verb('status.sh', '--json', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert encoded.returncode == 0, encoded.stderr
+    assert '5511900001234' not in encoded.stdout
+    assert json.loads(encoded.stdout)['keeper']['conversations'][0]['conversation_last4'] == '1234'
 
 
 @pytest.mark.parametrize('city_set', [False, True])
@@ -812,3 +816,51 @@ def test_enroll_writes_the_credential_0600_and_prints_nothing_secret(tmp_path):
         assert again.returncode == 1 and 'already holds' in again.stderr
     finally:
         server.shutdown()
+
+
+@pytest.mark.parametrize('mode,state,reason', [('held', 'up', ''), ('poll', 'down', 'pong_timeout')])
+def test_status_renders_gateway_link_directly_below_enrollment(fake, mode, state, reason):
+    adapter = fake({'GET /status': (200, {
+        'health': {'gateway_auth': 'ok'},
+        'inbound': {'link': {'mode': mode, 'state': state, 'since': 1800000000000,
+                            'last_wake_at': None, 'wakes': 2, 'reconnects': 1, 'reason': reason},
+                    'last_poll_at': None, 'entries': {}, 'acks_owed': 0, 'dead_letters': 0, 'held': [], 'gaps': []},
+        'keeper': {'conversations': {}},
+    })})
+    result = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    enrolled = lines.index('Enrolled:      yes')
+    assert lines[enrolled + 1].startswith(f'Gateway link:  {mode} ({state}')
+    assert 'wakes 2' in lines[enrolled + 1] and 'reconnects 1' in lines[enrolled + 1]
+    if reason:
+        assert reason in lines[enrolled + 1]
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+@pytest.mark.parametrize('mode,state', [('held', 'up'), ('poll', 'disabled')])
+def test_status_keeps_link_and_never_silent_in_plain_and_json(fake, enabled, mode, state):
+    link = {'mode': mode, 'state': state, 'since': 1800000000000,
+            'last_wake_at': None, 'wakes': 2, 'reconnects': 1, 'reason': ''}
+    notices = {'enabled': enabled, 'health': {'state': 'unknown', 'reason': 'unavailable'},
+               'owner_lines_seven_days': 1 if enabled else 0,
+               'outages': [{'cause': 'not_delivered', 'start': '2027-01-15T08:00:00Z',
+                            'conversations': 1, 'messages': 1, 'owners_told': 1,
+                            'mail_sent': True}] if enabled else []}
+    adapter = fake({'GET /status': (200, {
+        'health': {'gateway_auth': 'ok'}, 'never_silent': notices,
+        'inbound': {'link': link, 'last_poll_at': None, 'entries': {}, 'acks_owed': 0,
+                    'dead_letters': 0, 'held': [], 'gaps': []},
+        'keeper': {'conversations': {}}, 'ledger': {'conversations': {}},
+    })})
+    plain = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert plain.returncode == 0, plain.stderr
+    lines = plain.stdout.splitlines()
+    assert lines[lines.index('Enrolled:      yes') + 1].startswith(f'Gateway link:  {mode} ({state}')
+    assert f'Never silent:  {str(enabled).lower()}; health unknown' in plain.stdout
+    assert ('not_delivered since' in plain.stdout) == enabled
+    encoded = verb('status.sh', '--json', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert encoded.returncode == 0, encoded.stderr
+    result = json.loads(encoded.stdout)
+    assert result['inbound']['link'] == link
+    assert result['never_silent'] == notices

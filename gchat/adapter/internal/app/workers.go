@@ -37,9 +37,6 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	defer cancel()
 	g := gcclient.New(a.cfg.Secrets.GCAPIBase, a.cfg.Secrets.CityName)
 	g.SetConnectionRefusedHandler(func(err error) { a.gcDown.Store(true); a.s.ObserveGCError(err) })
-	if err := a.ensureRegistered(ctx, registered); err != nil {
-		return err
-	}
 	hc, err := source.Client(ctx)
 	if err != nil {
 		return err
@@ -61,6 +58,12 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		}
 	}
 	a.chatClient.Store(c)
+	a.noticeProvider.Store(&noticeProvider{client: c, source: source})
+	// Provider access is needed by the service's outage watch even while gc
+	// refuses registration. Only inbound work waits at this barrier.
+	if err := a.ensureRegistered(ctx, registered); err != nil {
+		return err
+	}
 	a.s.SetClients(c, g)
 	g.SetConnectionRefusedHandler(func(err error) { a.gcDown.Store(true); a.s.ObserveGCError(err) })
 	es, err := workspace.NewService(ctx, option.WithHTTPClient(hc), option.WithEndpoint(strings.TrimRight(a.cfg.Endpoints.EventsAPIBase, "/")+"/"))
@@ -79,7 +82,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		lookup = principal.DirectoryLookup(hc, a.cfg.Endpoints.PeopleAPIBase)
 	}
 	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup})
-	proc, err := inbound.New(inbound.Options{Ack: a.arrival, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
+	proc, err := inbound.New(inbound.Options{Ack: a.arrival, NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
 	if err != nil {
 		return err
 	}

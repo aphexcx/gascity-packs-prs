@@ -26,6 +26,7 @@ import { pasteFound, probeShape } from './evidence.js';
 import {
   conversationOf, inboundAtMs, lastFour, pmidOfRid, providerMessageId, renderMessage, ridFor, statusOf,
 } from './render.js';
+import { createLink } from './link.js';
 
 export const READBACK_FAST_MS = 5000;
 export const READBACK_FAST_FOR_MS = 10 * 60 * 1000;
@@ -134,12 +135,14 @@ export function createInbound({
   ledger,
   keeper,
   arrival,
+  notices,
   pollMs = 2000,
   gcPostTimeoutMs = 30000,
   watermarkCheckMs = 60000,
   compactMs = 10 * 60 * 1000,
   routeAgent = 'mayor',
   onAuthFailure = () => {},
+  heldConnection,
 }) {
   const graceMs = gcPostTimeoutMs + GRACE_MARGIN_MS;
   const ackOwedIds = new Map(); // gateway delivery id -> rid (null for a status delivery that is only acked)
@@ -192,6 +195,17 @@ export function createInbound({
       }
     }
     for (const e of entries().values()) {
+      // Only previously enrolled sidecar entries can change here. Replaying
+      // the journal never enrolls old traffic when the feature is enabled.
+      if (e.accepted?.via === 'operator' && e.accepted.verdict === 'delivered') notices?.forget(e.rid);
+      else if (e.held?.never_silent_kind === 'delivered') {
+        notices?.result(e.rid, 'delivered', e.held.members ?? [], e.held.at);
+      }
+      else if (e.accepted?.verdict === 'delivered' || e.accepted?.never_silent_kind === 'delivered') {
+        notices?.result(e.rid, 'delivered', e.accepted.members ?? [], e.accepted.at);
+      }
+      if (e.dead) notices?.stop(e.rid, definiteStop(e, e.dead.reason), e.dead.at);
+      else if (e.held && e.held.never_silent_kind !== 'delivered' && e.accepted?.never_silent_kind !== 'delivered') notices?.stop(e.rid, false, e.held.at);
       if (ackOwed(e) && e.deliveryId !== undefined) ackOwedIds.set(e.deliveryId, e.rid);
       // Every pending entry is read back at once; the schedule is the fold's.
       if (entryState(e) === 'accepted:pending') nextAt.set(e.rid, 0);
@@ -250,11 +264,22 @@ export function createInbound({
 
   // --- the gateway poll ------------------------------------------------------
 
+  let pollWanted = false;
+  let nextBindRetryAt = 0;
+  const link = createLink({
+    ...heldConnection,
+    enabled: heldConnection?.enabled ?? false,
+    clock,
+    onRead: () => { pollWanted = true; },
+    onDown: () => { nextPollAt = Math.min(nextPollAt, clock()); },
+  });
+  const heldPollMs = heldConnection?.pollMs ?? 300000;
+
   async function poll() {
     polling = true;
+    pollWanted = false;
     const seq = ++pollSeq;
     try {
-      retryOwedBinds();
       const deliveries = await readWholeInbox(gateway);
       pollFailures = 0;
       lastCompletedPollSeq = seq;
@@ -270,11 +295,12 @@ export function createInbound({
         watermarkWanted = true;
         keeper?.noteDelivery?.();
       }
-      nextPollAt = clock() + pollMs;
+      nextPollAt = clock() + (link.up ? heldPollMs : pollMs);
     } catch (err) {
       stats.lastPollError = err.message;
       if (err.auth) {
         authFailed = true;
+        link.stop('unauthorized');
         log('gateway answered 401: the credential is unknown or revoked; polling stopped (gc whatsapp enroll)');
         onAuthFailure(err);
         return;
@@ -319,6 +345,11 @@ export function createInbound({
         now: clock(),
       });
       killPoint('before-received', rid);
+      // Persist enrollment before the admission record: a crash after either
+      // write cannot turn a new message into ineligible replay traffic.
+      if (!verdict.recovery && delivery.kind === 'message' && WINDOW_TYPES.has(delivery.message?.type) && delivery.message.type !== 'reaction') {
+        notices?.track({ id: rid, conversation: conversationId, created: clock() });
+      }
       journal.append({
         t: 'received',
         rid,
@@ -559,6 +590,8 @@ export function createInbound({
     try {
       answer = await gc.postInbound(message);
     } catch (err) {
+      const unreachable = err.notSent || err.status >= 500 || (err.status === 404 && err.json?.code === 'city-not-found');
+      notices?.result(rid, unreachable ? 'unreachable' : 'unknown');
       if (err.notSent || isRetryableAnswer(err)) {
         // The connection was refused (the request never left), or gc answered
         // 5xx/404/408/429 before any fan-out: a repeat is clean.
@@ -593,6 +626,7 @@ export function createInbound({
     const e = entries().get(rid);
     const delivery = answer?.delivery;
     const { verdict, terminal } = verdictOf(delivery);
+    observeDelivery(rid, delivery, terminal);
     const transcriptEntry = answer?.TranscriptEntry;
     const sequence = recordField(transcriptEntry, 'Sequence');
     if (verdict === 'unsupported') {
@@ -613,6 +647,8 @@ export function createInbound({
       sequence: Number.isSafeInteger(sequence) ? sequence : undefined,
       provider_message_id: recordField(transcriptEntry, 'ProviderMessageID') ?? pmidOfRid(rid),
       members: membersOf(delivery),
+      never_silent_definite_failure: definiteFailure(delivery),
+      never_silent_kind: neverSilentDeliveryKind(delivery, terminal),
       via,
       at: clock(),
     });
@@ -631,11 +667,29 @@ export function createInbound({
     await afterVerdict(rid, verdict, terminal, delivery);
   }
 
+  function definiteFailure(delivery) {
+    const { verdict } = verdictOf(delivery);
+    return (verdict === 'failed' || verdict === 'no_route') && !(delivery?.delivered_bytes > 0) && (delivery?.members ?? []).every((m) => !m.delivered_bytes && m.status !== 'partial');
+  }
+
+  function neverSilentDeliveryKind(delivery, concluded) {
+    const members = Array.isArray(delivery?.members) ? delivery.members : [];
+    const { verdict } = verdictOf(delivery);
+    const wholePaste = concluded && verdict === 'pending' && members.length > 0 && members.every((m) => Number.isSafeInteger(m.expected_bytes) && m.expected_bytes > 0 && m.delivered_bytes >= m.expected_bytes);
+    return verdict === 'delivered' || wholePaste ? 'delivered' : definiteFailure(delivery) ? 'failed' : 'pending';
+  }
+
+  function observeDelivery(rid, delivery, concluded) {
+    notices?.result(rid, neverSilentDeliveryKind(delivery, concluded), membersOf(delivery));
+  }
+
   async function afterVerdict(rid, verdict, terminal, delivery) {
     const e = entries().get(rid);
     if (terminal) {
-      journal.append({ t: 'held_terminal', rid, receipt_id: delivery?.receipt_id ?? e.accepted?.receipt_id ?? '', members: membersOf(delivery) });
+      const noticeKind = neverSilentDeliveryKind(delivery, true);
+      journal.append({ t: 'held_terminal', rid, receipt_id: delivery?.receipt_id ?? e.accepted?.receipt_id ?? '', members: membersOf(delivery), never_silent_kind: noticeKind });
       nextAt.delete(rid);
+      if (noticeKind !== 'delivered') notices?.stop(rid, false);
       log(`${ref(rid)}: TERMINAL HOLD (gc: stop polling, do not redeliver); waiting for gc whatsapp inbound resolve`);
       return;
     }
@@ -804,6 +858,7 @@ export function createInbound({
 
   async function markDelivered(rid, via) {
     journal.append({ t: 'accepted', rid, receipt_id: '', verdict: 'delivered', via, at: clock() });
+    notices?.result(rid, 'delivered');
     log(`${ref(rid)}: delivered (${via})`);
     oweAck(rid);
   }
@@ -824,6 +879,10 @@ export function createInbound({
 
   // --- the dead letter: AN ACKNOWLEDGEMENT OWED (THE GATE r7's SECOND RULE) ------
 
+  function definiteStop(e, reason) {
+    return reason === 'rejected' || reason === 'no_route' || (reason === 'repost_bound' && e.accepted?.never_silent_definite_failure === true);
+  }
+
   async function deadLetter(rid, reason, { detail = '' } = {}) {
     const e = entries().get(rid);
     const reads = readCounts.get(rid);
@@ -841,6 +900,7 @@ export function createInbound({
     });
     killPoint('between-deadletter-and-dead', rid);
     journal.append({ t: 'dead', rid, reason });
+    notices?.stop(rid, definiteStop(e, reason));
     nextAt.delete(rid);
     log(`${ref(rid)}: dead-lettered (${reason}); ack owed until the gateway confirms it`);
     oweAck(rid);
@@ -872,6 +932,7 @@ export function createInbound({
       return resolveInDoubt(rid);
     }
     if (state !== 'concluded') return schedule();
+    observeDelivery(rid, answer.delivery, true);
     const { verdict, terminal } = verdictOf(answer.delivery);
     if (terminal) return afterVerdict(rid, verdict, terminal, answer.delivery);
     if (verdict === 'pending') return schedule(); // gc's hold: stays on the schedule until gc forgets it
@@ -880,7 +941,7 @@ export function createInbound({
       log(`${ref(rid)}: concluded receipt without a usable delivery; the in-doubt rule`);
       return resolveInDoubt(rid);
     }
-    journal.append({ t: 'accepted', rid, receipt_id: receiptId, verdict, members: membersOf(answer.delivery), via: 'readback', at: clock() });
+    journal.append({ t: 'accepted', rid, receipt_id: receiptId, verdict, members: membersOf(answer.delivery), never_silent_definite_failure: definiteFailure(answer.delivery), never_silent_kind: neverSilentDeliveryKind(answer.delivery, true), via: 'readback', at: clock() });
     return afterVerdict(rid, verdict, false, answer.delivery);
   }
 
@@ -934,7 +995,13 @@ export function createInbound({
     if (!started) startup();
     const now = clock();
 
-    if (!authFailed && !polling && now >= nextPollAt) void poll();
+    if (authFailed) link.stop('unauthorized');
+    else link.tick();
+    if (!authFailed && now >= nextBindRetryAt) {
+      retryOwedBinds();
+      nextBindRetryAt = now + pollMs;
+    }
+    if (!authFailed && !polling && (pollWanted || now >= nextPollAt)) void poll();
     if (!acking && ackOwedIds.size && now >= ackNextAt) void driveAcks(false);
 
     if (journal.watermarks.size && !watermarkRunning
@@ -986,6 +1053,7 @@ export function createInbound({
     };
     if (as === 'delivered') {
       journal.append({ t: 'accepted', rid, receipt_id: info.receipt_id, verdict: 'delivered', via: 'operator', at: clock() });
+      notices?.forget(rid);
       oweAck(rid);
     } else if (as === 'dead') {
       await deadLetter(rid, 'held_terminal', { detail: 'the operator resolved the terminal hold with --dead' });
@@ -1042,6 +1110,7 @@ export function createInbound({
     }
     return {
       auth_failed: authFailed,
+      link: link.status(),
       last_poll_at: stats.lastPollAt,
       last_poll_error: stats.lastPollError,
       polls: stats.polls,
@@ -1061,7 +1130,7 @@ export function createInbound({
     resolve,
     clearGap,
     status,
-    stop() { stopped = true; },
+    stop() { stopped = true; link.stop(); },
     get authFailed() { return authFailed; },
     // exposed for tests and the doctor's runtime view
     _readAllWatermarks: readAllWatermarks,

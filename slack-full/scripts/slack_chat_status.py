@@ -183,6 +183,7 @@ def collect_status(*, session: str, since: str, limit: int) -> dict[str, Any]:
 
     return {
         "adapters": adapters,
+        "never_silent": _never_silent_status(),
         "session": session,
         "bindings": bindings,
         "mention_only_bindings": mention_only,
@@ -194,6 +195,18 @@ def collect_status(*, session: str, since: str, limit: int) -> dict[str, Any]:
         },
         "unreadable": unreadable,
     }
+
+
+def _never_silent_status() -> dict[str, Any]:
+    try:
+        result = common._adapter_json("GET", "/never-silent/status")
+        if "enabled" in result and "health" in result:
+            return result
+    except (common.AdapterError, common.GCAPIError):
+        pass
+    return {"enabled": os.environ.get("NEVER_SILENT") == "on",
+            "health": {"state": "unknown", "reason": "adapter status unavailable"},
+            "outages": [], "owner_lines_seven_days": None}
 
 
 def _fmt_event(direction: str, evt: dict[str, Any]) -> str:
@@ -209,6 +222,8 @@ def _fmt_event(direction: str, evt: dict[str, Any]) -> str:
 
 def format_status(status: dict[str, Any]) -> str:
     lines: list[str] = []
+    if "never_silent" in status:
+        lines.append("Never silent: " + json.dumps(status["never_silent"], sort_keys=True))
     unreadable = status.get("unreadable") or {}
 
     adapters = status["adapters"]

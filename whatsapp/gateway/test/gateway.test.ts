@@ -808,7 +808,32 @@ describe("City side: send", () => {
     expect(one.status).toBe(200);
     expect(two.status).toBe(200);
     expect(two.body).toEqual(one.body);
+    expect(one.headers.get("x-gc-replayed")).toBe("false");
+    expect(two.headers.get("x-gc-replayed")).toBe("true");
     expect(t.graph.sends()).toHaveLength(before + 1);
+  });
+
+  it("the replay header follows actual retention cleanup, not the caller's elapsed time", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const wa = await t.join(city);
+    const body = { to: wa, idempotency_key: uniq(), type: "text", text: "example reply" };
+    const sendAttempt = (id: string) => t.call("POST", "/v1/send", { token: city.token, body, headers: { "x-gc-send-attempt": id } });
+    const first = await sendAttempt("example-first-attempt");
+    expect(first.status).toBe(200);
+    expect(first.headers.get("x-gc-send-attempt")).toBe("example-first-attempt");
+    t.clock.now += 31 * DAY;
+    const old = await sendAttempt("example-later-attempt");
+    expect(old.body).toEqual(first.body);
+    expect(old.headers.get("x-gc-replayed")).toBe("true");
+    expect(old.headers.get("x-gc-send-attempt")).toBe("example-first-attempt");
+    await t.gateway.maintain();
+    await t.say(wa, "example new input");
+    const fresh = await sendAttempt("example-fresh-attempt");
+    expect(fresh.status).toBe(200);
+    expect(fresh.body.message_id).not.toBe(first.body.message_id);
+    expect(fresh.headers.get("x-gc-replayed")).toBe("false");
+    expect(fresh.headers.get("x-gc-send-attempt")).toBe("example-fresh-attempt");
   });
 
   it("the same idempotency_key in two cities is two sends (the key is per city)", async () => {
@@ -1175,6 +1200,8 @@ describe("Health, logs, the entry point", () => {
   it("no log line carries a phone number, a message body, a token or a secret", async () => {
     const t = setup();
     const city = await t.enrollCity("Hou Dynasty");
+    t.deps.wake = { open: async () => new Response(null, { status: 503 }),
+      notify: async () => { throw new Error(`sensitive ${city.token} ${city.id}`); } };
     const code = await t.invite(city);
     const wa = phone();
     const stranger = phone();
@@ -1195,11 +1222,11 @@ describe("Health, logs, the entry point", () => {
     await t.gateway.maintain();
     const lines = [...t.logs, ...broken.logs].map((e) => JSON.stringify(e));
     const events = new Set([...t.logs, ...broken.logs].map((e) => e.event));
-    for (const e of ["webhook", "send", "send_failed", "send_refused", "webhook_refused", "webhook_store_failed", "invite_minted", "city_enrolled"]) {
+    for (const e of ["webhook", "send", "send_failed", "send_refused", "webhook_refused", "webhook_store_failed", "invite_minted", "city_enrolled", "wake_failed"]) {
       expect(events).toContain(e);
     }
     expect(lines.length).toBeGreaterThan(0);
-    for (const needle of [wa, wa.slice(2), stranger, "4242", "vault", "private reply", "Taylor", code, city.token, SECRETS.app, SECRETS.access, SECRETS.verify, SECRETS.admin]) {
+    for (const needle of [wa, wa.slice(2), stranger, "4242", "vault", "private reply", "Taylor", code, city.token, city.id, SECRETS.app, SECRETS.access, SECRETS.verify, SECRETS.admin]) {
       for (const line of lines) expect(line).not.toContain(needle);
     }
   });

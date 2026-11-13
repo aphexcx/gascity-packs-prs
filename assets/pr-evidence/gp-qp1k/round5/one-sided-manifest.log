@@ -1,0 +1,3 @@
+main-only command=env -u GC_BIN -u NEVER_SILENT go test -run ^TestNeverSilentHoldLegacyWriters$ -count=1 -v . exit=1
+pr-only command=env -u GC_BIN -u NEVER_SILENT go test -run ^TestNeverSilentHoldLegacyWriters$ -count=1 -v . exit=1
+post-main-only command=env -u GC_BIN -u NEVER_SILENT go test -run ^TestNeverSilentHoldPostBranches/refused_connections$ -count=1 -v . exit=1

@@ -91,6 +91,9 @@ func (g *companyGateway) tryHandleMpimEvent(w http.ResponseWriter, r *http.Reque
 	}
 	// Admissibility gate: the SAME subtype allowlist as rooms/DMs.
 	if !AdmissibleSubtype(ev.Subtype) {
+		if ev.Subtype == "message_deleted" && ev.DeletedTS != "" {
+			g.cfg.noticeError(g.cfg.neverSilent.Forget(neverSilentID(ev.Channel, ev.DeletedTS)))
+		}
 		w.WriteHeader(http.StatusOK)
 		return true
 	}
@@ -134,6 +137,7 @@ func (g *companyGateway) tryHandleMpimEvent(w http.ResponseWriter, r *http.Reque
 		ThreadRootTS: deriveHumanRootTS(decodeCompanyMessage(origin, env.Event)),
 		Event:        append(json.RawMessage(nil), env.Event...),
 	}
+	receipt.NeverSilent = g.neverSilentAdmission(env, ev)
 	created, _, err := store.Admit(receipt)
 	if err != nil {
 		log.Printf("company mpim: admit failed origin=%+v: %v", origin, err)
@@ -400,6 +404,7 @@ func (g *companyGateway) deliverMpimTargets(r *IngressReceipt, origin ReceiptOri
 		}
 		body := renderCompanyMpimReminder(td.Agent, msg.Text, origin.TS, threadRootTS, hydration, &ptr)
 		result := g.postCompanyMessage(td, body)
+		td.NoticeKind = result.noticeKind
 		td.Attempts++
 		td.UpdatedAt = now
 		if result.disposition == postAccepted {

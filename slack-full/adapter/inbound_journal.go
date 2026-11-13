@@ -72,6 +72,7 @@ type inboundJournalRecord struct {
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {
+	cfg.observeNeverSilent(msg, receipt, nil, len(phase) > 0 && phase[0] == "concluded")
 	if j == nil {
 		return
 	}

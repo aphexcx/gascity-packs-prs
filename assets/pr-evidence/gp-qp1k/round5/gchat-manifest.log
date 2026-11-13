@@ -1,0 +1,2 @@
+command=env -u GC_BIN -u NEVER_SILENT go vet ./... log=gchat-1.log exit=0
+command=env -u GC_BIN -u NEVER_SILENT go test -p=1 -json ./... -count=1 -timeout=30m log=gchat-2.log exit=0

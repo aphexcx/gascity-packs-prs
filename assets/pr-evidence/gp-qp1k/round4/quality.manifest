@@ -1,0 +1,7 @@
+git diff --check BASE -- changed source and tests exit=0
+git diff --quiet BASE -- slack-full/adapter whatsapp/gateway exit=0
+gofmt -l (all changed Go files) exit=0
+gofmt output is empty exit=0
+git diff --quiet BASE -- existing server implementation and deadline test exit=0
+git diff --quiet BASE -- existing e2e catch-up test exit=0
+git diff --cached --check (all final evidence) exit=0

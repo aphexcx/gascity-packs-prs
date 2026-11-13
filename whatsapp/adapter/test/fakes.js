@@ -284,8 +284,11 @@ export async function startFakeGateway({ clock } = {}) {
     }
     return send(res, 404, { error: `no route ${route}` });
   });
+  const { attachWakeServer } = await import('./wake-server.js');
+  g.link = attachWakeServer(server, g, now);
   g.url = await listen(server);
   g.close = () => new Promise((resolve) => {
+    g.link.drop();
     for (const res of g.hung) res.destroy();
     server.closeAllConnections?.();
     server.close(() => resolve());
@@ -307,6 +310,7 @@ export const FAKE_GATEWAY_ROUTES = [
   'GET /v1/window',
   'GET /v1/media/<media_id>',
 ];
+export const FAKE_HELD_ROUTE = 'GET /v1/wake';
 
 // --- the fake gc -------------------------------------------------------------------
 
@@ -339,6 +343,7 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
     panes: new Map(),
     transcriptErrors: [], // statuses to answer GET /extmsg/transcript with, one per call
     registrations: [],
+    registrationStatus: 200,
     outbound: [],
     requests: [],
     withheld: [],
@@ -441,7 +446,7 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
       if (plan.panePaste) f.panes.set(sessionId, pasteText({ conversationId, text: message.text, pmid }));
       const verdict = plan.verdict ?? 'delivered';
       const bytes = Buffer.byteLength(message.text ?? '');
-      const member = { session_id: sessionId, status: verdict, delivered_bytes: verdict === 'failed' ? 0 : bytes, expected_bytes: bytes };
+      const member = { session_id: sessionId, status: verdict, delivered_bytes: plan.deliveredBytes ?? (verdict === 'failed' ? 0 : bytes), expected_bytes: bytes };
       if (plan.terminal) member.terminal = true;
       const delivery = { status: verdict, delivered_bytes: member.delivered_bytes, expected_bytes: bytes, members: [member] };
       if (plan.terminal) delivery.terminal = true;
@@ -481,7 +486,7 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
     f.requests.push(entry);
 
     if (req.method === 'POST' && p === '/extmsg/inbound') return inbound(req, res, body);
-    if (req.method === 'POST' && p === '/extmsg/adapters') { f.registrations.push(body); return send(res, 200, { status: 'registered' }); }
+    if (req.method === 'POST' && p === '/extmsg/adapters') { f.registrations.push(body); return send(res, f.registrationStatus, { status: f.registrationStatus === 200 ? 'registered' : 'unavailable' }); }
     if (req.method === 'POST' && p === '/extmsg/outbound') {
       f.outbound.push(body);
       return send(res, 200, f.recordOutbounds ? { TranscriptEntry: { id: f.outbound.length } } : { ok: true });
@@ -553,6 +558,7 @@ export function adapterEnv({ dir, clock, gw, gc, extra = {} }) {
     WHATSAPP_TEST_CLOCK: clock.file,
     WHATSAPP_TICK_MS: '10',
     WHATSAPP_POLL_MS: '0',
+    WHATSAPP_HELD_CONNECTION: 'off',
     // 5 s, not production's 30: a withheld answer still times out quickly,
     // and a child on a loaded host still answers in time.
     WHATSAPP_GC_POST_TIMEOUT_MS: '5000',

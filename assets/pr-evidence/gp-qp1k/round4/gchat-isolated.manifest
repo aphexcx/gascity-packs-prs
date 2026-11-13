@@ -1,0 +1,1 @@
+env -u GC_BIN go test ./internal/server/ -run '^TestCommandPreparationFailureSettlesExistingIntent$' -count=1 -v exit=0

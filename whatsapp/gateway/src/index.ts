@@ -4,9 +4,14 @@
  * names only: never a body, a phone number, a token or a secret.
  */
 import { createGateway } from "./gateway.js";
+import { createWake } from "./wake-client.js";
+import type { CityWake } from "./wake.js";
+export { CityWake } from "./wake.js";
 
 export interface Env {
   DB: D1Database;
+  CITY_WAKE?: DurableObjectNamespace<CityWake>;
+  WAKE?: string;
   META_ACCESS_TOKEN: string;
   META_APP_SECRET: string;
   META_VERIFY_TOKEN: string;
@@ -20,6 +25,7 @@ export interface Env {
 function gateway(env: Env) {
   return createGateway({
     db: env.DB,
+    wake: createWake(env.CITY_WAKE, env.WAKE),
     config: {
       metaAccessToken: env.META_ACCESS_TOKEN ?? "",
       metaAppSecret: env.META_APP_SECRET ?? "",
