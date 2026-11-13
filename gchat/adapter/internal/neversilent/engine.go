@@ -348,13 +348,23 @@ func (e *Engine) StopAt(id string, definite bool, at time.Time) error {
 func (e *Engine) Enabled() bool { return e != nil && e.opts.Enabled }
 
 func (e *Engine) Forget(id string) error {
+	return e.forget(id, true)
+}
+
+// ForgetTracked retires an already enrolled message without creating a
+// tombstone for historical acts that were never eligible for notices.
+func (e *Engine) ForgetTracked(id string) error {
+	return e.forget(id, false)
+}
+
+func (e *Engine) forget(id string, tombstone bool) error {
 	if e == nil || !e.opts.Enabled || id == "" {
 		return nil
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	m := e.state.Messages[id]
-	if m.Removed {
+	m, exists := e.state.Messages[id]
+	if m.Removed || (!exists && !tombstone) {
 		return nil
 	}
 	// Deletion can precede asynchronous target resolution and admission. Keep

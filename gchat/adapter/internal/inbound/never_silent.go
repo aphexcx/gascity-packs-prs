@@ -29,6 +29,16 @@ func ReconcileNeverSilent(l *ledger.Ledger, notices *neversilent.Engine) error {
 	for id, c := range l.Changes {
 		var err error
 		switch {
+		case c.Status == "committed" && c.Reason == "local" && (c.Cause == "before_history_floor" || c.Cause == "history_time_missing"):
+			// Migration can retain old delivery observations, but the retired
+			// attempt no longer owes an answer. Do this before NoticeDelivered.
+			err = notices.ForgetTracked(id)
+			if err == nil && c.Kind == "message.created" && c.Message != id && l.Changes[c.Message] == nil {
+				// A queued create with no usable time has a history-only ID.
+				// Its old enrollment used the message ID. A surviving primary
+				// record belongs to a valid act and must not be forgotten.
+				err = notices.ForgetTracked(c.Message)
+			}
 		case c.NoticeResolved || c.Reason == "operator accepted" || c.Reason == "operator replay" || c.Reason == reasonWithdrawn:
 			err = notices.Forget(id)
 		case c.NoticeDelivered:

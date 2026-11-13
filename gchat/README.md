@@ -231,6 +231,8 @@ the service and offline recovery commands.
 
 Set `NEVER_SILENT=on` to enable notices for newly admitted human messages addressed to the mayor. It is off by default. Edits, deletions, reactions, bots and recovery traffic do not start notices. A busy mayor is never reported just for taking time to reply.
 
+An act older than its history bound starts no notice, and a message whose attempt the first load retired earns none.
+
 The adapter knows `not_delivered` when it stops trying, or observes three continuous minutes of definite delivery failures or connection/dial errors, city-not-found responses or server errors. A successful HTTP response saying pending resets the failure wait. An uncertain stopped delivery raises operator mail immediately but waits three minutes without a session reply or reaction before telling the owner.
 
 The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
