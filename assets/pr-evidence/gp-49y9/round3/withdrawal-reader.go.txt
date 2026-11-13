@@ -1,0 +1,160 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/inbound"
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/wire"
+)
+
+// This same test is compiled with each reader's own loader, endpoint, fake gc
+// and processor. Receipt rows issue a real fake receipt before concluding it.
+func TestWithdrawalReaderCompatibility(t *testing.T) {
+	dir := os.Getenv("GCHAT_WITHDRAWAL_FIXTURES")
+	paths, err := filepath.Glob(filepath.Join(dir, "*.meta.json"))
+	if err != nil || len(paths) != 34 {
+		t.Fatalf("fixture inventory=%d err=%v", len(paths), err)
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var meta map[string]string
+		if err := json.Unmarshal(data, &meta); err != nil {
+			t.Fatal(err)
+		}
+		t.Run(meta["name"], func(t *testing.T) {
+			f := setup(t)
+			l, err := ledger.Load(filepath.Join(dir, meta["name"]+".json"), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			*f.l = *l
+			f.mu.Unlock()
+			now := time.Date(2026, 11, 1, 10, 0, 40, 0, time.UTC)
+			p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: f.l, LedgerMu: f.mu, LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: f.options.GC, IdentityUserID: "users/123", Now: func() time.Time { return now }, RetryDelay: time.Millisecond})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetPoll(p.Poll)
+			owner := f.l.Changes[meta["owner"]]
+			if owner.Status != meta["status"] || owner.Reason != meta["reason"] {
+				t.Fatal("reader lost stopped state or reason")
+			}
+			baseline := 0
+			if meta["prior"] == "pending" {
+				// Older ledger types ignore MemberEvent. The original Event may
+				// already be empty, so use a fixture message from the same room.
+				var original struct {
+					Changes map[string]struct {
+						Event       string `json:"event"`
+						MemberEvent string `json:"member_event"`
+					}
+				}
+				raw, err := os.ReadFile(filepath.Join(dir, meta["name"]+".json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(raw, &original); err != nil {
+					t.Fatal(err)
+				}
+				var seed wire.InboundMessage
+				entry := original.Changes[owner.ID]
+				payload := entry.MemberEvent
+				if payload == "" {
+					payload = entry.Event
+				}
+				if err := json.Unmarshal([]byte(payload), &seed); err != nil {
+					t.Fatal(err)
+				}
+				seed.ProviderMessageID, seed.Text, seed.Attachments = owner.ID, "receipt seed", nil
+				f.gc.NextDelivery = "pending"
+				answer, err := f.options.GC.Inbound(context.Background(), seed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				owner.ReceiptID = answer.Delivery.ReceiptID
+				f.gc.SetReceipt(owner.ReceiptID, wire.ReceiptResponse{State: "concluded", Delivery: wire.Delivery{Status: "failed"}})
+				baseline = len(f.gc.Inbound())
+			}
+			ids := make([]string, 0, len(f.l.Unresolved))
+			for id := range f.l.Unresolved {
+				ids = append(ids, id)
+			}
+			for _, id := range ids {
+				code, body, _ := f.call(t, "/resolve", map[string]string{"id": id, "action": "replay"})
+				if meta["form"] == "single" {
+					if code != 200 {
+						t.Errorf("single withdrawal replay code=%d body=%s", code, body)
+					}
+				} else if code != 400 || !strings.Contains(string(body), "stored turn is malformed; cannot replay") {
+					t.Errorf("replay code=%d body=%s", code, body)
+				}
+				if meta["form"] != "single" {
+					retained := f.l.Unresolved[id]
+					if retained == nil || retained.Status != "unresolved" || retained.Reason != meta["reason"] {
+						t.Error("refused replay changed the unresolved reason")
+					}
+				}
+				for _, post := range f.gc.Inbound()[baseline:] {
+					if strings.Contains(post.Text, meta["withdrawn"]) {
+						t.Errorf("replay sent withdrawn text: %q", post.Text)
+					}
+				}
+				if meta["form"] != "single" && len(f.gc.Inbound()) != baseline {
+					t.Error("non-replayable record caused a POST")
+				}
+			}
+			replayPosts := len(f.gc.Inbound()) - baseline
+			for i := 0; i < 3; i++ {
+				now = now.Add(10 * time.Second)
+				_ = p.Poll(context.Background())
+			}
+			for _, post := range f.gc.Inbound()[baseline:] {
+				if strings.Contains(post.Text, meta["withdrawn"]) {
+					t.Errorf("receipt or poll sent withdrawn text: %q", post.Text)
+				}
+			}
+			if meta["prior"] == "pending" {
+				ids = nil
+				for id := range f.l.Unresolved {
+					ids = append(ids, id)
+				}
+				if f.l.Unresolved[owner.ID] == nil && f.l.Changes[owner.ID].Status != "committed" {
+					t.Error("failed receipt neither stopped nor delivered its refreshed survivors")
+				}
+				for _, id := range ids {
+					reason := f.l.Unresolved[id].Reason
+					before := len(f.gc.Inbound())
+					code, body, _ := f.call(t, "/resolve", map[string]string{"id": id, "action": "replay"})
+					if code != 400 || !strings.Contains(string(body), "stored turn is malformed; cannot replay") {
+						t.Errorf("concluded receipt replay code=%d body=%s", code, body)
+					}
+					if retained := f.l.Unresolved[id]; retained == nil || retained.Reason != reason {
+						t.Error("concluded receipt replay changed its reason")
+					}
+					if len(f.gc.Inbound()) != before {
+						t.Error("concluded receipt replay caused a POST")
+					}
+					replayPosts += len(f.gc.Inbound()) - before
+				}
+			}
+			for _, id := range ids {
+				code, body, _ := f.call(t, "/resolve", map[string]string{"id": id, "action": "accept"})
+				if code != 200 || f.l.Unresolved[id] != nil {
+					t.Errorf("accept failed code=%d body=%s", code, body)
+				}
+			}
+			t.Logf("reader row=%s unresolved=%d replay_posts=%d later_posts=%d", meta["name"], len(ids), replayPosts, len(f.gc.Inbound())-baseline-replayPosts)
+		})
+	}
+}
