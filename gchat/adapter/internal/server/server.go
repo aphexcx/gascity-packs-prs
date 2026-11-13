@@ -1501,7 +1501,13 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 				saved.Text = strings.TrimPrefix(saved.Text, line+"\n")
 			}
 			if change.OriginalKind() == "message.updated" && id != m.Name {
-				saved.Text = strings.TrimPrefix(saved.Text, "edited: ")
+				// An edit folded into its held create was rendered without the
+				// adapter's prefix. Its own member link survives a later merge.
+				create := l.Changes[change.MemberOf]
+				folded := create != nil && create.Message == change.Message && create.OriginalKind() == "message.created"
+				if !folded {
+					saved.Text = strings.TrimPrefix(saved.Text, "edited: ")
+				}
 			}
 			return saved, true
 		}
