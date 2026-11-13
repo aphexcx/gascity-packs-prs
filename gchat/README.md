@@ -372,8 +372,8 @@ unresolved id, with its member count in status. Resolve that id once to replay
 the saved current text or accept every member. Before a retry, deleted members
 are removed and edited members use their current text. A surviving owner keeps
 the key; when the owner was deleted, the newest survivor owns the replacement,
-including the turn's attempt count, fragment marker and retry schedule. A
-fragment still has at most four POSTs across all owner keys. After an unknown
+including the turn's attempt count, fragment marker and retry schedule.
+Changing the owner never resets the fragment retry bound. After an unknown
 outcome, the surviving turn ends unresolved for the operator to inspect and
 accept or replay; an owner change never makes that turn automatically sendable.
 The deleted owner's retired record has no replayable payload and can be accepted.

@@ -1,0 +1,459 @@
+{
+  "red-readers": [
+    {
+      "stage": "writer",
+      "source": "36ec16e965d273ca286debcf759ecf47caf96f9a",
+      "exit": 1,
+      "command": "go test ./internal/inbound -run ^TestWithdrawalReachesEveryStoredCopy$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_fail": 33,
+        "subtest_pass": 1,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestWithdrawalReachesEveryStoredCopy/merged_interrupted",
+        "TestWithdrawalReachesEveryStoredCopy/merged_answer_lost",
+        "TestWithdrawalReachesEveryStoredCopy/merged_redirect",
+        "TestWithdrawalReachesEveryStoredCopy/merged_rejected",
+        "TestWithdrawalReachesEveryStoredCopy/merged_exhausted",
+        "TestWithdrawalReachesEveryStoredCopy/merged_retry_bound",
+        "TestWithdrawalReachesEveryStoredCopy/merged_malformed",
+        "TestWithdrawalReachesEveryStoredCopy/merged_lookup_deadline",
+        "TestWithdrawalReachesEveryStoredCopy/merged_pending_deadline",
+        "TestWithdrawalReachesEveryStoredCopy/merged_receipt_unknown",
+        "TestWithdrawalReachesEveryStoredCopy/merged_held",
+        "TestWithdrawalReachesEveryStoredCopy/merged_unconcluded",
+        "TestWithdrawalReachesEveryStoredCopy/merged_no_receipt",
+        "TestWithdrawalReachesEveryStoredCopy/merged_unknown_status",
+        "TestWithdrawalReachesEveryStoredCopy/merged_pending",
+        "TestWithdrawalReachesEveryStoredCopy/folded_interrupted",
+        "TestWithdrawalReachesEveryStoredCopy/folded_answer_lost",
+        "TestWithdrawalReachesEveryStoredCopy/folded_redirect",
+        "TestWithdrawalReachesEveryStoredCopy/folded_rejected",
+        "TestWithdrawalReachesEveryStoredCopy/folded_exhausted",
+        "TestWithdrawalReachesEveryStoredCopy/folded_retry_bound",
+        "TestWithdrawalReachesEveryStoredCopy/folded_malformed",
+        "TestWithdrawalReachesEveryStoredCopy/folded_lookup_deadline",
+        "TestWithdrawalReachesEveryStoredCopy/folded_pending_deadline",
+        "TestWithdrawalReachesEveryStoredCopy/folded_receipt_unknown",
+        "TestWithdrawalReachesEveryStoredCopy/folded_held",
+        "TestWithdrawalReachesEveryStoredCopy/folded_unconcluded",
+        "TestWithdrawalReachesEveryStoredCopy/folded_no_receipt",
+        "TestWithdrawalReachesEveryStoredCopy/folded_unknown_status",
+        "TestWithdrawalReachesEveryStoredCopy/folded_pending",
+        "TestWithdrawalReachesEveryStoredCopy/merged_owner_deleted",
+        "TestWithdrawalReachesEveryStoredCopy/merged_member_edited",
+        "TestWithdrawalReachesEveryStoredCopy/folded_edited",
+        "TestWithdrawalReachesEveryStoredCopy",
+        "gchat-adapter/internal/inbound"
+      ]
+    },
+    {
+      "stage": "current",
+      "source": "36ec16e965d273ca286debcf759ecf47caf96f9a",
+      "exit": 1,
+      "command": "go test -overlay <evidence>/current-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_fail": 32,
+        "subtest_pass": 2,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestWithdrawalReaderCompatibility/folded_answer_lost",
+        "TestWithdrawalReaderCompatibility/folded_edited",
+        "TestWithdrawalReaderCompatibility/folded_exhausted",
+        "TestWithdrawalReaderCompatibility/folded_held",
+        "TestWithdrawalReaderCompatibility/folded_interrupted",
+        "TestWithdrawalReaderCompatibility/folded_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/folded_malformed",
+        "TestWithdrawalReaderCompatibility/folded_no_receipt",
+        "TestWithdrawalReaderCompatibility/folded_pending",
+        "TestWithdrawalReaderCompatibility/folded_pending_deadline",
+        "TestWithdrawalReaderCompatibility/folded_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/folded_redirect",
+        "TestWithdrawalReaderCompatibility/folded_rejected",
+        "TestWithdrawalReaderCompatibility/folded_retry_bound",
+        "TestWithdrawalReaderCompatibility/folded_unconcluded",
+        "TestWithdrawalReaderCompatibility/folded_unknown_status",
+        "TestWithdrawalReaderCompatibility/merged_answer_lost",
+        "TestWithdrawalReaderCompatibility/merged_exhausted",
+        "TestWithdrawalReaderCompatibility/merged_held",
+        "TestWithdrawalReaderCompatibility/merged_interrupted",
+        "TestWithdrawalReaderCompatibility/merged_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/merged_malformed",
+        "TestWithdrawalReaderCompatibility/merged_member_edited",
+        "TestWithdrawalReaderCompatibility/merged_no_receipt",
+        "TestWithdrawalReaderCompatibility/merged_owner_deleted",
+        "TestWithdrawalReaderCompatibility/merged_pending_deadline",
+        "TestWithdrawalReaderCompatibility/merged_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/merged_redirect",
+        "TestWithdrawalReaderCompatibility/merged_rejected",
+        "TestWithdrawalReaderCompatibility/merged_retry_bound",
+        "TestWithdrawalReaderCompatibility/merged_unconcluded",
+        "TestWithdrawalReaderCompatibility/merged_unknown_status",
+        "TestWithdrawalReaderCompatibility",
+        "gchat-adapter/internal/server"
+      ]
+    },
+    {
+      "stage": "released",
+      "source": "d2f453b83a428546dfe7fa01dc2bd831c0b47ae0",
+      "exit": 1,
+      "command": "go test -overlay <evidence>/released-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "package_fail": 1
+      },
+      "failures": [
+        "gchat-adapter/internal/server"
+      ]
+    },
+    {
+      "stage": "main",
+      "source": "205d0aecedf944792f1e3b3fbc420b9e5ad910d8",
+      "exit": 1,
+      "command": "go test -overlay <evidence>/main-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_fail": 33,
+        "subtest_pass": 1,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestWithdrawalReaderCompatibility/folded_answer_lost",
+        "TestWithdrawalReaderCompatibility/folded_edited",
+        "TestWithdrawalReaderCompatibility/folded_exhausted",
+        "TestWithdrawalReaderCompatibility/folded_held",
+        "TestWithdrawalReaderCompatibility/folded_interrupted",
+        "TestWithdrawalReaderCompatibility/folded_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/folded_malformed",
+        "TestWithdrawalReaderCompatibility/folded_no_receipt",
+        "TestWithdrawalReaderCompatibility/folded_pending",
+        "TestWithdrawalReaderCompatibility/folded_pending_deadline",
+        "TestWithdrawalReaderCompatibility/folded_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/folded_redirect",
+        "TestWithdrawalReaderCompatibility/folded_rejected",
+        "TestWithdrawalReaderCompatibility/folded_retry_bound",
+        "TestWithdrawalReaderCompatibility/folded_unconcluded",
+        "TestWithdrawalReaderCompatibility/folded_unknown_status",
+        "TestWithdrawalReaderCompatibility/merged_answer_lost",
+        "TestWithdrawalReaderCompatibility/merged_exhausted",
+        "TestWithdrawalReaderCompatibility/merged_held",
+        "TestWithdrawalReaderCompatibility/merged_interrupted",
+        "TestWithdrawalReaderCompatibility/merged_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/merged_malformed",
+        "TestWithdrawalReaderCompatibility/merged_member_edited",
+        "TestWithdrawalReaderCompatibility/merged_no_receipt",
+        "TestWithdrawalReaderCompatibility/merged_owner_deleted",
+        "TestWithdrawalReaderCompatibility/merged_pending",
+        "TestWithdrawalReaderCompatibility/merged_pending_deadline",
+        "TestWithdrawalReaderCompatibility/merged_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/merged_redirect",
+        "TestWithdrawalReaderCompatibility/merged_rejected",
+        "TestWithdrawalReaderCompatibility/merged_retry_bound",
+        "TestWithdrawalReaderCompatibility/merged_unconcluded",
+        "TestWithdrawalReaderCompatibility/merged_unknown_status",
+        "TestWithdrawalReaderCompatibility",
+        "gchat-adapter/internal/server"
+      ]
+    }
+  ],
+  "red-readers-valid": [
+    {
+      "stage": "writer",
+      "source": "17627cf0599db42b9e460c7d4a91546fe794777d",
+      "exit": 1,
+      "command": "go test ./internal/inbound -run ^TestWithdrawalReachesEveryStoredCopy$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_fail": 33,
+        "subtest_pass": 1,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestWithdrawalReachesEveryStoredCopy/merged_interrupted",
+        "TestWithdrawalReachesEveryStoredCopy/merged_answer_lost",
+        "TestWithdrawalReachesEveryStoredCopy/merged_redirect",
+        "TestWithdrawalReachesEveryStoredCopy/merged_rejected",
+        "TestWithdrawalReachesEveryStoredCopy/merged_exhausted",
+        "TestWithdrawalReachesEveryStoredCopy/merged_retry_bound",
+        "TestWithdrawalReachesEveryStoredCopy/merged_malformed",
+        "TestWithdrawalReachesEveryStoredCopy/merged_lookup_deadline",
+        "TestWithdrawalReachesEveryStoredCopy/merged_pending_deadline",
+        "TestWithdrawalReachesEveryStoredCopy/merged_receipt_unknown",
+        "TestWithdrawalReachesEveryStoredCopy/merged_held",
+        "TestWithdrawalReachesEveryStoredCopy/merged_unconcluded",
+        "TestWithdrawalReachesEveryStoredCopy/merged_no_receipt",
+        "TestWithdrawalReachesEveryStoredCopy/merged_unknown_status",
+        "TestWithdrawalReachesEveryStoredCopy/merged_pending",
+        "TestWithdrawalReachesEveryStoredCopy/folded_interrupted",
+        "TestWithdrawalReachesEveryStoredCopy/folded_answer_lost",
+        "TestWithdrawalReachesEveryStoredCopy/folded_redirect",
+        "TestWithdrawalReachesEveryStoredCopy/folded_rejected",
+        "TestWithdrawalReachesEveryStoredCopy/folded_exhausted",
+        "TestWithdrawalReachesEveryStoredCopy/folded_retry_bound",
+        "TestWithdrawalReachesEveryStoredCopy/folded_malformed",
+        "TestWithdrawalReachesEveryStoredCopy/folded_lookup_deadline",
+        "TestWithdrawalReachesEveryStoredCopy/folded_pending_deadline",
+        "TestWithdrawalReachesEveryStoredCopy/folded_receipt_unknown",
+        "TestWithdrawalReachesEveryStoredCopy/folded_held",
+        "TestWithdrawalReachesEveryStoredCopy/folded_unconcluded",
+        "TestWithdrawalReachesEveryStoredCopy/folded_no_receipt",
+        "TestWithdrawalReachesEveryStoredCopy/folded_unknown_status",
+        "TestWithdrawalReachesEveryStoredCopy/folded_pending",
+        "TestWithdrawalReachesEveryStoredCopy/merged_owner_deleted",
+        "TestWithdrawalReachesEveryStoredCopy/merged_member_edited",
+        "TestWithdrawalReachesEveryStoredCopy/folded_edited",
+        "TestWithdrawalReachesEveryStoredCopy",
+        "gchat-adapter/internal/inbound"
+      ]
+    },
+    {
+      "stage": "current",
+      "source": "17627cf0599db42b9e460c7d4a91546fe794777d",
+      "exit": 1,
+      "command": "go test -overlay <evidence>/current-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_fail": 32,
+        "subtest_pass": 2,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestWithdrawalReaderCompatibility/folded_answer_lost",
+        "TestWithdrawalReaderCompatibility/folded_edited",
+        "TestWithdrawalReaderCompatibility/folded_exhausted",
+        "TestWithdrawalReaderCompatibility/folded_held",
+        "TestWithdrawalReaderCompatibility/folded_interrupted",
+        "TestWithdrawalReaderCompatibility/folded_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/folded_malformed",
+        "TestWithdrawalReaderCompatibility/folded_no_receipt",
+        "TestWithdrawalReaderCompatibility/folded_pending",
+        "TestWithdrawalReaderCompatibility/folded_pending_deadline",
+        "TestWithdrawalReaderCompatibility/folded_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/folded_redirect",
+        "TestWithdrawalReaderCompatibility/folded_rejected",
+        "TestWithdrawalReaderCompatibility/folded_retry_bound",
+        "TestWithdrawalReaderCompatibility/folded_unconcluded",
+        "TestWithdrawalReaderCompatibility/folded_unknown_status",
+        "TestWithdrawalReaderCompatibility/merged_answer_lost",
+        "TestWithdrawalReaderCompatibility/merged_exhausted",
+        "TestWithdrawalReaderCompatibility/merged_held",
+        "TestWithdrawalReaderCompatibility/merged_interrupted",
+        "TestWithdrawalReaderCompatibility/merged_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/merged_malformed",
+        "TestWithdrawalReaderCompatibility/merged_member_edited",
+        "TestWithdrawalReaderCompatibility/merged_no_receipt",
+        "TestWithdrawalReaderCompatibility/merged_owner_deleted",
+        "TestWithdrawalReaderCompatibility/merged_pending_deadline",
+        "TestWithdrawalReaderCompatibility/merged_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/merged_redirect",
+        "TestWithdrawalReaderCompatibility/merged_rejected",
+        "TestWithdrawalReaderCompatibility/merged_retry_bound",
+        "TestWithdrawalReaderCompatibility/merged_unconcluded",
+        "TestWithdrawalReaderCompatibility/merged_unknown_status",
+        "TestWithdrawalReaderCompatibility",
+        "gchat-adapter/internal/server"
+      ]
+    },
+    {
+      "stage": "released",
+      "source": "d2f453b83a428546dfe7fa01dc2bd831c0b47ae0",
+      "exit": 1,
+      "command": "go test -overlay <evidence>/released-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_fail": 33,
+        "subtest_pass": 1,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestWithdrawalReaderCompatibility/folded_answer_lost",
+        "TestWithdrawalReaderCompatibility/folded_edited",
+        "TestWithdrawalReaderCompatibility/folded_exhausted",
+        "TestWithdrawalReaderCompatibility/folded_held",
+        "TestWithdrawalReaderCompatibility/folded_interrupted",
+        "TestWithdrawalReaderCompatibility/folded_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/folded_malformed",
+        "TestWithdrawalReaderCompatibility/folded_no_receipt",
+        "TestWithdrawalReaderCompatibility/folded_pending",
+        "TestWithdrawalReaderCompatibility/folded_pending_deadline",
+        "TestWithdrawalReaderCompatibility/folded_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/folded_redirect",
+        "TestWithdrawalReaderCompatibility/folded_rejected",
+        "TestWithdrawalReaderCompatibility/folded_retry_bound",
+        "TestWithdrawalReaderCompatibility/folded_unconcluded",
+        "TestWithdrawalReaderCompatibility/folded_unknown_status",
+        "TestWithdrawalReaderCompatibility/merged_answer_lost",
+        "TestWithdrawalReaderCompatibility/merged_exhausted",
+        "TestWithdrawalReaderCompatibility/merged_held",
+        "TestWithdrawalReaderCompatibility/merged_interrupted",
+        "TestWithdrawalReaderCompatibility/merged_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/merged_malformed",
+        "TestWithdrawalReaderCompatibility/merged_member_edited",
+        "TestWithdrawalReaderCompatibility/merged_no_receipt",
+        "TestWithdrawalReaderCompatibility/merged_owner_deleted",
+        "TestWithdrawalReaderCompatibility/merged_pending",
+        "TestWithdrawalReaderCompatibility/merged_pending_deadline",
+        "TestWithdrawalReaderCompatibility/merged_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/merged_redirect",
+        "TestWithdrawalReaderCompatibility/merged_rejected",
+        "TestWithdrawalReaderCompatibility/merged_retry_bound",
+        "TestWithdrawalReaderCompatibility/merged_unconcluded",
+        "TestWithdrawalReaderCompatibility/merged_unknown_status",
+        "TestWithdrawalReaderCompatibility",
+        "gchat-adapter/internal/server"
+      ]
+    },
+    {
+      "stage": "main",
+      "source": "205d0aecedf944792f1e3b3fbc420b9e5ad910d8",
+      "exit": 1,
+      "command": "go test -overlay <evidence>/main-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_fail": 33,
+        "subtest_pass": 1,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestWithdrawalReaderCompatibility/folded_answer_lost",
+        "TestWithdrawalReaderCompatibility/folded_edited",
+        "TestWithdrawalReaderCompatibility/folded_exhausted",
+        "TestWithdrawalReaderCompatibility/folded_held",
+        "TestWithdrawalReaderCompatibility/folded_interrupted",
+        "TestWithdrawalReaderCompatibility/folded_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/folded_malformed",
+        "TestWithdrawalReaderCompatibility/folded_no_receipt",
+        "TestWithdrawalReaderCompatibility/folded_pending",
+        "TestWithdrawalReaderCompatibility/folded_pending_deadline",
+        "TestWithdrawalReaderCompatibility/folded_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/folded_redirect",
+        "TestWithdrawalReaderCompatibility/folded_rejected",
+        "TestWithdrawalReaderCompatibility/folded_retry_bound",
+        "TestWithdrawalReaderCompatibility/folded_unconcluded",
+        "TestWithdrawalReaderCompatibility/folded_unknown_status",
+        "TestWithdrawalReaderCompatibility/merged_answer_lost",
+        "TestWithdrawalReaderCompatibility/merged_exhausted",
+        "TestWithdrawalReaderCompatibility/merged_held",
+        "TestWithdrawalReaderCompatibility/merged_interrupted",
+        "TestWithdrawalReaderCompatibility/merged_lookup_deadline",
+        "TestWithdrawalReaderCompatibility/merged_malformed",
+        "TestWithdrawalReaderCompatibility/merged_member_edited",
+        "TestWithdrawalReaderCompatibility/merged_no_receipt",
+        "TestWithdrawalReaderCompatibility/merged_owner_deleted",
+        "TestWithdrawalReaderCompatibility/merged_pending",
+        "TestWithdrawalReaderCompatibility/merged_pending_deadline",
+        "TestWithdrawalReaderCompatibility/merged_receipt_unknown",
+        "TestWithdrawalReaderCompatibility/merged_redirect",
+        "TestWithdrawalReaderCompatibility/merged_rejected",
+        "TestWithdrawalReaderCompatibility/merged_retry_bound",
+        "TestWithdrawalReaderCompatibility/merged_unconcluded",
+        "TestWithdrawalReaderCompatibility/merged_unknown_status",
+        "TestWithdrawalReaderCompatibility",
+        "gchat-adapter/internal/server"
+      ]
+    }
+  ],
+  "green-readers": [
+    {
+      "stage": "writer",
+      "source": "53b5b8bc5dff5dd19b0650fa7e8674b1c1922a3a",
+      "exit": 0,
+      "command": "go test ./internal/inbound -run ^TestWithdrawalReachesEveryStoredCopy$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_pass": 34,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "current",
+      "source": "53b5b8bc5dff5dd19b0650fa7e8674b1c1922a3a",
+      "exit": 0,
+      "command": "go test -overlay <evidence>/current-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_pass": 34,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "released",
+      "source": "d2f453b83a428546dfe7fa01dc2bd831c0b47ae0",
+      "exit": 0,
+      "command": "go test -overlay <evidence>/released-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_pass": 34,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "main",
+      "source": "205d0aecedf944792f1e3b3fbc420b9e5ad910d8",
+      "exit": 0,
+      "command": "go test -overlay <evidence>/main-overlay.json ./internal/server -run ^TestWithdrawalReaderCompatibility$ -count=1 -timeout=10m -json",
+      "counts": {
+        "subtest_pass": 34,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    }
+  ],
+  "round2-readers": [
+    {
+      "stage": "writer",
+      "source": "53b5b8bc5dff5dd19b0650fa7e8674b1c1922a3a",
+      "command": "go test -overlay <evidence>/writer-overlay.json ./internal/inbound -run ^TestExportRollbackLedgers$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "current-reader",
+      "source": "53b5b8bc5dff5dd19b0650fa7e8674b1c1922a3a",
+      "command": "go test -overlay <evidence>/current-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "released-reader",
+      "source": "d2f453b83a428546dfe7fa01dc2bd831c0b47ae0",
+      "command": "go test -overlay <evidence>/released-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "main-reader",
+      "source": "205d0aecedf944792f1e3b3fbc420b9e5ad910d8",
+      "command": "go test -overlay <evidence>/main-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    }
+  ]
+}

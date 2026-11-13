@@ -1,0 +1,17 @@
+[
+  {
+    "path": "gchat/README.md",
+    "old": "the key; when the owner was deleted, the newest survivor owns the replacement.",
+    "new": "the key; when the owner was deleted, the newest survivor owns the replacement,\nincluding the turn's attempt count, fragment marker and retry schedule.\nChanging the owner never resets the fragment retry bound. After an unknown\noutcome, the surviving turn ends unresolved for the operator to inspect and\naccept or replay; an owner change never makes that turn automatically sendable.\nThe deleted owner's retired record has no replayable payload and can be accepted."
+  },
+  {
+    "path": "gchat/README.md",
+    "old": "row itself. History reads still use each message's own text. With coalescing\nenabled, a withdrawn record has no replayable payload: replay returns\n`stored turn is malformed; cannot replay` (HTTP 400), leaves the original\nwithdrawal reason in status, and makes no POST, including after a rollback to\n0.5.0. Use `--accept` to settle that record. A rollback delivers held messages individually and keeps",
+    "new": "row itself. History reads still use each message's own text. Any pending or\nalready unresolved merged or folded copy containing withdrawn text loses its\nreplayable payload, even if it stopped for another reason or coalescing is now\noff. Its prior reason and cause remain intact. Pending receipts are still\npolled; a failed receipt may rebuild a replacement with current survivors.\nReplaying an unresolved record whose payload was cleared returns\n`stored turn is malformed; cannot replay` (HTTP 400), preserves its reason,\nand makes no POST, including after a rollback to 0.5.0. Use `--accept` to settle\nthat record. A rollback delivers held messages individually and keeps"
+  },
+  {
+    "path": "gchat/CHANGELOG.md",
+    "old": "",
+    "new": "\n- Owner changes preserve delivery uncertainty, fragment limits and retry state; withdrawals clear every pending or unresolved merged/folded payload, and merged body headers are quoted as they display through Unicode format characters and spaces."
+  }
+]

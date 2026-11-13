@@ -1,0 +1,1366 @@
+{
+  "red-basic": {
+    "TestOwnerChangeKeepsDeliveryState": {
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeKeepsDeliveryState/unsaved/catchup=false": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 6 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 7 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 8 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 9 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=8 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeKeepsDeliveryState/unsaved/catchup=true": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[catch-up: 2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 6 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 7 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 8 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 9 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=8 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeKeepsDeliveryState/partial/catchup=false": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 6 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 7 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 8 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 9 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=8 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=true replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeKeepsDeliveryState/partial/catchup=true": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[catch-up: 2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 6 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 7 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 8 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 9 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=8 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=true replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    }
+  },
+  "red-class": {
+    "TestOwnerChangeDeliveryClass": {
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/owner_edited/record": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/member_deleted/record": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/owner_edited/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/member_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=true replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/partial/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=true replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/partial/owner_edited/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/member_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/owner_edited/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/member_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/owner_edited/record": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/member_deleted/record": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestOwnerChangeDeliveryClass/refused/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/owner_edited/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/member_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/known_refusal_backoff": {
+      "fail": 1,
+      "verdict": "fail"
+    }
+  },
+  "green": {
+    "TestOwnerChangeKeepsDeliveryState": {
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeKeepsDeliveryState/unsaved/catchup=false": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 5 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 6 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 7 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 8 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=8 fragment=false replayable=true member_of= members=[]",
+        "MAILS 2"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeKeepsDeliveryState/unsaved/catchup=true": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[catch-up: 2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 5 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 6 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 7 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 8 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=8 fragment=false replayable=true member_of= members=[]",
+        "MAILS 2"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeKeepsDeliveryState/partial/catchup=false": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 5 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 6 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 7 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 8 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=true replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=5 fragment=false replayable=true member_of= members=[]",
+        "MAILS 2"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeKeepsDeliveryState/partial/catchup=true": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[catch-up: 2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 5 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 6 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 7 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 8 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=true replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=5 fragment=false replayable=true member_of= members=[]",
+        "MAILS 2"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass": {
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/owner_edited/record": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/member_deleted/record": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/delivered/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=committed reason=\"delivered\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 2"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/owner_edited/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/member_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/unsaved/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=true replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=true replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 2"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/owner_edited/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/member_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/partial/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=1 fragment=true",
+        "POST 0 answer=partial accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"delivery retries exhausted\" cause=\"not_delivered\" attempts=4 fragment=true replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=1 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 2"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/owner_edited/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/member_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/pre_post_crash/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"interrupted POST; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=false member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=false member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/owner_edited/record": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=false member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=false member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/member_deleted/record": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=false member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/answer_lost/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=unresolved reason=\"POST response unavailable; delivery unknown\" attempts=1 fragment=false",
+        "POST 0 answer=lost accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=unresolved reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"POST response unavailable; delivery unknown\" cause=\"unknown\" attempts=1 fragment=false replayable=false member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/owner_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/owner_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001]",
+        "END id=spaces/room/messages/m002 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m002#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/owner_edited/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/owner_edited/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\"",
+        "END id=spaces/room/messages/m001 status=committed delivery_status=committed reason=\"coalesced\" cause=\"\" attempts=0 fragment=false replayable=true member_of=spaces/room/messages/m002 members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m001 spaces/room/messages/m002]",
+        "END id=spaces/room/messages/m002#updated#2026-11-01T10:00:02Z status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/member_deleted/record": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/refused/member_deleted/resume": {
+      "observations": [
+        "initial owner: status=intent reason=\"retry\" attempts=0 fragment=false",
+        "POST 0 answer=refused accepted=false id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 1 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 2 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 3 answer=failed accepted=false id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 4 answer=delivered accepted=true id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+        "POST 5 answer=delivered accepted=true id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\"",
+        "END id=spaces/room/messages/m001 status=unresolved delivery_status=unresolved reason=\"message deleted or superseded before retry\" cause=\"withdrawn\" attempts=0 fragment=false replayable=false member_of= members=[]",
+        "END id=spaces/room/messages/m001#deleted status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=1 fragment=false replayable=true member_of= members=[]",
+        "END id=spaces/room/messages/m002 status=committed delivery_status=committed reason=\"delivered\" cause=\"\" attempts=4 fragment=false replayable=true member_of= members=[spaces/room/messages/m002]",
+        "MAILS 0"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestOwnerChangeDeliveryClass/known_refusal_backoff": {
+      "pass": 1,
+      "verdict": "pass"
+    }
+  }
+}
