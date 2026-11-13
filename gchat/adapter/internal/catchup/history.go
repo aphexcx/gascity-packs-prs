@@ -14,6 +14,13 @@ import (
 // InitializeHistory upgrades the saved inventory before any workers or polls
 // can read it. It never gives an existing installation a global floor.
 func InitializeHistory(l *ledger.Ledger, cfg *config.Config, now time.Time, log puller.Logger) error {
+	_, err := InitializeHistoryWithReport(l, cfg, now, log)
+	return err
+}
+
+// InitializeHistoryWithReport also returns each delivery's message reference
+// for the caller to report only after saving the migrated ledger successfully.
+func InitializeHistoryWithReport(l *ledger.Ledger, cfg *config.Config, now time.Time, log puller.Logger) ([]string, error) {
 	if l.SpacesListedAt.IsZero() && l.HistoryFloor.IsZero() {
 		l.SpacesListedAt = now.UTC()
 	}
@@ -22,23 +29,31 @@ func InitializeHistory(l *ledger.Ledger, cfg *config.Config, now time.Time, log 
 			c.Reason, c.Cause = "local", "before_history_floor"
 		}
 	}
+	var retired []string
 	for name, s := range l.Spaces {
-		if err := startSpace(l, cfg, name, s, now, log); err != nil {
-			return err
+		references, err := startSpaceWithReport(l, cfg, name, s, now, log)
+		if err != nil {
+			return nil, err
 		}
+		retired = append(retired, references...)
 	}
-	return nil
+	return retired, nil
 }
 
 func startSpace(l *ledger.Ledger, cfg *config.Config, name string, s *ledger.SpaceState, now time.Time, log puller.Logger) error {
+	_, err := startSpaceWithReport(l, cfg, name, s, now, log)
+	return err
+}
+
+func startSpaceWithReport(l *ledger.Ledger, cfg *config.Config, name string, s *ledger.SpaceState, now time.Time, log puller.Logger) ([]string, error) {
 	if !l.StartSpace(s, now) {
-		return nil
+		return nil, nil
 	}
 	bound := ledger.HistoryBound(s, l.HistoryFloor)
 	if !s.FrozenUpper.IsZero() {
 		p, err := decodeProgress(s.PageToken)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		p.Phase, p.Token = "messages", ""
 		p.MessageLower, p.EventLower = bound, bound
@@ -52,7 +67,7 @@ func startSpace(l *ledger.Ledger, cfg *config.Config, name string, s *ledger.Spa
 	for _, raw := range s.Backlog {
 		var item queuedChange
 		if err := json.Unmarshal([]byte(raw), &item); err != nil {
-			return fmt.Errorf("catchup: invalid durable backlog for %s", name)
+			return nil, fmt.Errorf("catchup: invalid durable backlog for %s", name)
 		}
 		if item.Change.EventTime.IsZero() {
 			item.Change.EventTime = item.At
@@ -69,6 +84,5 @@ func startSpace(l *ledger.Ledger, cfg *config.Config, name string, s *ledger.Spa
 		kept = append(kept, raw)
 	}
 	s.Backlog = kept
-	inbound.RetireSpaceHistory(l, cfg, name, log)
-	return nil
+	return inbound.RetireSpaceHistory(l, cfg, name, log), nil
 }

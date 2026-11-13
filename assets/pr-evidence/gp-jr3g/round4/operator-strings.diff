@@ -1,0 +1,74 @@
+diff --git a/gchat/README.md b/gchat/README.md
+index 56b55679..eaad7ad1 100644
+--- a/gchat/README.md
++++ b/gchat/README.md
+@@ -481,3 +481,7 @@ message still arrives. `gc gchat read` keeps reading the old message's body.
+-An act with no usable resource or event time uses its Pub/Sub publish time;
+-with no usable time at all it is skipped, counted as
+-`history_time_missing:<space>` and logged without message text.
++For a message missing its resource time, the history bound uses its event time;
++Pub/Sub publish time never decides. With neither time, an edit is quarantined
++and a create in a bounded space is skipped, counted as
++`history_time_missing:<space>` and logged without message text. Spaces without
++a bound keep the released behavior: a missing edit time is quarantined, and a
++timeless create is a turn.
++Other acts keep their publish-time fallback when event time is missing.
+@@ -499,0 +504,6 @@ A space never read reports no lost history merely because its start is old.
++Before a box takes this version, check `gc gchat status` for waiting and
++unresolved deliveries: a delivery still waiting in a conversation with no
++reading position is ended at the first load. Each one ended is counted as
++`history_delivery_retired:<space>` and named in one mail to the city's agent
++at that load; a backup restore or a running sweep counts retirements but does
++not mail them.
+diff --git a/gchat/adapter/internal/app/operations.go b/gchat/adapter/internal/app/operations.go
+index eaeb7d9f..814068f3 100644
+--- a/gchat/adapter/internal/app/operations.go
++++ b/gchat/adapter/internal/app/operations.go
+@@ -4,0 +5 @@ import (
++	"crypto/rand"
+@@ -8,0 +10,2 @@ import (
++	"slices"
++	"strings"
+@@ -133,0 +137,10 @@ type notification struct{ kind, message, agent, dedup string }
++func (a *application) noticeHistoryRetired(references []string) {
++	if len(references) == 0 {
++		return
++	}
++	slices.Sort(references)
++	message := fmt.Sprintf("The first load ended %d waiting deliveries as history:\n%s", len(references), strings.Join(references, "\n"))
++	// Separate starts may retire the same references after restoring old state.
++	a.notice("history-delivery-retired", message, rand.Text())
++}
++
+@@ -140,0 +154,3 @@ func (a *application) notice(kind string, details ...string) {
++	if kind == "history-delivery-retired" && len(details) > 1 {
++		key += ":" + details[1]
++	}
+@@ -148,0 +165,2 @@ func (a *application) notice(kind string, details ...string) {
++	} else if kind == "history-delivery-retired" && len(details) > 0 {
++		message = details[0]
+diff --git a/gchat/adapter/internal/inbound/history.go b/gchat/adapter/internal/inbound/history.go
+index 835e97d6..f494c641 100644
+--- a/gchat/adapter/internal/inbound/history.go
++++ b/gchat/adapter/internal/inbound/history.go
+@@ -48,2 +48,2 @@ func historyID(c puller.Change) string {
+-// Use the selected fallback in message revision IDs as well as in the bound.
+-// An absent resource time must not consume a later act with another publish time.
++// Use the event-time fallback in bounded message revision IDs as well as in
++// the bound. Preserve malformed resource times so validation quarantines them.
+@@ -58 +58 @@ func historyTime(c puller.Change) puller.Change {
+-	if _, err := time.Parse(time.RFC3339Nano, raw); err == nil {
++	if raw != "" {
+@@ -123 +123 @@ func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
+-func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) {
++func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) []string {
+@@ -126 +126 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log
+-		return
++		return nil
+@@ -127,0 +128 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log
++	var retired []string
+@@ -163,0 +165,2 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log
++		l.Counters["history_delivery_retired:"+space]++
++		retired = append(retired, old.Message)
+@@ -169,0 +173 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log
++	return retired

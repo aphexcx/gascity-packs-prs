@@ -522,9 +522,13 @@ Each create, edit, deletion or reaction is judged by when that act happened.
 An act before its space's bound is never a turn, queued delivery or delivery
 mail, on the live stream or during recovery. A new edit or reaction on an old
 message still arrives. `gc gchat read` keeps reading the old message's body.
-An act with no usable resource or event time uses its Pub/Sub publish time;
-with no usable time at all it is skipped, counted as
-`history_time_missing:<space>` and logged without message text.
+For a message missing its resource time, the history bound uses its event time;
+Pub/Sub publish time never decides. With neither time, an edit is quarantined
+and a create in a bounded space is skipped, counted as
+`history_time_missing:<space>` and logged without message text. Spaces without
+a bound keep the released behavior: a missing edit time is quarantined, and a
+timeless create is a turn.
+Other acts keep their publish-time fallback when event time is missing.
 
 A space first encountered without a cursor or observed join starts at the
 previous completed spaces inventory. On a running adapter this includes at
@@ -541,6 +545,12 @@ limits. An unfinished cursorless interval restarts from its new bound; queued
 older acts leave the queue as committed non-turn records. Their count appears
 in status as `history_backlog_skipped:<space>`. They remain readable from Chat.
 A space never read reports no lost history merely because its start is old.
+Before a box takes this version, check `gc gchat status` for waiting and
+unresolved deliveries: a delivery still waiting in a conversation with no
+reading position is ended at the first load. Each one ended is counted as
+`history_delivery_retired:<space>` and named in one mail to the city's agent
+at that load; a backup restore or a running sweep counts retirements but does
+not mail them.
 
 A rollback keeps the saved cursors and skipped acts as non-turn records. It
 drops the new history bounds and inventory boundary, so spaces first found

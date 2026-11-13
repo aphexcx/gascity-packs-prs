@@ -361,16 +361,25 @@ func (e *Engine) WithHistory(fn func() error) error {
 }
 
 func (e *Engine) Forget(id string) error {
-	return e.forget(id, true)
+	return e.forget(id, true, time.Time{})
 }
 
 // ForgetTracked retires an already enrolled message without creating a
 // tombstone for historical acts that were never eligible for notices.
 func (e *Engine) ForgetTracked(id string) error {
-	return e.forget(id, false)
+	return e.forget(id, false, time.Time{})
 }
 
-func (e *Engine) forget(id string, tombstone bool) error {
+// ForgetTrackedBefore retires an alias's older enrollment. An enrollment
+// created after that history record can be a partly saved current admission.
+func (e *Engine) ForgetTrackedBefore(id string, before time.Time) error {
+	if before.IsZero() {
+		return nil
+	}
+	return e.forget(id, false, before)
+}
+
+func (e *Engine) forget(id string, tombstone bool, before time.Time) error {
 	if e == nil || !e.opts.Enabled || id == "" {
 		return nil
 	}
@@ -378,6 +387,9 @@ func (e *Engine) forget(id string, tombstone bool) error {
 	defer e.mu.Unlock()
 	m, exists := e.state.Messages[id]
 	if m.Removed || (!exists && !tombstone) {
+		return nil
+	}
+	if !before.IsZero() && !m.Created.Before(before) {
 		return nil
 	}
 	// Deletion can precede asynchronous target resolution and admission. Keep

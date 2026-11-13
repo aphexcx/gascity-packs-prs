@@ -45,8 +45,8 @@ func historyID(c puller.Change) string {
 	return name + "#history#" + c.Kind + "#" + c.ActTime().UTC().Format(time.RFC3339Nano)
 }
 
-// Use the selected fallback in message revision IDs as well as in the bound.
-// An absent resource time must not consume a later act with another publish time.
+// Use the event-time fallback in bounded message revision IDs as well as in
+// the bound. Preserve malformed resource times so validation quarantines them.
 func historyTime(c puller.Change) puller.Change {
 	if c.Message == nil || c.ActTime().IsZero() {
 		return c
@@ -55,7 +55,7 @@ func historyTime(c puller.Change) puller.Change {
 	if c.Kind == "message.updated" {
 		raw = c.Message.LastUpdateTime
 	}
-	if _, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+	if raw != "" {
 		return c
 	}
 	m := *c.Message
@@ -133,11 +133,12 @@ func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
 // An attempt recorded before a newly installed bound necessarily predates it;
 // its Created time is an upper bound on the act, not a replacement event time.
 // Existing cursors never call this migration, and committed deliveries survive.
-func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) {
+func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) []string {
 	bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
 	if bound.IsZero() {
-		return
+		return nil
 	}
+	var retired []string
 	// Select before mutating owners: committed members of an undelivered
 	// coalesced turn are still undelivered acts, independent of map order.
 	var retiring []*ledger.ChangeState
@@ -184,12 +185,15 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 		delete(l.Changes, id)
 		delete(l.Unresolved, id)
 		l.Changes[retained.ID] = &retained
+		l.Counters["history_delivery_retired:"+space]++
+		retired = append(retired, old.Message)
 		if kind == "message.deleted" {
 			if state := l.Messages[old.Message]; state != nil {
 				state.Deleted = false
 			}
 		}
 	}
+	return retired
 }
 
 // RetainHistorySkip is also used while migrating a saved queue, before network

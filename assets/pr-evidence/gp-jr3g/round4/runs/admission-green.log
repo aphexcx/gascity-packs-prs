@@ -1,0 +1,16 @@
+{"Time":"2026-11-13T04:48:42.311411-06:00","Action":"start","Package":"gchat-adapter/internal/app"}
+{"Time":"2026-11-13T04:48:42.634399-06:00","Action":"run","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices"}
+{"Time":"2026-11-13T04:48:42.6345-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices","Output":"=== RUN   TestHalfSavedAdmissionKeepsItsNotices","OutputType":"frame"}
+{"Time":"2026-11-13T04:48:42.634564-06:00","Action":"run","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices/save-failure"}
+{"Time":"2026-11-13T04:48:42.634575-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices/save-failure","Output":"=== RUN   TestHalfSavedAdmissionKeepsItsNotices/save-failure","OutputType":"frame"}
+{"Time":"2026-11-13T04:48:42.885186-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices/save-failure","Output":"--- PASS: TestHalfSavedAdmissionKeepsItsNotices/save-failure (0.25s)","OutputType":"frame"}
+{"Time":"2026-11-13T04:48:42.885226-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices/save-failure","Elapsed":0.25}
+{"Time":"2026-11-13T04:48:42.885246-06:00","Action":"run","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices/crash-reload"}
+{"Time":"2026-11-13T04:48:42.885252-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices/crash-reload","Output":"=== RUN   TestHalfSavedAdmissionKeepsItsNotices/crash-reload","OutputType":"frame"}
+{"Time":"2026-11-13T04:48:43.123845-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices/crash-reload","Output":"--- PASS: TestHalfSavedAdmissionKeepsItsNotices/crash-reload (0.24s)","OutputType":"frame"}
+{"Time":"2026-11-13T04:48:43.123889-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices/crash-reload","Elapsed":0.24}
+{"Time":"2026-11-13T04:48:43.123901-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices","Output":"--- PASS: TestHalfSavedAdmissionKeepsItsNotices (0.49s)","OutputType":"frame"}
+{"Time":"2026-11-13T04:48:43.12391-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Test":"TestHalfSavedAdmissionKeepsItsNotices","Elapsed":0.49}
+{"Time":"2026-11-13T04:48:43.123925-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T04:48:43.124963-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"ok  \tgchat-adapter/internal/app\t0.813s"}
+{"Time":"2026-11-13T04:48:43.124985-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Elapsed":0.814}
