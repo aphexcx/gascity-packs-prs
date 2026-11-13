@@ -1,0 +1,81 @@
+PR 104 round 3, item 4: the both-switches tests before any fix, and the checks that they can fail.
+
+== Slack at 87778c00 (the tests' commit, before 16815df7):
+$ cd slack-full/adapter && env -u GC_BIN go test . -run TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords -count=1 -v
+=== RUN   TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords
+=== RUN   TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/switchboard
+=== RUN   TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/room
+    round3_both_switches_test.go:238: R5: the owner line's echo wrote stopwatch words lines ["<ts>"]
+=== RUN   TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/dm
+    round3_both_switches_test.go:238: R5: the owner line's echo wrote stopwatch words lines ["<ts>"]
+=== RUN   TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/mpim
+    round3_both_switches_test.go:238: R5: the owner line's echo wrote stopwatch words lines ["<ts>"]
+--- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords (3.38s)
+    --- PASS: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/switchboard (0.69s)
+    --- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/room (0.87s)
+    --- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/dm (0.92s)
+    --- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/mpim (0.89s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	3.595s
+FAIL
+exit=1
+
+Google Chat and WhatsApp passed at 87778c00 with no change: R4 and R5 held there as merged.
+
+== Each test against scratch copies of the tip at 20b8c2c0 with one mutation (never committed). Every case fails:
+== google chat: the acknowledgement recorded as a session act (R4)
+--- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords (0.67s)
+    round3_both_switches_test.go:105: owner lines=0 (R4: the acknowledgement must not count as the session's answer)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.906s
+exit=1
+
+== google chat: CreateNotice fires the words hook (R5 words)
+--- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords (1.05s)
+    round3_both_switches_test.go:147: R5: the owner line wrote stopwatch words lines ["spaces/room/messages/2"]
+FAIL
+FAIL	gchat-adapter/internal/inbound	1.298s
+exit=1
+
+== google chat: the own-message check removed from the acknowledgement path (R5 echo)
+--- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords (0.97s)
+    round3_both_switches_test.go:124: R5: acknowledgements=["spaces/room/messages/one:👀" "spaces/room/messages/2:👀"], want only the human message's
+    round3_both_switches_test.go:150: reaction lines=["spaces/room/messages/one:adapter" "spaces/room/messages/2:adapter"], want the acknowledgement's only
+FAIL
+FAIL	gchat-adapter/internal/inbound	1.220s
+exit=1
+
+== slack: the acknowledgement recorded as a session act (R4)
+    round3_both_switches_test.go:216: owner lines=0 (R4: the acknowledgement must not count as the session's answer)
+--- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords (2.81s)
+    --- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/switchboard (0.59s)
+    --- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/room (0.73s)
+    --- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/dm (0.79s)
+    --- FAIL: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/mpim (0.71s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	3.054s
+exit=1
+
+== whatsapp: the acknowledgement recorded as a session act (R4)
+✖ both switches on: the acknowledgement is not the session's answer, and the owner line is not words (R4, R5) (15580.905416ms)
+ℹ pass 0
+ℹ fail 1
+  Error: timed out pumping for the never-silent owner line
+exit=1
+
+== whatsapp: the notice writes a words line (R5 words)
+✖ both switches on: the acknowledgement is not the session's answer, and the owner line is not words (R4, R5) (1686.322458ms)
+ℹ pass 0
+ℹ fail 1
+  AssertionError [ERR_ASSERTION]: the owner line wrote a stopwatch words line
+    actual: [ { event: 'words', channel: 'whatsapp', conversation: 'example-owner', at: '2026-11-04T15:03:03.000Z', message: 'wamid.out.2', acceptance_uncertain: false } ],
+exit=1
+
+== whatsapp: the notice creates a words-attempt marker (R5 marker)
+✖ both switches on: the acknowledgement is not the session's answer, and the owner line is not words (R4, R5) (1864.966292ms)
+ℹ pass 0
+ℹ fail 1
+  AssertionError [ERR_ASSERTION]: the owner line wrote a words-attempt marker
+    actual: [ '5dc964336baf850a67f0336ce79fb7fe0bc7ad96279aedf5a480676d727e7cea' ],
+exit=1
+

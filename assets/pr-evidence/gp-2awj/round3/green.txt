@@ -1,0 +1,59 @@
+PR 104 round 3, the suites of VERIFY. Code head 2db97763 unless a line says otherwise.
+Every Go run with GC_BIN unset. The box was shared with other sessions; loads are 1-minute averages.
+
+$ cd slack-full/adapter && env -u GC_BIN go test ./... -count=1 -json
+  13526 pass, 0 fail, 3 skip (tests and subtests); exit=0; 1-minute load 54.83 at start
+
+$ cd gchat/adapter && env -u GC_BIN go test ./... -count=1 -timeout=30m -json
+ run A, 20b8c2c0 (no gchat code change after it; 2db97763 changed two gchat test files): 2049 pass, 1 fail, 2 skip; exit=1; load 16.94 at start
+  FAIL app TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded (condition did not become true)
+ run B, 2db97763 alone:
+  2043 pass, 8 fail, 2 skip (tests and subtests); exit=1; 1-minute load 46.82 at start
+  FAIL app TestMissingTokenReplacementResumes
+  FAIL puller TestRunRotationsCloseAndReuseQuarantineHandles
+  FAIL gc-gchat-adapter TestForcedOfflineResetAfterLockLossSurvivesServiceExit
+  FAIL inbound TestLookupHoldCarriesCredentialKind/reaction_parent/403
+  FAIL inbound TestLookupHoldCarriesCredentialKind/reaction_parent/429
+  FAIL e2e TestEndToEnd/subscription_renewed_before_expiry
+ run C, main 205d0aec (a git archive) and 2db97763 at the same time:
+ main:
+  1903 pass, 0 fail, 2 skip (tests and subtests); exit=0; 1-minute load 17.90 at start, 24.71 at end
+ tip:
+  2048 pass, 3 fail, 2 skip (tests and subtests); exit=1; 1-minute load 17.90 at start, 24.71 at end
+  FAIL inbound TestNineArrivalsDeliverWhileJevIsHeld
+  FAIL app TestNeverSilentGateLockLoss/credentials-running/replaced
+
+ run D, 2db97763 alone, after C:
+  2044 pass, 7 fail, 2 skip (tests and subtests); exit=1; 1-minute load 21.93 at start, 35.76 at end
+  FAIL markdown TestToChatUnclosedOpenersLinearTime/nested_emphasis_and_distinct_backtick_runs_1000000
+  FAIL app TestFreshTokenIdentityDeliversFirstDM
+  FAIL app TestNeverSilentGateLockLoss/no-credentials/replaced
+  FAIL server TestCommandPreparationFailureSettlesExistingIntent/send-lock
+
+ The failing tests, each run at main and at the tip at the same time:
+  internal/app -count=2 at load 36 to 43: main 130 pass 2 fail, tip 130 pass 2 fail, the same two:
+   TestRevokedTokenReplacementResumes, TestMissingTokenReplacementResumes (health did not become ready in 5s)
+  TestLookupHoldCarriesCredentialKind -count=20 at load ~60: main 3 of 360 subtests failed, tip 3 of 360 (the 100 ms context runs out before the lookup's HTTP status)
+  TestNineArrivalsDeliverWhileJevIsHeld (round 1's test, not at main) -count=15 at load ~35: round 2's head 824ebab9 8 of 15 failed, tip 4 of 15, all 'maximum choices=5' (the fake counts a request until its handler sees the client's cancel)
+  TestNeverSilentGateLockLoss (main's test; its four cases) -count=3 at load 26 to 33: main 0 of 12 failed, tip 0 of 12. It failed at the tip inside three of five full runs (the merged tree before its commit, credentials-running/missing; run C, credentials-running/replaced; run D, no-credentials/replaced) and passed in main's one full run (C); not reproduced outside a full run. The tip's start hashes the executable for the release id before the state lock: a Go SHA-256 of the 31 MB app test binary took 18 to 221 ms at load 50; the test needs the adapter ready within about three seconds.
+  In isolation at load 4 to 9: TestTokenReloadDrainsPublishBeforeRebuilding and TestNeverSilentGateLockLoss/credentials-running/missing 6 of 6 at main and 6 of 6 at the tip.
+
+$ cd gchat/adapter && gofmt -l . ; go vet ./...
+  gofmt -l: nothing listed; go vet: exit 0
+$ cd slack-full/adapter && gofmt -l . ; go vet ./...
+  gofmt -l: company_thread_ambient.go (not touched by this PR; main 205d0aec lists the same file); go vet: exit 0
+
+$ env -u GC_BIN make test PYTEST_DIRS='tests/test_stopwatch.py tests/test_reaction_catalog.py tests/test_redaction_copies.py'
+  28 passed in 5.25s; exit 0
+$ env -u GC_BIN make test PYTEST_DIRS=whatsapp/tests
+  82 passed in 34.07s; exit 0
+
+$ cd whatsapp/adapter && GC_NO_INSTALL=1 pnpm exec node --test --test-concurrency=2 --test-timeout=240000 'test/*.test.js'
+  (env -i, the toolchain PATH, a scratch HOME; the three tip runs of item 6, whatsapp/ as at 20b8c2c0, unchanged after it; see wa-runs.txt)
+  run 1 tip: exit=1 tests=391 pass=387 fail=4 cancelled=0 load_start=30.86 load_end=33.56 seconds=414 failing=(7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST | a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) | never-silent integration: crash after admission or terminal acceptance retains notice eligibility | with ACK_REACTION unset the script observes as at the base (head or tip)
+  run 2 tip: exit=1 tests=391 pass=386 fail=5 cancelled=0 load_start=41.97 load_end=33.15 seconds=632 failing=audio survives SIGKILL at after-media-journal with one upload and one send | held: every reconnect reads a delivery whose wake was lost | held: reconnect attempts follow 1, 5, 15, 60, then 300 seconds without a loop | image survives SIGKILL at after-media-upload with one upload and one send | with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (head or tip)
+  run 3 tip: exit=1 tests=391 pass=384 fail=7 cancelled=0 load_start=50.02 load_end=38.55 seconds=671 failing=a 404 retries (gc answers it during a city restart) | a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) | held: a missed pong closes the socket within forty clock seconds and resumes polling | held: an owed keeper bind retries at the original cadence without another inbox read | nine live deliveries reach gc while Jev holds, with four choices and one reaction each | on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status | with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (head or tip)
+$ pnpm exec node --version
+  v24.21.0
+
+Targeted at 2db97763 (load 30 to 60): gchat ./internal/inbound -run 'TestOffParity|TestBothSwitchesOn' ok; slack . -run TestBothSwitchesOn ok (4 routes).
