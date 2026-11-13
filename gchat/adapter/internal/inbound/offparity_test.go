@@ -24,8 +24,9 @@ package inbound
 // Chat behind a transport that counts every request. The mayor's post and
 // react verbs run through the same chat.Client calls the server's publish
 // and react handlers make: the server package imports this one, so its
-// handlers cannot be driven from here; at the head the react handler adds
-// only a stopwatch reaction line (server.go:1320-1322), an allowed file.
+// handlers cannot be driven from here; at the tip the react handler adds
+// only a stopwatch reaction line (server.go:1367-1369), an allowed file,
+// beside main's own never-silent act for a react with a session.
 
 import (
 	"bytes"

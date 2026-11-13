@@ -30,6 +30,7 @@ import (
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/neversilent"
+	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
@@ -91,6 +92,17 @@ func TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords(t *testing.T) {
 	if got, want := reactions(), []string{messageName + ":\U0001F440"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("acknowledgements=%q, want %q", got, want)
 	}
+	// Google sends the acknowledgement back as a reaction event by the
+	// identity. It is not the session's reaction either.
+	var ackName string
+	rf.google.Configure(func(s *fakegoogle.Server) {
+		for name := range s.Reactions {
+			ackName = name
+		}
+	})
+	handle(t, rf.fixture, &puller.Event{PubSubID: "example-ack-echo", Changes: []puller.Change{{Kind: "reaction.created", Space: space,
+		Reaction: &api.Reaction{Name: ackName, User: &api.User{Name: rf.p.identity()}, Emoji: &api.Emoji{Unicode: "\U0001F440"}}}}})
+	settle()
 	// The session sends no words and no reaction. Three minutes pass and
 	// fresh health says session_down: the owner line is posted.
 	rf.clock.Add(3 * time.Minute)

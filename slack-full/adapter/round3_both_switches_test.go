@@ -121,7 +121,7 @@ func TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords(t *testing.T) {
 			human := slackTimestamp(now)
 			var channel string
 			var admitHuman, admitEcho func(ts, thread, text string)
-			var settle func()
+			var settle, ackEcho func()
 			switch route {
 			case "switchboard":
 				channel = "DEXAMPLE"
@@ -149,6 +149,13 @@ func TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords(t *testing.T) {
 				}
 				admitEcho = func(ts, thread, text string) {
 					event("event-echo", slackMessageEvent{Type: "message", Subtype: "bot_message", ChannelType: "im", Channel: channel, User: "U0BOTSELF", BotID: "B0SELF", TS: ts, ThreadTS: thread, Text: text})
+				}
+				// Slack sends the acknowledgement back as reaction_added by
+				// the bot. It is not the session's reaction either.
+				ackEcho = func() {
+					raw := fmt.Sprintf(`{"type":"reaction_added","user":"U0BOTSELF","reaction":"eyes","item":{"type":"message","channel":%q,"ts":%q},"event_ts":%q}`, channel, human, slackTimestamp(time.Now()))
+					processSlackEvent(cfg, aliases, nil, nil, nil, nil, slackEventEnvelope{Type: "event_callback", EventID: "event-ack-echo", Event: []byte(raw), receivedAt: time.Now(),
+						Authorizations: []slackEventAuthorization{{UserID: "U0BOTSELF", IsBot: true}}}, func() {})
 				}
 				settle = func() { time.Sleep(300 * time.Millisecond); service.Wait() }
 			default:
@@ -201,6 +208,10 @@ func TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords(t *testing.T) {
 			settle()
 			if got, want := slack.list(), []string{channel + "/" + human + ":eyes"}; strings.Join(got, ",") != strings.Join(want, ",") {
 				t.Fatalf("acknowledgements=%q, want %q", got, want)
+			}
+			if ackEcho != nil {
+				ackEcho()
+				settle()
 			}
 			// The session sends no words and no reaction. Three minutes pass
 			// and fresh health says session_down: the owner line is posted.
