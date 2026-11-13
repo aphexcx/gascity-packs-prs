@@ -45,8 +45,8 @@ func historyID(c puller.Change) string {
 	return name + "#history#" + c.Kind + "#" + c.ActTime().UTC().Format(time.RFC3339Nano)
 }
 
-// Use the selected fallback in message revision IDs as well as in the bound.
-// An absent resource time must not consume a later act with another publish time.
+// Use the event-time fallback in bounded message revision IDs as well as in
+// the bound. Preserve malformed resource times so validation quarantines them.
 func historyTime(c puller.Change) puller.Change {
 	if c.Message == nil || c.ActTime().IsZero() {
 		return c
@@ -55,7 +55,7 @@ func historyTime(c puller.Change) puller.Change {
 	if c.Kind == "message.updated" {
 		raw = c.Message.LastUpdateTime
 	}
-	if _, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+	if raw != "" {
 		return c
 	}
 	m := *c.Message

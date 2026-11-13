@@ -222,10 +222,12 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 	// the raw event when Quarantine is returned.
 	changes := make([]puller.Change, len(ev.Changes))
 	for i, c := range ev.Changes {
-		c = historyTime(c)
 		s := l.Spaces[c.Space]
 		bounded := !ledger.HistoryBound(s, l.HistoryFloor).IsZero() || s == nil || (s.MessageCursor.IsZero() && s.JoinedAt.IsZero())
-		if err := validate(c, bounded); err != nil {
+		if bounded {
+			c = historyTime(c)
+		}
+		if err := validate(c); err != nil {
 			return puller.Quarantine, err
 		}
 		changes[i] = c
@@ -582,7 +584,7 @@ func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
 	return l.Clone(), nil
 }
 
-func validate(c puller.Change, bounded bool) error {
+func validate(c puller.Change) error {
 	var name, resource string
 	switch c.Kind {
 	case "message.created", "message.updated", "message.deleted":
@@ -594,11 +596,11 @@ func validate(c puller.Change, bounded bool) error {
 			if c.Message == nil || c.Message.Sender == nil || c.Message.Sender.Name == "" {
 				return errors.New("inbound: message sender missing")
 			}
-			if !bounded && c.Kind == "message.updated" && c.Message.LastUpdateTime == "" {
+			if c.Kind == "message.updated" && c.Message.LastUpdateTime == "" {
 				return errors.New("inbound: update time missing")
 			}
 			for _, value := range []string{c.Message.CreateTime, c.Message.LastUpdateTime} {
-				if !bounded && value != "" {
+				if value != "" {
 					if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
 						return errors.New("inbound: invalid message timestamp")
 					}

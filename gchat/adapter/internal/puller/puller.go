@@ -65,6 +65,9 @@ func (c Change) ActTime() time.Time {
 	if at, err := time.Parse(time.RFC3339Nano, raw); err == nil {
 		return at
 	}
+	if c.Kind == "message.created" || c.Kind == "message.updated" {
+		return c.EventTime
+	}
 	if c.Batch && !c.EventTime.IsZero() {
 		return c.EventTime
 	}
