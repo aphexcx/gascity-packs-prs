@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gchat-adapter/internal/ack"
 	"github.com/BurntSushi/toml"
 )
 
@@ -104,10 +105,11 @@ type Settings struct {
 }
 
 type Config struct {
-	Secrets    Secrets
-	Settings   Settings
-	Endpoints  Endpoints
-	SecretsDir string
+	Acknowledgement ack.Options `json:"-"`
+	Secrets         Secrets
+	Settings        Settings
+	Endpoints       Endpoints
+	SecretsDir      string
 }
 
 // Load reads KEY=VALUE secrets and TOML settings, preserving Settings as decoded.
@@ -145,6 +147,13 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 		return nil, fmt.Errorf("secrets %s: missing required keys: %s", envFile, strings.Join(missing, ", "))
 	}
 	c := &Config{SecretsDir: secretsDir}
+	arrivalValue := func(key string) string {
+		if value, ok := values[key]; ok {
+			return value
+		}
+		return os.Getenv(key)
+	}
+	c.Acknowledgement = ack.Options{Mode: arrivalValue("ACK_REACTION"), Scope: arrivalValue("ACK_SCOPE"), Base: arrivalValue("JEV_API_BASE_URL"), Model: arrivalValue("JEV_MODEL"), Key: arrivalValue("JEV_API_KEY"), Catalog: ack.Catalog}
 	c.Secrets = Secrets{
 		ProjectID: values["GCHAT_PROJECT_ID"], Topic: values["GCHAT_PUBSUB_TOPIC"],
 		Subscription: values["GCHAT_PUBSUB_SUBSCRIPTION"], TokenSource: source,

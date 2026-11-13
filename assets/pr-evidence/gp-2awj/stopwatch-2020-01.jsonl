@@ -1,0 +1,9 @@
+{"event": "inbound", "channel": "gchat", "conversation": "space-example", "thread": "thread-example", "message": "0", "release": "release-a", "message_at": "2020-01-01T00:00:00Z", "at": "2020-01-01T00:00:00Z"}
+{"event": "inbound", "channel": "gchat", "conversation": "space-example", "thread": "thread-example", "message": "1", "release": "release-a", "message_at": "2020-01-01T00:00:01Z", "at": "2020-01-01T00:00:01Z"}
+{"event": "inbound", "channel": "gchat", "conversation": "space-example", "thread": "thread-example", "message": "2", "release": "release-a", "message_at": "2020-01-01T00:00:02Z", "at": "2020-01-01T00:00:02Z"}
+{"event": "reaction", "channel": "gchat", "conversation": "space-example", "message": "0", "at": "2020-01-01T00:00:01Z"}
+{"event": "reaction", "channel": "gchat", "conversation": "space-example", "message": "1", "at": "2020-01-01T00:00:04Z"}
+{"event": "words", "channel": "gchat", "conversation": "space-example", "thread": "another-thread", "at": "2020-01-01T00:00:03Z"}
+{"event": "words", "channel": "gchat", "conversation": "space-example", "thread": "thread-example", "at": "2020-01-01T00:00:06Z"}
+{"event": "inbound", "channel": "gchat", "conversation": "space-example", "thread": "thread-example", "message": "later", "release": "release-b", "message_at": "2020-02-01T00:00:00Z", "at": "2020-02-01T00:00:00Z"}
+{"event":

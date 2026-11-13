@@ -666,6 +666,9 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 			return true
 		}
 		w.WriteHeader(http.StatusOK)
+		// Resume owed delivery without treating the duplicate as a new arrival,
+		// including when the first process exited before creating an ack marker.
+		env.replayed = true
 		g.mentionOnlyForCompanyRoom(env, ev, room)
 		return true
 	}
@@ -673,6 +676,7 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	// no dispatch slot is free the receipt stays pending and the sweep
 	// recovers it — backpressure, never a silent drop.
 	w.WriteHeader(http.StatusOK)
+	g.observeArrival(env, ev, receipt)
 	g.triggerDelivery(origin)
 	// Mention-only sessions outside company membership get their copy
 	// from the gateway too (jg-vobf70 round 5): the legacy dispatcher
@@ -836,6 +840,7 @@ func (g *companyGateway) deliverReceipt(origin ReceiptOrigin) deliverOutcome {
 			case botResolveOK:
 				msg.ResolvedBotUserID = res.Agent.BotUserID
 				authorAgent = res.Agent
+				g.recordCompanyWords(msg, authorAgent)
 			}
 			// botResolveUnknown: leave ResolvedBotUserID empty.
 		}

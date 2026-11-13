@@ -75,6 +75,7 @@ def test_command_entries_resolve_to_nested_words():
     assert found == {
         'publish': 'publish.sh', 'invite': 'invite.sh', 'consent': 'consent.sh', 'hours': 'hours.sh',
         'enroll': 'enroll.sh', 'status': 'status.sh',
+        'stopwatch': 'stopwatch.py',
         'inbound resolve': 'resolve.sh', 'inbound clear-gap': 'clear-gap.sh',
     }
 

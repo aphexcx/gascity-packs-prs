@@ -103,6 +103,7 @@ func (g *companyGateway) tryHandleDMEvent(w http.ResponseWriter, r *http.Request
 		return true
 	}
 	w.WriteHeader(http.StatusOK)
+	g.observeArrival(env, ev, receipt)
 	g.triggerDelivery(origin)
 	return true
 }
@@ -133,6 +134,7 @@ func (g *companyGateway) deliverDMReceipt(r *IngressReceipt, origin ReceiptOrigi
 		// Immediately-terminal, routed to nobody, but a receipt (the dedup +
 		// reconciliation memory for DM outbound posts).
 		if isBotAuthored(msg) {
+			g.recordCompanyWords(msg, owner)
 			return g.finalizeDMNoDelivery(r, wakeReasonDMSelfEcho)
 		}
 		// Allowed-human policy (D-DM2). A policy denial is terminal + visible,

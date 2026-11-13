@@ -235,6 +235,7 @@ export function createPublisher({
   mediaDir,
   outboundRootConfig,
   mediaGateway = gateway,
+  stopwatch,
 }) {
   const progress = createProgressStore({ file: path.join(stateDir, PROGRESS_FILE), clock, log });
   const updatesFile = path.join(stateDir, UPDATES_FILE);
@@ -400,9 +401,12 @@ export function createPublisher({
     }
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer;
+      const sendKey = textChunkKey(key, conversationId, text, i);
+      const uncertain = stopwatch?.attempt(sendKey) ?? false;
       try {
-        answer = await gateway.send({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i] });
+        answer = await gateway.send({ to, idempotency_key: sendKey, type: 'text', text: chunks[i] });
         if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
+        stopwatch?.words(conversationId, answer.message_id, uncertain);
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
         if (err?.status === 422 && err.json?.error === 'window_closed') {
@@ -522,10 +526,12 @@ export function createPublisher({
           // The gateway checks that key before the window and grant. This sentinel
           // is not a gateway UUID handle, so even a window reopening during the
           // request cannot cause a new Meta send. No upload is made for the probe.
+          const uncertain = stopwatch?.attempt(`file-send:${operation}`) ?? false;
           const sent = await gateway.send({ to, idempotency_key: `file-send:${operation}`, type: file.kind,
             media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } });
           killPoint('after-media-send', key);
           if (!str(sent?.message_id)) throw Object.assign(new Error('missing message id'), { noMessageId: true });
+          stopwatch?.words(conversationId, sent.message_id, uncertain || recoverOnly);
           entry.delivered = 1;
           entry.message_ids = [sent.message_id];
           entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
@@ -618,9 +624,12 @@ export function createPublisher({
     if (existing?.receipt) return { status: 200, json: existing.receipt };
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
     let answer;
+    const sendKey = templateKey(key, to, template);
+    const uncertain = stopwatch?.attempt(sendKey) ?? false;
     try {
-      answer = await gateway.send({ to: recipient, idempotency_key: templateKey(key, to, template), type: 'template', template });
+      answer = await gateway.send({ to: recipient, idempotency_key: sendKey, type: 'template', template });
       if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
+      stopwatch?.words(to, answer.message_id, uncertain);
     } catch (err) {
       return failure(err, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
     }

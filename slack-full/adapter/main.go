@@ -300,6 +300,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/sjarmak/gc-slack-adapter/internal/ack"
+	"github.com/sjarmak/gc-slack-adapter/internal/stopwatch"
 	"io"
 	"log"
 	"maps"
@@ -397,6 +399,10 @@ func (c config) tryAcquireDispatchSlot() (release func(), capacity int, ok bool)
 }
 
 type config struct {
+	arrival             *ack.Service
+	arrivalChoice       *ack.Choice
+	arrivalState        string
+	arrivalStarted      time.Time
 	publicListen        string
 	internalListen      string // unused when serviceSocket is set
 	serviceSocket       string // when set, bind a UDS here for /publish instead of internalListen
@@ -1284,6 +1290,9 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	if strings.ContainsAny(cfg.cityName, "/?#%") {
 		return cfg, fmt.Errorf("GC_CITY_NAME must not contain '/', '?', '#', or '%%': %q", cfg.cityName)
 	}
+	if err := configureArrival(&cfg, getenv); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -1420,6 +1429,9 @@ type slackPostMessageResp struct {
 	TS      string `json:"ts,omitempty"`
 	Channel string `json:"channel,omitempty"`
 	Error   string `json:"error,omitempty"`
+	Message struct {
+		ThreadTS string `json:"thread_ts,omitempty"`
+	} `json:"message,omitempty"`
 	// Slack reports non-fatal problems here instead of failing the call. The
 	// one that matters to us is "message_truncated": Slack truncates text past
 	// slackMaxMessageLength rather than rejecting it, and returns ok:true, so
@@ -1467,11 +1479,9 @@ type slackCompleteUploadReq struct {
 }
 
 type slackCompleteUploadResp struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-	Files []struct {
-		ID string `json:"id"`
-	} `json:"files,omitempty"`
+	OK    bool                 `json:"ok"`
+	Error string               `json:"error,omitempty"`
+	Files []stopwatchSlackFile `json:"files,omitempty"`
 }
 
 // publishFileRequest is the body of POST /publish-file. Mirrors
@@ -1596,10 +1606,12 @@ type gcSessionMessageRequest struct {
 }
 
 type slackEventEnvelope struct {
-	Type      string `json:"type"`
-	Challenge string `json:"challenge,omitempty"`
-	TeamID    string `json:"team_id,omitempty"`
-	APIAppID  string `json:"api_app_id,omitempty"`
+	receivedAt time.Time
+	replayed   bool
+	Type       string `json:"type"`
+	Challenge  string `json:"challenge,omitempty"`
+	TeamID     string `json:"team_id,omitempty"`
+	APIAppID   string `json:"api_app_id,omitempty"`
 	// EventID is Slack's unique id for one event (Ev…). Retried
 	// deliveries of the same event carry the same event_id, which is
 	// what the redelivery seen-set keys on (hw-94w5k finding #4).
@@ -1686,6 +1698,9 @@ func main() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+	if err := startArrival(&cfg); err != nil {
+		log.Fatalf("stopwatch initialization failed: %v", err)
 	}
 	// Initialize the shared dispatch semaphore on the cfg value before
 	// any handler closes over it. cap is a fixed positive int —
@@ -2700,6 +2715,11 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 		cfg.publishReceipts.recordReadback(req.IdempotencyKey, &replay.receipt)
 		if replayed {
 			cached := replay.receipt
+			acceptedTarget := target
+			if cached.readbackTarget.messageTS != "" {
+				acceptedTarget = cached.readbackTarget
+			}
+			recordAcceptedSlackWords(cfg, acceptedTarget.channel, acceptedTarget.threadTS, cached.MessageID)
 			log.Printf("publish: dedup hit idem=%s conv=%s delivered=%t re_verified=%t -> returning cached receipt (no re-post)",
 				req.IdempotencyKey, req.Conversation.ConversationID, cached.Delivered, replay.reVerified)
 			// A replay that re-verified a posted-but-unconfirmed receipt is
@@ -2748,6 +2768,10 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			}
 		default:
 			receipt.MessageID = slackResp.TS
+			if slackResp.Message.ThreadTS != "" {
+				target.threadTS = slackResp.Message.ThreadTS
+			}
+			recordAcceptedSlackWords(cfg, req.Conversation.ConversationID, target.threadTS, slackResp.TS)
 			// Keep Slack's truncation warning on the receipt even if readback fails.
 			for _, warning := range slackResp.ResponseMetadata.Warnings {
 				if warning != "message_truncated" {
@@ -2956,6 +2980,9 @@ func handlePublishFile(cfg config, reg *identityRegistry) http.HandlerFunc {
 
 		receipt.Delivered = true
 		receipt.FileID = urlResp.FileID
+		if cfg.inboundJournal != nil && cfg.inboundJournal.watch != nil {
+			go recordUploadedFile(cfg, req.Conversation.ConversationID, urlResp.FileID, completeResp.Files)
+		}
 		// Busy-reaction lifecycle, remove side: a threaded file upload
 		// may be the agent's entire reply — it must clear the pending
 		// busy mark exactly like a text publish (hw-94w5k codex r1).
@@ -3305,7 +3332,7 @@ func handleReact(cfg config) http.HandlerFunc {
 // own ts (messageTS). Either way, replies in that thread now reach the
 // posting session even when it is bound mention-only.
 func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sessionID string) {
-	if at, ok := ingestionPublishTime(messageTS); ok && replyTo != "" && sessionID != "" {
+	if at, ok := ingestionPublishTime(messageTS); ok && sessionID != "" {
 		cfg.inboundJournal.recordSessionAct(ingestionSessionAct{
 			Kind: "reply", Source: "session_publish", Channel: conversationID,
 			MessageTS: messageTS, ThreadTS: replyTo, SessionID: sessionID, Timestamp: at,
@@ -3411,11 +3438,15 @@ func callSlackReactions(token, method string, req slackReactionsAddReq) (*slackR
 // visible-ack path (add/remove over the gateway's timeout-bounded client) all
 // route through here, so there is no second reactions POST implementation.
 func postReactionMethod(client *http.Client, token, method string, req slackReactionsAddReq) (*slackReactionsAddResp, error) {
+	return postReactionMethodContext(context.Background(), client, token, method, req)
+}
+
+func postReactionMethodContext(ctx context.Context, client *http.Client, token, method string, req slackReactionsAddReq) (*slackReactionsAddResp, error) {
 	if client == nil {
 		client = slackAPIClient
 	}
 	body, _ := json.Marshal(req)
-	httpReq, err := http.NewRequest(http.MethodPost, slackAPIBase+"/"+method, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, slackAPIBase+"/"+method, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -3549,6 +3580,8 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			http.Error(w, fmt.Sprintf("decode: %v", err), http.StatusBadRequest)
 			return
 		}
+		env.receivedAt = time.Now()
+		env.replayed = trustedTransportName(r) == "backfill"
 
 		// URL verification challenge.
 		if env.Type == "url_verification" && env.Challenge != "" {
@@ -4140,6 +4173,14 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// typed `@<handle>: <body>` from the start.
 		}
 	}
+	// Use the resolved target, including thread stickiness. Known own-thread
+	// bindings are local, so acknowledgement can start before hydration.
+	arrivalAddressed := slackKindFromChannelType(msg.ChannelType, msg.Channel) == "dm" || msg.ChannelType == "mpim" || target != "" || msg.Type == "app_mention" || slackTextMentionsUser(msg.Text, env.botUserID())
+	if !arrivalAddressed && msg.ThreadTS != "" && msg.ThreadTS != msg.TS {
+		posters, known := cfg.ownThreads.posters(msg.Channel, msg.ThreadTS)
+		arrivalAddressed = len(selectMentionOnlyTargets(mentionOnlyInput{bindings: cfg.mentionOnly.ForChannel(msg.Channel), isThreadReply: true, threadPosters: posters, threadKnown: known})) > 0
+	}
+	observeSlackArrival(cfg, env, msg, arrivalAddressed, nil)
 
 	// Alias-dispatch turn-dedup (gp-729 item 5): resolve the alias early
 	// so the duplicate-suppression verdict can shape the channel copy's
@@ -4561,6 +4602,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			}
 		}
 		mentionOnlyTargets = selectMentionOnlyTargets(moIn)
+		if len(mentionOnlyTargets) > 0 {
+			observeSlackArrival(cfg, env, msg, true, nil)
+		}
 	}
 	// runMentionOnly performs the injections. Called from exactly one of
 	// two places: right before a buffered channel copy is enqueued, or —
@@ -5057,13 +5101,16 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// after this add (clearBusyReaction orders remove-after-
 			// add so a fast reply cannot leave a stale busy emoji).
 			defer close(addDone)
-			_, err := postReactionToSlack(cfg.slackBotToken, slackReactionsAddReq{
+			response, err := postReactionToSlack(cfg.slackBotToken, slackReactionsAddReq{
 				Channel:   channel,
 				Name:      emoji,
 				Timestamp: ts,
 			})
 			if err != nil {
 				log.Printf("react busy %s failed: chan=%s ts=%s: %v", emoji, channel, ts, err)
+			}
+			if err == nil && response != nil && (response.OK || response.Error == "already_reacted") && cfg.inboundJournal != nil {
+				cfg.inboundJournal.watch.Record(stopwatch.Event{Event: "reaction", Conversation: channel, Message: ts, At: time.Now(), Actor: "adapter", Choice: "fixed"})
 			}
 		}(msg.Channel, msg.TS, cfg.busyReaction, busyAddDone)
 	}

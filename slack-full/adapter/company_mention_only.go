@@ -481,7 +481,7 @@ func (g *companyGateway) replayMentionOnlyLane(r *IngressReceipt, ev slackMessag
 		g.settleMentionOnlyIntent(r.Origin)
 		return
 	}
-	env := slackEventEnvelope{Type: "event_callback", TeamID: r.Origin.TeamID, APIAppID: r.APIAppID, EventID: r.EventID}
+	env := slackEventEnvelope{Type: "event_callback", TeamID: r.Origin.TeamID, APIAppID: r.APIAppID, EventID: r.EventID, replayed: true}
 	if r.MentionOnlyLane.AppID != "" {
 		env.APIAppID = r.MentionOnlyLane.AppID
 	}
@@ -635,6 +635,25 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 	}
 	if blindCopy && len(targets) == 0 {
 		return
+	}
+	if len(targets) > 0 && cfg.arrival != nil {
+		// This lane owns addressing for outsiders to company membership.
+		// Reuse its selected targets; receipt routing alone cannot see them.
+		if ev.Type == "app_mention" {
+			// A live persona copy may admit the message before a switchboard
+			// copy can recognize its target. Only a receipt predating this
+			// arrival service proves recovery; durable markers dedup live twins.
+			store := g.store()
+			if store == nil {
+				env.replayed = true
+			} else if receipt, err := store.Get(origin); err != nil {
+				env.replayed = true
+			} else if receipt != nil {
+				env.replayed = env.replayed || cfg.arrivalStarted.IsZero() || receipt.ReceivedAt.Before(cfg.arrivalStarted)
+				env.receivedAt = receipt.ReceivedAt
+			}
+		}
+		observeSlackArrival(cfg, env, ev, true, nil)
 	}
 	g.runMentionOnlyTargets(origin, ev, target, targets, scanFailed || blindCopy)
 }

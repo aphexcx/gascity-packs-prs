@@ -147,6 +147,7 @@ func (g *companyGateway) tryHandleMpimEvent(w http.ResponseWriter, r *http.Reque
 		return true
 	}
 	w.WriteHeader(http.StatusOK)
+	g.observeArrival(env, ev, receipt)
 	g.triggerDelivery(origin)
 	return true
 }
@@ -179,6 +180,9 @@ func (g *companyGateway) deliverMpimReceipt(r *IngressReceipt, origin ReceiptOri
 		// Bot-authored (a member app's own echo, or any bot): terminal, nobody
 		// woken, but a receipt (the reconciliation + dedup memory for mpim posts).
 		if isBotAuthored(msg) {
+			if author, ok := dir.AgentByBotUserID(msg.UserID); ok {
+				g.recordCompanyWords(msg, author)
+			}
 			return g.finalizeDMNoDelivery(r, wakeReasonMpimBotAuthor)
 		}
 		// Allowed-human policy (dm rules): a registry-unavailable answer parks

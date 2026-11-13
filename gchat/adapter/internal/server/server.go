@@ -30,6 +30,7 @@ import (
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/markdown"
 	"gchat-adapter/internal/provenance"
+	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/wire"
 	"github.com/BurntSushi/toml"
 	api "google.golang.org/api/chat/v1"
@@ -56,8 +57,9 @@ type Health struct {
 }
 
 type Options struct {
-	Config *config.Config
-	Ledger *ledger.Ledger
+	Stopwatch *stopwatch.Writer
+	Config    *config.Config
+	Ledger    *ledger.Ledger
 	// LedgerMu must be shared with inbound, catch-up, and the subscription manager.
 	// Consumers must release it for I/O and between batches; continuous re-locking
 	// can starve the server's deadline-aware TryLock polling.
@@ -1315,6 +1317,9 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 		problem(w, 502, err)
 		return
 	}
+	if !v.Remove {
+		s.opts.Stopwatch.Record(stopwatch.Event{Event: "reaction", Conversation: strings.Split(v.Message, "/messages/")[0], Message: v.Message, At: time.Now(), Actor: "agent"})
+	}
 	respond(w, 200, map[string]any{"name": name, "removed": v.Remove})
 }
 
@@ -1643,6 +1648,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
 	status["pending"], status["deliveries"], status["stuck"] = inFlight, deliveries, stuck
+	status["jev_api_key"] = "not set"
+	s.mu.RLock()
+	if s.cfg.Acknowledgement.Key != "" {
+		status["jev_api_key"] = "set"
+	}
+	s.mu.RUnlock()
 	if s.opts.SubscriptionStatus != nil {
 		failures, next, state, err := s.opts.SubscriptionStatus()
 		kind, code := logCause(err)
