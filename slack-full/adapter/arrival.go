@@ -97,7 +97,10 @@ func observeSlackArrival(cfg config, env slackEventEnvelope, msg slackMessageEve
 	thread := msg.ThreadTS
 	in := ack.Input{Conversation: msg.Channel, Message: msg.TS, Thread: thread, Text: msg.Text, Time: at, Seen: seen, Addressed: addressed,
 		Human: msg.User != "" && msg.BotID == "", Own: msg.User == env.botUserID(), Edit: (msg.Type != "message" && msg.Type != "app_mention") || (msg.Subtype != "" && msg.Subtype != "file_share" && msg.Subtype != "thread_broadcast"), Replay: env.replayed || cfg.recoveryReplay || strings.HasPrefix(env.EventID, "backfill:")}
-	if send == nil {
+	if env.timingOnly {
+		// No sender: the service records the inbound line and stops there.
+		cfg.arrival.ObserveUsing(in, nil)
+	} else if send == nil {
 		cfg.arrival.Observe(in)
 	} else {
 		cfg.arrival.ObserveUsing(in, send)
@@ -108,6 +111,8 @@ func observeSlackArrival(cfg config, env slackEventEnvelope, msg slackMessageEve
 // delivery worker admitted through the roster-drift overlay, from the
 // receipt alone: first sight is its ReceivedAt, and a receipt admitted before
 // this process's arrival service started is a replay, never a new arrival.
+// A wake admitted past the reaction budget (a sweep's redrive) is timed for
+// the stopwatch but gets no reaction.
 func (g *companyGateway) observeAdmittedArrival(r *IngressReceipt, body json.RawMessage) {
 	if g == nil || g.cfg.arrival == nil || r == nil {
 		return
@@ -117,12 +122,15 @@ func (g *companyGateway) observeAdmittedArrival(r *IngressReceipt, body json.Raw
 		return
 	}
 	env := slackEventEnvelope{Type: "event_callback", TeamID: r.Origin.TeamID, APIAppID: r.APIAppID, EventID: r.EventID, Event: body,
-		receivedAt: r.ReceivedAt, replayed: g.cfg.arrivalStarted.IsZero() || r.ReceivedAt.Before(g.cfg.arrivalStarted)}
+		receivedAt: r.ReceivedAt, replayed: g.cfg.arrivalStarted.IsZero() || r.ReceivedAt.Before(g.cfg.arrivalStarted),
+		timingOnly: time.Since(r.ReceivedAt) > ack.ReactionBudget}
 	g.observeArrival(env, ev, r)
 }
 
-// Company admission owns its route and its sender. Recovered receipts never
-// enter here; the durable attempt registry also absorbs paired event copies.
+// Company admission owns its route and its sender. Recovered receipts enter
+// only through observeAdmittedArrival, as replays (nothing at all) or, when
+// admitted past the reaction budget, timing-only; the durable attempt
+// registry also absorbs paired event copies.
 func (g *companyGateway) observeArrival(env slackEventEnvelope, ev slackMessageEvent, r *IngressReceipt) {
 	if g == nil || g.cfg.arrival == nil || r == nil {
 		return

@@ -1609,6 +1609,9 @@ type gcSessionMessageRequest struct {
 type slackEventEnvelope struct {
 	receivedAt time.Time
 	replayed   bool
+	// timingOnly: the stopwatch times the message, but no acknowledgement is
+	// placed (a wake admitted past the reaction budget, item 8).
+	timingOnly bool
 	Type       string `json:"type"`
 	Challenge  string `json:"challenge,omitempty"`
 	TeamID     string `json:"team_id,omitempty"`
