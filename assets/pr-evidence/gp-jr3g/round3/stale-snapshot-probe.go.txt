@@ -1,0 +1,52 @@
+func TestHistoryNoticeStaleSnapshotProbe(t *testing.T) {
+	for _, mode := range []string{"current-admission", "backup-restore"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t, false)
+			now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+			id := "spaces/dm/messages/one"
+			l := ledger.New()
+			l.IdentityUserID = fakegoogle.UserID
+			n := newHistoryNoticeSink(t, f.cfg.Endpoints.StateFile+".never-silent.json", now)
+			var stale *ledger.Ledger
+			if mode == "current-admission" {
+				l.HistoryFloor = now.Add(-time.Minute)
+				l.Spaces["spaces/dm"] = &ledger.SpaceState{Kind: "dm", ChatType: "DIRECT_MESSAGE", Wake: "all", MessageCursor: l.HistoryFloor}
+				key := id+"#history#message.created#0001-01-01T00:00:00Z"
+				l.Changes[key] = &ledger.ChangeState{ID: key, Message: id, Space: "spaces/dm", Kind: "message.created", Status: "committed", Reason: "local", Cause: "history_time_missing", Created: now.Add(-time.Second)}
+				stale = l.Clone()
+				c, err := chat.New(t.Context(), http.DefaultClient, f.cfg.Endpoints)
+				if err != nil { t.Fatal(err) }
+				p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: l, LedgerMu: &f.mu, LedgerPath: f.cfg.Endpoints.StateFile, Chat: c, GC: gcclient.New(f.gc.URL(), "examplecity"), IdentityUserID: fakegoogle.UserID, NeverSilent: n.engine, Now: func() time.Time { return n.now }})
+				if err != nil { t.Fatal(err) }
+				f.gc.Configure(func(g *fakegc.Server) { g.NextDelivery = "no_route" })
+				m := historyMessage("spaces/dm", "one", now)
+				m.Space = &api.Space{Name: "spaces/dm", SpaceType: "DIRECT_MESSAGE"}
+				if _, err := p.Handle(t.Context(), &puller.Event{Changes: []puller.Change{{Kind: "message.created", Space: "spaces/dm", Message: m}}}); err != nil { t.Fatal(err) }
+				if len(n.messages(t)) != 1 || l.Changes[id] == nil { t.Fatal("valid enrollment not established") }
+			} else {
+				stale = l.Clone()
+				if err := n.engine.Track(neversilent.Message{ID: id, Conversation: "spaces/dm", Created: now.Add(-time.Hour)}); err != nil { t.Fatal(err) }
+				if err := n.engine.StopAt(id, true, now.Add(-time.Hour)); err != nil { t.Fatal(err) }
+				backup := ledger.New()
+				backup.Spaces["spaces/dm"] = &ledger.SpaceState{Kind: "dm", Wake: "all"}
+				old := &ledger.ChangeState{ID: id, Message: id, Space: "spaces/dm", Kind: "message.created", Status: "unresolved", Created: now.Add(-time.Hour)}
+				backup.Changes[id], backup.Unresolved[id] = old, old
+				path := filepath.Join(t.TempDir(), "backup.json")
+				if err := backup.Save(path); err != nil { t.Fatal(err) }
+				s, err := server.New(server.Options{Config: f.cfg, Ledger: l, LedgerMu: &f.mu, LedgerPath: f.cfg.Endpoints.StateFile})
+				if err != nil { t.Fatal(err) }; defer s.Close()
+				s.SetNeverSilent(n.engine); s.SetHealth(server.Health{State: "recovery-required"})
+				raw, _ := json.Marshal(map[string]string{"action": "restore", "file": path})
+				w := httptest.NewRecorder(); s.ServeHTTP(w, httptest.NewRequest("POST", "/state", strings.NewReader(string(raw))))
+				if w.Code != 200 || len(l.Unresolved) != 0 { t.Fatalf("restore failed: %d", w.Code) }
+			}
+			if err := inbound.ReconcileNeverSilent(stale, n.engine); err != nil { t.Fatal(err) }
+			n.now = n.now.Add(4*time.Minute)
+			if err := n.engine.Poll(t.Context()); err != nil { t.Fatal(err) }
+			want := 0
+			if mode == "current-admission" { want = 1 }
+			t.Logf("owner=%d mail=%d expected=%d", n.posts, len(n.mails), want)
+			if n.posts != want || len(n.mails) != want { t.Errorf("stale decision: owner=%d mail=%d expected=%d", n.posts, len(n.mails), want) }
+		})
+	}
+}

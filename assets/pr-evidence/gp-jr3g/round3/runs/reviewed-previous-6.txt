@@ -1,0 +1,12 @@
+=== RUN   TestNewActsOnOldMessagesKeepTheirFrame
+=== RUN   TestNewActsOnOldMessagesKeepTheirFrame/message.updated
+--- PASS: TestNewActsOnOldMessagesKeepTheirFrame/message.updated (0.47s)
+=== RUN   TestNewActsOnOldMessagesKeepTheirFrame/message.deleted
+--- PASS: TestNewActsOnOldMessagesKeepTheirFrame/message.deleted (0.60s)
+=== RUN   TestNewActsOnOldMessagesKeepTheirFrame/reaction.created
+--- PASS: TestNewActsOnOldMessagesKeepTheirFrame/reaction.created (0.23s)
+=== RUN   TestNewActsOnOldMessagesKeepTheirFrame/reaction.deleted
+--- PASS: TestNewActsOnOldMessagesKeepTheirFrame/reaction.deleted (0.21s)
+--- PASS: TestNewActsOnOldMessagesKeepTheirFrame (1.51s)
+PASS
+ok  	gchat-adapter/internal/inbound	1.700s

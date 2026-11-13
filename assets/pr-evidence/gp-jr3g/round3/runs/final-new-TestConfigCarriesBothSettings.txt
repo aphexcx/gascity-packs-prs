@@ -1,0 +1,16 @@
+=== RUN   TestConfigCarriesBothSettings
+=== RUN   TestConfigCarriesBothSettings/on
+--- PASS: TestConfigCarriesBothSettings/on (0.00s)
+=== RUN   TestConfigCarriesBothSettings/none
+--- PASS: TestConfigCarriesBothSettings/none (0.00s)
+=== RUN   TestConfigCarriesBothSettings/off
+--- PASS: TestConfigCarriesBothSettings/off (0.00s)
+=== RUN   TestConfigCarriesBothSettings/ON
+--- PASS: TestConfigCarriesBothSettings/ON (0.00s)
+=== RUN   TestConfigCarriesBothSettings/true
+--- PASS: TestConfigCarriesBothSettings/true (0.00s)
+=== RUN   TestConfigCarriesBothSettings/1
+--- PASS: TestConfigCarriesBothSettings/1 (0.00s)
+--- PASS: TestConfigCarriesBothSettings (0.01s)
+PASS
+ok  	gchat-adapter/internal/config	0.141s

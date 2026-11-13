@@ -1,0 +1,184 @@
+=== RUN   TestNoOldActIsEverATurn
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=false/L
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=false/L (1.18s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=false/R
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=false/R (2.24s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=false/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=false/C (2.20s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=false/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=false/Q (2.23s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=false/O
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=false/O (1.18s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=false/P
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=false/P (1.18s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=true/L
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=true/L (1.19s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=true/R
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=true/R (2.28s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=true/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=true/C (2.19s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=true/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=true/Q (2.21s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=true/O
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=true/O (1.20s)
+=== RUN   TestNoOldActIsEverATurn/message.created/batch=true/P
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.created/batch=true/P (1.23s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=false/L
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=false/L (1.17s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=false/R
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=false/R (2.25s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=false/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=false/C (2.19s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=false/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=false/Q (2.21s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=false/O
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=false/O (1.16s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=false/P
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=false/P (1.16s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=true/L
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=true/L (1.21s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=true/R
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=true/R (2.32s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=true/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=true/C (2.21s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=true/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=true/Q (2.20s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=true/O
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=true/O (1.18s)
+=== RUN   TestNoOldActIsEverATurn/message.updated/batch=true/P
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.updated/batch=true/P (1.17s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=false/L
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=false/L (1.16s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=false/R
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=false/R (2.26s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=false/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=false/C (2.21s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=false/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=false/Q (2.21s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=false/O
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=false/O (4.29s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=false/P
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=false/P (1.19s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=true/L
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=true/L (1.17s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=true/R
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=true/R (2.26s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=true/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=true/C (2.19s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=true/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=true/Q (2.20s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=true/O
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=true/O (1.17s)
+=== RUN   TestNoOldActIsEverATurn/message.deleted/batch=true/P
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/message.deleted/batch=true/P (1.17s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=false/L
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=false/L (1.18s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=false/R
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=false/R (2.26s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=false/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=false/C (2.19s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=false/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=false/Q (2.21s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=false/O
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=false/O (1.16s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=false/P
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=false/P (1.15s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=true/L
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=true/L (1.18s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=true/R
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=true/R (2.28s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=true/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=true/C (2.20s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=true/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=true/Q (2.22s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=true/O
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=true/O (2.18s)
+=== RUN   TestNoOldActIsEverATurn/reaction.created/batch=true/P
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.created/batch=true/P (1.19s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=false/L
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=false/L (1.15s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=false/R
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=false/R (2.25s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=false/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=false/C (2.21s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=false/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=false/Q (2.24s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=false/O
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=false/O (1.19s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=false/P
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=false/P (1.18s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=true/L
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=true/L (1.19s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=true/R
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=true/R (2.27s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=true/C
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=true/C (2.20s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=true/Q
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=true/Q (2.21s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=true/O
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=true/O (1.19s)
+=== RUN   TestNoOldActIsEverATurn/reaction.deleted/batch=true/P
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+--- PASS: TestNoOldActIsEverATurn/reaction.deleted/batch=true/P (1.19s)
+--- PASS: TestNoOldActIsEverATurn (106.29s)
+PASS
+ok  	gchat-adapter/internal/app	106.531s

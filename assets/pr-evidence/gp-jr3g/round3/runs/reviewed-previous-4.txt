@@ -1,0 +1,20 @@
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns/message.created
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns/message.created (0.08s)
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns/message.updated
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns/message.updated (0.05s)
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns/message.deleted
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns/message.deleted (0.07s)
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns/reaction.created
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns/reaction.created (0.07s)
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns/reaction.deleted
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns/reaction.deleted (0.06s)
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns/message.created-message.updated
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns/message.created-message.updated (0.12s)
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns/reaction.created-reaction.deleted
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns/reaction.created-reaction.deleted (0.10s)
+=== RUN   TestLiveActsBeforeTheFloorAreNotTurns/message.updated-message.deleted
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns/message.updated-message.deleted (0.09s)
+--- PASS: TestLiveActsBeforeTheFloorAreNotTurns (0.65s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.874s

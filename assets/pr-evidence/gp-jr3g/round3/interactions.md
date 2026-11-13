@@ -27,3 +27,14 @@ Its first parent is `31f5e33e8ecc103f19f1fee0ed7045a787e72dba`; its second is
 State reset's existing notice-file behavior is outside this round. A main reader
 recognizes a committed record with reason `local` as a non-turn in both history
 rendering and forwarding decisions; it ignores the diagnostic history cause.
+
+The later self-review identified one missing interaction class: an independent
+watch can retain a snapshot across a live admission or a backup restore.
+The correction in `0741da65` orders enrollment and its ledger record with
+snapshot/reconciliation in inbound and app, and orders the whole watch pass
+with the app's state-route wrapper. The notice engine supplies the local
+transaction lock; no network call holds that lock or the ledger mutex.
+Both races were reproduced before the correction, and the four-case
+`TestHistoryNoticeInterleavings` guards their ordering, including with the race
+detector. The ten shared-file conclusions above still hold; app.go and
+inbound.go additionally contain this ordering correction.

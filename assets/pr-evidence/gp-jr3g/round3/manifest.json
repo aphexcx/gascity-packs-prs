@@ -1,0 +1,2977 @@
+[
+  {
+    "name": "merge-gofmt",
+    "command": [
+      "gofmt",
+      "-l",
+      "."
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.021,
+    "log": "merge-gofmt.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "merge-vet",
+    "command": [
+      "go",
+      "vet",
+      "./..."
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.124,
+    "log": "merge-vet.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "red-b",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestRetiredAttemptEndsItsNotice$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 1,
+    "seconds": 6.215,
+    "log": "red-b.log",
+    "counts": {
+      "subtests_fail": 12,
+      "subtests_pass": 2,
+      "tests_fail": 1,
+      "packages_fail": 1
+    },
+    "failures": [
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/unresolved/noticed=false",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/unresolved/noticed=true",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/intent/noticed=false",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/intent/noticed=true",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/delivered/noticed=false",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/delivered/noticed=true",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/queued/noticed=false",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/queued/noticed=true",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=false",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=true",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/restore/noticed=false",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice/restore/noticed=true",
+      "gchat-adapter/internal/app:TestRetiredAttemptEndsItsNotice",
+      "gchat-adapter/internal/app:"
+    ],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "pin-a",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestOldActStartsNoNotice$",
+      "-count=1",
+      "-json",
+      "-timeout=10m"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 1,
+    "seconds": 24.852,
+    "log": "pin-a.log",
+    "counts": {
+      "subtests_pass": 10,
+      "subtests_fail": 2,
+      "tests_fail": 1,
+      "packages_fail": 1
+    },
+    "failures": [
+      "gchat-adapter/internal/app:TestOldActStartsNoNotice/before_history_floor/O",
+      "gchat-adapter/internal/app:TestOldActStartsNoNotice/history_time_missing/O",
+      "gchat-adapter/internal/app:TestOldActStartsNoNotice",
+      "gchat-adapter/internal/app:"
+    ],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "pin-c",
+    "command": [
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestLedgerOfEitherParentLoads$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.152,
+    "log": "pin-c.log",
+    "counts": {
+      "subtests_pass": 3,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "pin-d",
+    "command": [
+      "go",
+      "test",
+      "./internal/server",
+      "-run",
+      "^TestStatusCarriesTheFloorAndTheNotices$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.152,
+    "log": "pin-d.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "pin-e",
+    "command": [
+      "go",
+      "test",
+      "./internal/config",
+      "-run",
+      "^TestConfigCarriesBothSettings$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.011,
+    "log": "pin-e.log",
+    "counts": {
+      "subtests_pass": 6,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "pin-start",
+    "command": [
+      "go",
+      "test",
+      "./internal/server",
+      "-run",
+      "^TestNoticePostSpaceStartMatchesProcessor$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.014,
+    "log": "pin-start.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "pin-pack",
+    "command": [
+      "make",
+      "test",
+      "PYTEST_DIRS=gchat/tests",
+      "PYTEST_ARGS=-q -k status_prints_history_before_never_silent"
+    ],
+    "cwd": ".",
+    "exit": 0,
+    "seconds": 2.005,
+    "log": "pin-pack.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "pin-a-corrected",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestOldActStartsNoNotice$",
+      "-count=1",
+      "-json",
+      "-timeout=10m"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 27.132,
+    "log": "pin-a-corrected.log",
+    "counts": {
+      "subtests_pass": 12,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "red-d-no-notice",
+    "command": [
+      "go",
+      "test",
+      "./internal/server",
+      "-run",
+      "^TestStatusCarriesTheFloorAndTheNotices$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 1,
+    "seconds": 2.003,
+    "log": "red-d-no-notice.log",
+    "counts": {
+      "tests_fail": 1,
+      "packages_fail": 1
+    },
+    "failures": [
+      "gchat-adapter/internal/server:TestStatusCarriesTheFloorAndTheNotices",
+      "gchat-adapter/internal/server:"
+    ],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "red-pack-no-notice",
+    "command": [
+      "make",
+      "test",
+      "PYTEST_DIRS=gchat/tests",
+      "PYTEST_ARGS=-q -k status_prints_history_before_never_silent"
+    ],
+    "cwd": ".",
+    "exit": 2,
+    "seconds": 2.009,
+    "log": "red-pack-no-notice.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "red-pack-no-history",
+    "command": [
+      "make",
+      "test",
+      "PYTEST_DIRS=gchat/tests",
+      "PYTEST_ARGS=-q -k status_prints_history_before_never_silent"
+    ],
+    "cwd": ".",
+    "exit": 2,
+    "seconds": 2.022,
+    "log": "red-pack-no-history.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "red-d-no-history",
+    "command": [
+      "go",
+      "test",
+      "./internal/server",
+      "-run",
+      "^TestStatusCarriesTheFloorAndTheNotices$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 1,
+    "seconds": 2.007,
+    "log": "red-d-no-history.log",
+    "counts": {
+      "tests_fail": 1,
+      "packages_fail": 1
+    },
+    "failures": [
+      "gchat-adapter/internal/server:TestStatusCarriesTheFloorAndTheNotices",
+      "gchat-adapter/internal/server:"
+    ],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0b479e5757d2036c15225019b75709abfdb8ff28"
+  },
+  {
+    "name": "green-b",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestRetiredAttemptEndsItsNotice$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 6.39,
+    "log": "green-b.log",
+    "counts": {
+      "subtests_pass": 14,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "rollback-write",
+    "command": [
+      "env",
+      "GCHAT_TEST_EXCHANGE_MODE=write",
+      "GCHAT_TEST_EXCHANGE_FILE=<evidence>/rollback-exchange.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.154,
+    "log": "rollback-write.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-new-TestOldActStartsNoNotice",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestOldActStartsNoNotice$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 29.238,
+    "log": "final-new-TestOldActStartsNoNotice.log",
+    "counts": {
+      "subtests_pass": 12,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-vet",
+    "command": [
+      "go",
+      "vet",
+      "./..."
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.182,
+    "log": "final-vet.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-new-TestRetiredAttemptEndsItsNotice",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestRetiredAttemptEndsItsNotice$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 8.294,
+    "log": "final-new-TestRetiredAttemptEndsItsNotice.log",
+    "counts": {
+      "subtests_pass": 14,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-new-TestLedgerOfEitherParentLoads",
+    "command": [
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestLedgerOfEitherParentLoads$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.003,
+    "log": "final-new-TestLedgerOfEitherParentLoads.log",
+    "counts": {
+      "subtests_pass": 3,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-new-TestStatusCarriesTheFloorAndTheNotices",
+    "command": [
+      "go",
+      "test",
+      "./internal/server",
+      "-run",
+      "^TestStatusCarriesTheFloorAndTheNotices$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.006,
+    "log": "final-new-TestStatusCarriesTheFloorAndTheNotices.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-new-TestNoticePostSpaceStartMatchesProcessor",
+    "command": [
+      "go",
+      "test",
+      "./internal/server",
+      "-run",
+      "^TestNoticePostSpaceStartMatchesProcessor$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.132,
+    "log": "final-new-TestNoticePostSpaceStartMatchesProcessor.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-new-TestConfigCarriesBothSettings",
+    "command": [
+      "go",
+      "test",
+      "./internal/config",
+      "-run",
+      "^TestConfigCarriesBothSettings$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.073,
+    "log": "final-new-TestConfigCarriesBothSettings.log",
+    "counts": {
+      "subtests_pass": 6,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "shellcheck",
+    "command": [
+      "shellcheck",
+      "-x",
+      "gchat/commands/status.sh"
+    ],
+    "cwd": ".",
+    "exit": 0,
+    "seconds": 2.01,
+    "log": "shellcheck.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "rollback-read",
+    "command": [
+      "env",
+      "GCHAT_TEST_EXCHANGE_MODE=read",
+      "GCHAT_TEST_EXCHANGE_FILE=<evidence>/rollback-exchange.json",
+      "GOFLAGS=-overlay=<evidence>/rollback-reader/overlay.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.073,
+    "log": "rollback-read.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "shell-syntax",
+    "command": [
+      "sh",
+      "-n",
+      "gchat/commands/status.sh"
+    ],
+    "cwd": ".",
+    "exit": 0,
+    "seconds": 2.137,
+    "log": "shell-syntax.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-gofmt",
+    "command": [
+      "gofmt",
+      "-l",
+      "."
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.135,
+    "log": "final-gofmt.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "python-version",
+    "command": [
+      "uv",
+      "run",
+      "--with",
+      "pytest",
+      "--with",
+      "pyyaml",
+      "--with",
+      "jsonschema",
+      "python3",
+      "-c",
+      "import sys,pytest; print(sys.version); print(pytest.__version__)"
+    ],
+    "cwd": ".",
+    "exit": 0,
+    "seconds": 2.129,
+    "log": "python-version.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "python-full",
+    "command": [
+      "make",
+      "test",
+      "PYTEST_DIRS=tests gchat/tests"
+    ],
+    "cwd": ".",
+    "exit": 2,
+    "seconds": 49.407,
+    "log": "python-full.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "python-runner-isolated",
+    "command": [
+      "env",
+      "-u",
+      "GC_TEMPLATE",
+      "-u",
+      "MAKEFLAGS",
+      "-u",
+      "MFLAGS",
+      "-u",
+      "MAKEOVERRIDES",
+      "-u",
+      "PYTEST_DIRS",
+      "uv",
+      "run",
+      "--with",
+      "pytest",
+      "--with",
+      "pyyaml",
+      "--with",
+      "jsonschema",
+      "python3",
+      "-m",
+      "pytest",
+      "tests",
+      "-q",
+      "-k",
+      "test_make_test_names_the_runner_a_worker_would_otherwise_rediscover"
+    ],
+    "cwd": ".",
+    "exit": 0,
+    "seconds": 2.006,
+    "log": "python-runner-isolated.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-1",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestNoOldActIsEverATurn$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 108.204,
+    "log": "final-previous-1.log",
+    "counts": {
+      "subtests_pass": 60,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "python-clean-env",
+    "command": [
+      "env",
+      "-u",
+      "GC_TEMPLATE",
+      "-u",
+      "MAKEFLAGS",
+      "-u",
+      "MFLAGS",
+      "-u",
+      "MAKEOVERRIDES",
+      "-u",
+      "PYTEST_DIRS",
+      "uv",
+      "run",
+      "--with",
+      "pytest",
+      "--with",
+      "pyyaml",
+      "--with",
+      "jsonschema",
+      "python3",
+      "-m",
+      "pytest",
+      "tests",
+      "gchat/tests",
+      "-q"
+    ],
+    "cwd": ".",
+    "exit": 0,
+    "seconds": 41.046,
+    "log": "python-clean-env.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-2",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestFloorFollowsTheFirstSuccessfulConnection$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 14.452,
+    "log": "final-previous-2.log",
+    "counts": {
+      "subtests_pass": 5,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-3",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedLedgerCursorlessSpacesStartAtLoad$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.006,
+    "log": "final-previous-3.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-4",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestLiveActsBeforeTheFloorAreNotTurns$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.081,
+    "log": "final-previous-4.log",
+    "counts": {
+      "subtests_pass": 8,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-5",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestSkippedActReadsAsNotDeliveredAfterRollback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.051,
+    "log": "final-previous-5.log",
+    "counts": {
+      "subtests_pass": 5,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-6",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewActsOnOldMessagesKeepTheirFrame$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.096,
+    "log": "final-previous-6.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-7",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestBoundedActWithoutTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.153,
+    "log": "final-previous-7.log",
+    "counts": {
+      "subtests_pass": 3,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-8",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestRollbackSkippedCreateDoesNotWake$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.036,
+    "log": "final-previous-8.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-9",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessSpaceStartsWhereItWasFirstSeen$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.128,
+    "log": "final-previous-9.log",
+    "counts": {
+      "subtests_pass": 6,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-10",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestNeverReadSpaceReportsNoLoss$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.011,
+    "log": "final-previous-10.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-11",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestSavedCursorStillDeliversItsOutage$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.018,
+    "log": "final-previous-11.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-12",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryBatchUsesEachResourceTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.007,
+    "log": "final-previous-12.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-13",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestMessageWithoutActTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.152,
+    "log": "final-previous-13.log",
+    "counts": {
+      "subtests_pass": 6,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-14",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewReactionRemovalKeepsSkippedAttribution$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.01,
+    "log": "final-previous-14.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-15",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestOldActNeverDownloadsAttachments$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.105,
+    "log": "final-previous-15.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-16",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.126,
+    "log": "final-previous-16.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-17",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedCursorlessHistoryCannotReplayAfterHold$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.047,
+    "log": "final-previous-17.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-18",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCatchupMissingEnvelopeTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.105,
+    "log": "final-previous-18.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-19",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestHistoryFloorSurvivesRetentionFallback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 8.263,
+    "log": "final-previous-19.log",
+    "counts": {
+      "subtests_pass": 24,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-20",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestHistoryFloorLedgerCompatibility$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.154,
+    "log": "final-previous-20.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-21",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.069,
+    "log": "final-previous-21.log",
+    "counts": {
+      "subtests_pass": 15,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-22",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.1,
+    "log": "final-previous-22.log",
+    "counts": {
+      "subtests_pass": 3,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-23",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.038,
+    "log": "final-previous-23.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-24",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestOldActOrdersAndNewActs$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 12.334,
+    "log": "final-previous-24.log",
+    "counts": {
+      "subtests_pass": 9,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "final-previous-25",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestBoundedQueueRetiresSavedDelivery$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.078,
+    "log": "final-previous-25.log",
+    "counts": {
+      "subtests_pass": 15,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "review-red-stale",
+    "command": [
+      "env",
+      "GOFLAGS=-overlay=<evidence>/stale-probe-overlay.json",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestHistoryNoticeStaleSnapshotProbe$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 1,
+    "seconds": 4.026,
+    "log": "review-red-stale.log",
+    "counts": {
+      "subtests_fail": 2,
+      "tests_fail": 1,
+      "packages_fail": 1
+    },
+    "failures": [
+      "gchat-adapter/internal/app:TestHistoryNoticeStaleSnapshotProbe/current-admission",
+      "gchat-adapter/internal/app:TestHistoryNoticeStaleSnapshotProbe/backup-restore",
+      "gchat-adapter/internal/app:TestHistoryNoticeStaleSnapshotProbe",
+      "gchat-adapter/internal/app:"
+    ],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "review-green-ordering",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestHistoryNoticeInterleavings$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 6.184,
+    "log": "review-green-ordering.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0",
+    "working_tree": "intermediate synchronization patch using the health mutex; superseded by noticeStateMu"
+  },
+  {
+    "name": "review-green-ordering-final",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestHistoryNoticeInterleavings$",
+      "-count=1",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 6.174,
+    "log": "review-green-ordering-final.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-vet",
+    "command": [
+      "go",
+      "vet",
+      "./..."
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.038,
+    "log": "reviewed-vet.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "review-race-ordering",
+    "command": [
+      "go",
+      "test",
+      "-race",
+      "./internal/app",
+      "-run",
+      "^TestHistoryNoticeInterleavings$",
+      "-count=1",
+      "-json",
+      "-timeout=5m"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 10.222,
+    "log": "review-race-ordering.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-new-TestOldActStartsNoNotice",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestOldActStartsNoNotice$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 35.175,
+    "log": "reviewed-new-TestOldActStartsNoNotice.log",
+    "counts": {
+      "subtests_pass": 12,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-new-TestRetiredAttemptEndsItsNotice",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestRetiredAttemptEndsItsNotice$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 8.195,
+    "log": "reviewed-new-TestRetiredAttemptEndsItsNotice.log",
+    "counts": {
+      "subtests_pass": 14,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-new-TestLedgerOfEitherParentLoads",
+    "command": [
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestLedgerOfEitherParentLoads$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.035,
+    "log": "reviewed-new-TestLedgerOfEitherParentLoads.log",
+    "counts": {
+      "subtests_pass": 3,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-new-TestStatusCarriesTheFloorAndTheNotices",
+    "command": [
+      "go",
+      "test",
+      "./internal/server",
+      "-run",
+      "^TestStatusCarriesTheFloorAndTheNotices$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.034,
+    "log": "reviewed-new-TestStatusCarriesTheFloorAndTheNotices.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-new-TestNoticePostSpaceStartMatchesProcessor",
+    "command": [
+      "go",
+      "test",
+      "./internal/server",
+      "-run",
+      "^TestNoticePostSpaceStartMatchesProcessor$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.178,
+    "log": "reviewed-new-TestNoticePostSpaceStartMatchesProcessor.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-new-TestConfigCarriesBothSettings",
+    "command": [
+      "go",
+      "test",
+      "./internal/config",
+      "-run",
+      "^TestConfigCarriesBothSettings$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.123,
+    "log": "reviewed-new-TestConfigCarriesBothSettings.log",
+    "counts": {
+      "subtests_pass": 6,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-new-TestHistoryNoticeInterleavings",
+    "command": [
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestHistoryNoticeInterleavings$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 6.607,
+    "log": "reviewed-new-TestHistoryNoticeInterleavings.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "full-go-1",
+    "command": [
+      "go",
+      "test",
+      "./...",
+      "-p=1",
+      "-count=1",
+      "-timeout=30m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 1356.904,
+    "log": "full-go-1.log",
+    "counts": {
+      "tests_pass": 731,
+      "subtests_pass": 1449,
+      "packages_pass": 22,
+      "tests_skip": 2
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "d6721ca01063a5c03b44aeddd42c4594c8e30db0"
+  },
+  {
+    "name": "reviewed-previous-1",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestNoOldActIsEverATurn$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 127.854,
+    "log": "reviewed-previous-1.log",
+    "counts": {
+      "subtests_pass": 60,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-2",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestFloorFollowsTheFirstSuccessfulConnection$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 16.476,
+    "log": "reviewed-previous-2.log",
+    "counts": {
+      "subtests_pass": 5,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-3",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedLedgerCursorlessSpacesStartAtLoad$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.153,
+    "log": "reviewed-previous-3.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-4",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestLiveActsBeforeTheFloorAreNotTurns$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.067,
+    "log": "reviewed-previous-4.log",
+    "counts": {
+      "subtests_pass": 8,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-5",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestSkippedActReadsAsNotDeliveredAfterRollback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 6.358,
+    "log": "reviewed-previous-5.log",
+    "counts": {
+      "subtests_pass": 5,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-6",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewActsOnOldMessagesKeepTheirFrame$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.172,
+    "log": "reviewed-previous-6.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-7",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestBoundedActWithoutTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.048,
+    "log": "reviewed-previous-7.log",
+    "counts": {
+      "subtests_pass": 3,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-8",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestRollbackSkippedCreateDoesNotWake$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.022,
+    "log": "reviewed-previous-8.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-9",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessSpaceStartsWhereItWasFirstSeen$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 6.376,
+    "log": "reviewed-previous-9.log",
+    "counts": {
+      "subtests_pass": 6,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-10",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestNeverReadSpaceReportsNoLoss$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.158,
+    "log": "reviewed-previous-10.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-11",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestSavedCursorStillDeliversItsOutage$",
+      "-count=1",
+      "-p=1",
+      "-timeout=10m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.153,
+    "log": "reviewed-previous-11.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-12",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryBatchUsesEachResourceTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.155,
+    "log": "reviewed-previous-12.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-13",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestMessageWithoutActTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.17,
+    "log": "reviewed-previous-13.log",
+    "counts": {
+      "subtests_pass": 6,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-14",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewReactionRemovalKeepsSkippedAttribution$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.188,
+    "log": "reviewed-previous-14.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-15",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestOldActNeverDownloadsAttachments$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.017,
+    "log": "reviewed-previous-15.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-16",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.186,
+    "log": "reviewed-previous-16.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-17",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedCursorlessHistoryCannotReplayAfterHold$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.161,
+    "log": "reviewed-previous-17.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-18",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCatchupMissingEnvelopeTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 6.243,
+    "log": "reviewed-previous-18.log",
+    "counts": {
+      "subtests_pass": 4,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-19",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestHistoryFloorSurvivesRetentionFallback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 10.099,
+    "log": "reviewed-previous-19.log",
+    "counts": {
+      "subtests_pass": 24,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-20",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestHistoryFloorLedgerCompatibility$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.208,
+    "log": "reviewed-previous-20.log",
+    "counts": {
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-21",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.151,
+    "log": "reviewed-previous-21.log",
+    "counts": {
+      "subtests_pass": 15,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-22",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.054,
+    "log": "reviewed-previous-22.log",
+    "counts": {
+      "subtests_pass": 3,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-23",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.019,
+    "log": "reviewed-previous-23.log",
+    "counts": {
+      "subtests_pass": 2,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-24",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestOldActOrdersAndNewActs$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 18.571,
+    "log": "reviewed-previous-24.log",
+    "counts": {
+      "subtests_pass": 9,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-previous-25",
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestBoundedQueueRetiresSavedDelivery$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 4.18,
+    "log": "reviewed-previous-25.log",
+    "counts": {
+      "subtests_pass": 15,
+      "tests_pass": 1,
+      "packages_pass": 1
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-gofmt",
+    "command": [
+      "gofmt",
+      "-l",
+      "."
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 2.022,
+    "log": "reviewed-gofmt.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "reviewed-python-clean-env",
+    "command": [
+      "env",
+      "-u",
+      "GC_TEMPLATE",
+      "-u",
+      "MAKEFLAGS",
+      "-u",
+      "MFLAGS",
+      "-u",
+      "MAKEOVERRIDES",
+      "-u",
+      "PYTEST_DIRS",
+      "uv",
+      "run",
+      "--with",
+      "pytest",
+      "--with",
+      "pyyaml",
+      "--with",
+      "jsonschema",
+      "python3",
+      "-m",
+      "pytest",
+      "tests",
+      "gchat/tests",
+      "-q"
+    ],
+    "cwd": ".",
+    "exit": 0,
+    "seconds": 60.188,
+    "log": "reviewed-python-clean-env.log",
+    "counts": {},
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  },
+  {
+    "name": "full-go-2",
+    "command": [
+      "go",
+      "test",
+      "./...",
+      "-p=1",
+      "-count=1",
+      "-timeout=30m",
+      "-json"
+    ],
+    "cwd": "gchat/adapter",
+    "exit": 0,
+    "seconds": 1583.429,
+    "log": "full-go-2.log",
+    "counts": {
+      "tests_pass": 732,
+      "subtests_pass": 1453,
+      "packages_pass": 22,
+      "tests_skip": 2
+    },
+    "failures": [],
+    "environment_unset": [
+      "GC_BIN",
+      "NEVER_SILENT"
+    ],
+    "source_sha": "0741da657a8e2011a6a2944470c6e97f0970aced"
+  }
+]

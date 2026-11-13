@@ -1,0 +1,26 @@
+=== RUN   TestOldActOrdersAndNewActs
+=== RUN   TestOldActOrdersAndNewActs/old/message.updated
+    history_bound_test.go:256: turns=0 notices=0 changes=1
+--- PASS: TestOldActOrdersAndNewActs/old/message.updated (1.23s)
+=== RUN   TestOldActOrdersAndNewActs/old/message.created-message.updated
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+--- PASS: TestOldActOrdersAndNewActs/old/message.created-message.updated (1.28s)
+=== RUN   TestOldActOrdersAndNewActs/old/reaction.created-reaction.deleted
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+--- PASS: TestOldActOrdersAndNewActs/old/reaction.created-reaction.deleted (1.30s)
+=== RUN   TestOldActOrdersAndNewActs/old/message.updated-message.deleted
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+--- PASS: TestOldActOrdersAndNewActs/old/message.updated-message.deleted (1.33s)
+=== RUN   TestOldActOrdersAndNewActs/new/message.created
+--- PASS: TestOldActOrdersAndNewActs/new/message.created (1.31s)
+=== RUN   TestOldActOrdersAndNewActs/new/message.updated
+--- PASS: TestOldActOrdersAndNewActs/new/message.updated (1.32s)
+=== RUN   TestOldActOrdersAndNewActs/new/message.deleted
+--- PASS: TestOldActOrdersAndNewActs/new/message.deleted (1.38s)
+=== RUN   TestOldActOrdersAndNewActs/new/reaction.created
+--- PASS: TestOldActOrdersAndNewActs/new/reaction.created (1.30s)
+=== RUN   TestOldActOrdersAndNewActs/new/reaction.deleted
+--- PASS: TestOldActOrdersAndNewActs/new/reaction.deleted (4.84s)
+--- PASS: TestOldActOrdersAndNewActs (15.31s)
+PASS
+ok  	gchat-adapter/internal/app	15.515s
