@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Never-silent observations and operator resolution follow every enrolled member of merged turns; body headers are quoted across the full Unicode invisible and blank class without changing their bytes.
+
 - Owner changes preserve delivery uncertainty, fragment limits and retry state; withdrawals clear every pending or unresolved merged/folded payload, and merged body headers are quoted as they display through Unicode format characters and spaces.
 
 - Coalesced retries refresh withdrawn members before posting, preserve literal edit prefixes in history, quote body from-line prefixes, isolate malformed held records, and count retried catch-up acts against the budget.
