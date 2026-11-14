@@ -148,7 +148,7 @@ func (f *memberNoticeFixture) respond(w http.ResponseWriter, r *http.Request) {
 	}
 	m := envelope.Message
 	f.posts = append(f.posts, m.ProviderMessageID)
-	if f.backlog && m.ProviderMessageID == noticeRoom+"/messages/m001" {
+	if f.backlog && !strings.Contains(m.Text, "enrolled-A") {
 		f.backlog = false
 		w.WriteHeader(503)
 		return
@@ -221,6 +221,23 @@ func (f *memberNoticeFixture) begin(t *testing.T, member bool, entry string) {
 		f.reload(t, false)
 		f.advance(10 * time.Second)
 		_ = f.p.Pass(context.Background())
+	} else if member && entry == "act_cap" {
+		// The fiftieth act freezes before the mention arrives. Even when that
+		// POST is refused, the mention owns a separate turn: this is a pin,
+		// not an invented path to a non-owner enrollment.
+		f.mu.Lock()
+		f.backlog = true
+		f.mu.Unlock()
+		for i := 0; i < 50; i++ {
+			_ = f.send(t, 100+i, "ordinary backlog", false, "message.created")
+			f.advance(time.Millisecond)
+		}
+		f.advance(time.Second - 50*time.Millisecond)
+		_ = f.send(t, 2, mention, true, "message.created")
+		f.advance(time.Second)
+		_ = f.send(t, 3, "ordinary C", false, "message.created")
+		f.advance(9 * time.Second)
+		_ = f.p.Pass(context.Background())
 	} else if member {
 		f.mu.Lock()
 		f.backlog = true
@@ -245,7 +262,8 @@ func (f *memberNoticeFixture) begin(t *testing.T, member bool, entry string) {
 		_ = f.send(t, 2, mention, true, "message.created")
 	}
 	c := f.l.Changes[noticeA]
-	if c == nil || (member && c.MemberOf != noticeRoom+"/messages/m003") || (!member && c.MemberOf != "") {
+	wantMember := member && entry != "act_cap"
+	if c == nil || (wantMember && c.MemberOf != noticeRoom+"/messages/m003") || (!wantMember && c.MemberOf != "") {
 		t.Fatalf("fixture did not reach intended enrollment/ownership: %+v", c)
 	}
 }
@@ -339,6 +357,7 @@ func TestNoticeFollowsEveryEnrolledMember(t *testing.T) {
 		{name: "replay", outcome: "rejected", action: "replay", restart: true},
 		{name: "two_mentions", outcome: "rejected", entry: "two_mentions"},
 		{name: "restart_before_urgent_freeze", outcome: "rejected", entry: "restart"},
+		{name: "act_cap_owns_mention_pin", outcome: "rejected", entry: "act_cap"},
 		{name: "owner_change", outcome: "refused", withdrawal: "owner"},
 		{name: "member_deleted", outcome: "refused", withdrawal: "member"},
 		{name: "replay_then_owner_change", outcome: "rejected", action: "replay", withdrawal: "owner", restart: true},
@@ -360,7 +379,10 @@ func TestNoticeFollowsEveryEnrolledMember(t *testing.T) {
 				stages := map[string]noticeView{}
 				capture := func(stage string) {
 					states := f.records(t)
-					m := states[noticeA]
+					m, enrolled := states[noticeA]
+					if !enrolled {
+						t.Fatal("fixture did not enroll the mention")
+					}
 					stages[stage] = viewNotice(m)
 					for id, state := range states {
 						if id != noticeA && !(tc.entry == "two_mentions" && id == noticeRoom+"/messages/m003") && !state.Removed {
