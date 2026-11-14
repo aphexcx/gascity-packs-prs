@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// PR 104 round 4: the acknowledgement's placement record. The react verb
-// takes it once, on the session's reaction of the same emoji on the same
+// PR 104 round 4: the acknowledgement's placement record, written before its
+// call and dropped when the channel says the call placed nothing. The react
+// verb takes it once, on the session's reaction of the same emoji on the same
 // message; while the acknowledgement is off it is never taken, and it is
 // pruned with the attempt markers.
 func TestPlacementRecordIsTakenOnceAndOnlyWhileOn(t *testing.T) {
@@ -27,7 +28,7 @@ func TestPlacementRecordIsTakenOnceAndOnlyWhileOn(t *testing.T) {
 	if s.TakePlaced(in.Conversation, in.Message, "eyes") {
 		t.Fatal("taken before any placement")
 	}
-	if err := s.NotePlaced(in, "eyes"); err != nil {
+	if err := s.NotePlacing(in, "eyes"); err != nil {
 		t.Fatal(err)
 	}
 	for _, other := range [][3]string{{"example-channel", "example-message", "thumbsup"}, {"example-channel", "other-message", "eyes"}, {"other-channel", "example-message", "eyes"}} {
@@ -46,19 +47,28 @@ func TestPlacementRecordIsTakenOnceAndOnlyWhileOn(t *testing.T) {
 		t.Error("taken twice")
 	}
 
-	// Google may write the emoji with or without the presentation selector.
-	if err := s.NotePlaced(in, "❤️"); err != nil {
+	// The channel answered that the call placed nothing: the record goes.
+	if err := s.NotePlacing(in, "eyes"); err != nil {
 		t.Fatal(err)
 	}
-	if !s.TakePlaced(in.Conversation, in.Message, "❤") {
+	s.DropPlacing(in, "eyes")
+	if s.TakePlaced(in.Conversation, in.Message, "eyes") {
+		t.Error("taken after the channel said the call placed nothing")
+	}
+
+	// Google may write the emoji with or without the presentation selector.
+	if err := s.NotePlacing(in, "\u2764\ufe0f"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.TakePlaced(in.Conversation, in.Message, "\u2764") {
 		t.Error("the placement was not taken without the presentation selector")
 	}
 
 	// Pruned with the markers: older than MarkerAge goes, newer stays.
-	if err := s.NotePlaced(in, "eyes"); err != nil {
+	if err := s.NotePlacing(in, "eyes"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.NotePlaced(Input{Conversation: "example-channel", Message: "fresh-message"}, "eyes"); err != nil {
+	if err := s.NotePlacing(Input{Conversation: "example-channel", Message: "fresh-message"}, "eyes"); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()

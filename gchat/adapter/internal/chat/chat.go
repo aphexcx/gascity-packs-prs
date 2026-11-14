@@ -398,15 +398,16 @@ func (c *Client) EnableArrivalPace() {
 // CreateArrivalReaction overlaps the choice with the identity's existing pace.
 // Unlike explicit agent actions, an acknowledgement is attempted only once.
 func (c *Client) CreateArrivalReaction(ctx context.Context, message string, deadline time.Time, fallback string, choose func(context.Context) (string, string)) (string, error) {
-	method, _, _, err := c.PlaceArrivalReaction(ctx, message, deadline, fallback, choose)
-	return method, err
+	return c.PlaceArrivalReaction(ctx, message, deadline, fallback, choose, nil, nil)
 }
 
-// PlaceArrivalReaction is CreateArrivalReaction that also says which emoji it
-// sent (the choice, or fallback when the choice was late) and whether Google
-// created the reaction (placed) or answered 409, the identity's reaction
-// already there.
-func (c *Client) PlaceArrivalReaction(ctx context.Context, message string, deadline time.Time, fallback string, choose func(context.Context) (string, string)) (method, selected string, placed bool, err error) {
+// PlaceArrivalReaction is CreateArrivalReaction with the acknowledgement's
+// placement record. placing, when set, gets the emoji just before the request
+// (the choice, or fallback when the choice was late); nothing, when set, gets
+// it when Google answers that the request placed nothing: 409 for the
+// identity's reaction already there, or another refusal. A request whose
+// answer is lost or unclear calls nothing.
+func (c *Client) PlaceArrivalReaction(ctx context.Context, message string, deadline time.Time, fallback string, choose func(context.Context) (string, string), placing, nothing func(emoji string)) (string, error) {
 	choiceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ready := make(chan struct{})
@@ -414,26 +415,33 @@ func (c *Client) PlaceArrivalReaction(ctx context.Context, message string, deadl
 	go func() { emoji, how = choose(choiceCtx); close(ready) }()
 	chosen, err := c.limits.waitReactionChoice(ctx, deadline, ready)
 	if err != nil {
-		return "", "", false, err
+		return "", err
 	}
-	selected, method = fallback, "default"
+	selected, method := fallback, "default"
 	if chosen {
 		selected, method = emoji, how
 	}
 	cancel()
+	if placing != nil {
+		placing(selected)
+	}
 	requestCtx, requestCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer requestCancel()
 	result, err := c.api.Spaces.Messages.Reactions.Create(message, &googlechat.Reaction{Emoji: &googlechat.Emoji{Unicode: selected}}).Context(requestCtx).Do()
+	var apiError *googleapi.Error
+	if nothing != nil && errors.As(err, &apiError) && apiError.Code >= 400 && apiError.Code < 500 && apiError.Code != http.StatusRequestTimeout {
+		nothing(selected)
+	}
 	if AlreadyThere(err) {
-		return method, selected, false, nil
+		return method, nil
 	}
 	if err != nil {
-		return "", "", false, err
+		return "", err
 	}
 	if result.User != nil && result.User.Name != "" {
 		c.learnIdentityUserID(result.User.Name)
 	}
-	return method, selected, true, nil
+	return method, nil
 }
 
 // AlreadyThere reports Google's 409 to a reaction create: this identity's

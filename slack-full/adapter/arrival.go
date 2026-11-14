@@ -74,25 +74,30 @@ func slackArrivalSender(token string) func(context.Context, ack.Input, ack.Row) 
 // arrivalSender places the acknowledgement as token. Slack answers
 // already_reacted when that identity's reaction is already there: a success
 // that placed nothing. When record is set (token is the one handleReact reacts
-// with), Slack's ok is recorded there, so that the session's own reaction of
-// the same emoji, which Slack then answers already_reacted, still counts for
-// never-silent as it would with the acknowledgement off (handleReact).
+// with), the placement is recorded there before the call and dropped only when
+// Slack answers that the call placed nothing, so that the session's own
+// reaction of the same emoji, which Slack answers already_reacted, still
+// counts for never-silent as it would with the acknowledgement off
+// (handleReact), even when the call's answer is lost.
 func arrivalSender(token string, record *ack.Service) func(context.Context, ack.Input, ack.Row) error {
 	return func(ctx context.Context, in ack.Input, row ack.Row) error {
 		if token == "" {
 			return errors.New("sender unavailable")
 		}
+		if record != nil {
+			if err := record.NotePlacing(in, row.Name); err != nil {
+				log.Printf("ACK_REACTION: placement record unavailable; the session's same reaction will not count for never-silent: %v", err)
+			}
+		}
 		response, err := postReactionMethodContext(ctx, slackAPIClient, token, "reactions.add", slackReactionsAddReq{Channel: in.Conversation, Timestamp: in.Message, Name: row.Name})
 		if err != nil {
 			return errors.New("reaction request failed")
 		}
+		if !response.OK && record != nil {
+			record.DropPlacing(in, row.Name)
+		}
 		if !response.OK && response.Error != "already_reacted" {
 			return errors.New("reaction refused")
-		}
-		if response.OK && record != nil {
-			if err := record.NotePlaced(in, row.Name); err != nil {
-				log.Printf("ACK_REACTION: placement record unavailable; the session's same reaction will not count for never-silent: %v", err)
-			}
 		}
 		return nil
 	}

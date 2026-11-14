@@ -62,16 +62,18 @@ func New(o Options) (*ack.Service, *stopwatch.Writer, error) {
 		if c == nil {
 			return "", errors.New("chat unavailable")
 		}
-		how, emoji, placed, err := c.PlaceArrivalReaction(ctx, in.Message, in.Seen.Add(ack.ReactionBudget), ack.Default.Emoji, func(choiceCtx context.Context) (string, string) { row, how := choose(choiceCtx); return row.Emoji, how })
-		// The react verb reacts as this same identity (Wire): record what
-		// Google created, so the session's own reaction of that emoji still
-		// counts for never-silent.
-		if err == nil && placed {
-			if noteErr := service.NotePlaced(in, emoji); noteErr != nil && o.Log != nil {
-				o.Log("ACK_REACTION: placement record unavailable; the session's same reaction will not count for never-silent")
-			}
-		}
-		return how, err
+		// The react verb reacts as this same identity (Wire). The placement
+		// record is written before the request and dropped only when Google
+		// answers that it placed nothing, so the session's own reaction of
+		// that emoji counts for never-silent however the request ends.
+		return c.PlaceArrivalReaction(ctx, in.Message, in.Seen.Add(ack.ReactionBudget), ack.Default.Emoji,
+			func(choiceCtx context.Context) (string, string) { row, how := choose(choiceCtx); return row.Emoji, how },
+			func(emoji string) {
+				if err := service.NotePlacing(in, emoji); err != nil && o.Log != nil {
+					o.Log("ACK_REACTION: placement record unavailable; the session's same reaction will not count for never-silent")
+				}
+			},
+			func(emoji string) { service.DropPlacing(in, emoji) })
 	}
 	return service, watch, nil
 }

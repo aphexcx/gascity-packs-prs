@@ -22,7 +22,7 @@ const (
 var markerName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // PruneAttempts removes acknowledgement markers older than MarkerAge from
-// <dir>/ack-attempts, and placement records (NotePlaced) from
+// <dir>/ack-attempts, and placement records (NotePlacing) from
 // <dir>/ack-placed, by modification time. Only empty files named by 64 hex
 // characters are markers or records; nothing else in the state directory is
 // touched. Errors are ignored: a marker left behind only costs an inode.
@@ -157,17 +157,20 @@ func messageDigest(conversation, message string) string {
 // Slack name may come with its colons; Google may add or drop the emoji
 // presentation selector. Neither changes the reaction.
 func placedPath(dir, conversation, message, emoji string) string {
-	emoji = strings.ReplaceAll(strings.Trim(emoji, ":"), "️", "")
+	emoji = strings.ReplaceAll(strings.Trim(emoji, ":"), "\ufe0f", "")
 	return filepath.Join(dir, "ack-placed", fmt.Sprintf("%x", sha256.Sum256([]byte(messageDigest(conversation, message)+"\x00"+emoji))))
 }
 
-// NotePlaced records that the acknowledgement placed emoji on in's message as
-// the identity the adapter's react verb uses, on the channel's answer that the
-// reaction is new (never on "already there"). With it, the session's own
-// reaction of that emoji, which the channel then answers "already there",
-// still counts for never-silent exactly as it would with the acknowledgement
-// off (TakePlaced).
-func (s *Service) NotePlaced(in Input, emoji string) error {
+// NotePlacing records, just before the acknowledgement's channel call, that
+// the call may place emoji on in's message as the identity the adapter's
+// react verb uses. The record stands unless the channel answers that the call
+// placed nothing (DropPlacing): a lost answer or a crash keeps it, so the
+// session's own reaction of that emoji, which the channel answers "already
+// there", still counts for never-silent exactly as it would with the
+// acknowledgement off (TakePlaced), whether it comes before, during or after
+// the call. A record whose reaction was never placed is harmless: the
+// session's first reaction of that emoji is then created, and takes it.
+func (s *Service) NotePlacing(in Input, emoji string) error {
 	if s == nil {
 		return nil
 	}
@@ -187,6 +190,19 @@ func (s *Service) NotePlaced(in Input, emoji string) error {
 		return err
 	}
 	return syncDir(filepath.Dir(path))
+}
+
+// DropPlacing removes NotePlacing's record when the channel answers that the
+// call placed nothing: the identity's reaction was already there (the
+// session's own, placed first), or the call was refused.
+func (s *Service) DropPlacing(in Input, emoji string) {
+	if s == nil {
+		return
+	}
+	path := placedPath(s.Dir, in.Conversation, in.Message, emoji)
+	if os.Remove(path) == nil {
+		_ = syncDir(filepath.Dir(path))
+	}
 }
 
 // TakePlaced is asked by the react verb on the channel's definite answer to
