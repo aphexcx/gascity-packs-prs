@@ -1357,13 +1357,19 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if v.Remove {
 		err = c.DeleteReaction(r.Context(), v.Message, v.Emoji)
+		// The session's own reaction is no longer there: its next one counts
+		// as it would with the acknowledgement off.
+		if err == nil && c.ArrivalRemoved != nil {
+			c.ArrivalRemoved(v.Message, v.Emoji)
+		}
 	} else {
 		name, err = c.CreateReaction(r.Context(), v.Message, v.Emoji)
 		// With ACK_REACTION on, the reaction already there may be the
 		// acknowledgement's own (arrival.Wire): the session's then counts as
-		// it would with the acknowledgement off. Google's created answer meets
-		// that placement too, so a later 409 is the session's repeat.
-		if (err == nil || chat.AlreadyThere(err)) && c.ArrivalPlaced != nil && c.ArrivalPlaced(v.Message, v.Emoji) {
+		// it would with the acknowledgement off. Google's created answer marks
+		// the session's own reaction, so a later 409 is its repeat even when
+		// the acknowledgement's record was written after it.
+		if (err == nil || chat.AlreadyThere(err)) && c.ArrivalPlaced != nil && c.ArrivalPlaced(v.Message, v.Emoji, err == nil) {
 			err = nil
 		}
 	}

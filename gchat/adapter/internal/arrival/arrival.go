@@ -90,10 +90,18 @@ func Wire(c *chat.Client, service *ack.Service, watch *stopwatch.Writer) {
 	}
 	if service != nil && service.Choice.Enabled() {
 		c.EnableArrivalPace()
-		c.ArrivalPlaced = func(message, emoji string) bool {
+		c.ArrivalPlaced = func(message, emoji string, created bool) bool {
 			// The acknowledgement keys the message by its space (inbound.go).
 			space, _, _ := strings.Cut(message, "/messages/")
+			if created {
+				service.SessionPlaced(space, message, emoji)
+				return true
+			}
 			return service.TakePlaced(space, message, emoji)
+		}
+		c.ArrivalRemoved = func(message, emoji string) {
+			space, _, _ := strings.Cut(message, "/messages/")
+			service.SessionRemoved(space, message, emoji)
 		}
 	}
 }

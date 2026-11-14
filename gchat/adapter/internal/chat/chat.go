@@ -31,9 +31,12 @@ type Client struct {
 	// ArrivalPlaced is installed before sharing the client while the arrival
 	// acknowledgement is on (arrival.Wire). The react verb asks it on
 	// Google's definite answer to the session's reaction, created or 409 for
-	// one already there: true means the reaction was the acknowledgement's own,
-	// so the session's counts as new.
-	ArrivalPlaced func(message, emoji string) bool
+	// one already there: true means the session's reaction counts as new
+	// (created, or a 409 for the acknowledgement's own reaction).
+	ArrivalPlaced func(message, emoji string, created bool) bool
+	// ArrivalRemoved is installed with ArrivalPlaced. The react verb tells it
+	// when the session's removal of a reaction succeeded.
+	ArrivalRemoved func(message, emoji string)
 	// MessageCreated is installed before sharing the client. It receives only
 	// coordinates and Google's original timestamp, including idempotent replays.
 	MessageCreated         func(space, message, thread, stamp string)

@@ -22,12 +22,13 @@ const (
 var markerName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // PruneAttempts removes acknowledgement markers older than MarkerAge from
-// <dir>/ack-attempts, and placement records (NotePlacing) from
-// <dir>/ack-placed, by modification time. Only empty files named by 64 hex
-// characters are markers or records; nothing else in the state directory is
-// touched. Errors are ignored: a marker left behind only costs an inode.
+// <dir>/ack-attempts, placement records (NotePlacing) from <dir>/ack-placed
+// and the session's reaction marks (SessionPlaced) from <dir>/ack-session, by
+// modification time. Only empty files named by 64 hex characters are markers
+// or records; nothing else in the state directory is touched. Errors are
+// ignored: a marker left behind only costs an inode.
 func PruneAttempts(dir string, now time.Time) {
-	for _, sub := range []string{"ack-attempts", "ack-placed"} {
+	for _, sub := range []string{"ack-attempts", "ack-placed", "ack-session"} {
 		root := filepath.Join(dir, sub)
 		entries, err := os.ReadDir(root)
 		if err != nil {
@@ -81,6 +82,9 @@ type Service struct {
 	Log        func(string)
 	workers    sync.WaitGroup
 	warning    sync.Once
+	// placing makes each read and write of the placement records and the
+	// session's reaction marks one step: one process owns the state directory.
+	placing sync.Mutex
 }
 
 func (s *Service) Observe(in Input) {
@@ -153,12 +157,23 @@ func messageDigest(conversation, message string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(conversation+"\x00"+message)))
 }
 
-// placedPath is the record of the acknowledgement's emoji on one message. A
-// Slack name may come with its colons; Google may add or drop the emoji
-// presentation selector. Neither changes the reaction.
-func placedPath(dir, conversation, message, emoji string) string {
+// reactionPath names one emoji on one message under <dir>/<sub>. A Slack name
+// may come with its colons; Google may add or drop the emoji presentation
+// selector. Neither changes the reaction.
+func reactionPath(dir, sub, conversation, message, emoji string) string {
 	emoji = strings.ReplaceAll(strings.Trim(emoji, ":"), "\ufe0f", "")
-	return filepath.Join(dir, "ack-placed", fmt.Sprintf("%x", sha256.Sum256([]byte(messageDigest(conversation, message)+"\x00"+emoji))))
+	return filepath.Join(dir, sub, fmt.Sprintf("%x", sha256.Sum256([]byte(messageDigest(conversation, message)+"\x00"+emoji))))
+}
+
+// placedPath is the record of the acknowledgement's emoji on one message.
+func placedPath(dir, conversation, message, emoji string) string {
+	return reactionPath(dir, "ack-placed", conversation, message, emoji)
+}
+
+// sessionPath is the mark of the session's own reaction of emoji on one
+// message: it is there as it would be with the acknowledgement off.
+func sessionPath(dir, conversation, message, emoji string) string {
+	return reactionPath(dir, "ack-session", conversation, message, emoji)
 }
 
 // NotePlacing records, just before the acknowledgement's channel call, that
@@ -169,12 +184,89 @@ func placedPath(dir, conversation, message, emoji string) string {
 // there", still counts for never-silent exactly as it would with the
 // acknowledgement off (TakePlaced), whether it comes before, during or after
 // the call. A record whose reaction was never placed is harmless: the
-// session's first reaction of that emoji is then created, and takes it.
+// session's first reaction of that emoji is then created (SessionPlaced).
 func (s *Service) NotePlacing(in Input, emoji string) error {
 	if s == nil {
 		return nil
 	}
-	path := placedPath(s.Dir, in.Conversation, in.Message, emoji)
+	s.placing.Lock()
+	defer s.placing.Unlock()
+	return touch(placedPath(s.Dir, in.Conversation, in.Message, emoji))
+}
+
+// DropPlacing removes NotePlacing's record when the channel answers that the
+// call placed nothing: the identity's reaction was already there (the
+// session's own, placed first), or the call was refused.
+func (s *Service) DropPlacing(in Input, emoji string) {
+	if s == nil {
+		return
+	}
+	s.placing.Lock()
+	defer s.placing.Unlock()
+	remove(placedPath(s.Dir, in.Conversation, in.Message, emoji))
+}
+
+// TakePlaced is asked by the react verb when the channel answers the
+// session's reaction of emoji "already there". It reports whether that
+// reaction is the acknowledgement's, so that the session's counts as new: a
+// placement record stands and the session's own reaction is not marked
+// there. Told true, the record is taken and the session's reaction marked, so
+// of two identical reactions at once only one is told true. A marked reaction
+// is the session's own: its "already there" is a repeat, as with the
+// acknowledgement off, even while the acknowledgement's record still stands
+// because that call's own "already there" answer was lost or is in flight.
+// While the acknowledgement is off it is always false and reads and writes
+// nothing, whatever an earlier run left on disk.
+func (s *Service) TakePlaced(conversation, message, emoji string) bool {
+	if s == nil || !s.Choice.Enabled() {
+		return false
+	}
+	s.placing.Lock()
+	defer s.placing.Unlock()
+	mark := sessionPath(s.Dir, conversation, message, emoji)
+	if _, err := os.Stat(mark); err == nil {
+		return false
+	}
+	if !remove(placedPath(s.Dir, conversation, message, emoji)) {
+		return false
+	}
+	// A mark lost to a crash leaves no record to take: a repeat still counts
+	// as nothing.
+	_ = touch(mark)
+	return true
+}
+
+// SessionPlaced is told by the react verb when the channel answers that the
+// session's reaction of emoji was placed. That reaction counts as it always
+// has; it is marked, so its later "already there" is a repeat whatever
+// placement record the acknowledgement writes after it. A record stays: if
+// the session removes its reaction before the acknowledgement's call lands,
+// the reaction there is then the acknowledgement's. While the acknowledgement
+// is off it does nothing.
+func (s *Service) SessionPlaced(conversation, message, emoji string) {
+	if s == nil || !s.Choice.Enabled() {
+		return
+	}
+	s.placing.Lock()
+	defer s.placing.Unlock()
+	_ = touch(sessionPath(s.Dir, conversation, message, emoji))
+}
+
+// SessionRemoved is told by the react verb when the channel answers the
+// session's removal of emoji definitely (removed, or none there): the
+// session's own reaction is not there now, and its mark goes. While the
+// acknowledgement is off it does nothing.
+func (s *Service) SessionRemoved(conversation, message, emoji string) {
+	if s == nil || !s.Choice.Enabled() {
+		return
+	}
+	s.placing.Lock()
+	defer s.placing.Unlock()
+	remove(sessionPath(s.Dir, conversation, message, emoji))
+}
+
+// touch makes path an empty file that survives a crash.
+func touch(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -192,35 +284,12 @@ func (s *Service) NotePlacing(in Input, emoji string) error {
 	return syncDir(filepath.Dir(path))
 }
 
-// DropPlacing removes NotePlacing's record when the channel answers that the
-// call placed nothing: the identity's reaction was already there (the
-// session's own, placed first), or the call was refused.
-func (s *Service) DropPlacing(in Input, emoji string) {
-	if s == nil {
-		return
-	}
-	path := placedPath(s.Dir, in.Conversation, in.Message, emoji)
-	if os.Remove(path) == nil {
-		_ = syncDir(filepath.Dir(path))
-	}
-}
-
-// TakePlaced is asked by the react verb on the channel's definite answer to
-// the session's reaction of emoji: placed, or already there. It reports
-// whether the acknowledgement's placement of that emoji was still unmet, and
-// meets it: only the first caller is told true. An "already there" told true
-// is the acknowledgement's reaction, and the session's counts as new; any
-// later one is the session's own repeat. While the acknowledgement is off it
-// is always false, whatever an earlier run left on disk.
-func (s *Service) TakePlaced(conversation, message, emoji string) bool {
-	if s == nil || !s.Choice.Enabled() {
-		return false
-	}
-	path := placedPath(s.Dir, conversation, message, emoji)
+// remove reports whether path was there and is now gone for good: a file that
+// came back after a crash would count a repeat.
+func remove(path string) bool {
 	if os.Remove(path) != nil {
 		return false
 	}
-	// A record that comes back after a crash would count a repeat.
 	_ = syncDir(filepath.Dir(path))
 	return true
 }

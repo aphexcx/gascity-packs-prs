@@ -3324,9 +3324,12 @@ func handleReact(cfg config) http.HandlerFunc {
 			fresh := err == nil && slackResp.OK
 			// With ACK_REACTION on, the reaction already there may be the
 			// acknowledgement's own (arrival.go): the session's then counts as
-			// it would with the acknowledgement off. Slack's ok meets that
-			// placement too, so a later already_reacted is the session's repeat.
-			if err == nil && cfg.arrival.TakePlaced(req.Conversation.ConversationID, req.MessageID, emoji) {
+			// it would with the acknowledgement off. Slack's ok marks the
+			// session's own reaction, so a later already_reacted is its repeat
+			// even when the acknowledgement's record was written after it.
+			if fresh {
+				cfg.arrival.SessionPlaced(req.Conversation.ConversationID, req.MessageID, emoji)
+			} else if err == nil && cfg.arrival.TakePlaced(req.Conversation.ConversationID, req.MessageID, emoji) {
 				fresh = true
 			}
 			act := ingestionSessionAct{
@@ -3341,6 +3344,12 @@ func handleReact(cfg config) http.HandlerFunc {
 				}
 			}
 			cfg.inboundJournal.recordSessionAct(act)
+		}
+		// A definite removal (ok or no_reaction): the session's own reaction
+		// is no longer there, so its next one counts as it would with the
+		// acknowledgement off.
+		if receipt.Delivered && req.Remove {
+			cfg.arrival.SessionRemoved(req.Conversation.ConversationID, req.MessageID, emoji)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(receipt)
