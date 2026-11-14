@@ -823,6 +823,9 @@ export function createPublisher({
               progress.save(key, entry);
               ledger?.noteSend?.(conversationId, { type: 'reaction', message_id: sent.message_id, at: activity?.at ?? clock() });
               restoreActivity(activity);
+              // The session's reaction for the stopwatch, as the Google Chat
+              // and Slack react verbs record it; a removal is none.
+              if (body.emoji) stopwatch?.record({ event: 'reaction', conversation: conversationId, message: body.message_id, at: new Date(clock()).toISOString(), actor: 'agent' });
               log(`reaction to …${lastFour(conversationId)} ${body.emoji ? 'placed' : 'removed'}`);
               return { status: 200, json: entry.receipt };
             } catch (err) {
