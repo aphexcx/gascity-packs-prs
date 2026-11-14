@@ -61,12 +61,23 @@ func startArrival(cfg *config) error {
 		Reaction: func(in ack.Input, how string, at time.Time) {
 			watch.Record(stopwatch.Event{Event: "reaction", Conversation: in.Conversation, Message: in.Message, At: at, Actor: "adapter", Choice: how})
 		},
-		Send: slackArrivalSender(cfg.slackBotToken),
 	}
+	// The switchboard token is the one handleReact reacts with.
+	cfg.arrival.Send = arrivalSender(cfg.slackBotToken, cfg.arrival)
 	return nil
 }
 
 func slackArrivalSender(token string) func(context.Context, ack.Input, ack.Row) error {
+	return arrivalSender(token, nil)
+}
+
+// arrivalSender places the acknowledgement as token. Slack answers
+// already_reacted when that identity's reaction is already there: a success
+// that placed nothing. When record is set (token is the one handleReact reacts
+// with), Slack's ok is recorded there, so that the session's own reaction of
+// the same emoji, which Slack then answers already_reacted, still counts for
+// never-silent as it would with the acknowledgement off (handleReact).
+func arrivalSender(token string, record *ack.Service) func(context.Context, ack.Input, ack.Row) error {
 	return func(ctx context.Context, in ack.Input, row ack.Row) error {
 		if token == "" {
 			return errors.New("sender unavailable")
@@ -77,6 +88,11 @@ func slackArrivalSender(token string) func(context.Context, ack.Input, ack.Row) 
 		}
 		if !response.OK && response.Error != "already_reacted" {
 			return errors.New("reaction refused")
+		}
+		if response.OK && record != nil {
+			if err := record.NotePlaced(in, row.Name); err != nil {
+				log.Printf("ACK_REACTION: placement record unavailable; the session's same reaction will not count for never-silent: %v", err)
+			}
 		}
 		return nil
 	}
@@ -181,7 +197,13 @@ func (g *companyGateway) observeArrival(env slackEventEnvelope, ev slackMessageE
 			if !ok {
 				return errors.New("sender unavailable")
 			}
-			return slackArrivalSender(token)(ctx, in, row)
+			// Only a reaction placed with handleReact's token can be the one
+			// Slack finds already there when the session reacts.
+			var record *ack.Service
+			if token == g.cfg.slackBotToken {
+				record = g.cfg.arrival
+			}
+			return arrivalSender(token, record)(ctx, in, row)
 		})
 	}()
 }

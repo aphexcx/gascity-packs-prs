@@ -3321,13 +3321,21 @@ func handleReact(cfg config) http.HandlerFunc {
 		// already_reacted is successful delivery of the requested state, but
 		// it is not a new session action and must not answer a newer request.
 		if receipt.Delivered && !req.Remove {
+			fresh := err == nil && slackResp.OK
+			// With ACK_REACTION on, the reaction already there may be the
+			// acknowledgement's own (arrival.go): the session's then counts as
+			// it would with the acknowledgement off. Slack's ok meets that
+			// placement too, so a later already_reacted is the session's repeat.
+			if err == nil && cfg.arrival.TakePlaced(req.Conversation.ConversationID, req.MessageID, emoji) {
+				fresh = true
+			}
 			act := ingestionSessionAct{
 				Kind: "reaction", Source: "session_react", Channel: req.Conversation.ConversationID,
 				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
 			}
 			if cfg.neverSilent.Enabled() {
 				act.Timestamp = time.Now()
-				act.NoticeNoActivity = err != nil || !slackResp.OK
+				act.NoticeNoActivity = !fresh
 				if !act.NoticeNoActivity {
 					cfg.noticeError(cfg.neverSilent.Act(act.Channel, "", act.SessionID, act.Timestamp))
 				}
