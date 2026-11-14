@@ -513,7 +513,7 @@ func unresolvedCause(reason, waiting string) string {
 // no terminal hold, landed: gc vouches the whole message is in the terminal,
 // not that the agent read it. Anything else stays unresolved.
 func (p *Processor) concludedPending(id string, d wire.Delivery) error {
-	if err := p.opts.NeverSilent.Result(id, "pending", deliverySessions(d)); err != nil {
+	if err := p.noticeResult(id, "pending", deliverySessions(d), time.Time{}); err != nil {
 		return err
 	}
 	terminal := d.Terminal
@@ -531,14 +531,14 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 			}); err != nil {
 				return err
 			}
-			return p.opts.NeverSilent.ResultAt(id, "delivered", deliverySessions(d), at)
+			return p.noticeResult(id, "delivered", deliverySessions(d), at)
 		}
 		return p.unresolved(id, reasonHeld)
 	}
 	if !landedWhole(d) {
 		return p.unresolved(id, reasonUnconcluded)
 	}
-	if err := p.opts.NeverSilent.Result(id, "delivered", deliverySessions(d)); err != nil {
+	if err := p.noticeResult(id, "delivered", deliverySessions(d), time.Time{}); err != nil {
 		return err
 	}
 	committed := false
@@ -1253,7 +1253,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 				if (answered && (responseErr.StatusCode >= 500 || stoppedCity(responseErr))) || (op != nil && op.Op == "dial") {
 					kind = "unreachable"
 				}
-				if noticeErr := p.opts.NeverSilent.Result(id, kind, nil); noticeErr != nil {
+				if noticeErr := p.noticeResult(id, kind, nil, time.Time{}); noticeErr != nil {
 					return noticeErr
 				}
 				if err := p.update(func(l *ledger.Ledger) {
@@ -1355,7 +1355,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 	if status == "held" && !fragment(d) {
 		noticeKind = "failed"
 	}
-	if err := p.opts.NeverSilent.Result(id, noticeKind, deliverySessions(d)); err != nil {
+	if err := p.noticeResult(id, noticeKind, deliverySessions(d), time.Time{}); err != nil {
 		return err
 	}
 	if status == "pending" && d.ReceiptID == "" {
@@ -1406,10 +1406,10 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 	})
 	if err == nil && exhausted {
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reasonExhausted)
-		err = p.opts.NeverSilent.Stop(id, false)
+		err = p.noticeStop(id, false)
 	}
 	if err == nil && status == "no_route" {
-		err = p.opts.NeverSilent.Stop(id, true)
+		err = p.noticeStop(id, true)
 	}
 	return err
 }
@@ -1434,7 +1434,7 @@ func fragment(d wire.Delivery) bool {
 // unresolved ends a change for an operator and records its cause.
 func (p *Processor) unresolved(id, reason string) error {
 	if reason == reasonWithdrawn {
-		if err := p.opts.NeverSilent.Forget(id); err != nil {
+		if err := p.noticeForget(id); err != nil {
 			return err
 		}
 	} else {
@@ -1447,7 +1447,7 @@ func (p *Processor) unresolved(id, reason string) error {
 		if c != nil && c.Reason == "retry" && !c.Fragment && (c.Cause == causeNotDelivered || c.Cause == causeDraftDeferred || c.Cause == causePendingInteraction || c.Cause == causeBehindEarlier) {
 			definite = true
 		}
-		if err := p.opts.NeverSilent.Stop(id, definite); err != nil {
+		if err := p.noticeStop(id, definite); err != nil {
 			return err
 		}
 	}

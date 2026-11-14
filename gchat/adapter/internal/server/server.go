@@ -1749,6 +1749,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		problem(w, 503, errors.New("inbound processor is initializing"))
 		return
 	}
+	var noticeIDs []string
 	err := s.update(r.Context(), func(l *ledger.Ledger) error {
 		c := l.Unresolved[v.ID]
 		if c == nil {
@@ -1775,6 +1776,12 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		}
 		c.NoticeResolved = true
 		l.Changes[v.ID] = c
+		noticeIDs = inbound.NoticeDeliveryIDs(l, v.ID)
+		for _, id := range noticeIDs {
+			if member := l.Changes[id]; member != nil {
+				member.NoticeResolved = true
+			}
+		}
 		delete(l.Unresolved, v.ID)
 		return nil
 	})
@@ -1786,6 +1793,14 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	if err := s.notices().Forget(v.ID); err != nil {
 		problem(w, 500, err)
 		return
+	}
+	for _, id := range noticeIDs {
+		if id != v.ID {
+			if err := s.notices().ForgetTracked(id); err != nil {
+				problem(w, 500, err)
+				return
+			}
+		}
 	}
 	if v.Action == "replay" {
 		if err := poll(r.Context()); err != nil {
