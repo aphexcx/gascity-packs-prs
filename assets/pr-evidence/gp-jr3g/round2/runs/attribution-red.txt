@@ -1,0 +1,14 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "top_level_fail": 1
+  },
+  "command": null,
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/inbound TestNewReactionRemovalKeepsSkippedAttribution
+FAIL gchat-adapter/internal/inbound
+
+    history_bound_test.go:309: removal lost attribution: {ProviderMessageID:spaces/room/messages/one/reactions/one#deleted Conversation:{ScopeID:examplecity Provider:gchat AccountID:example ConversationID:spaces/room ParentConversationID: Kind:room} Actor:{ID: DisplayName: IsBot:false} Text:[from: unknown | external]

@@ -146,6 +146,9 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 			if s == nil {
 				continue
 			}
+			if err := startSpace(l, r.opts.Config, name, s, now, r.opts.Logger); err != nil {
+				return err
+			}
 			if !s.FrozenUpper.IsZero() {
 				p, err := decodeProgress(s.PageToken)
 				if err != nil {
@@ -165,7 +168,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 				clockAhead = append(clockAhead, name)
 				continue
 			}
-			p := r.begin(s, now)
+			p := r.begin(s, now, l.HistoryFloor)
 			p.ListingAbsent = !listed[name]
 			s.PageToken = encode(p)
 			if p.Reported {
@@ -173,6 +176,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 				reported = append(reported, name)
 			}
 		}
+		l.SpacesListedAt = now.UTC()
 		return nil
 	})
 	if err == nil {
@@ -186,20 +190,21 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 	return err
 }
 
-func (r *Runner) begin(s *ledger.SpaceState, upper time.Time) progress {
+func (r *Runner) begin(s *ledger.SpaceState, upper, floor time.Time) progress {
 	p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
-	if p.MessageLower.Before(s.JoinedAt) {
-		p.MessageLower = s.JoinedAt
+	floor = ledger.HistoryBound(s, floor)
+	if p.MessageLower.Before(floor) {
+		p.MessageLower = floor
 	}
-	if p.EventLower.Before(s.JoinedAt) {
-		p.EventLower = s.JoinedAt
+	if p.EventLower.Before(floor) {
+		p.EventLower = floor
 	}
 	// Request the full retained event window. Message history has no 28-day
 	// limit. Report only a known cursor older than the retention boundary.
 	earliest := r.opts.Now().UTC().Add(-28 * 24 * time.Hour)
 	if p.EventLower.Before(earliest) {
 		p.EventLower = earliest
-		p.Reported = !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
+		p.Reported = s.HistoryRead(floor) && s.EventCursor.Before(earliest)
 	}
 	s.FrozenUpper, s.PageToken = upper.UTC(), encode(p)
 	return p
@@ -316,7 +321,9 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		var next string
 		if p.Phase == "messages" {
 			var messages []*api.Message
-			messages, next, err = r.opts.Chat.ListMessagesPage(ctx, name, p.MessageLower, s.FrozenUpper, "", p.Token)
+			if p.MessageLower.Before(s.FrozenUpper) {
+				messages, next, err = r.opts.Chat.ListMessagesPage(ctx, name, p.MessageLower, s.FrozenUpper, "", p.Token)
+			}
 			for _, message := range messages {
 				at := time.Time{}
 				if message != nil {
@@ -332,7 +339,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 			}
 			if p.EventLower.Before(earliest) {
 				p.EventLower, p.Token = earliest, ""
-				lost := !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
+				lost := s.HistoryRead(l.HistoryFloor) && s.EventCursor.Before(earliest)
 				if err := r.saveProgress(name, p, lost); err != nil {
 					return err
 				}
@@ -349,7 +356,14 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 				}
 				events, next, err = r.opts.Chat.ListSpaceEventsPage(ctx, name, lower, s.FrozenUpper, eventTypes, p.Token)
 				for _, event := range events {
-					page = append(page, expandEvent(name, event)...)
+					// A widened provider query cannot widen the bound. Judge
+					// each batch item by its own act, not the batch envelope.
+					for _, item := range expandEvent(name, event, !ledger.HistoryBound(s, l.HistoryFloor).IsZero()) {
+						if item.Malformed == "" && inbound.HistorySkipCause(l, item.Change) == "before_history_floor" {
+							continue
+						}
+						page = append(page, item)
+					}
 				}
 			}
 		}
@@ -499,6 +513,9 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			}
 			outcome := puller.Quarantine
 			if item.Malformed == "" {
+				if item.Change.EventTime.IsZero() {
+					item.Change.EventTime = item.At
+				}
 				outcome, err = r.opts.Processor.HandleChange(ctx, item.Change)
 			}
 			if outcome == puller.Quarantine {
@@ -525,7 +542,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 				continue
 			}
 			switch c.Reason {
-			case "own", "local", "wake_policy", "space unavailable", "parent unavailable":
+			case "own", "local", "wake_policy", "before_history_floor", "space unavailable", "parent unavailable":
 				continue
 			}
 			*budget--
@@ -576,7 +593,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			s.MessageCursor, s.EventCursor = s.FrozenUpper, s.FrozenUpper
 			s.PageToken, s.FrozenUpper = "", time.Time{}
 			if p.NextUpper.After(s.MessageCursor) {
-				next := r.begin(s, p.NextUpper)
+				next := r.begin(s, p.NextUpper, l.HistoryFloor)
 				next.ListingAbsent = p.ListingAbsent
 				s.PageToken = encode(next)
 				reported = next.Reported
@@ -629,14 +646,14 @@ func related(c puller.Change, state *ledger.ChangeState) bool {
 	return false
 }
 
-func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
+func expandEvent(space string, event *api.SpaceEvent, bounded bool) []queuedChange {
 	raw := encode(event)
 	bad := func() []queuedChange { return []queuedChange{{Malformed: raw}} }
 	if event == nil {
 		return bad()
 	}
 	at, err := time.Parse(time.RFC3339Nano, event.EventTime)
-	if err != nil {
+	if err != nil && !bounded {
 		return bad()
 	}
 	parts := strings.Split(strings.TrimPrefix(event.EventType, "google.workspace.chat."), ".v1.")
@@ -648,7 +665,7 @@ func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
 		return bad()
 	}
 	key := parts[0] + strings.ToUpper(parts[1][:1]) + parts[1][1:] + "EventData"
-	ev, err := puller.Decode(&pubsub.Message{Attributes: map[string]string{"ce-type": event.EventType}, Data: fields[key]})
+	ev, err := puller.Decode(&pubsub.Message{Attributes: map[string]string{"ce-type": event.EventType, "ce-time": event.EventTime}, Data: fields[key]})
 	if err != nil || len(ev.Changes) == 0 {
 		return bad()
 	}
@@ -657,7 +674,11 @@ func expandEvent(space string, event *api.SpaceEvent) []queuedChange {
 		if c.Space != space {
 			return bad()
 		}
-		items = append(items, queuedChange{Change: c, At: at})
+		order := c.ActTime()
+		if order.IsZero() {
+			order = at
+		}
+		items = append(items, queuedChange{Change: c, At: order})
 	}
 	return items
 }
@@ -796,7 +817,13 @@ func unavailableID(item queuedChange) string {
 	} else if item.Change.Reaction != nil {
 		resource = item.Change.Reaction.Name
 	}
-	key := encode([]string{item.Change.Kind, resource, item.At.UTC().Format(time.RFC3339Nano)})
+	// The released key used the envelope time. At may now be the resource's
+	// time for ordering, while old queued rows still have only At.
+	at := item.Change.EventTime
+	if at.IsZero() {
+		at = item.At
+	}
+	key := encode([]string{item.Change.Kind, resource, at.UTC().Format(time.RFC3339Nano)})
 	return fmt.Sprintf("catchup:unavailable:%x", sha256.Sum256([]byte(key)))
 }
 

@@ -1,0 +1,4 @@
+=== RUN   TestRollbackSkippedCreateDoesNotWake
+--- PASS: TestRollbackSkippedCreateDoesNotWake (0.26s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.452s

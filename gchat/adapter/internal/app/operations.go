@@ -2,10 +2,13 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -131,12 +134,25 @@ func (a *application) retryPending(ctx context.Context, registered *atomic.Bool)
 
 type notification struct{ kind, message, agent, dedup string }
 
+func (a *application) noticeHistoryRetired(references []string) {
+	if len(references) == 0 {
+		return
+	}
+	slices.Sort(references)
+	message := fmt.Sprintf("The first load ended %d waiting deliveries as history:\n%s", len(references), strings.Join(references, "\n"))
+	// Separate starts may retire the same references after restoring old state.
+	a.notice("history-delivery-retired", message, rand.Text())
+}
+
 func (a *application) notice(kind string, details ...string) {
 	a.noticeMu.Lock()
 	defer a.noticeMu.Unlock()
 	key := kind
 	if len(details) > 0 {
 		key += fmt.Sprintf(":%x", sha256.Sum256([]byte(details[0])))
+	}
+	if kind == "history-delivery-retired" && len(details) > 1 {
+		key += ":" + details[1]
 	}
 	if a.notified[key] {
 		return
@@ -146,6 +162,8 @@ func (a *application) notice(kind string, details ...string) {
 		message = "Google Chat credentials are missing or revoked; run gc gchat auth. Events remain at Google."
 	} else if kind == "chat-access" {
 		message = "Google Chat refuses the Workspace user's token (HTTP 401/403) although the key holder mints it. Check that the Chat API is configured for the project and Chat is on for the user, or send the user a first direct message; the adapter keeps retrying. Events remain at Google."
+	} else if kind == "history-delivery-retired" && len(details) > 0 {
+		message = details[0]
 	} else if len(details) > 0 {
 		message = details[0] + ". " + message
 	}

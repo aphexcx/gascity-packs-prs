@@ -1,0 +1,60 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 1,
+    "top_level_fail": 1
+  },
+  "command": null,
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+FAIL gchat-adapter/test/e2e TestEndToEnd
+FAIL gchat-adapter/test/e2e
+
+    e2e_test.go:198: READY_WAIT elapsed=1.109797083s turns=0 failed=false
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+SLOW_SAVE delay=200ms
+    e2e_test.go:198: condition did not become true within 10s
+    e2e_test.go:198: READY_WAIT elapsed=10.008125334s turns=15 failed=true
+SLOW_SAVE delay=200ms

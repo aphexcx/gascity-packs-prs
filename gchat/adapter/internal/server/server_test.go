@@ -67,6 +67,8 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	l := ledger.New()
+	// Content fixtures belong to an inventory preceding their messages.
+	l.SpacesListedAt = time.Unix(0, 0).UTC()
 	mu := new(sync.Mutex)
 	opts := Options{Config: cfg, Ledger: l, LedgerMu: mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: filepath.Join(dir, "config.toml"), Chat: c, GC: gcclient.New(gc.URL(), "examplecity")}
 	s, err := New(opts)
@@ -822,7 +824,7 @@ func TestReadReactStatusAndState(t *testing.T) {
 			t.Fatalf("%d %s", code, raw)
 		}
 		if action == "reset" {
-			if len(f.l.Sends) != 0 || !bytes.Contains(raw, []byte("lost or duplicated")) {
+			if len(f.l.Sends) != 0 || !bytes.Contains(raw, []byte("will not be delivered")) {
 				t.Fatalf("%s", raw)
 			}
 		} else {

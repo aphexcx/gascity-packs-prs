@@ -1,0 +1,24 @@
+{"Time":"2026-11-13T05:01:20.772469-06:00","Action":"start","Package":"gchat-adapter/internal/catchup"}
+{"Time":"2026-11-13T05:01:21.00877-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime"}
+{"Time":"2026-11-13T05:01:21.01473-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime","Output":"=== RUN   TestCatchupMissingEnvelopeTime","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.020048-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/message.updated/bounded=false"}
+{"Time":"2026-11-13T05:01:21.020129-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/message.updated/bounded=false","Output":"=== RUN   TestCatchupMissingEnvelopeTime/message.updated/bounded=false","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.237828-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/message.updated/bounded=false","Output":"--- PASS: TestCatchupMissingEnvelopeTime/message.updated/bounded=false (0.23s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.243309-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/message.updated/bounded=false","Elapsed":0.23}
+{"Time":"2026-11-13T05:01:21.24336-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/reaction.created/bounded=false"}
+{"Time":"2026-11-13T05:01:21.243371-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/reaction.created/bounded=false","Output":"=== RUN   TestCatchupMissingEnvelopeTime/reaction.created/bounded=false","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.461968-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/reaction.created/bounded=false","Output":"--- PASS: TestCatchupMissingEnvelopeTime/reaction.created/bounded=false (0.22s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.468203-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/reaction.created/bounded=false","Elapsed":0.22}
+{"Time":"2026-11-13T05:01:21.468227-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/message.updated/bounded=true"}
+{"Time":"2026-11-13T05:01:21.468246-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/message.updated/bounded=true","Output":"=== RUN   TestCatchupMissingEnvelopeTime/message.updated/bounded=true","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.725429-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/message.updated/bounded=true","Output":"--- PASS: TestCatchupMissingEnvelopeTime/message.updated/bounded=true (0.26s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.725477-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/message.updated/bounded=true","Elapsed":0.26}
+{"Time":"2026-11-13T05:01:21.72549-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/reaction.created/bounded=true"}
+{"Time":"2026-11-13T05:01:21.725495-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/reaction.created/bounded=true","Output":"=== RUN   TestCatchupMissingEnvelopeTime/reaction.created/bounded=true","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.929206-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/reaction.created/bounded=true","Output":"--- PASS: TestCatchupMissingEnvelopeTime/reaction.created/bounded=true (0.20s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.929266-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime/reaction.created/bounded=true","Elapsed":0.2}
+{"Time":"2026-11-13T05:01:21.929291-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime","Output":"--- PASS: TestCatchupMissingEnvelopeTime (0.92s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.929305-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestCatchupMissingEnvelopeTime","Elapsed":0.92}
+{"Time":"2026-11-13T05:01:21.9343-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:21.934383-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Output":"ok  \tgchat-adapter/internal/catchup\t1.156s"}
+{"Time":"2026-11-13T05:01:21.9344-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Elapsed":1.162}

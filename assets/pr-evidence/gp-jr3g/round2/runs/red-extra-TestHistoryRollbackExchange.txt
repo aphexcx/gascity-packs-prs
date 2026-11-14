@@ -1,0 +1,30 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+    "go",
+    "test",
+    "./internal/inbound",
+    "-run",
+    "^TestHistoryRollbackExchange$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/inbound TestHistoryRollbackExchange
+FAIL gchat-adapter/internal/inbound
+
+    history_exchange_test.go:47: writer delivered skipped history

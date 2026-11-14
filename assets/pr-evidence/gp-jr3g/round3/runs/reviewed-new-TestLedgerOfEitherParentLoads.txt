@@ -1,0 +1,10 @@
+=== RUN   TestLedgerOfEitherParentLoads
+=== RUN   TestLedgerOfEitherParentLoads/main
+--- PASS: TestLedgerOfEitherParentLoads/main (0.10s)
+=== RUN   TestLedgerOfEitherParentLoads/pr-head
+--- PASS: TestLedgerOfEitherParentLoads/pr-head (0.07s)
+=== RUN   TestLedgerOfEitherParentLoads/merged
+--- PASS: TestLedgerOfEitherParentLoads/merged (0.06s)
+--- PASS: TestLedgerOfEitherParentLoads (0.23s)
+PASS
+ok  	gchat-adapter/internal/ledger	0.441s

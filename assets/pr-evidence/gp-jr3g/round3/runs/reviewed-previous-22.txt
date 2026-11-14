@@ -1,0 +1,10 @@
+=== RUN   TestCursorlessMigrationRetiresEveryUpdateRevision
+=== RUN   TestCursorlessMigrationRetiresEveryUpdateRevision/intent
+--- PASS: TestCursorlessMigrationRetiresEveryUpdateRevision/intent (0.32s)
+=== RUN   TestCursorlessMigrationRetiresEveryUpdateRevision/pending
+--- PASS: TestCursorlessMigrationRetiresEveryUpdateRevision/pending (0.36s)
+=== RUN   TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved
+--- PASS: TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved (0.35s)
+--- PASS: TestCursorlessMigrationRetiresEveryUpdateRevision (1.03s)
+PASS
+ok  	gchat-adapter/internal/catchup	1.236s

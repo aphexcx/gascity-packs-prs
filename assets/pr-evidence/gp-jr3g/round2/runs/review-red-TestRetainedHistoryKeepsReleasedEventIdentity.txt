@@ -1,0 +1,34 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 1,
+    "subtests_pass": 1,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+    "go",
+    "test",
+    "./internal/catchup",
+    "-run",
+    "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/catchup TestRetainedHistoryKeepsReleasedEventIdentity/batch=false
+PASS gchat-adapter/internal/catchup TestRetainedHistoryKeepsReleasedEventIdentity/batch=true
+FAIL gchat-adapter/internal/catchup TestRetainedHistoryKeepsReleasedEventIdentity
+FAIL gchat-adapter/internal/catchup
+
+    history_bound_test.go:278: retained event redelivered after upgrade: 1 turns

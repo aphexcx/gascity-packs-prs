@@ -1,0 +1,532 @@
+{
+  "e2e-before": {
+    "runs": [
+      {
+        "verdict": "pass",
+        "seconds": 5.065085583
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.051390292
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.056018792
+      },
+      {
+        "verdict": "pass",
+        "seconds": 4.046029083
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.052307833
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.051313333
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.058964875
+      },
+      {
+        "verdict": "pass",
+        "seconds": 4.073110875
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.519938792
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.053853375
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.060371041
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.044655042
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.0618725
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.050556375
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.053888125
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.056832
+      },
+      {
+        "verdict": "pass",
+        "seconds": 4.061695833
+      },
+      {
+        "verdict": "pass",
+        "seconds": 7.0455365
+      },
+      {
+        "verdict": "pass",
+        "seconds": 4.05497975
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.064651083
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.049346333
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.053329791
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.055166791
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.061571667
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.05865975
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.0490385
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.049187833
+      },
+      {
+        "verdict": "pass",
+        "seconds": 9.051166458
+      },
+      {
+        "verdict": "pass",
+        "seconds": 4.069130791
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.051734375
+      }
+    ],
+    "count": 30,
+    "longest": 9.051166458,
+    "complete": true
+  },
+  "slow-before": {
+    "runs": [
+      {
+        "verdict": "fail",
+        "seconds": 10.008125334
+      }
+    ],
+    "count": 1,
+    "longest": 10.008125334,
+    "complete": true
+  },
+  "slow-after": {
+    "runs": [
+      {
+        "verdict": "pass",
+        "seconds": 20.582409458
+      }
+    ],
+    "count": 1,
+    "longest": 20.582409458,
+    "complete": true
+  },
+  "e2e-after": {
+    "runs": [
+      {
+        "verdict": "pass",
+        "seconds": 5.061030708
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.06500825
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.06414275
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.059923166
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.076110917
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.057497917
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.058853584
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.056084416
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.057721791
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.065458
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.0597755
+      },
+      {
+        "verdict": "pass",
+        "seconds": 8.184807041
+      },
+      {
+        "verdict": "pass",
+        "seconds": 4.065500458
+      },
+      {
+        "verdict": "pass",
+        "seconds": 4.068278958
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.057289791
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.048038209
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.054161083
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.081497
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.060955333
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.047517875
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.044386625
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.05824375
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.054866708
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.051652292
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.056262333
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.057775
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.047855208
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.048179875
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.053548667
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.057575709
+      }
+    ],
+    "count": 30,
+    "longest": 8.184807041,
+    "complete": true
+  },
+  "e2e-final": {
+    "runs": [
+      {
+        "verdict": "pass",
+        "seconds": 5.048236959
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.045771709
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.059426
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.056765167
+      },
+      {
+        "verdict": "pass",
+        "seconds": 8.051007417
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.099726959
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.102799583
+      },
+      {
+        "verdict": "pass",
+        "seconds": 8.102376292
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.094521917
+      },
+      {
+        "verdict": "pass",
+        "seconds": 9.1004705
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.094335209
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.048531167
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.045636375
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.095601334
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.106391125
+      },
+      {
+        "verdict": "pass",
+        "seconds": 8.10575025
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.119235667
+      },
+      {
+        "verdict": "pass",
+        "seconds": 9.092918375
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.094064417
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.056246792
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.057165791
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.058964459
+      },
+      {
+        "verdict": "pass",
+        "seconds": 4.048291042
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.044284583
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.054642834
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.053681042
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.106427125
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.061995375
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.063415375
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.058762667
+      }
+    ],
+    "count": 30,
+    "longest": 9.1004705,
+    "complete": true
+  },
+  "e2e-reviewed-final": {
+    "runs": [
+      {
+        "verdict": "pass",
+        "seconds": 10.131668791
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.05953575
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.082210375
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.232071292
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.055375875
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.082126208
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.151777625
+      },
+      {
+        "verdict": "pass",
+        "seconds": 10.129278
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.125001208
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.117801292
+      },
+      {
+        "verdict": "pass",
+        "seconds": 7.109215958
+      },
+      {
+        "verdict": "pass",
+        "seconds": 10.159944208
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.147226625
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.106816625
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.0605285
+      },
+      {
+        "verdict": "pass",
+        "seconds": 7.304182459
+      },
+      {
+        "verdict": "pass",
+        "seconds": 7.30036625
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.106419416
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.110018125
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.129884708
+      },
+      {
+        "verdict": "pass",
+        "seconds": 13.134079208
+      },
+      {
+        "verdict": "pass",
+        "seconds": 9.353664
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.426198584
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.054373458
+      },
+      {
+        "verdict": "pass",
+        "seconds": 12.25126075
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.133648125
+      },
+      {
+        "verdict": "pass",
+        "seconds": 6.302333084
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.062130542
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.056992209
+      },
+      {
+        "verdict": "pass",
+        "seconds": 5.053604292
+      }
+    ],
+    "count": 30,
+    "longest": 13.134079208,
+    "complete": true
+  }
+}

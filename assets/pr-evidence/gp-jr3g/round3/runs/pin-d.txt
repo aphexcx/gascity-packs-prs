@@ -1,0 +1,4 @@
+=== RUN   TestStatusCarriesTheFloorAndTheNotices
+--- PASS: TestStatusCarriesTheFloorAndTheNotices (0.00s)
+PASS
+ok  	gchat-adapter/internal/server	0.224s

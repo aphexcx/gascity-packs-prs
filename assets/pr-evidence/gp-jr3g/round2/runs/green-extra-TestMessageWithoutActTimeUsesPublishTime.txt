@@ -1,0 +1,34 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 6,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/inbound",
+    "-run",
+    "^TestMessageWithoutActTimeUsesPublishTime$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/created/old
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/created/new
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/created/none
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/updated/old
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/updated/new
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime/updated/none
+PASS gchat-adapter/internal/inbound TestMessageWithoutActTimeUsesPublishTime
+PASS gchat-adapter/internal/inbound

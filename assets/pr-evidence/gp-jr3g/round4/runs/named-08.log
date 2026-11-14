@@ -1,0 +1,8 @@
+{"Time":"2026-11-13T05:00:35.733154-06:00","Action":"start","Package":"gchat-adapter/internal/inbound"}
+{"Time":"2026-11-13T05:00:35.929862-06:00","Action":"run","Package":"gchat-adapter/internal/inbound","Test":"TestRollbackSkippedCreateDoesNotWake"}
+{"Time":"2026-11-13T05:00:35.930704-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestRollbackSkippedCreateDoesNotWake","Output":"=== RUN   TestRollbackSkippedCreateDoesNotWake","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:36.152635-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestRollbackSkippedCreateDoesNotWake","Output":"--- PASS: TestRollbackSkippedCreateDoesNotWake (0.22s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:36.152697-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Test":"TestRollbackSkippedCreateDoesNotWake","Elapsed":0.22}
+{"Time":"2026-11-13T05:00:36.152735-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:36.153457-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Output":"ok  \tgchat-adapter/internal/inbound\t0.418s"}
+{"Time":"2026-11-13T05:00:36.160151-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Elapsed":0.427}

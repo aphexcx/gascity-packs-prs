@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"gchat-adapter/internal/catchup"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/events"
@@ -49,6 +50,7 @@ type application struct {
 	l                  *ledger.Ledger
 	mu                 sync.Mutex
 	stateMu            sync.Mutex // excludes app health transitions during POST /state
+	noticeStateMu      sync.Mutex // orders notice passes with state replacement
 	s                  *server.Server
 	manager            atomic.Pointer[events.Manager]
 	chatClient         atomic.Pointer[chat.Client]
@@ -131,6 +133,8 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 		if r.Method == http.MethodPost && r.URL.Path == "/state" {
 			a.stateMu.Lock()
 			defer a.stateMu.Unlock()
+			a.noticeStateMu.Lock()
+			defer a.noticeStateMu.Unlock()
 			if err := a.checkStateLock(); err != nil {
 				http.Error(w, err.Error(), http.StatusConflict)
 				return
@@ -263,7 +267,7 @@ func (a *application) checkStateLock() error {
 func (a *application) run(ctx context.Context) error {
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
-	l, err := ledger.Load(a.cfg.Endpoints.StateFile, ledger.Established(a.cfg.SecretsDir))
+	l, fresh, err := ledger.LoadWithOrigin(a.cfg.Endpoints.StateFile, ledger.Established(a.cfg.SecretsDir))
 	recovery := errors.Is(err, ledger.ErrRecoveryRequired)
 	if err != nil && !recovery {
 		return err
@@ -271,9 +275,19 @@ func (a *application) run(ctx context.Context) error {
 	if recovery {
 		a.health("recovery-required", "ledger is missing or invalid; restore a backup or explicitly reset state")
 	} else {
+		var retired []string
 		a.mu.Lock()
 		*a.l = *l
 		a.l.SetSaveGuard(a.checkStateLock)
+		if fresh {
+			a.l.HistoryFloor = time.Now().UTC().Add(-a.cfg.FirstStartWindow())
+		} else {
+			retired, err = catchup.InitializeHistoryWithReport(a.l, a.cfg, time.Now(), a.log)
+			if err != nil {
+				a.mu.Unlock()
+				return err
+			}
+		}
 		err = a.l.Save(a.cfg.Endpoints.StateFile)
 		a.mu.Unlock()
 		if err != nil {
@@ -282,6 +296,7 @@ func (a *application) run(ctx context.Context) error {
 		if err = ledger.MarkEstablished(a.cfg.SecretsDir); err != nil {
 			return err
 		}
+		a.noticeHistoryRetired(retired)
 		a.loaded.Store(true)
 	}
 	if err = canonicalize(a.cfg); err != nil {

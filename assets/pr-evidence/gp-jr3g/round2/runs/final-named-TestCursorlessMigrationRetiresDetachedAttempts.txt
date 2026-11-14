@@ -1,0 +1,44 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 15,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/catchup",
+    "-run",
+    "^TestCursorlessMigrationRetiresDetachedAttempts$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "pass",
+  "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+}
+
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.created/intent
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.created/pending
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.created/unresolved
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.updated/intent
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.updated/pending
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.updated/unresolved
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/intent
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/pending
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/unresolved
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/intent
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/pending
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/unresolved
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/intent
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/pending
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/unresolved
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresDetachedAttempts
+PASS gchat-adapter/internal/catchup

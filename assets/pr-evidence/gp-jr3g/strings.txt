@@ -1,0 +1,68 @@
+Operator-visible string changes
+
+Status (new; omitted on a ledger without a floor):
+History: first start skipped messages written before <floor>; gc gchat read still reads them
+
+Offline reset warning:
+OLD: messages from the gap may be lost or duplicated
+NEW: messages written before the reset history bound will not be delivered (gc gchat read still reads them); use state restore to keep them
+
+Service reset response:
+OLD: state reset; messages from the gap may be lost or duplicated
+NEW: state reset; messages written before the reset history bound will not be delivered (gc gchat read still reads them); use state restore to keep them
+
+Settings errors (new, wrapped by the existing "settings <file>:" prefix):
+first_start_history must be a Go duration; write 24h for one day: <parse error>
+first_start_history must be between 0s and 168h
+An integer is rejected by the TOML string decoder, with first_start_history and the file named. Previously every first_start_history value was rejected as an unknown key.
+
+Retained live-create reason (new):
+before_history_floor
+
+Pack README, settings (new paragraph):
+The root-level `first_start_history` setting optionally includes a short history
+window on first start or reset. It is a Go duration string, from `"0s"` to
+`"168h"` inclusive; write `"24h"` for a day, not `"1d"`. Omit it to start at
+the current time. Set it before the first connection; changing it after a
+subscription has been recorded does not change the saved history bound.
+Remove this key before rolling back to 0.5.0, whose settings loader refuses
+unknown keys. The older ledger reader ignores the floor and keeps saved cursors.
+
+Pack README, catch-up (new paragraph):
+A first start with no ledger and no established marker begins at the current
+time. The bound moves to the first connection if sign-in was delayed. Older
+messages in rooms and direct messages are not turns, queued rows or delivery
+mails; `gc gchat read` still reads them. `first_start_history` can include up to
+a week before that start. Status names the saved bound. A restart with a ledger
+still recovers everything since its last cursor, with the existing overlap and
+event-retention limits. Existing ledgers gain no new bound.
+
+Pack README, recovery:
+OLD: through the service, or explicitly choose `gc gchat state reset`, which warns
+that messages from the gap may be lost or duplicated. These proxy commands are
+NEW: through the service to keep its saved history bound and recovery cursors, or
+explicitly choose `gc gchat state reset`. Reset starts at the current time,
+minus the optional `first_start_history` window, and moves that bound to its
+first connection. Messages before the bound will not be delivered;
+`gc gchat read` still reads them. Use restore to retain recovery of the gap.
+These proxy commands are
+
+Adapter README, catch-up (new introduction):
+A first start begins at its first connection, optionally including up to a week
+with `first_start_history`; older messages stay readable with `gc gchat read`
+but are not turns. A restart with a ledger keeps recovering from its cursors.
+
+Adapter README, recovery:
+OLD: defaults to `adapter.sock` beside the ledger. Reset reports that gap messages
+may be lost or duplicated; the CLI replaces the ledger only while holding the lock. Use `gc gchat state` for recovery through the running service's proxy.
+NEW: defaults to `adapter.sock` beside the ledger. Reset takes the same first-start
+bound and warns that earlier messages will not be delivered; restore keeps the
+backup's bound and cursors. The CLI replaces the ledger only while holding the
+lock. Use `gc gchat state` for recovery through the running service's proxy.
+
+Changelog (new entry after the existing Unreleased entries):
+First start and state reset begin history at the first connection, with an
+optional `first_start_history` window of up to 168 hours. Earlier messages
+remain readable with `gc gchat read` and do not become turns or queued rows.
+Status shows the saved `history_floor`; restarts with a ledger keep recovering
+from their cursors. Old ledgers retain their existing behavior.

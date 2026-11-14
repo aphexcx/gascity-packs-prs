@@ -1,0 +1,4 @@
+=== RUN   TestNewReactionRemovalKeepsSkippedAttribution
+--- PASS: TestNewReactionRemovalKeepsSkippedAttribution (0.61s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.860s

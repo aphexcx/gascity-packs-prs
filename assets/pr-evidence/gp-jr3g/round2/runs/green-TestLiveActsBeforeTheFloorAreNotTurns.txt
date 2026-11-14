@@ -1,0 +1,36 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 8,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/inbound",
+    "-run",
+    "^TestLiveActsBeforeTheFloorAreNotTurns$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.created
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.updated
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.deleted
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.created
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.deleted
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.created-message.updated
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.created-reaction.deleted
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.updated-message.deleted
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns
+PASS gchat-adapter/internal/inbound

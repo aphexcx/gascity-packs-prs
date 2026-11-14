@@ -41,6 +41,7 @@ func TestCatchupCadence(t *testing.T) {
 				cfg := &config.Config{Endpoints: config.Endpoints{StateFile: path, ChatAPIBase: "https://example.invalid"}}
 				a := &application{cfg: cfg, l: ledger.New(), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 				a.l.IdentityUserID = "users/123456"
+				a.l.SpacesListedAt = time.Unix(0, 0).UTC()
 				var lists, messages, history atomic.Int32
 				var denied atomic.Bool
 				denied.Store(held)

@@ -1,0 +1,43 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 9,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/app",
+    "-run",
+    "^TestOldActOrdersAndNewActs$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "pass",
+  "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+}
+
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/old/message.updated
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/old/message.created-message.updated
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/old/reaction.created-reaction.deleted
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/old/message.updated-message.deleted
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/new/message.created
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/new/message.updated
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/new/message.deleted
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/new/reaction.created
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs/new/reaction.deleted
+PASS gchat-adapter/internal/app TestOldActOrdersAndNewActs
+PASS gchat-adapter/internal/app
+
+    history_bound_test.go:256: turns=0 notices=0 changes=1
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+    history_bound_test.go:256: turns=0 notices=0 changes=2

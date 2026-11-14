@@ -1,0 +1,188 @@
+[
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1,
+    "label": "review-red2"
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1,
+    "label": "review-red2"
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/reviewed-head/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1,
+    "label": "review-red2"
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0,
+    "label": "review-green2"
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0,
+    "label": "review-green2"
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0,
+    "label": "review-green2"
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1,
+    "label": "review-base"
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1,
+    "label": "review-base"
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0,
+    "label": "review-base"
+  }
+]

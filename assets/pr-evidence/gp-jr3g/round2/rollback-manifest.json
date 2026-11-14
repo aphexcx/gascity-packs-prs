@@ -1,0 +1,45 @@
+[
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GCHAT_TEST_EXCHANGE_MODE=write",
+      "GCHAT_TEST_EXCHANGE_FILE=<evidence>/rollback-ledger.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "GCHAT_TEST_EXCHANGE_MODE=read",
+      "GCHAT_TEST_EXCHANGE_FILE=<evidence>/rollback-ledger.json",
+      "GOFLAGS=-overlay=<evidence>/released-reader/overlay.json",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  }
+]

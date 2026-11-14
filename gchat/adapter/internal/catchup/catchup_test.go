@@ -74,6 +74,8 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	l := ledger.New()
+	// Recovery fixtures have an inventory preceding their historical acts.
+	l.SpacesListedAt = time.Unix(0, 0).UTC()
 	mu := &sync.Mutex{}
 	logger := slog.New(slog.NewTextHandler(&f.logs, nil))
 	f.p, err = inbound.New(inbound.Options{Config: cfg, Ledger: l, LedgerMu: mu, LedgerPath: cfg.Endpoints.StateFile, GC: gcclient.New(f.gc.URL(), "examplecity"), Chat: c, IdentityUserID: "users/123", Logger: logger, Now: func() time.Time { return frozen }, RetryDelay: time.Millisecond})
@@ -255,7 +257,7 @@ func TestNewSpaceUsesDefaultWake(t *testing.T) {
 	m.Annotations = []*api.Annotation{{Type: "USER_MENTION", UserMention: &api.UserMentionMetadata{User: &api.User{Name: "users/123"}}}}
 	f.freeze(t)
 	s := f.opts.Ledger.Spaces["spaces/joined"]
-	if s == nil || s.Wake != "mentions" || !s.MessageCursor.IsZero() || !s.EventCursor.IsZero() {
+	if s == nil || s.Wake != "mentions" || !s.MessageCursor.Equal(time.Unix(0, 0)) || !s.EventCursor.Equal(time.Unix(0, 0)) {
 		t.Fatalf("discovered state: %+v", s)
 	}
 	f.pass(t, 1, 0)

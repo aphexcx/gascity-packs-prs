@@ -1,0 +1,142 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 21,
+    "subtests_pass": 1338,
+    "top_level_pass": 690,
+    "top_level_skip": 2
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./...",
+    "-p=1",
+    "-count=1",
+    "-timeout=30m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/cmd/gc-gchat-adapter
+PASS gchat-adapter/internal/app
+PASS gchat-adapter/internal/catchup
+PASS gchat-adapter/internal/chat
+PASS gchat-adapter/internal/config
+PASS gchat-adapter/internal/events
+PASS gchat-adapter/internal/fakes/fakegc
+PASS gchat-adapter/internal/fakes/fakegoogle
+PASS gchat-adapter/internal/gcclient
+PASS gchat-adapter/internal/inbound
+PASS gchat-adapter/internal/ledger
+PASS gchat-adapter/internal/markdown
+PASS gchat-adapter/internal/media
+PASS gchat-adapter/internal/principal
+PASS gchat-adapter/internal/provenance
+PASS gchat-adapter/internal/puller
+PASS gchat-adapter/internal/server
+PASS gchat-adapter/internal/token
+PASS gchat-adapter/internal/wire
+SKIP gchat-adapter/test/contract TestRealGCContract
+SKIP gchat-adapter/test/contract TestRealGCReplyReminder
+PASS gchat-adapter/test/contract
+PASS gchat-adapter/test/e2e
+
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:256: turns=0 notices=0 changes=1
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+    history_floor_test.go:119: first start: 1 turns, 8 old messages, 0 notifications
+    history_upgrade_test.go:156: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_exchange_test.go:93: read 5 skipped-act records: zero turns after every unmentioned edit and deletion
+    markdown_test.go:261: converted 70002 bytes in 2.68875ms
+    markdown_test.go:261: converted 70002 bytes in 684.25µs
+    markdown_test.go:261: converted 70000 bytes in 2.345209ms
+    markdown_test.go:261: converted 70000 bytes in 2.726791ms
+    markdown_test.go:261: converted 140000 bytes in 2.879834ms
+    markdown_test.go:261: converted 64002 bytes in 953.584µs
+    markdown_test.go:261: converted 64058 bytes in 4.292042ms
+    markdown_test.go:261: converted 128000 bytes in 5.574ms
+    markdown_test.go:261: converted 128056 bytes in 3.243916ms
+    markdown_test.go:261: converted 1000056 bytes in 31.439625ms
+    markdown_test.go:279: converted 70001 bytes in 1.912292ms
+    contract_test.go:43: set GC_BIN to a real gc binary to run the contract test
+    reply_test.go:52: set GC_BIN to a real gc binary to run the rendered reply contract
+    e2e_test.go:932: catch-up delivered 500/3000; retained backlog 2500
+    e2e_test.go:932: catch-up delivered 1000/3000; retained backlog 2000
+    e2e_test.go:932: catch-up delivered 1500/3000; retained backlog 1500
+    e2e_test.go:932: catch-up delivered 2000/3000; retained backlog 1000
+    e2e_test.go:932: catch-up delivered 2500/3000; retained backlog 500
+    e2e_test.go:932: catch-up delivered 3000/3000; retained backlog 0
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.063031708s ceiling=1m26s turns=24 failed=false

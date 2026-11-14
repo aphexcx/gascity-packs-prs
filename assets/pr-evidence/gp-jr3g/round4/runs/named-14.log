@@ -1,0 +1,8 @@
+{"Time":"2026-11-13T05:00:59.320975-06:00","Action":"start","Package":"gchat-adapter/internal/inbound"}
+{"Time":"2026-11-13T05:00:59.507538-06:00","Action":"run","Package":"gchat-adapter/internal/inbound","Test":"TestNewReactionRemovalKeepsSkippedAttribution"}
+{"Time":"2026-11-13T05:00:59.512659-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestNewReactionRemovalKeepsSkippedAttribution","Output":"=== RUN   TestNewReactionRemovalKeepsSkippedAttribution","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:59.785761-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestNewReactionRemovalKeepsSkippedAttribution","Output":"--- PASS: TestNewReactionRemovalKeepsSkippedAttribution (0.28s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:59.79226-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Test":"TestNewReactionRemovalKeepsSkippedAttribution","Elapsed":0.28}
+{"Time":"2026-11-13T05:00:59.792331-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:59.792383-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Output":"ok  \tgchat-adapter/internal/inbound\t0.466s"}
+{"Time":"2026-11-13T05:00:59.792401-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Elapsed":0.471}

@@ -1,0 +1,185 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 2,
+    "packages_pass": 19,
+    "subtests_fail": 16,
+    "subtests_pass": 1307,
+    "top_level_fail": 6,
+    "top_level_pass": 683,
+    "top_level_skip": 2
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./...",
+    "-p=1",
+    "-count=1",
+    "-timeout=30m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/cmd/gc-gchat-adapter
+FAIL gchat-adapter/internal/app TestCatchupCadence/held_space
+FAIL gchat-adapter/internal/app TestCatchupCadence
+FAIL gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn/404
+FAIL gchat-adapter/internal/app TestSubscriptionRefusalRetriesWithoutSignIn
+FAIL gchat-adapter/internal/app
+PASS gchat-adapter/internal/catchup
+PASS gchat-adapter/internal/chat
+PASS gchat-adapter/internal/config
+PASS gchat-adapter/internal/events
+PASS gchat-adapter/internal/fakes/fakegc
+PASS gchat-adapter/internal/fakes/fakegoogle
+PASS gchat-adapter/internal/gcclient
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/401
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/403
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/408
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/409
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/503
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/429
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/401
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/403
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/408
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/409
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/503
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/429
+FAIL gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind
+FAIL gchat-adapter/internal/inbound TestLookupHoldPreservesTokenError/reaction_parent
+FAIL gchat-adapter/internal/inbound TestLookupHoldPreservesTokenError/reaction_space
+FAIL gchat-adapter/internal/inbound TestLookupHoldPreservesTokenError
+FAIL gchat-adapter/internal/inbound TestLiveReactionThenCatchUpDoesNotRecordOrPostAgain
+FAIL gchat-adapter/internal/inbound TestHeadIsTheLiveOrderTestNotTheCauseWord
+FAIL gchat-adapter/internal/inbound
+PASS gchat-adapter/internal/ledger
+PASS gchat-adapter/internal/markdown
+PASS gchat-adapter/internal/media
+PASS gchat-adapter/internal/principal
+PASS gchat-adapter/internal/provenance
+PASS gchat-adapter/internal/puller
+PASS gchat-adapter/internal/server
+PASS gchat-adapter/internal/token
+PASS gchat-adapter/internal/wire
+SKIP gchat-adapter/test/contract TestRealGCContract
+SKIP gchat-adapter/test/contract TestRealGCReplyReminder
+PASS gchat-adapter/test/contract
+PASS gchat-adapter/test/e2e
+
+    catchup_test.go:125: hourly sweep calls: messages 0->1 events 0->1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:256: turns=0 notices=0 changes=1
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+    history_bound_test.go:256: turns=0 notices=0 changes=2
+    history_floor_test.go:119: first start: 1 turns, 8 old messages, 0 notifications
+    history_upgrade_test.go:156: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages
+    subscription_test.go:354: health did not become ready in 5s: {State:catching-up Reason:subscription refused: Workspace Events API not enabled (HTTP 404)}
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_bound_test.go:90: turns=1
+    history_exchange_test.go:93: read 5 skipped-act records: zero turns after every unmentioned edit and deletion
+    inbound_test.go:1943: hold = 1, <nil>; credentials=true
+    inbound_test.go:1943: hold = 1, <nil>; credentials=true
+    inbound_test.go:1943: hold = 1, <nil>; credentials=false
+    inbound_test.go:1943: hold = 1, <nil>; credentials=false
+    inbound_test.go:1943: hold = 1, <nil>; credentials=false
+    inbound_test.go:1943: hold = 1, <nil>; credentials=false
+    inbound_test.go:1943: hold = 1, <nil>; credentials=true
+    inbound_test.go:1943: hold = 1, <nil>; credentials=true
+    inbound_test.go:1943: hold = 1, <nil>; credentials=false
+    inbound_test.go:1943: hold = 1, <nil>; credentials=false
+    inbound_test.go:1943: hold = 1, <nil>; credentials=false
+    inbound_test.go:1943: hold = 1, <nil>; credentials=false
+    inbound_test.go:1993: hold lost token error: 1, <nil>
+    inbound_test.go:1993: hold lost token error: 1, <nil>
+    inbound_test.go:2450: catch-up changed live reaction: saves=1 posts=1 counters=map[history_time_missing:spaces/room:1 turns:spaces/room:1]
+    round2_test.go:580: the new head with a stale behind_earlier word was not mailed: 0
+    markdown_test.go:261: converted 70002 bytes in 2.804125ms
+    markdown_test.go:261: converted 70002 bytes in 674.459µs
+    markdown_test.go:261: converted 70000 bytes in 2.286958ms
+    markdown_test.go:261: converted 70000 bytes in 2.612375ms
+    markdown_test.go:261: converted 140000 bytes in 3.358625ms
+    markdown_test.go:261: converted 64002 bytes in 954.583µs
+    markdown_test.go:261: converted 64058 bytes in 4.294ms
+    markdown_test.go:261: converted 128000 bytes in 5.254833ms
+    markdown_test.go:261: converted 128056 bytes in 3.490916ms
+    markdown_test.go:261: converted 1000056 bytes in 31.267ms
+    markdown_test.go:279: converted 70001 bytes in 1.7505ms
+    contract_test.go:43: set GC_BIN to a real gc binary to run the contract test
+    reply_test.go:52: set GC_BIN to a real gc binary to run the rendered reply contract
+    e2e_test.go:932: catch-up delivered 500/3000; retained backlog 2500
+    e2e_test.go:932: catch-up delivered 1000/3000; retained backlog 2000
+    e2e_test.go:932: catch-up delivered 1500/3000; retained backlog 1500
+    e2e_test.go:932: catch-up delivered 2000/3000; retained backlog 1000
+    e2e_test.go:932: catch-up delivered 2500/3000; retained backlog 500
+    e2e_test.go:932: catch-up delivered 3000/3000; retained backlog 0
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.074299041s ceiling=1m26s turns=24 failed=false

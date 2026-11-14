@@ -1,0 +1,8 @@
+{"Time":"2026-11-13T05:01:37.320477-06:00","Action":"start","Package":"gchat-adapter/internal/ledger"}
+{"Time":"2026-11-13T05:01:37.526596-06:00","Action":"run","Package":"gchat-adapter/internal/ledger","Test":"TestHistoryFloorLedgerCompatibility"}
+{"Time":"2026-11-13T05:01:37.530706-06:00","Action":"output","Package":"gchat-adapter/internal/ledger","Test":"TestHistoryFloorLedgerCompatibility","Output":"=== RUN   TestHistoryFloorLedgerCompatibility","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:37.548503-06:00","Action":"output","Package":"gchat-adapter/internal/ledger","Test":"TestHistoryFloorLedgerCompatibility","Output":"--- PASS: TestHistoryFloorLedgerCompatibility (0.02s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:37.553756-06:00","Action":"pass","Package":"gchat-adapter/internal/ledger","Test":"TestHistoryFloorLedgerCompatibility","Elapsed":0.02}
+{"Time":"2026-11-13T05:01:37.553809-06:00","Action":"output","Package":"gchat-adapter/internal/ledger","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:37.553846-06:00","Action":"output","Package":"gchat-adapter/internal/ledger","Output":"ok  \tgchat-adapter/internal/ledger\t0.229s"}
+{"Time":"2026-11-13T05:01:37.553866-06:00","Action":"pass","Package":"gchat-adapter/internal/ledger","Elapsed":0.233}

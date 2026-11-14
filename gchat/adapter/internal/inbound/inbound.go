@@ -220,15 +220,22 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 	}
 	// Validate the whole batch before accepting any changes. The puller preserves
 	// the raw event when Quarantine is returned.
-	for _, c := range ev.Changes {
+	changes := make([]puller.Change, len(ev.Changes))
+	for i, c := range ev.Changes {
+		s := l.Spaces[c.Space]
+		bounded := !ledger.HistoryBound(s, l.HistoryFloor).IsZero() || s == nil || (s.MessageCursor.IsZero() && s.JoinedAt.IsZero())
+		if bounded {
+			c = historyTime(c)
+		}
 		if err := validate(c); err != nil {
 			return puller.Quarantine, err
 		}
+		changes[i] = c
 	}
 	if len(ev.Changes) > 0 && p.identity() == "" {
 		return puller.Nack, errors.New("inbound: identity user ID unavailable")
 	}
-	for _, c := range ev.Changes {
+	for _, c := range changes {
 		if err := ctx.Err(); err != nil {
 			return puller.Nack, err
 		}
@@ -273,11 +280,15 @@ func (p *Processor) Pass(ctx context.Context) error {
 		return err
 	}
 	defer p.leave()
-	l, err := p.snapshot()
-	if err != nil {
-		return err
-	}
-	if err := ReconcileNeverSilent(l, p.opts.NeverSilent); err != nil {
+	var l *ledger.Ledger
+	if err := p.opts.NeverSilent.WithHistory(func() error {
+		var err error
+		l, err = p.snapshot()
+		if err != nil {
+			return err
+		}
+		return ReconcileNeverSilent(l, p.opts.NeverSilent)
+	}); err != nil {
 		return err
 	}
 	ids := make([]string, 0)
@@ -629,6 +640,11 @@ func validate(c puller.Change) error {
 }
 
 func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) error {
+	if !strings.HasPrefix(c.Kind, "membership.") {
+		if handled, err := p.history(ctx, c, catchUp); handled || err != nil {
+			return err
+		}
+	}
 	switch {
 	case strings.HasPrefix(c.Kind, "membership."):
 		m := c.Membership
@@ -828,7 +844,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	forwarded := false
 	for _, change := range l.Changes {
-		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && !strings.HasPrefix(change.Reason, "space unavailable") {
+		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "before_history_floor" && !strings.HasPrefix(change.Reason, "space unavailable") {
 			forwarded = true
 			break
 		}
@@ -883,12 +899,14 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
-		if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
-			return err
+	if err := p.opts.NeverSilent.WithHistory(func() error {
+		if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
+			if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
+				return err
+			}
 		}
-	}
-	if err := p.record(c, id, w, &state, s, local, catchUp, learnedDomain); err != nil {
+		return p.record(c, id, w, &state, s, local, catchUp, learnedDomain)
+	}); err != nil {
 		return err
 	}
 	return p.resume(ctx, id)
@@ -939,12 +957,25 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	w := p.envelope(id, c.Space, s.Kind, r.User, state.Thread)
 	w.Text = provenance.Render(speaker, reactionText(r, action, parent))
 	if action == "deleted" && r.User == nil {
-		if created := l.Changes[r.Name+"#created"]; created != nil {
+		created := l.Changes[r.Name+"#created"]
+		if created == nil {
+			for _, old := range l.Changes {
+				if strings.HasPrefix(old.ID, r.Name+"#history#reaction.created#") && (created == nil || earlier(created, old)) {
+					created = old
+				}
+			}
+		}
+		if created != nil {
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(created.Event), &original) == nil {
 				w.Actor = original.Actor
 				if created.ProvenanceFramed {
 					w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
+					if created.Cause == "before_history_floor" || created.Cause == "history_time_missing" {
+						if frame, ok := provenance.FrameOf(original.Text); ok {
+							w.Text = frame + "\n" + reactionText(r, action, parent)
+						}
+					}
 				}
 			}
 		}
@@ -1210,7 +1241,7 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 		return err == nil && state.Revision.After(revision)
 	}
 	for _, other := range l.Changes {
-		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID {
+		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID && other.Cause != "before_history_floor" && other.Cause != "history_time_missing" {
 			return true
 		}
 	}
