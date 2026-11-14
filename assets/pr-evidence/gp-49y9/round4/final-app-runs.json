@@ -1,0 +1,44 @@
+[
+  {
+    "run": 1,
+    "source": "8d0987d30d026edc170caf75e5206cb8e7b83899",
+    "command": "env -u GC_BIN -u NEVER_SILENT go test ./internal/app -count=1 -p=1 -timeout=30m -json",
+    "load_before": 23.41845703125,
+    "load_after": 14.24951171875,
+    "seconds": 508.884,
+    "exit": 1,
+    "failures": [
+      "TestObservedIdentityReplacesContradictedLedgerIdentity",
+      "gchat-adapter/internal/app"
+    ],
+    "top_pass": 80,
+    "sub_pass": 142,
+    "skip": 0
+  },
+  {
+    "run": 2,
+    "source": "8d0987d30d026edc170caf75e5206cb8e7b83899",
+    "command": "env -u GC_BIN -u NEVER_SILENT go test ./internal/app -count=1 -p=1 -timeout=30m -json",
+    "load_before": 14.24951171875,
+    "load_after": 16.44580078125,
+    "seconds": 512.749,
+    "exit": 0,
+    "failures": [],
+    "top_pass": 81,
+    "sub_pass": 142,
+    "skip": 0
+  },
+  {
+    "run": 3,
+    "source": "8d0987d30d026edc170caf75e5206cb8e7b83899",
+    "command": "env -u GC_BIN -u NEVER_SILENT go test ./internal/app -count=1 -p=1 -timeout=30m -json",
+    "load_before": 16.44580078125,
+    "load_after": 7.41064453125,
+    "seconds": 495.397,
+    "exit": 0,
+    "failures": [],
+    "top_pass": 81,
+    "sub_pass": 142,
+    "skip": 0
+  }
+]

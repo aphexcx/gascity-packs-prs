@@ -1,0 +1,12 @@
+{
+  "class": "DEEP",
+  "reviewer": "native Codex subagent, inherited model without override",
+  "base": "52e91dbe5902fb98daeb8e3ff3150cb80b8d9527",
+  "reviewed_sha": "8d0987d30d026edc170caf75e5206cb8e7b83899",
+  "verdict": "CLEAN",
+  "findings": [],
+  "record": "self-review.md",
+  "scratch_checks": "review-check.json",
+  "mayor_gate": "pending",
+  "second_model_read": "pending"
+}
