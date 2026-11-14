@@ -283,8 +283,9 @@ or emoji is a conflict. A reaction is recorded as the mayor's act when
 
 A reaction needs the open 24-hour window and never reopens it. It cannot
 use the update template. A refusal exits 1 with a reason and a hint; say the
-same thing in words by the window rule. Nothing reacts automatically: this
-command acts only when the mayor runs it. A box gains it after updating its
+same thing in words by the window rule. Apart from the acknowledgement when
+`ACK_REACTION` is set, nothing reacts automatically: this command acts only
+when the mayor runs it. A box gains it after updating its
 pack and restarting the adapter. No gateway update is needed for this command.
 
 ## Files out
@@ -365,7 +366,7 @@ Set `NEVER_SILENT=on` to enable notices for newly admitted human messages addres
 
 The adapter knows `not_delivered` when it stops trying, or observes three continuous minutes of definite delivery failures or connection/dial errors, city-not-found responses or server errors. A successful HTTP response saying pending resets the failure wait. An uncertain stopped delivery raises operator mail immediately but waits three minutes without a session reply or reaction before telling the owner.
 
-The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
+The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. A reaction from the session counts even when the adapter's acknowledgement placed the same one first; the acknowledgement alone never does. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
 
 Nothing in these packs writes that file yet. Its writer must run independently of gc's supervisor so evidence remains fresh when the supervisor fails. It must never call an asleep, drained or suspended session down: gc wakes those sessions for incoming messages. Until a writer exists, only not_delivered can fire.
 
