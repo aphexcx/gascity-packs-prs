@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -21,24 +22,27 @@ const (
 var markerName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // PruneAttempts removes acknowledgement markers older than MarkerAge from
-// <dir>/ack-attempts, by modification time. Only empty files named by 64 hex
-// characters are markers; nothing else in the state directory is touched.
-// Errors are ignored: a marker left behind only costs an inode.
+// <dir>/ack-attempts, and placement records (NotePlaced) from
+// <dir>/ack-placed, by modification time. Only empty files named by 64 hex
+// characters are markers or records; nothing else in the state directory is
+// touched. Errors are ignored: a marker left behind only costs an inode.
 func PruneAttempts(dir string, now time.Time) {
-	root := filepath.Join(dir, "ack-attempts")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.Type().IsRegular() || !markerName.MatchString(e.Name()) {
+	for _, sub := range []string{"ack-attempts", "ack-placed"} {
+		root := filepath.Join(dir, sub)
+		entries, err := os.ReadDir(root)
+		if err != nil {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil || info.Size() != 0 || now.Sub(info.ModTime()) <= MarkerAge {
-			continue
+		for _, e := range entries {
+			if !e.Type().IsRegular() || !markerName.MatchString(e.Name()) {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil || info.Size() != 0 || now.Sub(info.ModTime()) <= MarkerAge {
+				continue
+			}
+			_ = os.Remove(filepath.Join(root, e.Name()))
 		}
-		_ = os.Remove(filepath.Join(root, e.Name()))
 	}
 }
 
@@ -142,13 +146,84 @@ func (s *Service) warn(message string) {
 		}
 	})
 }
+
+// messageDigest names one message: the attempt marker's key, and the first
+// half of a placement record's.
+func messageDigest(conversation, message string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(conversation+"\x00"+message)))
+}
+
+// placedPath is the record of the acknowledgement's emoji on one message. A
+// Slack name may come with its colons; Google may add or drop the emoji
+// presentation selector. Neither changes the reaction.
+func placedPath(dir, conversation, message, emoji string) string {
+	emoji = strings.ReplaceAll(strings.Trim(emoji, ":"), "️", "")
+	return filepath.Join(dir, "ack-placed", fmt.Sprintf("%x", sha256.Sum256([]byte(messageDigest(conversation, message)+"\x00"+emoji))))
+}
+
+// NotePlaced records that the acknowledgement placed emoji on in's message as
+// the identity the adapter's react verb uses, on the channel's answer that the
+// reaction is new (never on "already there"). With it, the session's own
+// reaction of that emoji, which the channel then answers "already there",
+// still counts for never-silent exactly as it would with the acknowledgement
+// off (TakePlaced).
+func (s *Service) NotePlaced(in Input, emoji string) error {
+	if s == nil {
+		return nil
+	}
+	path := placedPath(s.Dir, in.Conversation, in.Message, emoji)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	err = f.Sync()
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// TakePlaced is asked by the react verb on the channel's definite answer to
+// the session's reaction of emoji: placed, or already there. It reports
+// whether the acknowledgement's placement of that emoji was still unmet, and
+// meets it: only the first caller is told true. An "already there" told true
+// is the acknowledgement's reaction, and the session's counts as new; any
+// later one is the session's own repeat. While the acknowledgement is off it
+// is always false, whatever an earlier run left on disk.
+func (s *Service) TakePlaced(conversation, message, emoji string) bool {
+	if s == nil || !s.Choice.Enabled() {
+		return false
+	}
+	path := placedPath(s.Dir, conversation, message, emoji)
+	if os.Remove(path) != nil {
+		return false
+	}
+	// A record that comes back after a crash would count a repeat.
+	_ = syncDir(filepath.Dir(path))
+	return true
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+
 func (s *Service) claim(in Input) (bool, error) {
 	root := filepath.Join(s.Dir, "ack-attempts")
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return false, err
 	}
-	digest := sha256.Sum256([]byte(in.Conversation + "\x00" + in.Message))
-	f, err := os.OpenFile(filepath.Join(root, fmt.Sprintf("%x", digest)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(filepath.Join(root, messageDigest(in.Conversation, in.Message)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if os.IsExist(err) {
 		return false, nil
 	}
