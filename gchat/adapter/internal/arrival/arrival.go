@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"gchat-adapter/internal/ack"
@@ -52,23 +53,33 @@ func New(o Options) (*ack.Service, *stopwatch.Writer, error) {
 		Reaction: func(in ack.Input, how string, at time.Time) {
 			watch.Record(stopwatch.Event{Event: "reaction", Conversation: in.Conversation, Message: in.Message, At: at, Actor: "adapter", Choice: how})
 		},
-		SendChoice: func(ctx context.Context, in ack.Input, choose func(context.Context) (ack.Row, string)) (string, error) {
-			var c *chat.Client
-			if o.Chat != nil {
-				c = o.Chat()
+	}
+	service.SendChoice = func(ctx context.Context, in ack.Input, choose func(context.Context) (ack.Row, string)) (string, error) {
+		var c *chat.Client
+		if o.Chat != nil {
+			c = o.Chat()
+		}
+		if c == nil {
+			return "", errors.New("chat unavailable")
+		}
+		how, emoji, placed, err := c.PlaceArrivalReaction(ctx, in.Message, in.Seen.Add(ack.ReactionBudget), ack.Default.Emoji, func(choiceCtx context.Context) (string, string) { row, how := choose(choiceCtx); return row.Emoji, how })
+		// The react verb reacts as this same identity (Wire): record what
+		// Google created, so the session's own reaction of that emoji still
+		// counts for never-silent.
+		if err == nil && placed {
+			if noteErr := service.NotePlaced(in, emoji); noteErr != nil && o.Log != nil {
+				o.Log("ACK_REACTION: placement record unavailable; the session's same reaction will not count for never-silent")
 			}
-			if c == nil {
-				return "", errors.New("chat unavailable")
-			}
-			return c.CreateArrivalReaction(ctx, in.Message, in.Seen.Add(ack.ReactionBudget), ack.Default.Emoji, func(choiceCtx context.Context) (string, string) { row, how := choose(choiceCtx); return row.Emoji, how })
-		},
+		}
+		return how, err
 	}
 	return service, watch, nil
 }
 
 // Wire prepares a new client before it is shared: the words hook always (the
-// stopwatch runs on or off, item 15), and the shared arrival pace only while
-// the acknowledgement is on, so the switch unset keeps the base's gate.
+// stopwatch runs on or off, item 15); the shared arrival pace and the react
+// verb's placement lookup only while the acknowledgement is on, so the switch
+// unset keeps the base's gate and the base's react verb.
 func Wire(c *chat.Client, service *ack.Service, watch *stopwatch.Writer) {
 	c.MessageCreated = func(space, message, thread, stamp string) {
 		if at, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
@@ -77,5 +88,10 @@ func Wire(c *chat.Client, service *ack.Service, watch *stopwatch.Writer) {
 	}
 	if service != nil && service.Choice.Enabled() {
 		c.EnableArrivalPace()
+		c.ArrivalPlaced = func(message, emoji string) bool {
+			// The acknowledgement keys the message by its space (inbound.go).
+			space, _, _ := strings.Cut(message, "/messages/")
+			return service.TakePlaced(space, message, emoji)
+		}
 	}
 }
