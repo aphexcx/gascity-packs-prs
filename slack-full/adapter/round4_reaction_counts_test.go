@@ -41,6 +41,10 @@ type round4Slack struct {
 	mu     sync.Mutex
 	placed map[string]bool
 	refuse bool // refuse the next reactions.add, placing nothing
+	lose   bool // place the next reactions.add, then drop the connection unanswered
+	// during runs after the next reactions.add is placed and before it is
+	// answered: a reaction that arrives while the call is in flight.
+	during func()
 	adds   []string
 }
 
@@ -51,26 +55,43 @@ func (s *round4Slack) serve(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body, &req)
 	key := r.Header.Get("Authorization") + "\x00" + req.Channel + "\x00" + req.Timestamp + "\x00" + req.Name
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var during func()
+	lose := false
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/reactions.add"):
 		s.adds = append(s.adds, req.Name)
 		if s.refuse {
 			s.refuse = false
+			s.mu.Unlock()
 			_, _ = io.WriteString(w, `{"ok":false,"error":"too_many_reactions"}`)
 			return
 		}
 		if s.placed[key] {
+			s.mu.Unlock()
 			_, _ = io.WriteString(w, `{"ok":false,"error":"already_reacted"}`)
 			return
 		}
 		s.placed[key] = true
+		during, s.during = s.during, nil
+		lose, s.lose = s.lose, false
 	case strings.HasSuffix(r.URL.Path, "/reactions.remove"):
 		if !s.placed[key] {
+			s.mu.Unlock()
 			_, _ = io.WriteString(w, `{"ok":false,"error":"no_reaction"}`)
 			return
 		}
 		delete(s.placed, key)
+	}
+	s.mu.Unlock()
+	if during != nil {
+		during()
+	}
+	if lose {
+		// Slack applied the reaction; its answer never arrives.
+		if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+		return
 	}
 	_, _ = io.WriteString(w, `{"ok":true}`)
 }
@@ -325,6 +346,70 @@ func TestRound4SessionReactionCountsAsWithAckOff(t *testing.T) {
 		}
 	})
 
+	// Review M1: Slack placed the acknowledgement but its answer was lost
+	// (the connection dropped). The session's eyes still counts, once.
+	t.Run("lost-answer/ack-placed-answer-lost-session-eyes-twice", func(t *testing.T) {
+		r := newRound4SlackRig(t)
+		r.start("eyes")
+		r.slack.mu.Lock()
+		r.slack.lose = true
+		r.slack.mu.Unlock()
+		human := slackTimestamp(r.now)
+		r.human(human)
+		if got := r.slack.addCount(); got != 1 {
+			t.Fatalf("acknowledgements=%d, want 1 (placed, answer lost)", got)
+		}
+		if receipt := r.react(human, "eyes"); !receipt.Delivered {
+			t.Fatalf("first receipt=%+v", receipt)
+		}
+		if r.acts() != 1 {
+			t.Errorf("after the session's first eyes: acts=%d, want 1 (the eyes already there is the acknowledgement's)", r.acts())
+		}
+		r.start("eyes")
+		if receipt := r.react(human, "eyes"); !receipt.Delivered {
+			t.Fatalf("second receipt=%+v", receipt)
+		}
+		if r.acts() != 1 {
+			t.Errorf("after the session's second eyes: acts=%d, want 1 (a repeat is no new answer)", r.acts())
+		}
+		if got, want := strings.Join(r.journaled(), ","), "eyes:counted,eyes:not counted"; got != want {
+			t.Errorf("journal session_react rows=%q, want %q", got, want)
+		}
+	})
+
+	// Review M1, the same window: the session's eyes reaches Slack after the
+	// acknowledgement's eyes is placed and before Slack answers it. It
+	// counts, once, and the session's next eyes is a repeat.
+	t.Run("in-flight/session-eyes-while-ack-in-flight-then-again", func(t *testing.T) {
+		r := newRound4SlackRig(t)
+		r.start("eyes")
+		human := slackTimestamp(r.now)
+		var inFlight string
+		r.slack.mu.Lock()
+		r.slack.during = func() {
+			w := httptest.NewRecorder()
+			handleReact(r.cfg)(w, httptest.NewRequest(http.MethodPost, "/react", strings.NewReader(`{"conversation":{"conversation_id":"DEXAMPLE"},"message_id":"`+human+`","emoji":"eyes","session_id":"example-session"}`)))
+			inFlight = strings.TrimSpace(w.Body.String())
+		}
+		r.slack.mu.Unlock()
+		r.human(human)
+		if inFlight != `{"delivered":true}` {
+			t.Fatalf("the in-flight reaction's receipt=%q", inFlight)
+		}
+		if r.acts() != 1 {
+			t.Errorf("after the in-flight eyes: acts=%d, want 1", r.acts())
+		}
+		if receipt := r.react(human, "eyes"); !receipt.Delivered {
+			t.Fatalf("second receipt=%+v", receipt)
+		}
+		if r.acts() != 1 {
+			t.Errorf("after the session's second eyes: acts=%d, want 1 (a repeat is no new answer)", r.acts())
+		}
+		if got, want := strings.Join(r.journaled(), ","), "eyes:counted,eyes:not counted"; got != want {
+			t.Errorf("journal session_react rows=%q, want %q", got, want)
+		}
+	})
+
 	// P1, the repeats: each second reaction is the session's own repeat and
 	// counts no more than it would with the acknowledgement off.
 	for _, tc := range []struct {
@@ -360,5 +445,95 @@ func TestRound4SessionReactionCountsAsWithAckOff(t *testing.T) {
 				t.Errorf("journal session_react rows=%q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// Review m2: on a company room the acknowledgement is placed with the
+// gateway's switchboard token (ackActorToken), the token handleReact reacts
+// with, so Slack answers the session's eyes already_reacted there too. The
+// session's eyes counts, once. The arrival service is main's start
+// (startArrival), copied into the gateway as main's start copies the cfg.
+func TestRound4CompanyRoomReactionCountsAsWithAckOff(t *testing.T) {
+	slack := &round4Slack{placed: map[string]bool{}}
+	stub := httptest.NewServer(http.HandlerFunc(slack.serve))
+	defer stub.Close()
+	withSlackAPIStub(t, stub)
+	prev := arrivalExecutable
+	dir := t.TempDir()
+	arrivalExecutable = func() (string, error) { return filepath.Join(dir, "missing-executable"), nil }
+	t.Cleanup(func() { arrivalExecutable = prev })
+
+	now := time.Now()
+	e, err := neversilent.New(neversilent.Options{Enabled: true, Path: filepath.Join(dir, "never-silent.json"), HealthFile: filepath.Join(dir, "health.json"), Now: func() time.Time { return now },
+		Post: func(context.Context, neversilent.Message, string) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _, _, _ := setupMpim(t)
+	bf := baseBindingsFile()
+	bf.Bindings[0].Session = "mayor"
+	bindings, _, err := ParseCompanyBindings(marshalBindings(t, bf), h.dirStore.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.bindStore.set(bindings)
+	h.gw.now = func() time.Time { return now }
+	// As in production (company_delivery.go): the gateway's switchboard token
+	// is the config's bot token.
+	h.gw.cfg.slackBotToken = h.gw.slackToken
+	started := h.gw.cfg
+	started.busyReaction = ""
+	env := map[string]string{"ACK_REACTION": "eyes", "GC_SERVICE_STATE_ROOT": filepath.Join(dir, "state")}
+	if err := configureArrival(&started, func(k string) string { return env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	started.inboundJournal = &inboundJournal{dir: filepath.Join(dir, "journal")}
+	if err := startArrival(&started); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(started.stopArrival)
+	h.gw.cfg.arrival, h.gw.cfg.arrivalChoice, h.gw.cfg.arrivalState = started.arrival, started.arrivalChoice, started.arrivalState
+	h.gw.cfg.arrivalStarted, h.gw.cfg.inboundJournal, h.gw.cfg.neverSilent = started.arrivalStarted, started.inboundJournal, e
+
+	human := slackTimestamp(now)
+	h.admitViaHandler(t, slackMessageEvent{Type: "message", Channel: testChannelID, User: "U0HUMAN01", TS: human, Text: "<@U0AAAAAA1> example request"}, 0)
+	h.wait()
+	deadline := time.Now().Add(10 * time.Second)
+	for slack.addCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if slack.addCount() != 1 {
+		t.Fatalf("acknowledgements=%d, want 1", slack.addCount())
+	}
+	h.gw.cfg.arrival.Wait()
+
+	react := func() reactReceipt {
+		w := httptest.NewRecorder()
+		handleReact(h.gw.cfg)(w, httptest.NewRequest(http.MethodPost, "/react", strings.NewReader(`{"conversation":{"conversation_id":"`+testChannelID+`"},"message_id":"`+human+`","emoji":"eyes","session_id":"mayor"}`)))
+		var receipt reactReceipt
+		if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
+			t.Fatalf("receipt %q: %v", w.Body.String(), err)
+		}
+		return receipt
+	}
+	acts := func() int {
+		var state struct {
+			Acts []json.RawMessage `json:"acts"`
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, "never-silent.json"))
+		_ = json.Unmarshal(data, &state)
+		return len(state.Acts)
+	}
+	if receipt := react(); !receipt.Delivered {
+		t.Fatalf("first receipt=%+v", receipt)
+	}
+	if acts() != 1 {
+		t.Errorf("after the session's eyes on the company room: acts=%d, want 1", acts())
+	}
+	if receipt := react(); !receipt.Delivered {
+		t.Fatalf("second receipt=%+v", receipt)
+	}
+	if acts() != 1 {
+		t.Errorf("after the session's second eyes: acts=%d, want 1 (a repeat is no new answer)", acts())
 	}
 }

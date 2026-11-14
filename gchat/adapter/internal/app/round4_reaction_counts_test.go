@@ -69,25 +69,30 @@ func (c *round4Clock) Now() time.Time      { c.mu.Lock(); defer c.mu.Unlock(); r
 func (c *round4Clock) Add(d time.Duration) { c.mu.Lock(); defer c.mu.Unlock(); c.now = c.now.Add(d) }
 
 type round4Chat struct {
-	t       *testing.T
-	google  *fakegoogle.Server
-	gc      *fakegc.Server
-	cfg     *config.Config
-	dir     string
-	state   string
-	health  string
-	clock   *round4Clock
-	opts    neversilent.Options
-	refuse  atomic.Bool // refuse the next reaction create, placing nothing
-	seq     int
-	mu      *sync.Mutex
-	l       *ledger.Ledger
-	c       *chat.Client
-	s       *server.Server
-	p       *inbound.Processor
-	service *ack.Service
-	watch   *stopwatch.Writer
-	engine  *neversilent.Engine
+	t      *testing.T
+	google *fakegoogle.Server
+	gc     *fakegc.Server
+	cfg    *config.Config
+	dir    string
+	state  string
+	health string
+	clock  *round4Clock
+	opts   neversilent.Options
+	refuse atomic.Bool // refuse the next reaction create, placing nothing
+	lose   atomic.Bool // let the next reaction create reach Google, then lose its answer
+	// during runs after the next reaction create reached Google and before
+	// its answer returns: a reaction that arrives while the call is in flight.
+	during   func()
+	duringMu sync.Mutex
+	seq      int
+	mu       *sync.Mutex
+	l        *ledger.Ledger
+	c        *chat.Client
+	s        *server.Server
+	p        *inbound.Processor
+	service  *ack.Service
+	watch    *stopwatch.Writer
+	engine   *neversilent.Engine
 }
 
 func newRound4Chat(t *testing.T) *round4Chat {
@@ -112,13 +117,36 @@ func newRound4Chat(t *testing.T) *round4Chat {
 }
 
 // RoundTrip refuses one reaction create when asked, as Google refusing the
-// acknowledgement's call; everything else reaches the fake.
+// acknowledgement's call, or lets it through and then loses the answer, or
+// holds the answer while another reaction runs; everything else reaches the
+// fake as it is.
 func (r *round4Chat) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/reactions") && r.refuse.CompareAndSwap(true, false) {
+	create := req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/reactions")
+	if create && r.refuse.CompareAndSwap(true, false) {
 		return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(strings.NewReader(`{"error":{"code":403,"status":"PERMISSION_DENIED","message":"refused"}}`)), Request: req}, nil
 	}
-	return http.DefaultTransport.RoundTrip(req)
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if !create || err != nil {
+		return resp, err
+	}
+	if r.lose.CompareAndSwap(true, false) {
+		_ = resp.Body.Close()
+		return nil, io.ErrUnexpectedEOF
+	}
+	r.duringMu.Lock()
+	during := r.during
+	r.during = nil
+	r.duringMu.Unlock()
+	if during != nil {
+		done := make(chan struct{})
+		go func() { defer close(done); during() }()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+		}
+	}
+	return resp, nil
 }
 
 // start is a process start with ACK_REACTION set to mode ("" leaves it
@@ -342,6 +370,65 @@ func TestRound4SessionReactionCountsAsWithAckOff(t *testing.T) {
 		r.start("")
 		if lines := r.due(); lines != 1 {
 			t.Errorf("owner lines=%d, want 1 (main's rule with the switch unset)", lines)
+		}
+	})
+
+	// Review M1: Google created the acknowledgement but its answer was lost.
+	// The session's eyes still counts, once.
+	t.Run("lost-answer/ack-placed-answer-lost-session-eyes-twice", func(t *testing.T) {
+		r := newRound4Chat(t)
+		r.start("eyes")
+		r.lose.Store(true)
+		message := r.human()
+		if got, want := strings.Join(r.reactions(), ","), message+":"+round4Eyes; got != want {
+			t.Fatalf("reactions=%q, want the acknowledgement %q (placed, answer lost)", got, want)
+		}
+		if code, body := r.react(message, round4Eyes); code != http.StatusOK {
+			t.Errorf("first react status=%d %s, want 200 (the eyes already there is the acknowledgement's)", code, body)
+		}
+		if r.acts() != 1 {
+			t.Errorf("after the session's first eyes: acts=%d, want 1", r.acts())
+		}
+		r.start("eyes")
+		if code, body := r.react(message, round4Eyes); code != http.StatusBadGateway {
+			t.Errorf("second react status=%d %s, want main's 502 for a repeat", code, body)
+		}
+		if r.acts() != 1 {
+			t.Errorf("after the session's second eyes: acts=%d, want 1 (a repeat is no new answer)", r.acts())
+		}
+	})
+
+	// Review M1, the same window: the session's eyes reaches Google after the
+	// acknowledgement's eyes is created and before Google's answer returns.
+	// It counts, once, and the session's next eyes is a repeat.
+	t.Run("in-flight/session-eyes-while-ack-in-flight-then-again", func(t *testing.T) {
+		r := newRound4Chat(t)
+		r.start("eyes")
+		next := fmt.Sprintf("%s/messages/m%d", round4Space, r.seq+1)
+		var inFlight int
+		r.duringMu.Lock()
+		r.during = func() {
+			body, _ := json.Marshal(map[string]any{"message": next, "emoji": round4Eyes, "session_id": "example-session"})
+			w := httptest.NewRecorder()
+			r.s.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/react", strings.NewReader(string(body))))
+			inFlight = w.Code
+		}
+		r.duringMu.Unlock()
+		message := r.human()
+		if message != next {
+			t.Fatalf("message=%q, want %q", message, next)
+		}
+		if inFlight != http.StatusOK {
+			t.Errorf("the in-flight react status=%d, want 200", inFlight)
+		}
+		if r.acts() != 1 {
+			t.Errorf("after the in-flight eyes: acts=%d, want 1", r.acts())
+		}
+		if code, body := r.react(message, round4Eyes); code != http.StatusBadGateway {
+			t.Errorf("second react status=%d %s, want main's 502 for a repeat", code, body)
+		}
+		if r.acts() != 1 {
+			t.Errorf("after the session's second eyes: acts=%d, want 1 (a repeat is no new answer)", r.acts())
 		}
 	})
 
