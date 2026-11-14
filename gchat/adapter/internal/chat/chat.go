@@ -35,7 +35,8 @@ type Client struct {
 	// (created, or a 409 for the acknowledgement's own reaction).
 	ArrivalPlaced func(message, emoji string, created bool) bool
 	// ArrivalRemoved is installed with ArrivalPlaced. The react verb tells it
-	// when the session's removal of a reaction succeeded.
+	// when the session's removal found its reaction and removed it
+	// (RemoveReaction).
 	ArrivalRemoved func(message, emoji string)
 	// MessageCreated is installed before sharing the client. It receives only
 	// coordinates and Google's original timestamp, including idempotent replays.
@@ -455,9 +456,18 @@ func AlreadyThere(err error) bool {
 }
 
 func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) error {
+	_, err := c.RemoveReaction(ctx, message, emoji)
+	return err
+}
+
+// RemoveReaction is DeleteReaction that also reports whether the identity's
+// reaction of exactly emoji was on the message (and is now gone). Nothing
+// found is not proof that no reaction is there: Google may hold the same
+// emoji in another form.
+func (c *Client) RemoveReaction(ctx context.Context, message, emoji string) (bool, error) {
 	user, err := c.reactionIdentity()
 	if err != nil {
-		return err
+		return false, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -468,7 +478,7 @@ func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) erro
 		var result *googlechat.ListReactionsResponse
 		err := c.retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
 		if err != nil {
-			return err
+			return false, err
 		}
 		for _, reaction := range result.Reactions {
 			if reaction.User != nil && reaction.User.Name == user && reaction.Emoji != nil && reaction.Emoji.Unicode == emoji {
@@ -497,10 +507,10 @@ func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) erro
 			return err
 		})
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return len(names) > 0, nil
 }
 
 func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*googlechat.AttachmentDataRef, error) {

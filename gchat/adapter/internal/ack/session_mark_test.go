@@ -71,14 +71,32 @@ func TestSessionMarkMakesTheRepeatNoNewAnswer(t *testing.T) {
 		t.Errorf("with the acknowledgement off the state went from %q to %q", before, after)
 	}
 
-	// Pruned with the records, after MarkerAge.
+	// Pruned after the records: a record younger than the mark (the session
+	// first) is gone before the mark goes.
 	now := time.Now()
-	if err := os.Chtimes(mark, now.Add(-MarkerAge-time.Hour), now.Add(-MarkerAge-time.Hour)); err != nil {
+	record := placedPath(dir, in.Conversation, in.Message, "eyes")
+	if err := s.NotePlacing(in, "eyes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(mark, now.Add(-MarkerAge-2*time.Hour), now.Add(-MarkerAge-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(record, now.Add(-MarkerAge-time.Hour), now.Add(-MarkerAge-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	PruneAttempts(dir, now)
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Errorf("a record older than MarkerAge was not pruned: %v", err)
+	}
+	if _, err := os.Stat(mark); err != nil {
+		t.Errorf("the mark went with its younger record: %v", err)
+	}
+	if err := os.Chtimes(mark, now.Add(-sessionMarkAge-time.Hour), now.Add(-sessionMarkAge-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	PruneAttempts(dir, now)
 	if _, err := os.Stat(mark); !os.IsNotExist(err) {
-		t.Errorf("an old mark was not pruned: %v", err)
+		t.Errorf("a mark older than sessionMarkAge was not pruned: %v", err)
 	}
 }
 

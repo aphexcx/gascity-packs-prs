@@ -230,5 +230,38 @@ func TestSessionFirstReactionCountsAsWithAckOff(t *testing.T) {
 				t.Errorf("after the session's eyes that followed its removal: acts=%d, want 2 (as with ACK_REACTION unset)", got)
 			}
 		})
+
+		// The self-review's finding 3: the session's removal names the emoji
+		// in another form (with the presentation selector) and so matches
+		// nothing; the session's eyes stays on the message. The
+		// acknowledgement's 409 is lost and its record stands; the session
+		// repeats eyes. A removal that removed nothing must not clear the
+		// session's mark: the repeat adds no act, as with ACK_REACTION unset.
+		t.Run("session-first/removal-matched-nothing/"+name, func(t *testing.T) {
+			r := newRound4Chat(t)
+			r.start(mode)
+			a, actsAfterFirst := r.sessionFirstEyes(func(a string) {
+				if code, body := r.sessionFirstUnreact(a, round4Eyes+"️"); code != http.StatusOK {
+					t.Errorf("the session's removal: status=%d %s, want 200", code, body)
+				}
+				r.lose.Store(mode != "")
+			})
+			if got, want := strings.Join(r.reactions(), ","), a+":"+round4Eyes; got != want {
+				t.Fatalf("reactions=%q, want the session's eyes still there %q", got, want)
+			}
+			if mode != "" && (r.lose.Load() || !r.sessionFirstPlaced()) {
+				t.Fatalf("the acknowledgement's answer was not lost with its record standing: files %q", r.ackFiles())
+			}
+			code, body := r.react(a, round4Eyes)
+			if actsAfterFirst != 1 {
+				t.Errorf("after the session's first eyes: acts=%d, want 1", actsAfterFirst)
+			}
+			if got := r.acts(); got != 1 {
+				t.Errorf("after the session's repeat: acts=%d, want 1 (a repeat is no new answer, as with ACK_REACTION unset)", got)
+			}
+			if code != http.StatusBadGateway {
+				t.Errorf("the session's repeat: status=%d %s, want main's 502", code, body)
+			}
+		})
 	}
 }

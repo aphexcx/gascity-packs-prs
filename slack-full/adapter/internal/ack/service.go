@@ -19,16 +19,27 @@ const (
 	PruneInterval = 24 * time.Hour
 )
 
+// sessionMarkAge keeps the session's reaction mark longer than any placement
+// record written after it: the acknowledgement's record comes within moments
+// of its message, so a mark pruned with the records could leave a younger
+// record behind, and the session's repeat would take it.
+const sessionMarkAge = 2 * MarkerAge
+
 var markerName = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // PruneAttempts removes acknowledgement markers older than MarkerAge from
-// <dir>/ack-attempts, placement records (NotePlacing) from <dir>/ack-placed
-// and the session's reaction marks (SessionPlaced) from <dir>/ack-session, by
-// modification time. Only empty files named by 64 hex characters are markers
-// or records; nothing else in the state directory is touched. Errors are
-// ignored: a marker left behind only costs an inode.
+// <dir>/ack-attempts and placement records (NotePlacing) from
+// <dir>/ack-placed, and the session's reaction marks (SessionPlaced) older
+// than sessionMarkAge from <dir>/ack-session, by modification time. Only
+// empty files named by 64 hex characters are markers, records or marks;
+// nothing else in the state directory is touched. Errors are ignored: a
+// marker left behind only costs an inode.
 func PruneAttempts(dir string, now time.Time) {
 	for _, sub := range []string{"ack-attempts", "ack-placed", "ack-session"} {
+		age := MarkerAge
+		if sub == "ack-session" {
+			age = sessionMarkAge
+		}
 		root := filepath.Join(dir, sub)
 		entries, err := os.ReadDir(root)
 		if err != nil {
@@ -39,7 +50,7 @@ func PruneAttempts(dir string, now time.Time) {
 				continue
 			}
 			info, err := e.Info()
-			if err != nil || info.Size() != 0 || now.Sub(info.ModTime()) <= MarkerAge {
+			if err != nil || info.Size() != 0 || now.Sub(info.ModTime()) <= age {
 				continue
 			}
 			_ = os.Remove(filepath.Join(root, e.Name()))
@@ -211,8 +222,8 @@ func (s *Service) DropPlacing(in Input, emoji string) {
 // reaction is the acknowledgement's, so that the session's counts as new: a
 // placement record stands and the session's own reaction is not marked
 // there. Told true, the record is taken and the session's reaction marked, so
-// of two identical reactions at once only one is told true. A marked reaction
-// is the session's own: its "already there" is a repeat, as with the
+// of two "already there" answers at once only one is told true. A marked
+// reaction is the session's own: its "already there" is a repeat, as with the
 // acknowledgement off, even while the acknowledgement's record still stands
 // because that call's own "already there" answer was lost or is in flight.
 // While the acknowledgement is off it is always false and reads and writes
@@ -232,7 +243,7 @@ func (s *Service) TakePlaced(conversation, message, emoji string) bool {
 	}
 	// A mark lost to a crash leaves no record to take: a repeat still counts
 	// as nothing.
-	_ = touch(mark)
+	s.markError(touch(mark))
 	return true
 }
 
@@ -249,7 +260,15 @@ func (s *Service) SessionPlaced(conversation, message, emoji string) {
 	}
 	s.placing.Lock()
 	defer s.placing.Unlock()
-	_ = touch(sessionPath(s.Dir, conversation, message, emoji))
+	s.markError(touch(sessionPath(s.Dir, conversation, message, emoji)))
+}
+
+// markError logs a mark that could not be written: the session's repeat of
+// that reaction may then count as new if the acknowledgement's record stands.
+func (s *Service) markError(err error) {
+	if err != nil && s.Log != nil {
+		s.Log("ACK_REACTION: session reaction mark unavailable; a repeat of that reaction may count for never-silent")
+	}
 }
 
 // SessionRemoved is told by the react verb when the channel answers the

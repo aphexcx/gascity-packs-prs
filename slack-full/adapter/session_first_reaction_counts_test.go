@@ -390,6 +390,9 @@ func TestSessionFirstReactionCountsAsWithAckOff(t *testing.T) {
 				t.Fatalf("the session's eyes after its removal: receipt=%+v, want delivered", receipt)
 			}
 			t.Logf("reactions: %s", r.slack.record())
+			if want := a + ":eyes:remove:ok | " + a + ":eyes:ok | " + a + ":eyes:already_reacted"; mode != "" && !strings.HasSuffix(r.slack.record(), want) {
+				t.Fatalf("reactions %s, want the acknowledgement's eyes placed after the session's removal and the session's next eyes answered already_reacted", r.slack.record())
+			}
 			if actsAfterFirst != 1 {
 				t.Errorf("after the session's first eyes: acts=%d, want 1", actsAfterFirst)
 			}

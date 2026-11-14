@@ -1356,10 +1356,13 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var err error
 	if v.Remove {
-		err = c.DeleteReaction(r.Context(), v.Message, v.Emoji)
-		// The session's own reaction is no longer there: its next one counts
-		// as it would with the acknowledgement off.
-		if err == nil && c.ArrivalRemoved != nil {
+		var removed bool
+		removed, err = c.RemoveReaction(r.Context(), v.Message, v.Emoji)
+		// The session's own reaction was there and is gone: its next one
+		// counts as it would with the acknowledgement off. Nothing found
+		// proves nothing (Google may hold the emoji in another form), so the
+		// mark stays.
+		if err == nil && removed && c.ArrivalRemoved != nil {
 			c.ArrivalRemoved(v.Message, v.Emoji)
 		}
 	} else {
