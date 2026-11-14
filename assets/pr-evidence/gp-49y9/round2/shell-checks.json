@@ -1,0 +1,12 @@
+[
+  {
+    "check": "sh",
+    "command": "sh -n gchat/commands/status.sh",
+    "exit": 0
+  },
+  {
+    "check": "shellcheck",
+    "command": "shellcheck -x gchat/commands/status.sh",
+    "exit": 0
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "run": 1,
+  "source_sha": "8d0987d30d026edc170caf75e5206cb8e7b83899",
+  "command": "env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run ^TestRound4Deep -count=1 -p=1 -timeout=10m -json",
+  "exit": 0,
+  "seconds": 4.651,
+  "counts": {
+    "subtest_pass": 138,
+    "top_level_pass": 5,
+    "package_pass": 1
+  },
+  "failures": []
+}

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Never-silent observations and operator resolution follow every enrolled member of merged turns; body headers are quoted across the full Unicode invisible and blank class without changing their bytes.
+
+- Owner changes preserve delivery uncertainty, fragment limits and retry state; withdrawals clear every pending or unresolved merged/folded payload, and merged body headers are quoted as they display through Unicode format characters and spaces.
+
+- Coalesced retries refresh withdrawn members before posting, preserve literal edit prefixes in history, quote body from-line prefixes, isolate malformed held records, and count retried catch-up acts against the budget.
+- Withdrawn window-on deliveries retain their message history but cannot be replayed, including by a rolled-back 0.5.0 reader; replay leaves the withdrawal reason intact and operators can accept the record.
+
+- Room chatter now waits a per-space window (default eight seconds) and arrives
+  as one turn, with each message's full from line. DMs, mentions and replies in
+  the mayor's threads arrive immediately; reactions wait for the window.
+  Catch-up merges missed messages, and the ledger keeps held messages across
+  stops and crashes. `coalesce_window = "0s"` restores individual turns.
+  A box that sets nothing changes behavior when its adapter updates and restarts: the default is on.
+  Remove the setting before rolling back to an older adapter.
+
 - The skill gives reactions fixed meanings, with the same tables and rules
   as the Slack fragment and the WhatsApp skill, in place of any emoji that
   fits (gp-adh3). The rows are a catalog, `reactions.json` at the pack's

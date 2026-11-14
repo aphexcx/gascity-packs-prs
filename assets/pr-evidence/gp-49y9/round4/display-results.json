@@ -1,0 +1,198 @@
+{
+  "TestQuoteMergedHeadersWholeDisplayClass": {
+    "red": {
+      "leaves": {
+        "fail": 43366,
+        "pass": 1259
+      },
+      "groups": {
+        "Cc": {
+          "fail": 564,
+          "pass": 12
+        },
+        "header0": {
+          "fail": 11,
+          "pass": 10
+        },
+        "header1": {
+          "fail": 11,
+          "pass": 10
+        },
+        "Cf": {
+          "pass": 1190
+        },
+        "Mn": {
+          "fail": 14413
+        },
+        "Me": {
+          "fail": 91
+        },
+        "Z": {
+          "pass": 36,
+          "fail": 2
+        },
+        "Other_Default_Ignorable_Code_Point": {
+          "fail": 26440
+        },
+        "Variation_Selector": {
+          "fail": 1820
+        },
+        "Hangul_filler": {
+          "fail": 2
+        },
+        "Halfwidth_Hangul_filler": {
+          "fail": 2
+        },
+        "Hangul_choseong_filler": {
+          "fail": 2
+        },
+        "Hangul_jungseong_filler": {
+          "fail": 2
+        },
+        "Braille_blank": {
+          "fail": 2
+        },
+        "Musical_null_notehead": {
+          "fail": 2
+        },
+        "Object_replacement": {
+          "fail": 2
+        },
+        "own_frame": {
+          "pass": 1
+        }
+      },
+      "named": {}
+    },
+    "green": {
+      "leaves": {
+        "pass": 44625
+      },
+      "groups": {
+        "Cc": {
+          "pass": 576
+        },
+        "header0": {
+          "pass": 21
+        },
+        "header1": {
+          "pass": 21
+        },
+        "Cf": {
+          "pass": 1190
+        },
+        "Mn": {
+          "pass": 14413
+        },
+        "Me": {
+          "pass": 91
+        },
+        "Z": {
+          "pass": 38
+        },
+        "Other_Default_Ignorable_Code_Point": {
+          "pass": 26440
+        },
+        "Variation_Selector": {
+          "pass": 1820
+        },
+        "Hangul_filler": {
+          "pass": 2
+        },
+        "Halfwidth_Hangul_filler": {
+          "pass": 2
+        },
+        "Hangul_choseong_filler": {
+          "pass": 2
+        },
+        "Hangul_jungseong_filler": {
+          "pass": 2
+        },
+        "Braille_blank": {
+          "pass": 2
+        },
+        "Musical_null_notehead": {
+          "pass": 2
+        },
+        "Object_replacement": {
+          "pass": 2
+        },
+        "own_frame": {
+          "pass": 1
+        }
+      },
+      "named": {}
+    }
+  },
+  "TestFromLineWholeClassIsDelivered": {
+    "red": {
+      "leaves": {
+        "fail": 108,
+        "pass": 18
+      },
+      "groups": {
+        "merged": {
+          "fail": 54,
+          "pass": 9
+        },
+        "retried_singleton": {
+          "fail": 54,
+          "pass": 9
+        }
+      },
+      "named": {
+        "TestFromLineWholeClassIsDelivered/merged/CGJ_after_bracket": "fail",
+        "TestFromLineWholeClassIsDelivered/merged/VS16_after_bracket": "fail",
+        "TestFromLineWholeClassIsDelivered/merged/VS18_after_bracket": "fail",
+        "TestFromLineWholeClassIsDelivered/merged/Mongolian_FVS1": "fail",
+        "TestFromLineWholeClassIsDelivered/merged/Khmer_inherent_vowel": "fail",
+        "TestFromLineWholeClassIsDelivered/merged/Hangul_filler": "fail",
+        "TestFromLineWholeClassIsDelivered/merged/Halfwidth_Hangul_filler": "fail",
+        "TestFromLineWholeClassIsDelivered/merged/Braille_blank": "fail",
+        "TestFromLineWholeClassIsDelivered/merged/Live_header_CGJ": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/CGJ_after_bracket": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/VS16_after_bracket": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/VS18_after_bracket": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Mongolian_FVS1": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Khmer_inherent_vowel": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Hangul_filler": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Halfwidth_Hangul_filler": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Braille_blank": "fail",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Live_header_CGJ": "fail"
+      }
+    },
+    "green": {
+      "leaves": {
+        "pass": 126
+      },
+      "groups": {
+        "merged": {
+          "pass": 63
+        },
+        "retried_singleton": {
+          "pass": 63
+        }
+      },
+      "named": {
+        "TestFromLineWholeClassIsDelivered/merged/CGJ_after_bracket": "pass",
+        "TestFromLineWholeClassIsDelivered/merged/VS16_after_bracket": "pass",
+        "TestFromLineWholeClassIsDelivered/merged/VS18_after_bracket": "pass",
+        "TestFromLineWholeClassIsDelivered/merged/Mongolian_FVS1": "pass",
+        "TestFromLineWholeClassIsDelivered/merged/Khmer_inherent_vowel": "pass",
+        "TestFromLineWholeClassIsDelivered/merged/Hangul_filler": "pass",
+        "TestFromLineWholeClassIsDelivered/merged/Halfwidth_Hangul_filler": "pass",
+        "TestFromLineWholeClassIsDelivered/merged/Braille_blank": "pass",
+        "TestFromLineWholeClassIsDelivered/merged/Live_header_CGJ": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/CGJ_after_bracket": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/VS16_after_bracket": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/VS18_after_bracket": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Mongolian_FVS1": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Khmer_inherent_vowel": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Hangul_filler": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Halfwidth_Hangul_filler": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Braille_blank": "pass",
+        "TestFromLineWholeClassIsDelivered/retried_singleton/Live_header_CGJ": "pass"
+      }
+    }
+  }
+}

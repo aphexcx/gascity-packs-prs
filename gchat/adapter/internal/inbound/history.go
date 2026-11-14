@@ -95,7 +95,7 @@ func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
 			baseID := id
 			id += "#updated#" + c.Message.LastUpdateTime
 			if l.Changes[id] == nil {
-				if base := l.Changes[baseID]; base != nil && base.Kind == c.Kind && base.Created.Before(ledger.HistoryBound(l.Spaces[c.Space], l.HistoryFloor)) {
+				if base := l.Changes[baseID]; base != nil && base.OriginalKind() == c.Kind && base.Created.Before(ledger.HistoryBound(l.Spaces[c.Space], l.HistoryFloor)) {
 					id = baseID
 				}
 			}
@@ -105,7 +105,20 @@ func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
 	} else if c.Reaction != nil {
 		id = c.Reaction.Name + "#" + strings.TrimPrefix(c.Kind, "reaction.")
 	}
-	if old := l.Changes[id]; old != nil && old.Kind == c.Kind && old.Status != "committed" {
+	if old := l.Changes[id]; old != nil && old.OriginalKind() == c.Kind && old.Status != "committed" {
+		// The queued row retires only this act. Restore unsent members before
+		// removing their owner so the space migration judges each one too.
+		var members []*ledger.ChangeState
+		for _, member := range l.Changes {
+			if member.ID != id && member.MemberOf != "" && l.Delivery(member) == old {
+				members = append(members, member)
+			}
+		}
+		for _, member := range members {
+			member.Event, member.Kind = member.OriginalEvent(), member.OriginalKind()
+			member.MemberEvent, member.MemberKind, member.MemberOf, member.Members = "", "", "", nil
+			member.Status, member.Reason, member.HeldUntil = "intent", "", time.Time{}
+		}
 		delete(l.Changes, id)
 		delete(l.Unresolved, id)
 		if c.Kind == "message.deleted" {
@@ -126,13 +139,20 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 		return nil
 	}
 	var retired []string
-	for id, old := range l.Changes {
-		if old.Space != space || old.Status == "committed" || (!old.Created.IsZero() && !old.Created.Before(bound)) ||
-			(!strings.HasPrefix(old.Kind, "message.") && !strings.HasPrefix(old.Kind, "reaction.")) {
+	// Select before mutating owners: committed members of an undelivered
+	// coalesced turn are still undelivered acts, independent of map order.
+	var retiring []*ledger.ChangeState
+	for _, old := range l.Changes {
+		if old.Space != space || l.Delivery(old).Status == "committed" || (!old.Created.IsZero() && !old.Created.Before(bound)) ||
+			(!strings.HasPrefix(old.OriginalKind(), "message.") && !strings.HasPrefix(old.OriginalKind(), "reaction.")) {
 			continue
 		}
+		retiring = append(retiring, old)
+	}
+	for _, old := range retiring {
+		id, kind := old.ID, old.OriginalKind()
 		var w wire.InboundMessage
-		_ = json.Unmarshal([]byte(old.Event), &w)
+		_ = json.Unmarshal([]byte(old.OriginalEvent()), &w)
 		frame, framed := provenance.FrameOf(w.Text)
 		if !old.ProvenanceFramed || !framed {
 			user := &api.User{Name: w.Actor.ID, DisplayName: w.Actor.DisplayName}
@@ -143,8 +163,11 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 			w.Text = "[catch-up]\n" + w.Text
 		}
 		retained := *old
-		if old.Kind != "message.created" {
-			retained.ID += "#history#" + old.Kind + "#" + old.Created.UTC().Format(time.RFC3339Nano)
+		retained.Kind = kind
+		retained.MemberEvent, retained.MemberKind, retained.MemberOf, retained.Members = "", "", "", nil
+		retained.MemberRevision, retained.HeldUntil = time.Time{}, time.Time{}
+		if kind != "message.created" {
+			retained.ID += "#history#" + kind + "#" + old.Created.UTC().Format(time.RFC3339Nano)
 		}
 		w.ProviderMessageID = retained.ID
 		raw, _ := json.Marshal(w)
@@ -156,7 +179,7 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 			retained.Cause = "history_time_missing"
 			l.Counters["history_time_missing:"+space]++
 			if log != nil {
-				log.Warn("inbound act has no usable history time", "space", space, "kind", old.Kind)
+				log.Warn("inbound act has no usable history time", "space", space, "kind", kind)
 			}
 		}
 		delete(l.Changes, id)
@@ -164,7 +187,7 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 		l.Changes[retained.ID] = &retained
 		l.Counters["history_delivery_retired:"+space]++
 		retired = append(retired, old.Message)
-		if old.Kind == "message.deleted" {
+		if kind == "message.deleted" {
 			if state := l.Messages[old.Message]; state != nil {
 				state.Deleted = false
 			}

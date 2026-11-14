@@ -1481,7 +1481,7 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 		if change == nil {
 			continue
 		}
-		if id == m.Name && m.LastUpdateTime != "" && change.Kind != "message.updated" {
+		if id == m.Name && m.LastUpdateTime != "" && change.OriginalKind() != "message.updated" {
 			return saved, false
 		}
 		if strings.HasPrefix(change.Reason, "space unavailable") {
@@ -1491,7 +1491,7 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 		case "local", "own", "wake_policy", "before_history_floor":
 			return saved, false
 		}
-		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
+		if json.Unmarshal([]byte(change.OriginalEvent()), &saved) == nil && saved.ProviderMessageID == id {
 			if change.CatchUp {
 				saved.Text = strings.TrimPrefix(saved.Text, "[catch-up]\n")
 			}
@@ -1500,8 +1500,14 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			if line, ok := provenance.FrameOf(saved.Text); change.ProvenanceFramed && ok {
 				saved.Text = strings.TrimPrefix(saved.Text, line+"\n")
 			}
-			if change.Kind == "message.updated" && id != m.Name {
-				saved.Text = strings.TrimPrefix(saved.Text, "edited: ")
+			if change.OriginalKind() == "message.updated" && id != m.Name {
+				// An edit folded into its held create was rendered without the
+				// adapter's prefix. Its own member link survives a later merge.
+				create := l.Changes[change.MemberOf]
+				folded := create != nil && create.Message == change.Message && create.OriginalKind() == "message.created"
+				if !folded {
+					saved.Text = strings.TrimPrefix(saved.Text, "edited: ")
+				}
 			}
 			return saved, true
 		}
@@ -1665,11 +1671,16 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		Raised      time.Time `json:"raised,omitzero"`
 		RaisedEnd   time.Time `json:"raised_end,omitzero"`
 		Fragment    bool      `json:"fragment,omitempty"`
+		Members     int       `json:"members,omitempty"`
 	}
 	deliveries := make([]delivery, 0)
-	inFlight, stuck := 0, 0
+	inFlight, stuck, held := 0, 0, 0
 	now := time.Now()
 	for _, change := range l.Changes {
+		if change.Status == "intent" && !change.HeldUntil.IsZero() {
+			held++
+			continue
+		}
 		waiting := false
 		switch change.Status {
 		case "intent", "pending":
@@ -1681,6 +1692,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		}
 		row := delivery{ID: change.ID, Status: change.Status, Reason: change.Reason, ReceiptID: change.ReceiptID, Created: change.Created,
 			Cause: change.Cause, Attempts: change.Attempts, NextAttempt: change.NextAttempt, Raised: change.Raised, RaisedEnd: change.RaisedEnd, Fragment: change.Fragment}
+		row.Members = len(change.Members)
 		if !change.Created.IsZero() {
 			age := max(now.Sub(change.Created), 0)
 			seconds := int64(age / time.Second)
@@ -1700,6 +1712,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
 	status["pending"], status["deliveries"], status["stuck"] = inFlight, deliveries, stuck
+	cfg := s.configuration()
+	status["coalesce_window"], status["held_acts"] = cfg.CoalesceWindow().String(), held
 	status["never_silent"] = s.notices().Status()
 	if !l.HistoryFloor.IsZero() {
 		status["history_floor"] = l.HistoryFloor
@@ -1735,6 +1749,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		problem(w, 503, errors.New("inbound processor is initializing"))
 		return
 	}
+	var noticeIDs []string
 	err := s.update(r.Context(), func(l *ledger.Ledger) error {
 		c := l.Unresolved[v.ID]
 		if c == nil {
@@ -1761,6 +1776,12 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		}
 		c.NoticeResolved = true
 		l.Changes[v.ID] = c
+		noticeIDs = inbound.NoticeDeliveryIDs(l, v.ID)
+		for _, id := range noticeIDs {
+			if member := l.Changes[id]; member != nil {
+				member.NoticeResolved = true
+			}
+		}
 		delete(l.Unresolved, v.ID)
 		return nil
 	})
@@ -1772,6 +1793,14 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	if err := s.notices().Forget(v.ID); err != nil {
 		problem(w, 500, err)
 		return
+	}
+	for _, id := range noticeIDs {
+		if id != v.ID {
+			if err := s.notices().ForgetTracked(id); err != nil {
+				problem(w, 500, err)
+				return
+			}
+		}
 	}
 	if v.Action == "replay" {
 		if err := poll(r.Context()); err != nil {

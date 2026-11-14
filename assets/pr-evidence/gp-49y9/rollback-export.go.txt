@@ -1,0 +1,44 @@
+package inbound
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+// Export through the current writer. Frozen/posted snapshots differ only at
+// the pre-POST checkpoint; the regular crash tests exercise those save hooks.
+func TestExportRollbackLedgers(t *testing.T) {
+	for _, state := range []string{"held", "delivered", "pending", "frozen", "posted"} {
+		t.Run(state, func(t *testing.T) {
+			f := windowSetup(t, "8s")
+			if state == "pending" {
+				f.gc.NextDelivery = "pending"
+			}
+			for i := 0; i < 3; i++ {
+				f.send(t, i, "message.created", nil)
+			}
+			if state != "held" {
+				f.advance(t, 8*time.Second)
+				f.turns(t, 1)
+			}
+			if state == "frozen" || state == "posted" {
+				for _, c := range f.l.Changes {
+					if len(c.Members) == 0 {
+						continue
+					}
+					c.Status, c.Reason, c.ReceiptID = "intent", "", ""
+					c.Attempts = 0
+					c.Posted = time.Time{}
+					if state == "posted" {
+						c.Attempts, c.Posted = 1, f.now
+					}
+				}
+			}
+			if err := f.l.Save(filepath.Join(os.Getenv("GCHAT_ROLLBACK_FIXTURES"), state+".json")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

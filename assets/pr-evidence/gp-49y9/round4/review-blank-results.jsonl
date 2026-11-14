@@ -1,0 +1,5 @@
+{"requested_font": "Helvetica", "actual_font": "Helvetica", "range": "U+0000..U+FFFF", "present_candidate_glyphs": 1903, "outside_candidates": []}
+{"requested_font": "Times", "actual_font": "Times-Roman", "range": "U+0000..U+FFFF", "present_candidate_glyphs": 1234, "outside_candidates": []}
+{"requested_font": "Apple Symbols", "actual_font": "AppleSymbols", "range": "U+0000..U+FFFF", "present_candidate_glyphs": 2794, "outside_candidates": []}
+{"requested_font": "Arial Unicode MS", "actual_font": "ArialUnicodeMS", "range": "U+0000..U+FFFF", "present_candidate_glyphs": 38539, "outside_candidates": []}
+{"requested_font": "Apple Braille", "actual_font": "AppleBraille", "range": "U+0000..U+FFFF", "present_candidate_glyphs": 255, "outside_candidates": []}

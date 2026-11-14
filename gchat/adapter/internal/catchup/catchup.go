@@ -475,6 +475,13 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 	}); err != nil {
 		return 0, err
 	}
+	if r.opts.Config.CoalesceWindow() > 0 {
+		n, err := r.prepareMerged(ctx, name, budget)
+		delivered += n
+		if err != nil {
+			return delivered, err
+		}
+	}
 	index := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -552,7 +559,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		}
 		terminal := true
 		for _, c := range after.Changes {
-			if related(item.Change, c) && !settled(c) {
+			if related(item.Change, c) && !settled(after.Delivery(c)) {
 				terminal = false
 				break
 			}
@@ -638,7 +645,7 @@ func settled(c *ledger.ChangeState) bool {
 // holds its recovered records; unrelated live messages never hold the cursor.
 func related(c puller.Change, state *ledger.ChangeState) bool {
 	if c.Message != nil {
-		return state.Message == c.Message.Name && strings.HasPrefix(state.Kind, "message.")
+		return state.Message == c.Message.Name && strings.HasPrefix(state.OriginalKind(), "message.")
 	}
 	if c.Reaction != nil {
 		return state.ID == c.Reaction.Name+"#"+strings.TrimPrefix(c.Kind, "reaction.")

@@ -1,0 +1,755 @@
+{
+  "current": {
+    "log": "current.jsonl",
+    "counts": {
+      "fail": 33,
+      "pass": 2
+    },
+    "rows": {
+      "TestWithdrawalReaderCompatibility": {
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_answer_lost": {
+        "observations": [
+          "reader row=folded_answer_lost unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_edited": {
+        "observations": [
+          "reader row=folded_edited unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_exhausted": {
+        "observations": [
+          "reader row=folded_exhausted unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_held": {
+        "observations": [
+          "reader row=folded_held unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_interrupted": {
+        "observations": [
+          "reader row=folded_interrupted unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_lookup_deadline": {
+        "observations": [
+          "reader row=folded_lookup_deadline unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_malformed": {
+        "observations": [
+          "reader row=folded_malformed unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_no_receipt": {
+        "observations": [
+          "reader row=folded_no_receipt unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_pending": {
+        "observations": [
+          "reader row=folded_pending unresolved=1 replay_posts=0 later_posts=1"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_pending_deadline": {
+        "observations": [
+          "reader row=folded_pending_deadline unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_receipt_unknown": {
+        "observations": [
+          "reader row=folded_receipt_unknown unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_redirect": {
+        "observations": [
+          "reader row=folded_redirect unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_rejected": {
+        "observations": [
+          "reader row=folded_rejected unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_retry_bound": {
+        "observations": [
+          "reader row=folded_retry_bound unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_unconcluded": {
+        "observations": [
+          "reader row=folded_unconcluded unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_unknown_status": {
+        "observations": [
+          "reader row=folded_unknown_status unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_answer_lost": {
+        "observations": [
+          "reader row=merged_answer_lost unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_exhausted": {
+        "observations": [
+          "reader row=merged_exhausted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_held": {
+        "observations": [
+          "reader row=merged_held unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_interrupted": {
+        "observations": [
+          "reader row=merged_interrupted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_lookup_deadline": {
+        "observations": [
+          "reader row=merged_lookup_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_malformed": {
+        "observations": [
+          "reader row=merged_malformed unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_member_edited": {
+        "observations": [
+          "reader row=merged_member_edited unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_no_receipt": {
+        "observations": [
+          "reader row=merged_no_receipt unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_owner_deleted": {
+        "observations": [
+          "reader row=merged_owner_deleted unresolved=1 replay_posts=1 later_posts=1"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_pending": {
+        "observations": [
+          "reader row=merged_pending unresolved=1 replay_posts=0 later_posts=2"
+        ],
+        "pass": 1,
+        "verdict": "pass"
+      },
+      "TestWithdrawalReaderCompatibility/merged_pending_deadline": {
+        "observations": [
+          "reader row=merged_pending_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_receipt_unknown": {
+        "observations": [
+          "reader row=merged_receipt_unknown unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_redirect": {
+        "observations": [
+          "reader row=merged_redirect unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_rejected": {
+        "observations": [
+          "reader row=merged_rejected unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_retry_bound": {
+        "observations": [
+          "reader row=merged_retry_bound unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_unconcluded": {
+        "observations": [
+          "reader row=merged_unconcluded unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_unknown_status": {
+        "observations": [
+          "reader row=merged_unknown_status unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/single": {
+        "observations": [
+          "reader row=single unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "pass": 1,
+        "verdict": "pass"
+      }
+    }
+  },
+  "released": {
+    "log": "released.jsonl",
+    "counts": {
+      "fail": 34,
+      "pass": 1
+    },
+    "rows": {
+      "TestWithdrawalReaderCompatibility": {
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_answer_lost": {
+        "observations": [
+          "reader row=folded_answer_lost unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_edited": {
+        "observations": [
+          "reader row=folded_edited unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_exhausted": {
+        "observations": [
+          "reader row=folded_exhausted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_held": {
+        "observations": [
+          "reader row=folded_held unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_interrupted": {
+        "observations": [
+          "reader row=folded_interrupted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_lookup_deadline": {
+        "observations": [
+          "reader row=folded_lookup_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_malformed": {
+        "observations": [
+          "reader row=folded_malformed unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_no_receipt": {
+        "observations": [
+          "reader row=folded_no_receipt unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_pending": {
+        "observations": [
+          "reader row=folded_pending unresolved=0 replay_posts=0 later_posts=2"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_pending_deadline": {
+        "observations": [
+          "reader row=folded_pending_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_receipt_unknown": {
+        "observations": [
+          "reader row=folded_receipt_unknown unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_redirect": {
+        "observations": [
+          "reader row=folded_redirect unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_rejected": {
+        "observations": [
+          "reader row=folded_rejected unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_retry_bound": {
+        "observations": [
+          "reader row=folded_retry_bound unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_unconcluded": {
+        "observations": [
+          "reader row=folded_unconcluded unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_unknown_status": {
+        "observations": [
+          "reader row=folded_unknown_status unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_answer_lost": {
+        "observations": [
+          "reader row=merged_answer_lost unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_exhausted": {
+        "observations": [
+          "reader row=merged_exhausted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_held": {
+        "observations": [
+          "reader row=merged_held unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_interrupted": {
+        "observations": [
+          "reader row=merged_interrupted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_lookup_deadline": {
+        "observations": [
+          "reader row=merged_lookup_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_malformed": {
+        "observations": [
+          "reader row=merged_malformed unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_member_edited": {
+        "observations": [
+          "reader row=merged_member_edited unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_no_receipt": {
+        "observations": [
+          "reader row=merged_no_receipt unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_owner_deleted": {
+        "observations": [
+          "reader row=merged_owner_deleted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_pending": {
+        "observations": [
+          "reader row=merged_pending unresolved=0 replay_posts=0 later_posts=2"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_pending_deadline": {
+        "observations": [
+          "reader row=merged_pending_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_receipt_unknown": {
+        "observations": [
+          "reader row=merged_receipt_unknown unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_redirect": {
+        "observations": [
+          "reader row=merged_redirect unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_rejected": {
+        "observations": [
+          "reader row=merged_rejected unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_retry_bound": {
+        "observations": [
+          "reader row=merged_retry_bound unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_unconcluded": {
+        "observations": [
+          "reader row=merged_unconcluded unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_unknown_status": {
+        "observations": [
+          "reader row=merged_unknown_status unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/single": {
+        "observations": [
+          "reader row=single unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "pass": 1,
+        "verdict": "pass"
+      }
+    }
+  },
+  "main": {
+    "log": "main.jsonl",
+    "counts": {
+      "fail": 34,
+      "pass": 1
+    },
+    "rows": {
+      "TestWithdrawalReaderCompatibility": {
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_answer_lost": {
+        "observations": [
+          "reader row=folded_answer_lost unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_edited": {
+        "observations": [
+          "reader row=folded_edited unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_exhausted": {
+        "observations": [
+          "reader row=folded_exhausted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_held": {
+        "observations": [
+          "reader row=folded_held unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_interrupted": {
+        "observations": [
+          "reader row=folded_interrupted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_lookup_deadline": {
+        "observations": [
+          "reader row=folded_lookup_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_malformed": {
+        "observations": [
+          "reader row=folded_malformed unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_no_receipt": {
+        "observations": [
+          "reader row=folded_no_receipt unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_pending": {
+        "observations": [
+          "reader row=folded_pending unresolved=0 replay_posts=0 later_posts=2"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_pending_deadline": {
+        "observations": [
+          "reader row=folded_pending_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_receipt_unknown": {
+        "observations": [
+          "reader row=folded_receipt_unknown unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_redirect": {
+        "observations": [
+          "reader row=folded_redirect unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_rejected": {
+        "observations": [
+          "reader row=folded_rejected unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_retry_bound": {
+        "observations": [
+          "reader row=folded_retry_bound unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_unconcluded": {
+        "observations": [
+          "reader row=folded_unconcluded unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/folded_unknown_status": {
+        "observations": [
+          "reader row=folded_unknown_status unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_answer_lost": {
+        "observations": [
+          "reader row=merged_answer_lost unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_exhausted": {
+        "observations": [
+          "reader row=merged_exhausted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_held": {
+        "observations": [
+          "reader row=merged_held unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_interrupted": {
+        "observations": [
+          "reader row=merged_interrupted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_lookup_deadline": {
+        "observations": [
+          "reader row=merged_lookup_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_malformed": {
+        "observations": [
+          "reader row=merged_malformed unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_member_edited": {
+        "observations": [
+          "reader row=merged_member_edited unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_no_receipt": {
+        "observations": [
+          "reader row=merged_no_receipt unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_owner_deleted": {
+        "observations": [
+          "reader row=merged_owner_deleted unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_pending": {
+        "observations": [
+          "reader row=merged_pending unresolved=0 replay_posts=0 later_posts=2"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_pending_deadline": {
+        "observations": [
+          "reader row=merged_pending_deadline unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_receipt_unknown": {
+        "observations": [
+          "reader row=merged_receipt_unknown unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_redirect": {
+        "observations": [
+          "reader row=merged_redirect unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_rejected": {
+        "observations": [
+          "reader row=merged_rejected unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_retry_bound": {
+        "observations": [
+          "reader row=merged_retry_bound unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_unconcluded": {
+        "observations": [
+          "reader row=merged_unconcluded unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/merged_unknown_status": {
+        "observations": [
+          "reader row=merged_unknown_status unresolved=1 replay_posts=2 later_posts=0"
+        ],
+        "fail": 1,
+        "verdict": "fail"
+      },
+      "TestWithdrawalReaderCompatibility/single": {
+        "observations": [
+          "reader row=single unresolved=1 replay_posts=1 later_posts=0"
+        ],
+        "pass": 1,
+        "verdict": "pass"
+      }
+    }
+  }
+}

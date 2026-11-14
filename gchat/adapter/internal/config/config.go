@@ -103,6 +103,7 @@ type Settings struct {
 	Media             Media      `toml:"media,omitempty"`               // as decoded; effective values are in Endpoints
 	CatchupBudget     int        `toml:"catchup_budget,omitzero"`       // per space per pass, default 50
 	FirstStartHistory *string    `toml:"first_start_history,omitempty"` // optional history window, at most one week
+	CoalesceWindow    *string    `toml:"coalesce_window,omitempty"`
 }
 
 type Config struct {
@@ -339,6 +340,15 @@ func (c *Config) CatchupBudget() int {
 	return 50
 }
 
+// CoalesceWindow is validated at load and refreshed with other settings.
+func (c *Config) CoalesceWindow() time.Duration {
+	if c.Settings.CoalesceWindow == nil {
+		return 8 * time.Second
+	}
+	d, _ := time.ParseDuration(*c.Settings.CoalesceWindow)
+	return d
+}
+
 // FirstStartWindow is used only when creating or moving a history floor.
 // Load validates the duration before a Config is used by the service or CLI.
 func (c *Config) FirstStartWindow() time.Duration {
@@ -413,6 +423,15 @@ func (c *Config) validateSettings(mediaMaxBytes int64, mediaMaxAttachments int, 
 		}
 		if d < 0 || d > 168*time.Hour {
 			return fmt.Errorf("first_start_history must be between 0s and 168h")
+		}
+	}
+	if c.Settings.CoalesceWindow != nil {
+		d, err := time.ParseDuration(*c.Settings.CoalesceWindow)
+		if err != nil {
+			return fmt.Errorf("coalesce_window must be a Go duration: %w", err)
+		}
+		if d < 0 || d > time.Minute {
+			return fmt.Errorf("coalesce_window must be between 0s and 60s")
 		}
 	}
 	return nil

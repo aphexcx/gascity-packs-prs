@@ -1,0 +1,36 @@
+[
+  {
+    "name": "gofmt",
+    "command": "gofmt -l .",
+    "exit": 0
+  },
+  {
+    "name": "vet",
+    "command": "go vet ./...",
+    "exit": 0
+  },
+  {
+    "name": "shell-syntax",
+    "command": "sh -n gchat/commands/status.sh",
+    "exit": 0
+  },
+  {
+    "name": "shellcheck",
+    "command": "shellcheck -x gchat/commands/status.sh",
+    "exit": 0
+  },
+  {
+    "name": "go-version",
+    "command": "go version",
+    "exit": 0
+  },
+  {
+    "name": "python-version",
+    "command": "python3 --version",
+    "exit": 0
+  },
+  {
+    "name": "staticcheck",
+    "status": "not installed; not required"
+  }
+]

@@ -109,6 +109,9 @@ func (p *Processor) raise(ctx context.Context) {
 //     mailed only to end a waiting mail of this life, which said it would
 //     still arrive. An unresolved row from before causes is never mailed.
 func (p *Processor) mailDue(l *ledger.Ledger, c *ledger.ChangeState, now time.Time) bool {
+	if isHeld(c) {
+		return false
+	}
 	switch c.Status {
 	case "intent", "pending":
 		if !c.Raised.IsZero() || now.Sub(WaitingSince(c)) < p.opts.StuckAfter {

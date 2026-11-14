@@ -1,0 +1,490 @@
+{
+  "red": {
+    "TestWithdrawalReachesEveryStoredCopy": {
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_interrupted": {
+      "observations": [
+        "ROW merged_interrupted prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_answer_lost": {
+      "observations": [
+        "ROW merged_answer_lost prior=unresolved reason=\"POST response unavailable; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_redirect": {
+      "observations": [
+        "ROW merged_redirect prior=unresolved reason=\"gc answered HTTP 303; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_rejected": {
+      "observations": [
+        "ROW merged_rejected prior=unresolved reason=\"gc rejected the POST: HTTP 403\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_exhausted": {
+      "observations": [
+        "ROW merged_exhausted prior=unresolved reason=\"delivery retries exhausted\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_retry_bound": {
+      "observations": [
+        "ROW merged_retry_bound prior=unresolved reason=\"not delivered within the retry bound\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_malformed": {
+      "observations": [
+        "ROW merged_malformed prior=unresolved reason=\"stored turn is malformed\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_lookup_deadline": {
+      "observations": [
+        "ROW merged_lookup_deadline prior=unresolved reason=\"receipt lookup failed beyond deadline\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_pending_deadline": {
+      "observations": [
+        "ROW merged_pending_deadline prior=unresolved reason=\"receipt pending beyond deadline\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_receipt_unknown": {
+      "observations": [
+        "ROW merged_receipt_unknown prior=unresolved reason=\"receipt unavailable or unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_held": {
+      "observations": [
+        "ROW merged_held prior=unresolved reason=\"gc holds the delivery; operator attention\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_unconcluded": {
+      "observations": [
+        "ROW merged_unconcluded prior=unresolved reason=\"receipt concluded with pending delivery\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_no_receipt": {
+      "observations": [
+        "ROW merged_no_receipt prior=unresolved reason=\"pending delivery has no receipt\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_unknown_status": {
+      "observations": [
+        "ROW merged_unknown_status prior=unresolved reason=\"unrecognized delivery status\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_pending": {
+      "observations": [
+        "ROW merged_pending prior=pending reason=\"\" owner_event_empty=false replay_copy_empty=true later_posts=2"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_interrupted": {
+      "observations": [
+        "ROW folded_interrupted prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_answer_lost": {
+      "observations": [
+        "ROW folded_answer_lost prior=unresolved reason=\"POST response unavailable; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_redirect": {
+      "observations": [
+        "ROW folded_redirect prior=unresolved reason=\"gc answered HTTP 303; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_rejected": {
+      "observations": [
+        "ROW folded_rejected prior=unresolved reason=\"gc rejected the POST: HTTP 403\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_exhausted": {
+      "observations": [
+        "ROW folded_exhausted prior=unresolved reason=\"delivery retries exhausted\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_retry_bound": {
+      "observations": [
+        "ROW folded_retry_bound prior=unresolved reason=\"not delivered within the retry bound\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_malformed": {
+      "observations": [
+        "ROW folded_malformed prior=unresolved reason=\"stored turn is malformed\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_lookup_deadline": {
+      "observations": [
+        "ROW folded_lookup_deadline prior=unresolved reason=\"receipt lookup failed beyond deadline\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_pending_deadline": {
+      "observations": [
+        "ROW folded_pending_deadline prior=unresolved reason=\"receipt pending beyond deadline\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_receipt_unknown": {
+      "observations": [
+        "ROW folded_receipt_unknown prior=unresolved reason=\"receipt unavailable or unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_held": {
+      "observations": [
+        "ROW folded_held prior=unresolved reason=\"gc holds the delivery; operator attention\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_unconcluded": {
+      "observations": [
+        "ROW folded_unconcluded prior=unresolved reason=\"receipt concluded with pending delivery\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_no_receipt": {
+      "observations": [
+        "ROW folded_no_receipt prior=unresolved reason=\"pending delivery has no receipt\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_unknown_status": {
+      "observations": [
+        "ROW folded_unknown_status prior=unresolved reason=\"unrecognized delivery status\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_pending": {
+      "observations": [
+        "ROW folded_pending prior=pending reason=\"\" owner_event_empty=false replay_copy_empty=true later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_owner_deleted": {
+      "observations": [
+        "ROW merged_owner_deleted prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_member_edited": {
+      "observations": [
+        "ROW merged_member_edited prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_edited": {
+      "observations": [
+        "ROW folded_edited prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "fail": 1,
+      "verdict": "fail"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/single": {
+      "observations": [
+        "ROW single prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    }
+  },
+  "green": {
+    "TestWithdrawalReachesEveryStoredCopy": {
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_interrupted": {
+      "observations": [
+        "ROW merged_interrupted prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_answer_lost": {
+      "observations": [
+        "ROW merged_answer_lost prior=unresolved reason=\"POST response unavailable; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_redirect": {
+      "observations": [
+        "ROW merged_redirect prior=unresolved reason=\"gc answered HTTP 303; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_rejected": {
+      "observations": [
+        "ROW merged_rejected prior=unresolved reason=\"gc rejected the POST: HTTP 403\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_exhausted": {
+      "observations": [
+        "ROW merged_exhausted prior=unresolved reason=\"delivery retries exhausted\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_retry_bound": {
+      "observations": [
+        "ROW merged_retry_bound prior=unresolved reason=\"not delivered within the retry bound\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_malformed": {
+      "observations": [
+        "ROW merged_malformed prior=unresolved reason=\"stored turn is malformed\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_lookup_deadline": {
+      "observations": [
+        "ROW merged_lookup_deadline prior=unresolved reason=\"receipt lookup failed beyond deadline\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_pending_deadline": {
+      "observations": [
+        "ROW merged_pending_deadline prior=unresolved reason=\"receipt pending beyond deadline\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_receipt_unknown": {
+      "observations": [
+        "ROW merged_receipt_unknown prior=unresolved reason=\"receipt unavailable or unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_held": {
+      "observations": [
+        "ROW merged_held prior=unresolved reason=\"gc holds the delivery; operator attention\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_unconcluded": {
+      "observations": [
+        "ROW merged_unconcluded prior=unresolved reason=\"receipt concluded with pending delivery\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_no_receipt": {
+      "observations": [
+        "ROW merged_no_receipt prior=unresolved reason=\"pending delivery has no receipt\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_unknown_status": {
+      "observations": [
+        "ROW merged_unknown_status prior=unresolved reason=\"unrecognized delivery status\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_pending": {
+      "observations": [
+        "ROW merged_pending prior=pending reason=\"\" owner_event_empty=true replay_copy_empty=true later_posts=2"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_interrupted": {
+      "observations": [
+        "ROW folded_interrupted prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_answer_lost": {
+      "observations": [
+        "ROW folded_answer_lost prior=unresolved reason=\"POST response unavailable; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_redirect": {
+      "observations": [
+        "ROW folded_redirect prior=unresolved reason=\"gc answered HTTP 303; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_rejected": {
+      "observations": [
+        "ROW folded_rejected prior=unresolved reason=\"gc rejected the POST: HTTP 403\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_exhausted": {
+      "observations": [
+        "ROW folded_exhausted prior=unresolved reason=\"delivery retries exhausted\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_retry_bound": {
+      "observations": [
+        "ROW folded_retry_bound prior=unresolved reason=\"not delivered within the retry bound\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_malformed": {
+      "observations": [
+        "ROW folded_malformed prior=unresolved reason=\"stored turn is malformed\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_lookup_deadline": {
+      "observations": [
+        "ROW folded_lookup_deadline prior=unresolved reason=\"receipt lookup failed beyond deadline\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_pending_deadline": {
+      "observations": [
+        "ROW folded_pending_deadline prior=unresolved reason=\"receipt pending beyond deadline\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_receipt_unknown": {
+      "observations": [
+        "ROW folded_receipt_unknown prior=unresolved reason=\"receipt unavailable or unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_held": {
+      "observations": [
+        "ROW folded_held prior=unresolved reason=\"gc holds the delivery; operator attention\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_unconcluded": {
+      "observations": [
+        "ROW folded_unconcluded prior=unresolved reason=\"receipt concluded with pending delivery\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_no_receipt": {
+      "observations": [
+        "ROW folded_no_receipt prior=unresolved reason=\"pending delivery has no receipt\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_unknown_status": {
+      "observations": [
+        "ROW folded_unknown_status prior=unresolved reason=\"unrecognized delivery status\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_pending": {
+      "observations": [
+        "ROW folded_pending prior=pending reason=\"\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_owner_deleted": {
+      "observations": [
+        "ROW merged_owner_deleted prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/merged_member_edited": {
+      "observations": [
+        "ROW merged_member_edited prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/folded_edited": {
+      "observations": [
+        "ROW folded_edited prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=true replay_copy_empty=true later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    },
+    "TestWithdrawalReachesEveryStoredCopy/single": {
+      "observations": [
+        "ROW single prior=unresolved reason=\"interrupted POST; delivery unknown\" owner_event_empty=false replay_copy_empty=false later_posts=1"
+      ],
+      "pass": 1,
+      "verdict": "pass"
+    }
+  }
+}

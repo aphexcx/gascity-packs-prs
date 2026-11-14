@@ -202,6 +202,13 @@ expires: a path the agent was handed keeps working until someone removes it,
 so a full store needs a decision, not a background sweep. The root-level `catchup_budget` setting defaults to
 50 records per space per pass; it is a budget, not a truncation limit.
 
+The root-level `coalesce_window` setting is a Go duration string from `"0s"`
+to `"60s"`, default `"8s"`. Room chatter waits this long from the first act,
+then arrives as one turn. `coalesce_window = "0s"` restores individual turns
+with their original text and ids. A validated settings replacement reloads it
+with the other settings. Remove this key before rolling back to 0.5.0,
+whose settings loader refuses unknown keys, as with `first_start_history` below.
+
 The root-level `first_start_history` setting optionally includes a short history
 window on first start or reset. It is a Go duration string, from `"0s"` to
 `"168h"` inclusive; write `"24h"` for a day, not `"1d"`. Omit it to start at
@@ -339,6 +346,55 @@ including quota errors, retry with backoff and notify after three consecutive
 failed reconciliation attempts; isolated transient failures stay quiet. Status
 polls do not count as attempts. Notices deduplicate by cause until subscription
 recovery, which clears the failure count and notice deduplication.
+
+### Room message windows
+
+After a hosted box updates this pack and restarts its adapter, room chatter
+arrives up to eight seconds later, with a burst in one turn. Direct messages,
+mentions of the mayor and replies in a thread she wrote in arrive as fast as
+before. A mention or thread reply takes that room's held messages along in
+one turn. Reactions wait out the window, including reactions in DMs. After
+downtime, missed messages arrive in merged turns. A box that sets nothing
+changes behavior when its adapter updates: the default is on at eight
+seconds. Restart the adapter after updating; `coalesce_window = "0s"` turns
+coalescing off.
+
+Each space has a fixed window, ending early at 50 acts or before adding a
+message would exceed 32,000 bytes. One oversized message goes alone. Each
+message keeps its own sender, class and reply id. Edits inside a window replace
+unseen text, and messages created then deleted are omitted. Status shows the
+window and held act count; held acts are not stuck deliveries.
+
+The ledger saves held messages before acknowledging them and saves a merged
+turn before posting it. A stop leaves them there; the next start delivers them
+before that space's catch-up. A merged turn has one receipt, retry record and
+unresolved id, with its member count in status. Resolve that id once to replay
+the saved current text or accept every member. Before a retry, deleted members
+are removed and edited members use their current text. A surviving owner keeps
+the key; when the owner was deleted, the newest survivor owns the replacement,
+including the turn's attempt count, fragment marker and retry schedule.
+Changing the owner never resets the fragment retry bound. An interrupted intent
+with an unknown POST outcome becomes an unresolved surviving turn; inspect the
+delivery before accepting it or replaying its sanitized payload. If a turn was
+already unresolved when the withdrawal arrived, its frozen payload is cleared
+and only acceptance is available. An owner change never makes an unknown
+outcome automatically sendable.
+The deleted owner's retired record has no replayable payload and can be accepted.
+The edit or deletion follows that delivery. When gc had recorded a turn before
+it refused it, gc's saved transcript keeps that first text; the adapter sends
+the current text and then the withdrawal; a gc change is needed for the saved
+row itself. History reads still use each message's own text. Any pending or
+already unresolved merged or folded copy containing withdrawn text loses its
+replayable payload, even if it stopped for another reason or coalescing is now
+off. Its prior reason and cause remain intact. Pending receipts are still
+polled; a failed receipt may rebuild a replacement with current survivors.
+Replaying an unresolved record whose payload was cleared returns
+`stored turn is malformed; cannot replay` (HTTP 400), preserves its reason,
+and makes no POST, including after a rollback to 0.5.0. Use `--accept` to settle
+that record. A rollback delivers held messages individually and keeps
+delivered groups completed. A frozen group in flight remains one delivery on
+the older reader: pending receipts are polled, and an interrupted POST becomes
+one unresolved record, requiring the usual explicit replay or acceptance.
 
 ### Delivery uncertainty
 

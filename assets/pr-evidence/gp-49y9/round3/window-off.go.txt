@@ -1,0 +1,92 @@
+package inbound
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/wire"
+	api "google.golang.org/api/chat/v1"
+)
+
+// Same scripted acts through the parent's processor and the head's with the
+// window "0s" (the shared fixture's setting at the head). Output is compared outside.
+func TestProbeDiffOffIsParent(t *testing.T) {
+	out := os.Getenv("PROBE_OUT")
+	if out == "" {
+		t.Skip("PROBE_OUT unset")
+	}
+	f := setup(t)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	f.opts.Now = func() time.Time { return now }
+	f.opts.Save = func(*ledger.Ledger) error { return nil }
+	var err error
+	if f.p, err = New(f.opts); err != nil {
+		t.Fatal(err)
+	}
+	step := 0
+	do := func(kind string, m *api.Message, catchUp bool) {
+		step++
+		now = now.Add(time.Second)
+		c := puller.Change{Kind: kind, Message: m, Space: m.Space.Name, PublishTime: now, EventTime: now}
+		if catchUp {
+			o, err := f.p.HandleChange(context.Background(), c)
+			t.Logf("step %d catch-up %s: %v %v", step, kind, o, err)
+			return
+		}
+		o, err := f.p.Handle(context.Background(), &puller.Event{PubSubID: fmt.Sprint("ev", step), Changes: []puller.Change{c}})
+		t.Logf("step %d %s: %v %v", step, kind, o, err)
+	}
+	mk := func(n int, text string) *api.Message {
+		m := message()
+		m.Name = fmt.Sprintf("%s/messages/m%03d", space, n)
+		m.Text = text
+		m.CreateTime = now.Add(time.Second).Format(time.RFC3339Nano)
+		m.Thread.Name = fmt.Sprintf("%s/threads/t%03d", space, n)
+		return m
+	}
+	m1 := mk(1, "one")
+	do("message.created", m1, false)
+	m2 := mk(2, "two")
+	m2.Attachment = []*api.Attachment{{Name: m2.Name + "/attachments/notes", ContentName: "notes.txt", ContentType: "text/plain", Source: "DRIVE_FILE", DriveDataRef: &api.DriveDataRef{DriveFileId: "invented"}}}
+	do("message.created", m2, false)
+	m1.Text, m1.LastUpdateTime = "one edited", now.Add(time.Second).Format(time.RFC3339Nano)
+	do("message.updated", m1, false)
+	do("message.deleted", &api.Message{Name: m2.Name, Space: m2.Space}, false)
+	d := mk(3, "dm words")
+	d.Space = &api.Space{Name: "spaces/dmspace", SpaceType: "DIRECT_MESSAGE"}
+	d.Name = "spaces/dmspace/messages/d1"
+	do("message.created", d, false)
+	m4 := mk(4, "mention")
+	m4.Annotations = []*api.Annotation{{Type: "USER_MENTION", UserMention: &api.UserMentionMetadata{User: &api.User{Name: identity}}}}
+	do("message.created", m4, false)
+	f.gc.Script = []wire.Delivery{{Status: "failed"}, {Status: "delivered"}}
+	do("message.created", mk(5, "retried"), false)
+	f.l.Messages[space+"/messages/mine"] = &ledger.MessageState{Mine: true}
+	for _, action := range []string{"created", "deleted"} {
+		now = now.Add(time.Second)
+		o, err := f.p.Handle(context.Background(), &puller.Event{PubSubID: "r" + action, Changes: []puller.Change{{Kind: "reaction." + action, Space: space, PublishTime: now, EventTime: now,
+			Reaction: &api.Reaction{Name: space + "/messages/mine/reactions/r1", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}}}})
+		t.Logf("reaction %s: %v %v", action, o, err)
+	}
+	m6 := mk(6, "caught up")
+	do("message.created", m6, true)
+	m6.Text, m6.LastUpdateTime = "caught up, edited", now.Add(time.Second).Format(time.RFC3339Nano)
+	do("message.updated", m6, true)
+	do("message.created", m1, false) // redelivery under a new transport id
+	f.gc.NextDelivery = "pending"
+	do("message.created", mk(7, "pending one"), false)
+	now = now.Add(5 * time.Second)
+	t.Logf("poll: %v", f.p.Poll(context.Background()))
+	posts, _ := json.MarshalIndent(f.gc.Inbound(), "", " ")
+	led, _ := json.MarshalIndent(f.l, "", " ")
+	if err := os.WriteFile(out, append(append(posts, '\n'), led...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("posts=%d", len(f.gc.Inbound()))
+}

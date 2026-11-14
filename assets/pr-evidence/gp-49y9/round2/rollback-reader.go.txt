@@ -1,0 +1,139 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/inbound"
+	"gchat-adapter/internal/ledger"
+)
+
+// Compiled against each reader's actual loader, resolve endpoint and processor.
+func TestCoalescedLedgerCompatibility(t *testing.T) {
+	for _, state := range []string{"owner_deleted", "member_deleted", "member_edited", "empty_replayed", "folded_deleted_replayed", "folded_edited_replayed", "edit_owner_replayed"} {
+		t.Run(state, func(t *testing.T) {
+			f := setup(t)
+			loaded, err := ledger.Load(filepath.Join(os.Getenv("GCHAT_ROLLBACK_FIXTURES"), state+".json"), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			*f.l = *loaded
+			f.mu.Unlock()
+			p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: f.l, LedgerMu: f.mu,
+				LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: f.options.GC,
+				IdentityUserID: "users/123", Now: func() time.Time { return time.Date(2026, 11, 1, 10, 0, 30, 0, time.UTC) }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetPoll(p.Poll)
+			withdrawn := make(map[string]string)
+			for id, c := range f.l.Unresolved {
+				withdrawn[id] = c.Reason
+				if c.Reason != "message deleted or superseded before retry" {
+					t.Fatalf("unexpected retirement reason: %s", c.Reason)
+				}
+			}
+			for id := range withdrawn {
+				code, body, _ := f.call(t, "/resolve", map[string]string{"id": id, "action": "replay"})
+				if code != 400 || !strings.Contains(string(body), "stored turn is malformed; cannot replay") {
+					t.Errorf("withdrawn replay: code=%d body=%s", code, body)
+				}
+				if len(f.gc.Inbound()) != 0 {
+					t.Error("withdrawn replay caused a POST")
+				}
+			}
+			checkRetirement := func() {
+				t.Helper()
+				if len(f.l.Unresolved) != len(withdrawn) {
+					t.Errorf("unresolved=%d want=%d", len(f.l.Unresolved), len(withdrawn))
+				}
+				code, body, _ := f.call(t, "/status", nil)
+				var status struct {
+					Unresolved int
+					Deliveries []struct{ ID, Status, Reason string }
+				}
+				if code != 200 || json.Unmarshal(body, &status) != nil || status.Unresolved != len(withdrawn) {
+					t.Fatalf("status lost retirement: code=%d", code)
+				}
+				for id, reason := range withdrawn {
+					c := f.l.Unresolved[id]
+					if c == nil || c.Status != "unresolved" || c.Reason != reason {
+						t.Fatalf("retirement changed: %s", id)
+					}
+					rows := 0
+					for _, row := range status.Deliveries {
+						if row.ID == id && row.Status == "unresolved" && row.Reason == reason {
+							rows++
+						}
+					}
+					if rows != 1 {
+						t.Errorf("status retirement rows=%d want=1 for %s", rows, id)
+					}
+				}
+			}
+			checkRetirement()
+			for i := 0; i < 2; i++ {
+				if err := p.Poll(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			checkRetirement()
+			posts := f.gc.Inbound()
+			if strings.HasSuffix(state, "_replayed") {
+				want := 1
+				if state == "empty_replayed" {
+					want = 2
+				}
+				// The current reader recovers held deletions as one turn; older
+				// readers deliver them separately. Both must deliver both acts.
+				if len(posts) < 1 || len(posts) > want || len(withdrawn) != want {
+					t.Errorf("healthy posts=%d retired=%d want=%d", len(posts), len(withdrawn), want)
+				}
+				if state == "empty_replayed" {
+					deletions := 0
+					for _, post := range posts {
+						deletions += strings.Count(post.Text, "\ndeleted")
+					}
+					if deletions != 2 {
+						t.Errorf("healthy deletion acts=%d want=2", deletions)
+					}
+				}
+				for _, post := range posts {
+					old := strings.Contains(post.Text, "body-00")
+					if state == "edit_owner_replayed" {
+						old = strings.Contains(post.Text, "body-001")
+					}
+					if old || strings.Contains(post.Text, "folded-text") {
+						t.Errorf("reader sent withdrawn text: %s", post.Text)
+					}
+				}
+				return
+			}
+			if len(posts) != 2 {
+				t.Fatalf("healthy posts=%d want=2", len(posts))
+			}
+			text := posts[0].Text + "\n" + posts[1].Text
+			old, survivor, unresolved := "body-001", "body-002", 1
+			if state == "owner_deleted" {
+				old, survivor = survivor, old
+			}
+			if state == "member_edited" {
+				unresolved = 0
+				if !strings.Contains(posts[0].Text, "current-text") || !strings.HasSuffix(posts[1].Text, "\nedited: current-text") {
+					t.Fatal("edit must follow the refreshed delivery")
+				}
+			} else if !strings.HasSuffix(posts[1].Text, "\ndeleted") {
+				t.Fatal("deletion must follow survivor")
+			}
+			if strings.Contains(text, old) || strings.Count(text, survivor) != 1 || len(f.l.Unresolved) != unresolved {
+				t.Fatalf("withdrawn/duplicate text or wrong unresolved count: %s, %d", text, len(f.l.Unresolved))
+			}
+		})
+	}
+}

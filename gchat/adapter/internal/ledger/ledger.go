@@ -114,6 +114,21 @@ type ChangeState struct {
 	// ProvenanceFramed marks adapter-authored frames; legacy records default
 	// to false so user text resembling a frame is never trusted or stripped.
 	ProvenanceFramed bool `json:"provenance_framed,omitempty"`
+	// HeldUntil marks an unsent act in a durable coalescing window. Older
+	// readers ignore it and deliver the retained single turn through intent.
+	HeldUntil time.Time `json:"held_until,omitzero"`
+	ActAt     time.Time `json:"act_at,omitzero"`
+	// A frozen turn owns one existing delivery ID. Other members are committed
+	// to that owner atomically, so older readers cannot send them twice.
+	Members  []string `json:"members,omitempty"`
+	MemberOf string   `json:"member_of,omitempty"`
+	// The owner retains its own original message for history and attribution.
+	MemberEvent string `json:"member_event,omitempty"`
+	MemberKind  string `json:"member_kind,omitempty"`
+	// MemberRevision identifies the effective text saved when a failed merged
+	// delivery is refreshed after an edit. Older readers ignore this field and
+	// send the already-refreshed Event under the existing delivery key.
+	MemberRevision time.Time `json:"member_revision,omitzero"`
 	// NextAttempt is the earliest time of the next POST of a change that gc
 	// answered "not delivered" four or more times.
 	NextAttempt time.Time `json:"next_attempt,omitzero"`
@@ -138,6 +153,35 @@ type ChangeState struct {
 	// starts a new one): once while it waits and once when it ends, the second only when the end is not the retry bound
 	// the first mail named.
 	RaisedEnd time.Time `json:"raised_end,omitzero"`
+}
+
+// OriginalEvent and OriginalKind keep per-message readers independent of the
+// delivery that happens to carry that message with its neighbors.
+func (c *ChangeState) OriginalEvent() string {
+	if c.MemberEvent != "" {
+		return c.MemberEvent
+	}
+	return c.Event
+}
+
+func (c *ChangeState) OriginalKind() string {
+	if c.MemberKind != "" {
+		return c.MemberKind
+	}
+	return c.Kind
+}
+
+// Delivery follows folded revisions and merged members to their one obligation.
+// Cycles are never written; a damaged chain remains unsettled at its member.
+func (l *Ledger) Delivery(c *ChangeState) *ChangeState {
+	for n := 0; c != nil && c.MemberOf != "" && n < len(l.Changes); n++ {
+		next := l.Changes[c.MemberOf]
+		if next == nil {
+			return c
+		}
+		c = next
+	}
+	return c
 }
 
 type SendState struct {
@@ -490,6 +534,13 @@ func (l *Ledger) Clone() *Ledger {
 	out.Messages = copyRecords(l.Messages)
 	out.Changes = copyRecords(l.Changes)
 	out.Unresolved = copyRecords(l.Unresolved)
+	for _, records := range []map[string]*ChangeState{out.Changes, out.Unresolved} {
+		for _, change := range records {
+			if change != nil {
+				change.Members = slices.Clone(change.Members)
+			}
+		}
+	}
 	out.Sends = copyRecords(l.Sends)
 	for _, send := range out.Sends {
 		if send == nil {

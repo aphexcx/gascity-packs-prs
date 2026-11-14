@@ -1,0 +1,87 @@
+package inbound_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/inbound"
+)
+
+func TestRound4DeepNoticePromotionStillMember(t *testing.T) {
+	f := noticeFixture(t, "refused", "8s")
+	f.backlog = true
+	if err := f.send(t, 1, strings.Repeat("b", 31500), false, "message.created"); err != nil { t.Fatal(err) }
+	f.advance(time.Second)
+	if err := f.send(t, 2, "enrolled-A "+strings.Repeat("a", 990), true, "message.created"); err == nil { t.Fatal("missing refused backlog") }
+	f.advance(time.Second)
+	_ = f.send(t, 3, "ordinary C", false, "message.created")
+	f.advance(time.Second)
+	_ = f.send(t, 4, "ordinary D", false, "message.created")
+	f.advance(9*time.Second)
+	_ = f.p.Pass(context.Background())
+	if got := f.l.Changes[noticeA].MemberOf; got != noticeRoom+"/messages/m004" { t.Fatalf("initial member owner=%s", got) }
+	f.advance(time.Second)
+	_ = f.send(t, 4, "", false, "message.deleted")
+	if got := f.l.Changes[noticeA].MemberOf; got != noticeRoom+"/messages/m003" { t.Fatalf("promoted owner=%s", got) }
+	f.mu.Lock()
+	f.mode = "no_route"
+	f.mu.Unlock()
+	f.advance(9*time.Second)
+	_ = f.p.Pass(context.Background())
+	live := viewNotice(f.records(t)[noticeA])
+	if live.Kind != "no_route" || !live.Stopped || live.Uncertain || live.Removed { t.Fatalf("promoted-member outcome=%+v", live) }
+	if err := f.l.Save(f.opts.LedgerPath); err != nil { t.Fatal(err) }
+	f.reload(t, true)
+	if err := inbound.ReconcileNeverSilent(f.l, f.ns); err != nil { t.Fatal(err) }
+	if cold := viewNotice(f.records(t)[noticeA]); cold != live { t.Fatalf("cold=%+v live=%+v", cold, live) }
+	for id, m := range f.records(t) { if id != noticeA && !m.Removed { t.Errorf("ambient live record: %s", id) } }
+}
+
+func TestRound4DeepNoticeAllMembersWithdrawn(t *testing.T) {
+	f := noticeFixture(t, "refused", "8s")
+	f.begin(t, true, "")
+	f.advance(time.Second)
+	_ = f.send(t, 3, "", false, "message.deleted")
+	f.advance(time.Second)
+	_ = f.send(t, 2, "", false, "message.deleted")
+	if err := inbound.ReconcileNeverSilent(f.l, f.ns); err != nil { t.Fatal(err) }
+	if !f.records(t)[noticeA].Removed { t.Fatal("withdrawn mention not forgotten") }
+	for id, m := range f.records(t) { if id != noticeA && !m.Removed { t.Errorf("ambient live record: %s", id) } }
+}
+
+func TestRound4DeepNoticeUnrecognizedOutcome(t *testing.T) {
+	var control noticeView
+	for _, member := range []bool{false, true} {
+		f := noticeFixture(t, "unrecognized", "8s")
+		f.begin(t, member, "")
+		m := viewNotice(f.records(t)[noticeA])
+		if m.Kind != "unrecognized" || !m.Stopped || !m.Uncertain || m.Removed { t.Fatalf("unknown outcome=%+v", m) }
+		if !member { control = m } else if m != control { t.Fatalf("member=%+v control=%+v", m, control) }
+		for id, state := range f.records(t) { if id != noticeA && !state.Removed { t.Errorf("ambient live record: %s", id) } }
+	}
+}
+
+func TestRound4DeepNoticeActTargets(t *testing.T) {
+	for _, matching := range []bool{false, true} {
+		name := "unrelated_session"
+		if matching { name = "matching_session" }
+		t.Run(name, func(t *testing.T) {
+			f := noticeFixture(t, "no_route", "8s")
+			f.begin(t, true, "")
+			m := f.records(t)[noticeA]
+			if len(m.Targets) != 1 || m.Targets[0] != "example-session" { t.Fatalf("targets=%v", m.Targets) }
+			session := "another-session"
+			if matching { session = "example-session" }
+			f.advance(time.Second)
+			if err := f.ns.Act(noticeRoom, "", session, f.now()); err != nil { t.Fatal(err) }
+			f.advance(4*time.Minute)
+			if err := f.ns.Poll(context.Background()); err != nil { t.Fatal(err) }
+			want := 1
+			if matching { want = 0 }
+			if len(f.lines) != want { t.Fatalf("lines=%d want=%d", len(f.lines), want) }
+			for id, m := range f.records(t) { if id != noticeA && !m.Removed { t.Errorf("ambient live record: %s", id) } }
+		})
+	}
+}

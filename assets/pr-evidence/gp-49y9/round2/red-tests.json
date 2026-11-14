@@ -1,0 +1,176 @@
+[
+  {
+    "package": "inbound",
+    "base": "8101a65e53176f8413e33127b9422e7c7370097d",
+    "command": "go test -overlay <overlay> ./internal/inbound -run ^(TestRetryNeverSendsWithdrawnText|TestRetryTranscriptKeepsFirstText|TestMergedTurnCannotBeForged|TestMalformedHeldRecordIsOneUnresolved|TestDueWindowNeverRefusesAnotherSpace|TestCoalescedKindReadersRetireOldHistory|TestWithdrawalSaveSurvivesRestart|TestWindowOffIsToday|TestSupersededIntentNeverRepostsOldText)$ -count=1 -json",
+    "exit": 1,
+    "counts": {
+      "subtest_fail": 19,
+      "test_fail": 7,
+      "test_pass": 2,
+      "subtest_pass": 2
+    },
+    "verdicts": [
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/merged_member/message.deleted",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/merged_member/message.updated",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/merged_owner/message.deleted",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/merged_owner/message.updated",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/folded/message.deleted",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/folded/message.updated",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/edit_owner/message.deleted",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/edit_owner/message.updated",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/catchup/message.deleted",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText/catchup/message.updated",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryNeverSendsWithdrawnText",
+        "result": "fail"
+      },
+      {
+        "test": "TestRetryTranscriptKeepsFirstText",
+        "result": "fail"
+      },
+      {
+        "test": "TestMalformedHeldRecordIsOneUnresolved/member_1",
+        "result": "fail"
+      },
+      {
+        "test": "TestMalformedHeldRecordIsOneUnresolved/member_2",
+        "result": "fail"
+      },
+      {
+        "test": "TestMalformedHeldRecordIsOneUnresolved",
+        "result": "fail"
+      },
+      {
+        "test": "TestDueWindowNeverRefusesAnotherSpace",
+        "result": "fail"
+      },
+      {
+        "test": "TestCoalescedKindReadersRetireOldHistory/folded",
+        "result": "fail"
+      },
+      {
+        "test": "TestCoalescedKindReadersRetireOldHistory/merged",
+        "result": "fail"
+      },
+      {
+        "test": "TestCoalescedKindReadersRetireOldHistory/queued_edit",
+        "result": "fail"
+      },
+      {
+        "test": "TestCoalescedKindReadersRetireOldHistory",
+        "result": "fail"
+      },
+      {
+        "test": "TestWithdrawalSaveSurvivesRestart/member",
+        "result": "fail"
+      },
+      {
+        "test": "TestWithdrawalSaveSurvivesRestart/owner",
+        "result": "fail"
+      },
+      {
+        "test": "TestWithdrawalSaveSurvivesRestart",
+        "result": "fail"
+      },
+      {
+        "test": "TestWindowOffIsToday",
+        "result": "pass"
+      },
+      {
+        "test": "TestMergedTurnCannotBeForged/_exact_form_with_words_after_it",
+        "result": "fail"
+      },
+      {
+        "test": "TestMergedTurnCannotBeForged/.",
+        "result": "fail"
+      },
+      {
+        "test": "TestMergedTurnCannotBeForged",
+        "result": "fail"
+      },
+      {
+        "test": "TestSupersededIntentNeverRepostsOldText/message.updated",
+        "result": "pass"
+      },
+      {
+        "test": "TestSupersededIntentNeverRepostsOldText/message.deleted",
+        "result": "pass"
+      },
+      {
+        "test": "TestSupersededIntentNeverRepostsOldText",
+        "result": "pass"
+      }
+    ]
+  },
+  {
+    "package": "server",
+    "base": "8101a65e53176f8413e33127b9422e7c7370097d",
+    "command": "go test -overlay <overlay> ./internal/server -run ^TestHistoryPreservesFoldedLiteralEditPrefix$ -count=1 -json",
+    "exit": 1,
+    "counts": {
+      "subtest_fail": 1,
+      "subtest_pass": 1,
+      "test_fail": 1
+    },
+    "verdicts": [
+      {
+        "test": "TestHistoryPreservesFoldedLiteralEditPrefix/8s",
+        "result": "fail"
+      },
+      {
+        "test": "TestHistoryPreservesFoldedLiteralEditPrefix/0s",
+        "result": "pass"
+      },
+      {
+        "test": "TestHistoryPreservesFoldedLiteralEditPrefix",
+        "result": "fail"
+      }
+    ]
+  },
+  {
+    "package": "catchup",
+    "base": "8101a65e53176f8413e33127b9422e7c7370097d",
+    "command": "go test -overlay <overlay> ./internal/catchup -run ^TestCatchUpRetryCountsEveryAct$ -count=1 -json",
+    "exit": 1,
+    "counts": {
+      "test_fail": 1
+    },
+    "verdicts": [
+      {
+        "test": "TestCatchUpRetryCountsEveryAct",
+        "result": "fail"
+      }
+    ]
+  }
+]
