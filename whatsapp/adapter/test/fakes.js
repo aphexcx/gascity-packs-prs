@@ -131,6 +131,7 @@ export async function startFakeGateway({ clock } = {}) {
     requests: [],
     hung: [],
     inboxDelayMs: 0, // a page computed now, answered later (the poll/ack race)
+    inboxFailures: 0, // inbox reads that answer 503 before one succeeds
     mediaFailures: 0, // media downloads that answer 503 before one succeeds
     ackMaxIds: Infinity, // a batch over this answers 413
   };
@@ -230,6 +231,7 @@ export async function startFakeGateway({ clock } = {}) {
       return send(res, 200, invite);
     }
     if (route === 'GET /v1/inbox') {
+      if (g.inboxFailures > 0) { g.inboxFailures -= 1; return send(res, 503, { error: 'unavailable' }); }
       const after = url.searchParams.has('after') ? Number(url.searchParams.get('after')) : -Infinity;
       const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 200), 1), 200);
       const page = [...g.deliveries.values()]

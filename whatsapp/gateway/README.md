@@ -281,7 +281,10 @@ The request carries `Authorization: Bearer <credential>` and `Upgrade: websocket
 The bearer is checked before upgrading: a missing, unknown or revoked credential
 receives `401 unauthorized`; a live credential without the upgrade receives
 `426 upgrade_required`. Success is `101`. Other methods receive `405`. With
-`WAKE=off` or no `CITY_WAKE` binding, the route returns `404 not_found`.
+`WAKE` set to `off` (in any case; spaces around it are ignored) or no
+`CITY_WAKE` binding, the route returns `404 not_found`. Any other value of
+`WAKE`, including `false`, `0` and `no`, quoted or not, leaves the link on, and
+the gateway has no start at which to say so: this sentence is the guard.
 
 The wire carries only three fixed words: the gateway sends text `wake` and
 `pong`; the adapter sends text `ping`. Close codes are `4401` for a revoked
@@ -309,14 +312,25 @@ the credential in the header only. Each connect and wake requests an inbox
 read; wakes during a read coalesce into one further read. A quiet healthy link
 uses `WHATSAPP_HELD_POLL_MS` (default `300000`) for safety reads. Whenever the
 link is down, disabled, unsupported by the runtime, or refused by an older
-gateway, `WHATSAPP_POLL_MS` keeps its existing default of `2000`. Owed keeper
-binds retain that original cadence even while the inbox link is held.
+gateway, `WHATSAPP_POLL_MS` keeps its existing default of `2000`. So does a
+link whose gateway side cannot wake the box: when a safety read finds a new
+delivery that no wake announced (no wake or connect arrived while that read
+ran), the box reads at `WHATSAPP_POLL_MS` until the next wake frame or
+reconnect, then returns to the safety interval. A delivery the gateway returns
+again is not new and does not count. Owed keeper binds retain that original
+cadence even while the inbox link is held.
 
 The adapter sends `ping` every 30 seconds and requires `pong` within 10 seconds.
-Reconnect waits are 1, 5, 15, 60, then 300 seconds. Only the inbox's `401`
-decides credential validity and stops reconnecting. `/status` includes
+Reconnect waits are 1, 5, 15, 60, then 300 seconds; they start over at 1 second
+only once a connected link has received its first `pong`, so a socket closed
+as soon as it opens climbs the ladder like a refused upgrade. Only the inbox's
+`401` decides credential validity and stops reconnecting. `/status` includes
 `inbound.link`: mode, state, since, last_wake_at, wakes, reconnects and reason;
-`gc whatsapp status` prints it directly below enrollment.
+`gc whatsapp status` prints it directly below enrollment. Mode `held` means the
+socket is up and trusted. After an unannounced delivery the socket is still up
+but the box reads at `WHATSAPP_POLL_MS`, so the link reads mode `poll`, state
+`up`, reason `unannounced_delivery`, since the safety read that found it
+(`poll (up; unannounced_delivery)` in `gc whatsapp status`).
 
 This is never weaker than polling: the same bearer check and TLS protect the
 link, every inbox read and ack authenticates again, and revocation is checked
@@ -327,15 +341,36 @@ message-delivery path is introduced.
 
 Deploy the gateway first, then adapters one box at a time. There is no D1
 migration. The deploy configuration must carry `CITY_WAKE`, the SQLite-backed
-`CityWake` class declaration, and `WAKE`; a configuration without the binding
-leaves boxes polling. Cloudflare does not allow a version rollback across the
-deployment that adds a Durable Object class
+`CityWake` class declaration, and `WAKE`. A gateway without the binding offers
+no link, so a box that never connected keeps polling. But it can neither wake
+nor close a socket that a box already holds: that box finds its next message
+only at its safety read, up to five minutes later at the default, and then
+reads at `WHATSAPP_POLL_MS` until a wake or a reconnect (above). Never take the
+binding out while boxes hold sockets.
+
+Cloudflare does not allow a version rollback across the deployment that adds a
+Durable Object class
 ([rollback rules](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/rollbacks/),
-read 2026-11-12). Roll back by a forward deployment with `WAKE=off`: new
-connections stop immediately, and the Worker closes each city's existing
-sockets with `4503` where it would send a wake and on that city's inbox read.
-Each box returns to its ordinary poll at its next message or safety read,
-whichever is first—at most five minutes for an idle box using the default.
+read 2026-11-12). Roll back by forward deployments, in this order:
+
+1. Deploy with `WAKE=off` (any case, as above). New connections receive `404`
+   at once, and the Worker closes each city's existing sockets with `4503`
+   where it would send a wake and on that city's inbox read. Each box returns
+   to its ordinary poll at its next message or safety read, whichever is first.
+2. Wait until every socket has closed. On each updated box, the state in the
+   `Gateway link:` line of `gc whatsapp status` is no longer `up`. Without
+   reading every box, wait the longest safety interval of any box since the
+   deploy reached Cloudflare's edge (five minutes at the default), plus one
+   read.
+3. Deploy again without the `CITY_WAKE` binding; the class declaration stays.
+   `WAKE=off` is a state to pass through, not to stay in: while it is off,
+   every inbox read of every box calls that city's object (about 38,000 calls
+   a day for one box polling every two seconds), and a failed call also counts
+   `wake_failed`. Without the binding the gateway makes no object call, as
+   before the held connection. Every box polls; an updated box also makes one
+   refused upgrade at its longest reconnect wait, every 300 seconds (288 a
+   day).
+
 The per-box `WHATSAPP_HELD_CONNECTION=off` switch and adapter restart restore
 polling immediately for that box. The class remains declared; D1 needs no
 rollback.

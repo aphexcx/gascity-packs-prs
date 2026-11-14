@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased (gp-urx1)
+
+- A box whose safety read finds a delivery that no wake announced reads at
+  its ordinary poll interval until the next wake or reconnect. Its status
+  then reads `poll (up; unannounced_delivery)`, not held.
+- Both off switches, the gateway's `WAKE` and the box's
+  `WHATSAPP_HELD_CONNECTION`, read `off` in any case and with spaces around
+  it. `false`, `0` and `no` still leave the link on; the box names such a
+  value once in its log at start.
+- The gateway README gives the rollback as two deploys in order: `WAKE` off
+  first, the `CITY_WAKE` binding out only after every socket has closed.
+- A socket closed as soon as it opens climbs the reconnect ladder; the
+  ladder starts over only after the link's first pong.
+
+No deployment is included in this change.
+
 ## Unreleased (gp-bod9)
 
 - Add `publish --reply-to` and quote the inbound message in the default reply
