@@ -116,8 +116,8 @@ at the adapter directory; a missing selected file never falls back to another.
 | `WHATSAPP_GATEWAY_CREDENTIAL` | the per-city credential (written by `gc whatsapp enroll`, 0600) |
 | `GC_CITY_NAME`, `GC_API_BASE_URL` | the city and its API (not controller-injected; check `gc status`) |
 | `WHATSAPP_POLL_MS` | inbox poll, default 2000 |
-| `WHATSAPP_HELD_CONNECTION` | held wake link, default on; off restores the ordinary poll |
-| `WHATSAPP_HELD_POLL_MS` | safety inbox read while the link is up, default 300000 |
+| `WHATSAPP_HELD_CONNECTION` | held wake link, default on; `off` in any case (spaces ignored) restores the ordinary poll; a value other than `on` or `off`, including `false`, `0` and `no`, leaves it on and is named once in the log at start |
+| `WHATSAPP_HELD_POLL_MS` | safety inbox read while the link is held, default 300000 |
 | `WHATSAPP_WATERMARK_CHECK_MS` | the all-watermark restore read, default 60000 |
 | `WHATSAPP_ROUTE_AGENT` | the default route's agent for the paste probe, default `mayor` |
 | `WHATSAPP_KEEPER_UPDATE_HOUR`, `WHATSAPP_CITY_TZ` | the keeper's daily update hour (default 10) and the city's zone |
@@ -242,6 +242,51 @@ A template never opens or extends the window; only the owner's next message
 does. Whether a text is an actual update is the mayor's skill rule (Afik:
 "only if there is an actual update").
 
+## Quoted replies
+
+The reply line under every inbound message now includes
+`gc whatsapp publish --to <conversation_id> --reply-to <message_id> --text-file <path>`.
+It quotes that message on the first part of a text, or on the file's message.
+Leave the flag off subsequent messages of the same answer. The first call's
+quote is retained when its idempotency key is retried, without changing the
+send keys. An invalid id goes plain, including an unexpanded placeholder
+from an older gc. A keeper or delivery-failure id goes plain when the gateway
+does not recognize it. Templates accept the flag but cannot quote.
+
+Only a receipt that requested a quote adds the strings `metadata.quoted`
+and `metadata.quote_reason`. Quoted is `true` when the gateway sent context
+(with an empty reason), `false` for `invalid_id`, `template`,
+`gateway_without_quotes`, `unknown_message` or `meta_refused`, and `unknown`
+with reason `replayed` when only a stored gateway answer is available.
+The command still exits 0 after a successful send and explains a missing
+or uncertain quote on stderr. Meta may omit a quote bubble for a deleted or
+archived target even after accepting the context.
+
+The adapter and gateway can ship in either order. An older gateway ignores
+context and sends plain; the command reports that. Quotes reach a phone only
+when both are updated. Nothing changes on a box until its pack is updated
+and its adapter restarts. Gateway deployment is separate from this change,
+and migration 0005 must precede deployment of the current gateway. There is
+no new migration. Quoted replies use the same 24-hour window and never reopen
+it. Nothing automatic is enabled.
+
+## Hand reactions
+
+`gc whatsapp react --to <conversation_id> --message <message_id> --emoji 👀`
+places a reaction; `--emoji ""` removes it. Use the inbound "Message id:"
+line. The emoji is a character, not a catalog name. All three flags are
+required, and the command needs session attribution just like a publish.
+It prints a resume key before sending and records the delivered reaction in
+the transcript. Reuse that key after a transport error; changing its message
+or emoji is a conflict. A reaction is recorded as the mayor's act when
+`NEVER_SILENT` is on.
+
+A reaction needs the open 24-hour window and never reopens it. It cannot
+use the update template. A refusal exits 1 with a reason and a hint; say the
+same thing in words by the window rule. Nothing reacts automatically: this
+command acts only when the mayor runs it. A box gains it after updating its
+pack and restarting the adapter. No gateway update is needed for this command.
+
 ## Files out
 
 `gc whatsapp publish --to <conversation_id> --file <path>` sends one image,
@@ -343,6 +388,8 @@ Operator mail contains only city, adapter, cause, times, aggregate counts and ag
 | Verb | What it does |
 | --- | --- |
 | `gc whatsapp publish --to <conversation_id> --text-file <path>` | free-form text inside the window |
+| `gc whatsapp publish --to <conversation_id> --reply-to <message_id> --text-file <path>` | quote the inbound message on the first part of the reply |
+| `gc whatsapp react --to <conversation_id> --message <message_id> --emoji <emoji>` | place a hand reaction inside the window; an empty emoji removes it |
 | `gc whatsapp publish --to <conversation_id> --file <path> [--caption-file <path>]` | one allowed file inside the window; upload/send resume under the printed key |
 | `gc whatsapp publish --update --to <conversation_id> --text "..."` | the update template outside the window |
 | `gc whatsapp invite [--proactive-consent] [--hours "Mon-Fri 09:00-18:00"] [--tz <zone>]` | a 6-digit, 24-hour invite code and the two lines the owner is told |

@@ -1,0 +1,268 @@
+[
+  {
+    "name": "verified-shell-syntax",
+    "cwd": "whatsapp/commands",
+    "command": [
+      "sh",
+      "-n",
+      "react.sh",
+      "publish.sh"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-shellcheck",
+    "cwd": "whatsapp/commands",
+    "command": [
+      "shellcheck",
+      "-x",
+      "react.sh",
+      "publish.sh"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-adapter",
+    "cwd": "whatsapp/adapter",
+    "command": [
+      "pnpm",
+      "test"
+    ],
+    "exit": 1,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-adapter-isolated",
+    "cwd": "whatsapp/adapter/test",
+    "command": [
+      "pnpm",
+      "exec",
+      "node",
+      "--test",
+      "--test-concurrency=1",
+      "--test-name-pattern",
+      "M2: an inbox page|held: a wake during an in-flight read"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-quotes",
+    "cwd": "whatsapp/adapter/test",
+    "command": [
+      "pnpm",
+      "exec",
+      "node",
+      "--test",
+      "quote.test.js"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-reactions",
+    "cwd": "whatsapp/adapter/test",
+    "command": [
+      "pnpm",
+      "exec",
+      "node",
+      "--test",
+      "react.test.js"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-gateway",
+    "cwd": "whatsapp/gateway",
+    "command": [
+      "pnpm",
+      "test"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-build",
+    "cwd": "whatsapp/gateway",
+    "command": [
+      "pnpm",
+      "build"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-types",
+    "cwd": "whatsapp/gateway",
+    "command": [
+      "pnpm",
+      "typecheck"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "verified-python",
+    "cwd": ".",
+    "command": [
+      "make",
+      "test",
+      "PYTEST_DIRS=tests whatsapp/tests",
+      "PYTEST_RUNNER=echo 'env -u MAKEFLAGS -u MAKEOVERRIDES -u MFLAGS -u PYTEST_DIRS -u PYTEST_ARGS -u PYTEST_RUNNER uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "b981c9803b990cc505da73ebaae89b2e87366a3b",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "final-quotes",
+    "cwd": "whatsapp/adapter/test",
+    "command": [
+      "pnpm",
+      "exec",
+      "node",
+      "--test",
+      "quote.test.js"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "final-adapter",
+    "cwd": "whatsapp/adapter",
+    "command": [
+      "pnpm",
+      "test"
+    ],
+    "exit": 1,
+    "start": {
+      "sha": "2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "final-adapter-isolated",
+    "cwd": "whatsapp/adapter/test",
+    "command": [
+      "pnpm",
+      "exec",
+      "node",
+      "--test",
+      "--test-concurrency=1",
+      "--test-name-pattern",
+      "document survives SIGKILL at after-media-receipt"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec",
+      "tracked_dirty": false
+    }
+  },
+  {
+    "name": "final-reactions",
+    "cwd": "whatsapp/adapter/test",
+    "command": [
+      "pnpm",
+      "exec",
+      "node",
+      "--test",
+      "react.test.js"
+    ],
+    "exit": 0,
+    "start": {
+      "sha": "2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec",
+      "tracked_dirty": false
+    },
+    "end": {
+      "sha": "2cbbeef86ad1f2c0f6d9d787f5cc0b165b195cec",
+      "tracked_dirty": false
+    }
+  }
+]

@@ -26,7 +26,7 @@ test('registers with gc as provider whatsapp, account dynasty, with the reply in
   assert.equal(reg.provider, 'whatsapp');
   assert.equal(reg.account_id, 'dynasty');
   assert.equal(reg.callback_url, `${r.gc.url}/v0/city/test-city/svc/whatsapp`);
-  assert.match(reg.reply_instructions, /gc whatsapp publish --to \{conversation_id\} --text-file/);
+  assert.match(reg.reply_instructions, /gc whatsapp publish --to \{conversation_id\} --reply-to \{message_ts\} --text-file/);
   assert.equal(reg.envelope_format, undefined, 'the long envelope format by omission (the evidence rule reads it)');
 });
 

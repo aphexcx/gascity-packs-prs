@@ -49,13 +49,18 @@ export function createGatewayClient({ url, credential, timeoutMs = 15000, fetchI
     },
     ack: (ids) => call('POST', '/v1/inbox/ack', { body: { ids } }),
     send: async ({ activity_attempt_id, ...body }) => {
-      let replayed, acceptedAttempt;
+      let replayed, acceptedAttempt, quoted, quoteReason;
       const answer = await call('POST', '/v1/send', { body, activityAttempt: activity_attempt_id, captureResponse: (response) => {
         const flag = response.headers.get('x-gc-replayed');
         if (flag === 'true' || flag === 'false') replayed = flag === 'true';
         acceptedAttempt = response.headers.get('x-gc-send-attempt');
+        const quote = response.headers.get('x-gc-quoted');
+        if (['true', 'false', 'unknown'].includes(quote)) quoted = quote;
+        const reason = response.headers.get('x-gc-quote-reason');
+        if (['unknown_message', 'meta_refused'].includes(reason)) quoteReason = reason;
       } });
-      return { ...answer, ...(replayed === undefined ? {} : { replayed }), ...(acceptedAttempt ? { activity_attempt_id: acceptedAttempt } : {}) };
+      return { ...answer, ...(replayed === undefined ? {} : { replayed }), ...(acceptedAttempt ? { activity_attempt_id: acceptedAttempt } : {}),
+        ...(quoted === undefined ? {} : { quoted }), ...(quoteReason ? { quote_reason: quoteReason } : {}) };
     },
     upload: (file, key) => call('POST', '/v1/uploads', { rawBody: file.bytes, uploadHeaders: {
       'Content-Type': file.mime, 'Content-Length': String(file.size),
