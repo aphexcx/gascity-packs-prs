@@ -41,8 +41,9 @@ type Client struct {
 	// ArrivalHold is installed with ArrivalPlaced. The react verb holds what
 	// it returns across its call and that call's ArrivalPlaced or
 	// ArrivalRemoved, then calls it, so the session's calls on one emoji of
-	// one message reach Google one at a time.
-	ArrivalHold func(message, emoji string) (release func())
+	// one message reach Google one at a time; waited is how long it waited
+	// for that turn (ack.Service.HoldReaction).
+	ArrivalHold func(message, emoji string) (release func(), waited time.Duration)
 	// MessageCreated is installed before sharing the client. It receives only
 	// coordinates and Google's original timestamp, including idempotent replays.
 	MessageCreated         func(space, message, thread, stamp string)

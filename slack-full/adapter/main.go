@@ -3293,7 +3293,10 @@ func handleReact(cfg config) http.HandlerFunc {
 		// Slack one at a time, each with its bookkeeping below, so the
 		// session's mark follows the order in which Slack applied them
 		// (ack.Service.HoldReaction). slackAPIClient's timeout bounds a turn.
-		defer cfg.arrival.HoldReaction(req.Conversation.ConversationID, req.MessageID, emoji)()
+		// A call that waited is dated back by its wait: the session acted
+		// when it asked, so a message that arrived meanwhile is not answered.
+		release, waited := cfg.arrival.HoldReaction(req.Conversation.ConversationID, req.MessageID, emoji)
+		defer release()
 
 		slackResp, err := callSlackReactions(cfg.slackBotToken, method, slackReactionsAddReq{
 			Channel:   req.Conversation.ConversationID,
@@ -3343,7 +3346,7 @@ func handleReact(cfg config) http.HandlerFunc {
 				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
 			}
 			if cfg.neverSilent.Enabled() {
-				act.Timestamp = time.Now()
+				act.Timestamp = time.Now().Add(-waited)
 				act.NoticeNoActivity = !fresh
 				if !act.NoticeNoActivity {
 					cfg.noticeError(cfg.neverSilent.Act(act.Channel, "", act.SessionID, act.Timestamp))

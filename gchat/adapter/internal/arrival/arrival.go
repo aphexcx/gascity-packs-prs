@@ -103,7 +103,7 @@ func Wire(c *chat.Client, service *ack.Service, watch *stopwatch.Writer) {
 			space, _, _ := strings.Cut(message, "/messages/")
 			service.SessionRemoved(space, message, emoji)
 		}
-		c.ArrivalHold = func(message, emoji string) func() {
+		c.ArrivalHold = func(message, emoji string) (func(), time.Duration) {
 			space, _, _ := strings.Cut(message, "/messages/")
 			return service.HoldReaction(space, message, emoji)
 		}

@@ -1357,9 +1357,14 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	// one at a time, each with its bookkeeping below, so the session's mark
 	// follows the order in which Google applied them (arrival.Wire). The
 	// call's own bound (CreateReaction's retry bound, RemoveReaction's
-	// timeout) bounds a turn.
+	// timeout) bounds a turn. A call that waited is dated back by its wait:
+	// the session acted when it asked, so a message that arrived meanwhile is
+	// not answered.
+	var waited time.Duration
 	if c.ArrivalHold != nil {
-		defer c.ArrivalHold(v.Message, v.Emoji)()
+		var release func()
+		release, waited = c.ArrivalHold(v.Message, v.Emoji)
+		defer release()
 	}
 	var name string
 	var err error
@@ -1394,7 +1399,7 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	if !v.Remove && v.SessionID != "" {
 		space, _, valid := strings.Cut(v.Message, "/messages/")
 		if valid {
-			if err := s.notices().Act(space, "", v.SessionID, time.Now()); err != nil {
+			if err := s.notices().Act(space, "", v.SessionID, time.Now().Add(-waited)); err != nil {
 				s.opts.Logger.Warn("never-silent: could not record session reaction")
 			}
 		}

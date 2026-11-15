@@ -200,11 +200,15 @@ func reactionPath(dir, sub, conversation, message, emoji string) string {
 // follows the order in which the channel applied the session's calls. A call
 // on another message or another emoji never waits, and the acknowledgement's
 // own call takes no turn. A turn lasts as long as the holder's channel call,
-// which that call's own timeout bounds. While the acknowledgement is off it
-// holds nothing.
-func (s *Service) HoldReaction(conversation, message, emoji string) (release func()) {
+// which that call's own timeout bounds. waited is how long this call waited
+// for its turn, zero when it did not wait: the verb dates the session's act
+// that much earlier, to the moment it would have had with the
+// acknowledgement off, so a message that arrived during the wait is not
+// answered by it. While the acknowledgement is off it holds nothing and
+// waited is zero.
+func (s *Service) HoldReaction(conversation, message, emoji string) (release func(), waited time.Duration) {
 	if s == nil || !s.Choice.Enabled() {
-		return func() {}
+		return func() {}, 0
 	}
 	key := reactionKey(conversation, message, emoji)
 	s.reacting.Lock()
@@ -218,7 +222,11 @@ func (s *Service) HoldReaction(conversation, message, emoji string) (release fun
 	}
 	turn.callers++
 	s.reacting.Unlock()
-	turn.Lock()
+	if !turn.TryLock() {
+		start := time.Now()
+		turn.Lock()
+		waited = time.Since(start)
+	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {
@@ -230,7 +238,7 @@ func (s *Service) HoldReaction(conversation, message, emoji string) (release fun
 			}
 			s.reacting.Unlock()
 		})
-	}
+	}, waited
 }
 
 // placedPath is the record of the acknowledgement's emoji on one message.
