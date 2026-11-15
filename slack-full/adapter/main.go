@@ -3297,11 +3297,12 @@ func handleReact(cfg config) http.HandlerFunc {
 		// when it asked, so a message that arrived meanwhile is not answered.
 		// The wait ends with r's context, which ends when the session's
 		// command stops waiting (through gc's proxy, the connection closes):
-		// a call whose caller has given up never reaches Slack and records
-		// nothing. A call that holds the turn runs on as before.
+		// a call whose caller has given up by the time it has its turn never
+		// reaches Slack and records nothing. A call that holds the turn runs
+		// on as before.
 		release, waited, err := cfg.arrival.HoldReactionContext(r.Context(), req.Conversation.ConversationID, req.MessageID, emoji)
 		if err != nil {
-			log.Printf("react: op=%s conv=%s ts=%s emoji=%s: not sent, the caller gave up while it waited for its turn: %v", method, req.Conversation.ConversationID, req.MessageID, emoji, err)
+			log.Printf("react: op=%s conv=%s ts=%s emoji=%s: not sent, its caller had given up by the time it had its turn: %v", method, req.Conversation.ConversationID, req.MessageID, emoji, err)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(reactReceipt{FailureKind: "transient"})
 			return

@@ -1361,8 +1361,9 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	// the session acted when it asked, so a message that arrived meanwhile is
 	// not answered. The wait ends with r's context, which ends when the
 	// session's command stops waiting (through gc's proxy, the connection
-	// closes): a call whose caller has given up never reaches Google and
-	// records nothing.
+	// closes): a call whose caller has given up by the time it has its turn
+	// never reaches Google and records nothing. A call that holds the turn
+	// runs on as before.
 	var waited time.Duration
 	var err error
 	if c.ArrivalHold != nil {
