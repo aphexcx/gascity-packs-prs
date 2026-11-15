@@ -14,8 +14,9 @@ package main
 // any call after applying it: the session's add, the session's removal, the
 // acknowledgement's add. Each row is a sequence of those calls and of the
 // moments their answers are released. Run with ACK_REACTION set, the
-// receipts, the journal's session_react rows and the acts must equal the
-// same row run with ACK_REACTION unset (main's answer). The order Slack
+// receipts, the journal's session_react rows, the acts and the owner lines
+// never-silent posts three minutes on must equal the same row run with
+// ACK_REACTION unset (main's answer). The order Slack
 // applied the calls in is checked too, so a row cannot pass without reaching
 // its order.
 //
@@ -184,18 +185,21 @@ type heldRow struct {
 	//   add ID [thumbsup] [B] [held|prompt]   the session's add (eyes on A unless named)
 	//   remove ID [held]                      the session's removal of eyes on A
 	//   ack [held]                            admit A; with ACK_REACTION set, its acknowledgement
+	//   message                               admit another owner's message in the conversation
 	//   release ID                            release a held answer (ID "ack": the acknowledgement's)
 	//   settle                                wait for every call; note the acts
 	steps string
 	// The order Slack applied the calls in, ACK_REACTION set and unset.
 	slackAck, slackOff string
-	// Red at 3dc345a1 (the round's base) or a guard that is green there.
+	// Red before the fix (3dc345a1; the stamp row at f9a078fd) or a guard
+	// that is green there.
 	red bool
 }
 
 // run plays one row with ACK_REACTION set to mode and returns its trace: at
 // each settle the acts and the journal's session_react rows since the last
-// settle, then each call's receipt in the order the calls were made.
+// settle, then each call's receipt in the order the calls were made, then the
+// owner lines three minutes on with the session down.
 func (r *heldSlackRig) run(row heldRow, mode string) []string {
 	t := r.t
 	t.Helper()
@@ -285,6 +289,8 @@ func (r *heldSlackRig) run(row heldRow, mode string) []string {
 			if !waitDone(hold.applied, 10*time.Second) {
 				t.Fatalf("%s: the acknowledgement's add never reached Slack; Slack applied %s", row.name, r.front.record())
 			}
+		case "message":
+			r.human(slackTimestamp(time.Now()))
 		case "release":
 			hold := holds[f[1]]
 			if hold == nil {
@@ -312,6 +318,7 @@ func (r *heldSlackRig) run(row heldRow, mode string) []string {
 	for _, c := range calls {
 		trace = append(trace, c.id+"="+*c.body)
 	}
+	trace = append(trace, "owner lines="+strconv.Itoa(r.due()))
 	want := row.slackOff
 	if mode != "" {
 		want = row.slackAck
@@ -371,6 +378,17 @@ func heldSlackRows() []heldRow {
 			steps:    "add s1 held; ack held; add s2; release s1; release ack",
 			slackAck: "add:ok | add:already_reacted | add:already_reacted",
 			slackOff: "add:ok | add:already_reacted",
+			red:      true,
+		},
+		{
+			// A call that waited for its turn is the session's act at the
+			// moment it asked: message B, admitted while s2 waits behind the
+			// held removal, is not answered by s2 (with ACK_REACTION unset s2
+			// has returned before B), so B's owner line is posted.
+			name:     "stamp/message-arrives-while-a-call-waits",
+			steps:    "add s1; remove r1 held; ack; add s2; message; release r1; settle",
+			slackAck: "add:ok | remove:ok | add:ok | add:ok | add:already_reacted",
+			slackOff: "add:ok | remove:ok | add:ok",
 			red:      true,
 		},
 		{

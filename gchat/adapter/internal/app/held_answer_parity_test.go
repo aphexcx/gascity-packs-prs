@@ -15,8 +15,9 @@ package app
 // can hold the answer of any call after Google applied it: the session's
 // create, the session's delete, the acknowledgement's create. Each row is a
 // sequence of those calls and of the moments their answers are released. Run
-// with ACK_REACTION set, the react verb's status codes and the acts must
-// equal the same row run with ACK_REACTION unset (main's answer). The order
+// with ACK_REACTION set, the react verb's status codes, the acts and the
+// owner lines never-silent posts three minutes on must equal the same row run
+// with ACK_REACTION unset (main's answer). The order
 // Google applied the calls in is checked too, so a row cannot pass without
 // reaching its order.
 //
@@ -189,13 +190,15 @@ type heldRow struct {
 	//   add ID [thumbsup] [B] [held|prompt]   the session's create (eyes on A unless named)
 	//   remove ID [held]                      the session's removal of eyes on A
 	//   ack [held]                            admit A; with ACK_REACTION set, its acknowledgement
+	//   message                               admit another owner's message in the space
 	//   release ID                            release a held answer (ID "ack": the acknowledgement's)
 	//   settle                                wait for every call; note the acts
 	steps string
 	// The order Google applied the creates and deletes in, ACK_REACTION set
 	// and unset.
 	googleAck, googleOff string
-	// Red at 3dc345a1 (the round's base) or a guard that is green there.
+	// Red before the fix (3dc345a1; the stamp row at f9a078fd) or a guard
+	// that is green there.
 	red bool
 }
 
@@ -203,7 +206,7 @@ const heldOther = round4Space + "/messages/other"
 
 // run plays one row with ACK_REACTION set to mode and returns its trace: the
 // acts at each settle, then each call's status code in the order the calls
-// were made.
+// were made, then the owner lines three minutes on with the session down.
 func (r *heldChat) run(row heldRow, mode string) []string {
 	t := r.t
 	t.Helper()
@@ -296,6 +299,14 @@ func (r *heldChat) run(row heldRow, mode string) []string {
 			if !waitDone(hold.applied, 10*time.Second) {
 				t.Fatalf("%s: the acknowledgement's create never reached Google; Google applied %s", row.name, r.front.record())
 			}
+		case "message":
+			// The rig's clock stands at its start; the react verb's acts are
+			// on the wall clock. Live both are the wall clock: bring the rig's
+			// up to it, as round 1's later-message-notice does.
+			r.clock.mu.Lock()
+			r.clock.now = time.Now().UTC()
+			r.clock.mu.Unlock()
+			r.human()
 		case "release":
 			hold := holds[f[1]]
 			if hold == nil {
@@ -323,6 +334,7 @@ func (r *heldChat) run(row heldRow, mode string) []string {
 	for _, c := range calls {
 		trace = append(trace, c.id+"="+strconv.Itoa(*c.code))
 	}
+	trace = append(trace, "owner lines="+strconv.Itoa(r.due()))
 	want := row.googleOff
 	if mode != "" {
 		want = row.googleAck
@@ -382,6 +394,17 @@ func heldChatRows() []heldRow {
 			steps:     "add s1 held; ack held; add s2; release s1; release ack",
 			googleAck: "create:200 | create:409 | create:409",
 			googleOff: "create:200 | create:409",
+			red:       true,
+		},
+		{
+			// A call that waited for its turn is the session's act at the
+			// moment it asked: message B, admitted while s2 waits behind the
+			// held removal, is not answered by s2 (with ACK_REACTION unset s2
+			// has returned before B), so B's owner line is posted.
+			name:      "stamp/message-arrives-while-a-call-waits",
+			steps:     "add s1; remove r1 held; ack; add s2; message; release r1; settle",
+			googleAck: "create:200 | delete:200 | create:200 | create:200 | create:409",
+			googleOff: "create:200 | delete:200 | create:200",
 			red:       true,
 		},
 		{
