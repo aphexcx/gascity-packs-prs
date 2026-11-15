@@ -1359,15 +1359,22 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	// call's own bound (CreateReaction's retry bound, RemoveReaction's
 	// timeout) bounds a turn. A call that waited is dated back by its wait:
 	// the session acted when it asked, so a message that arrived meanwhile is
-	// not answered.
+	// not answered. The wait ends with r's context, which ends when the
+	// session's command stops waiting (through gc's proxy, the connection
+	// closes): a call whose caller has given up never reaches Google and
+	// records nothing.
 	var waited time.Duration
+	var err error
 	if c.ArrivalHold != nil {
 		var release func()
-		release, waited = c.ArrivalHold(v.Message, v.Emoji)
+		release, waited, err = c.ArrivalHold(r.Context(), v.Message, v.Emoji)
+		if err != nil {
+			problem(w, 502, err)
+			return
+		}
 		defer release()
 	}
 	var name string
-	var err error
 	if v.Remove {
 		var removed bool
 		removed, err = c.RemoveReaction(r.Context(), v.Message, v.Emoji)

@@ -3295,7 +3295,17 @@ func handleReact(cfg config) http.HandlerFunc {
 		// (ack.Service.HoldReaction). slackAPIClient's timeout bounds a turn.
 		// A call that waited is dated back by its wait: the session acted
 		// when it asked, so a message that arrived meanwhile is not answered.
-		release, waited := cfg.arrival.HoldReaction(req.Conversation.ConversationID, req.MessageID, emoji)
+		// The wait ends with r's context, which ends when the session's
+		// command stops waiting (through gc's proxy, the connection closes):
+		// a call whose caller has given up never reaches Slack and records
+		// nothing. A call that holds the turn runs on as before.
+		release, waited, err := cfg.arrival.HoldReactionContext(r.Context(), req.Conversation.ConversationID, req.MessageID, emoji)
+		if err != nil {
+			log.Printf("react: op=%s conv=%s ts=%s emoji=%s: not sent, the caller gave up while it waited for its turn: %v", method, req.Conversation.ConversationID, req.MessageID, emoji, err)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(reactReceipt{FailureKind: "transient"})
+			return
+		}
 		defer release()
 
 		slackResp, err := callSlackReactions(cfg.slackBotToken, method, slackReactionsAddReq{

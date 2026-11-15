@@ -102,10 +102,13 @@ type Service struct {
 	turns    map[string]*reactionTurn
 }
 
-// reactionTurn is held by one session call on a reaction at a time; callers
-// counts the holder and the calls waiting, and the turn goes with the last.
+// reactionTurn is held by one session call on a reaction at a time: its slot
+// holds a token while a call has the turn, and the calls waiting queue on the
+// slot in the order they came, each able to leave when its caller gives up.
+// callers counts the holder and the calls waiting, and the turn goes with the
+// last.
 type reactionTurn struct {
-	sync.Mutex
+	slot    chan struct{}
 	callers int
 }
 
@@ -205,10 +208,23 @@ func reactionPath(dir, sub, conversation, message, emoji string) string {
 // that much earlier, to the moment it would have had with the
 // acknowledgement off, so a message that arrived during the wait is not
 // answered by it. While the acknowledgement is off it holds nothing and
-// waited is zero.
+// waited is zero. It is HoldReactionContext for a caller that never gives up.
 func (s *Service) HoldReaction(conversation, message, emoji string) (release func(), waited time.Duration) {
+	release, waited, _ = s.HoldReactionContext(context.Background(), conversation, message, emoji)
+	return release, waited
+}
+
+// HoldReactionContext is HoldReaction for a call whose caller can give up:
+// ctx is the react verb's request context, which ends when the session's
+// command stops waiting for the answer. A call whose ctx ends while it waits
+// leaves the queue and returns ctx's error with nothing held, and the calls
+// behind it move up; so does a call whose ctx has ended by the time it has
+// the turn. Either way no channel call is made for a caller that has given
+// up. While the acknowledgement is off it holds nothing, waits for nothing
+// and never refuses.
+func (s *Service) HoldReactionContext(ctx context.Context, conversation, message, emoji string) (release func(), waited time.Duration, err error) {
 	if s == nil || !s.Choice.Enabled() {
-		return func() {}, 0
+		return func() {}, 0, nil
 	}
 	key := reactionKey(conversation, message, emoji)
 	s.reacting.Lock()
@@ -217,28 +233,45 @@ func (s *Service) HoldReaction(conversation, message, emoji string) (release fun
 	}
 	turn := s.turns[key]
 	if turn == nil {
-		turn = &reactionTurn{}
+		turn = &reactionTurn{slot: make(chan struct{}, 1)}
 		s.turns[key] = turn
 	}
 	turn.callers++
 	s.reacting.Unlock()
-	if !turn.TryLock() {
+	leave := func() {
+		s.reacting.Lock()
+		turn.callers--
+		if turn.callers == 0 {
+			delete(s.turns, key)
+		}
+		s.reacting.Unlock()
+	}
+	select {
+	case turn.slot <- struct{}{}:
+	default:
 		start := time.Now()
-		turn.Lock()
-		waited = time.Since(start)
+		select {
+		case turn.slot <- struct{}{}:
+			waited = time.Since(start)
+		case <-ctx.Done():
+			leave()
+			return func() {}, time.Since(start), ctx.Err()
+		}
 	}
 	var once sync.Once
-	return func() {
+	release = func() {
 		once.Do(func() {
-			turn.Unlock()
-			s.reacting.Lock()
-			turn.callers--
-			if turn.callers == 0 {
-				delete(s.turns, key)
-			}
-			s.reacting.Unlock()
+			<-turn.slot
+			leave()
 		})
-	}, waited
+	}
+	// The turn and the end of ctx can come together, and a call can have the
+	// turn at once after its caller has gone: it passes the turn on.
+	if err := ctx.Err(); err != nil {
+		release()
+		return func() {}, waited, err
+	}
+	return release, waited, nil
 }
 
 // placedPath is the record of the acknowledgement's emoji on one message.

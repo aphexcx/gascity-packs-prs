@@ -42,8 +42,9 @@ type Client struct {
 	// it returns across its call and that call's ArrivalPlaced or
 	// ArrivalRemoved, then calls it, so the session's calls on one emoji of
 	// one message reach Google one at a time; waited is how long it waited
-	// for that turn (ack.Service.HoldReaction).
-	ArrivalHold func(message, emoji string) (release func(), waited time.Duration)
+	// for that turn. A call whose ctx ends first gets ctx's error, holds
+	// nothing and must not reach Google (ack.Service.HoldReactionContext).
+	ArrivalHold func(ctx context.Context, message, emoji string) (release func(), waited time.Duration, err error)
 	// MessageCreated is installed before sharing the client. It receives only
 	// coordinates and Google's original timestamp, including idempotent replays.
 	MessageCreated         func(space, message, thread, stamp string)
