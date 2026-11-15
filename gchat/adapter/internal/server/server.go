@@ -1353,6 +1353,14 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, _ := s.clients()
+	// With ACK_REACTION on, the session's calls on one reaction reach Google
+	// one at a time, each with its bookkeeping below, so the session's mark
+	// follows the order in which Google applied them (arrival.Wire). The
+	// call's own bound (CreateReaction's retry bound, RemoveReaction's
+	// timeout) bounds a turn.
+	if c.ArrivalHold != nil {
+		defer c.ArrivalHold(v.Message, v.Emoji)()
+	}
 	var name string
 	var err error
 	if v.Remove {

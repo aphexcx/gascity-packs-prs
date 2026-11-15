@@ -96,6 +96,17 @@ type Service struct {
 	// placing makes each read and write of the placement records and the
 	// session's reaction marks one step: one process owns the state directory.
 	placing sync.Mutex
+	// reacting guards turns, the react verb's one turn per reaction that a
+	// session call holds or waits for (HoldReaction).
+	reacting sync.Mutex
+	turns    map[string]*reactionTurn
+}
+
+// reactionTurn is held by one session call on a reaction at a time; callers
+// counts the holder and the calls waiting, and the turn goes with the last.
+type reactionTurn struct {
+	sync.Mutex
+	callers int
 }
 
 func (s *Service) Observe(in Input) {
@@ -168,12 +179,58 @@ func messageDigest(conversation, message string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(conversation+"\x00"+message)))
 }
 
-// reactionPath names one emoji on one message under <dir>/<sub>. A Slack name
-// may come with its colons; Google may add or drop the emoji presentation
-// selector. Neither changes the reaction.
-func reactionPath(dir, sub, conversation, message, emoji string) string {
+// reactionKey names one emoji on one message. A Slack name may come with its
+// colons; Google may add or drop the emoji presentation selector. Neither
+// changes the reaction.
+func reactionKey(conversation, message, emoji string) string {
 	emoji = strings.ReplaceAll(strings.Trim(emoji, ":"), "\ufe0f", "")
-	return filepath.Join(dir, sub, fmt.Sprintf("%x", sha256.Sum256([]byte(messageDigest(conversation, message)+"\x00"+emoji))))
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(messageDigest(conversation, message)+"\x00"+emoji)))
+}
+
+// reactionPath names one emoji on one message under <dir>/<sub>.
+func reactionPath(dir, sub, conversation, message, emoji string) string {
+	return filepath.Join(dir, sub, reactionKey(conversation, message, emoji))
+}
+
+// HoldReaction gives the react verb its turn on one reaction. The verb holds
+// the turn across its channel call and that call's bookkeeping
+// (SessionPlaced, TakePlaced, SessionRemoved), then calls release, so the
+// session's next call on the same conversation, message and emoji reaches
+// the channel only after this call's answer is handled. The mark then
+// follows the order in which the channel applied the session's calls. A call
+// on another message or another emoji never waits, and the acknowledgement's
+// own call takes no turn. A turn lasts as long as the holder's channel call,
+// which that call's own timeout bounds. While the acknowledgement is off it
+// holds nothing.
+func (s *Service) HoldReaction(conversation, message, emoji string) (release func()) {
+	if s == nil || !s.Choice.Enabled() {
+		return func() {}
+	}
+	key := reactionKey(conversation, message, emoji)
+	s.reacting.Lock()
+	if s.turns == nil {
+		s.turns = map[string]*reactionTurn{}
+	}
+	turn := s.turns[key]
+	if turn == nil {
+		turn = &reactionTurn{}
+		s.turns[key] = turn
+	}
+	turn.callers++
+	s.reacting.Unlock()
+	turn.Lock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			turn.Unlock()
+			s.reacting.Lock()
+			turn.callers--
+			if turn.callers == 0 {
+				delete(s.turns, key)
+			}
+			s.reacting.Unlock()
+		})
+	}
 }
 
 // placedPath is the record of the acknowledgement's emoji on one message.

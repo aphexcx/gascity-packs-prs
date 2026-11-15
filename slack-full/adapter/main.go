@@ -3289,6 +3289,12 @@ func handleReact(cfg config) http.HandlerFunc {
 		}
 		log.Printf("react: op=%s conv=%s ts=%s emoji=%s", method, req.Conversation.ConversationID, req.MessageID, emoji)
 
+		// With ACK_REACTION on, the session's calls on one reaction reach
+		// Slack one at a time, each with its bookkeeping below, so the
+		// session's mark follows the order in which Slack applied them
+		// (ack.Service.HoldReaction). slackAPIClient's timeout bounds a turn.
+		defer cfg.arrival.HoldReaction(req.Conversation.ConversationID, req.MessageID, emoji)()
+
 		slackResp, err := callSlackReactions(cfg.slackBotToken, method, slackReactionsAddReq{
 			Channel:   req.Conversation.ConversationID,
 			Name:      emoji,

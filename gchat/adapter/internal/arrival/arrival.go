@@ -80,8 +80,8 @@ func New(o Options) (*ack.Service, *stopwatch.Writer, error) {
 
 // Wire prepares a new client before it is shared: the words hook always (the
 // stopwatch runs on or off, item 15); the shared arrival pace and the react
-// verb's placement lookup only while the acknowledgement is on, so the switch
-// unset keeps the base's gate and the base's react verb.
+// verb's placement lookup and turn only while the acknowledgement is on, so
+// the switch unset keeps the base's gate and the base's react verb.
 func Wire(c *chat.Client, service *ack.Service, watch *stopwatch.Writer) {
 	c.MessageCreated = func(space, message, thread, stamp string) {
 		if at, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
@@ -102,6 +102,10 @@ func Wire(c *chat.Client, service *ack.Service, watch *stopwatch.Writer) {
 		c.ArrivalRemoved = func(message, emoji string) {
 			space, _, _ := strings.Cut(message, "/messages/")
 			service.SessionRemoved(space, message, emoji)
+		}
+		c.ArrivalHold = func(message, emoji string) func() {
+			space, _, _ := strings.Cut(message, "/messages/")
+			return service.HoldReaction(space, message, emoji)
 		}
 	}
 }
