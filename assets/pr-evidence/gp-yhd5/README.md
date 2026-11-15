@@ -153,12 +153,122 @@ No data race was reported.
   - The wait itself is bounded as stated above.
 - **Self-review, NOTE** (this README was not yet updated): FIXED in this commit.
 
+## Round 3: a waiting call ends with its caller; the stopwatch keeps its own time
+
+Code tip 2486bb00 on 6a6e7ed7. Fakes only, nothing deployed, GC_BIN unset.
+
+The commits:
+- 4b0830f2: the waiter tests, red.
+- 076cb06d: the stopwatch test, red.
+- 86bc90e9: the fix for a waiting call.
+- d2fb8f10: the stopwatch's fix.
+- fba54c18: the dating back's false-notice row (the second read's note).
+- 2486bb00: the self-review's wording.
+
+**The review's MAJOR.** With `ACK_REACTION` on, a react call waiting for its turn on a reaction took no account of its caller. Its sequence: an eyes reaction placed; a removal whose channel answer is held; another eyes through the session's command, whose own timeout ends while the add waits. On Slack the abandoned add then reached Slack and counted. On Google Chat its handler was kept until its turn and then answered 502 with no call.
+
+**The class.** A queue that cannot be left stands ahead of the channel call. Its cases in round 2's code:
+- Slack: a waiting call is sent after its caller gave up, and counts.
+- Google Chat: a waiting call's handler is kept until its turn.
+- Either: every call queued behind a slow holder takes that holder's bound, whether or not its caller is still there.
+
+The test at the class level cancels the waiter while the holder's answer is held.
+
+**The mechanism.**
+- The turn on one reaction is a channel with room for one token. A call takes the turn by putting the token in. A call that finds it full waits on it in a select with the react verb's request context, and waiting calls are served in the order they came.
+- A call whose context ends while it waits leaves the queue at once with the context's error, holding nothing, and the calls behind it move up.
+- A call checks its context once more after it has the turn, whether it waited or not: the turn and the end of the context can come together. So no channel call is made for a caller that has gone.
+- The verbs answer such a call `{"delivered":false,"failure_kind":"transient"}` (Slack) or 502 (Google Chat) and record nothing: no act, no journal row, no mark.
+- A call that holds the turn runs as before. Slack's react call still runs on a background context, bounded by `slackAPIClient`'s 30 s timeout.
+- With `ACK_REACTION` unset nothing is held, nothing waits and nothing is refused. `HoldReaction` stays, as the same turn for a caller that never gives up.
+
+**The caller's context.** It ends when the caller stops waiting, as a cancellation. It carries no deadline value of its own.
+- Slack: the request's context on the adapter's internal listener (`main.go`, `internalSrv`; only `ReadHeaderTimeout` is set). The session's react command gives up after 10 s (`slack_intake_common.py`, `urlopen(req, timeout=10)`) and closes its connection to the gc API. gc's service proxy is a plain `httputil.ReverseProxy`, which sends the upstream request on the incoming request's context, so it closes the adapter's connection and net/http cancels the handler's context. The context also ends when the handler returns.
+- Google Chat: the request's context on the app's server (`app.go`), whose base is the service's context. It ends when the session's command gives up (`commands/common.sh`, curl `--max-time 45`, through the same proxy) or when the service stops. The server's 25 s `ReadTimeout` does not end it while the handler runs (a probe of net/http).
+- The proxy row runs this path in each adapter's test: an HTTP client with a 600 ms timeout, a reverse proxy, and the adapter on a unix socket.
+
+**The review's MINOR: the stopwatch.** On Slack the act dated back by its wait also fed the stopwatch, so a session reaction that waited was recorded as landing earlier by the whole wait. The act now carries two times, as Google Chat's verb already keeps them:
+- `Timestamp`, dated back, is what never-silent judges by and what the journal keeps for a restart's replay.
+- `landed`, never persisted, is when the reaction completed. Only the stopwatch reads it.
+- A call that did not wait gives both the same instant, as before.
+
+### The tests (red first, in commits of their own)
+
+- `TestReactVerbWaiterEndsWithItsCaller`, one per adapter (`slack-full/adapter/waiter_gives_up_test.go`, `gchat/adapter/internal/app/waiter_gives_up_test.go`), on round 2's holding rigs, with `ACK_REACTION=eyes`:
+  - The steps: the session's eyes on A (s1); its removal (r1), applied and its answer held; the waiter (w) and a third eyes (s3) queued behind r1; w's caller gives up; r1's answer is released; a later eyes (s4).
+  - Three rows, one for each way the caller gives up: its context is cancelled; its context reaches its deadline; its HTTP client times out through a reverse proxy in front of the adapter on a unix socket.
+  - It asserts:
+    - w returns within 2 s of its caller giving up, while r1's answer is still held;
+    - by then the channel has applied only s1 and r1, and the acts, the journal (Slack) and the state files are unchanged;
+    - the whole trace equals the same steps without w: the channel's applied order, the acts, the journal (Slack), the receipts or status codes of s1, r1, s3 and s4, and the state files;
+    - s4 returns at once, so the turn is not kept;
+    - w's caller got the transient receipt or 502, or, in the proxy row, its own timeout.
+- `TestReactVerbWaiterGivenUpIsAMissedCount`, one per adapter: the parity limit's direction, below.
+- `TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction`:
+  - On Slack, red: a session eyes that waits behind its own held removal is the first reaction on its message. Its stopwatch line must lie between the release and the return. Its never-silent act must be dated back before the release, and the journal row must carry the never-silent time.
+  - A guard: a call that did not wait gives one instant to all three.
+  - Google Chat's copy is a guard, green before and after.
+- `TestHeldAnswerParityMessageBeforeTheWaitingCall`, one per adapter: round 2's oracle on the row "add s1; remove r1 held; ack; message; add s2; release r1; settle". B is admitted before s2 asks, so s2 must not be dated back past its ask. Round 2's table file is unedited.
+- `TestHoldReactionContextEndsWithItsCaller`, in both ack copies:
+  - a waiter whose context is cancelled or reaches its deadline returns that error at once, holding nothing;
+  - the calls queued before and after it go in order;
+  - a caller already gone when the turn is free takes nothing;
+  - nothing is kept, and a later call takes the turn at once;
+  - with the switch off, a gone caller is not refused.
+
+### Results
+
+**Red** (r3-red.txt), this round's test files on the code of 6a6e7ed7:
+- Slack: the three waiter rows fail. The waiting call had not returned 2 s after its caller gave up, with the holder's answer still held (waiter_gives_up_test.go:252); the trace differs from the run without it, with one more add applied by Slack and one more journal row (:259); and its caller was answered `{"delivered":true}` (:262). The limit test fails: the waiter counted. The stopwatch test fails: the line is at +72 ms from the ask, the release at +700 ms and the return at +899 ms. Its did-not-wait guard and the false-notice row pass there.
+- Google Chat: the three waiter rows and the limit test fail on the prompt return (:234, :306), because the handler was kept until its turn. Google got no call for it at the base either, which is the second read's observation. The stopwatch guard and the false-notice row pass there.
+- The ack unit test does not build at the base in either copy: `HoldReactionContext` is new.
+
+**Mutations of 2486bb00** (r3-red.txt):
+- r3m1, the wait ignores the caller: the waiter test, the limit test and the unit test fail in both adapters.
+- r3m2, no check after the turn: the unit test fails in both copies (a caller already gone when the turn is free).
+- r3m3, a waiter that gives up keeps its place: the unit test fails in both copies (callers and turns kept).
+- r3m4, Slack's verb sends anyway: the waiter test and the limit test fail.
+- r3m5, Google Chat's verb sends anyway: SURVIVES, as an equivalent mutant. Google Chat's create and removal take the request's context themselves, so a given-up call fails before any request to Google either way, with the same 502 and nothing recorded. The verb's check keeps that from depending on the client.
+- r3m6, Slack's stopwatch reads the dated-back time: the stopwatch test fails.
+- r3m7, the act dated back by twice its wait (the second read's own mutation): the false-notice row fails in both adapters. On Slack round 2's table and the stopwatch test fail too; on Google Chat the stopwatch guard does.
+
+**Green at 2486bb00** (r3-green.txt):
+- Every test above passes, and so do round 2's parity table and bound test.
+- Round 1's and round 4's tests and the off-parity tests pass.
+- No earlier test file was modified: the diff against 6a6e7ed7 and against PR 104's head 972ff72c lists no modified test file, and this round adds eight.
+- The two ack copies are identical.
+
+**-race -count=20 at 2486bb00:** 20 of 20 in both adapters for each of these: the four new app-level tests, round 2's parity table and its bound test, round 1's two-goroutine test `TestPlacementRecordHasOneTaker`, round 2's `TestHoldReactionIsOneTurnPerReaction` and the new `TestHoldReactionContextEndsWithItsCaller`. No data race was reported.
+
+**Full runs at 2486bb00:**
+- Slack: `env -u GC_BIN go test ./... -count=1` exits 0. 5 packages ok; 1685 top-level tests passed (round 2's 1680 and this round's five), 0 failed, 3 skipped. `go vet` is clean, and `gofmt -l` is clean on the files this round touched.
+- Google Chat: `env -u GC_BIN go test ./... -count=1 -timeout=30m` exits 0. 25 packages ok; 731 passed (726 and five), 0 failed, 2 skipped. `go vet` and `gofmt` are clean.
+- The pytest target (round 1's command): 110 passed.
+
+### Outcomes: the gate's two findings, the second read's six, the self-review
+
+- **Gate r2, MAJOR** (waiting reactions cannot be cancelled): FIXED in 86bc90e9. `TestReactVerbWaiterEndsWithItsCaller` is red at 6a6e7ed7 in both adapters and green at 2486bb00, in each of the three ways a caller gives up. The class's cases: the Slack send after the caller gave up (the extra add in the trace), the Google Chat handler kept (the prompt return), and the queued bound (the waiter leaves at once, and the calls behind it move up).
+- **Gate r2, MINOR** (Slack's stopwatch early by the wait): FIXED in d2fb8f10. Red at 6a6e7ed7 (+72 ms against a release at +700 ms), green at the tip.
+- **Read r2, MINOR 1** (the gate's MAJOR, graded MINOR there): FIXED, as above.
+- **Read r2, MINOR 2** (the gate's MINOR): FIXED, as above.
+- **Read r2, NOTE 3** (Google Chat's table does not pin the dating back from the false-notice side): FIXED in fba54c18. The read's row runs as its own test in each adapter, and r3m7 fails it in both.
+- **Read r2, NOTE 4** (case 2 on Google Chat has no time limit short of the retry): FIXED in this commit. The Limits sentence now says so.
+- **Read r2, NOTE 5** (the dating back was outside round 2's four scope items): DOES NOT MATTER. This round's contract builds on it (its scope item 4), and the read found it needed and sound.
+- **Read r2, NOTE 6** (bead ids in the public delta): INTENDED. They are the branch names and the trailers the contract orders, and there is no other id.
+- **Round 2's self-review NOTE** (a waiting call ignores its request's context, graded DOES NOT MATTER there): superseded. It is the gate's MAJOR, fixed above.
+- **Self-review r3** (one Opus reviewer on this round's delta: BLOCKER 0, MAJOR 0, MINOR 1, NIT 3):
+  - MINOR, the caller's context carries no deadline value of its own: stated above under "The caller's context". It ends when the caller gives up, which is what the wait needs, and the proxy row shows it.
+  - NIT, the check after the turn also drops a call that did not wait, and the log line said "while it waited": the wording is FIXED in 2486bb00. The behaviour is the contract's (scope item 2) and is stated in the limit below.
+  - NIT, Google Chat's comment did not say that a call holding the turn runs as before: FIXED in 2486bb00.
+  - NIT, the evidence was not yet in the delta: FIXED in this commit.
+
 ## Limits (stated, not fixed)
 
 - **The session's own answer lost** (already in the base): the session's reaction lands but its answer is lost, it retries, and it gets "already there" while an acknowledgement record stands. The retry counts once; with the switch unset it counts 0. Nothing in the answers tells the two cases apart.
 - **A placed answer no longer uses up the record.** Taking the record on a placed answer would lose the answer in the add, remove, acknowledgement-lands order above, which needs no fault. Keeping the record widens the first limit to one more two-fault sequence.
 - **Slack emoji aliases** (`+1` / `thumbsup`): records and marks key on the name as sent. Out of scope here.
-- **A removal whose answer is lost or fails** (round 2's case 2): the mark stays, so if the acknowledgement then places the same emoji, the session's next reaction of it is not counted where with the switch unset it counts, and Google Chat answers 502 to it and to each repeat until the session retries its removal, which clears the mark. It is left because it needs a fault on top of the session-first order and errs toward a notice never-silent would not otherwise post, never a hidden failure; closing it would mean clearing the mark when the acknowledgement's own add is placed, which is safe only if that add takes the reaction's turn (tying the acknowledgement's two-second budget to the session's calls: m3 shows it stalling 25 to 30 s), and on Google Chat a created answer does not prove the session's reaction is gone (Google may hold the emoji in another form), so the clear could over-count.
+- **A removal whose answer is lost or fails** (round 2's case 2): the mark stays, so if the acknowledgement then places the same emoji, the session's next reaction of it is not counted where with the switch unset it counts, and Google Chat answers 502 to it and to each repeat until the session retries its removal, which clears the mark; no timer ends it sooner. It is left because it needs a fault on top of the session-first order and errs toward a notice never-silent would not otherwise post, never a hidden failure; closing it would mean clearing the mark when the acknowledgement's own add is placed, which is safe only if that add takes the reaction's turn (tying the acknowledgement's two-second budget to the session's calls: m3 shows it stalling 25 to 30 s), and on Google Chat a created answer does not prove the session's reaction is gone (Google may hold the emoji in another form), so the clear could over-count.
+- **A react call whose caller gives up before it has its turn** (round 3): with `ACK_REACTION` set, a react call that waits longer than its caller's own timeout is never made, where with it unset it would have been made at once. It errs toward a missed count, so never-silent may post a notice the unset run does not, never toward a hidden failure. `TestReactVerbWaiterGivenUpIsAMissedCount` shows it in both adapters: acts 1 against 2, owner lines 1 against 0. The session sees its own command's timeout: on Slack the react command raises `TimeoutError` after 10 s, on Google Chat curl stops at 45 s. The adapter's answer, `transient` (Slack) or 502 (Google Chat), reaches only a caller still listening. The same holds for a caller already gone when its turn is free, a window of microseconds.
 - Round 1's limit on overlapping identical session requests is closed by round 2's turn (the overlap rows).
 - The mark directory is pruned at start and daily whatever the switch is set to, as `ack-attempts` and `ack-placed` already were.
 
@@ -168,5 +278,7 @@ No data race was reported.
 - **green.txt:** the tip's runs, the full suites' counts, main's load-sensitive tests run alone, and the pytest target.
 - **r2-red.txt** (round 2): the parity table on the code of 3dc345a1 and at 53971345, and the mutations of 4d2099b5.
 - **r2-green.txt** (round 2): the tip's runs, -race -count=20, the full suites' counts and the pytest target.
+- **r3-red.txt** (round 3): this round's tests on the code of 6a6e7ed7, and the mutations of 2486bb00.
+- **r3-green.txt** (round 3): the tip's runs, -race -count=20, the full suites' counts and the pytest target.
 
 Paths are written `<clone>` (the lane's clone), `<scratch>` / `<scratch-NAME>` (a git archive, never committed) and `<tmp>`.
