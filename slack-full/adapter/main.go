@@ -3356,7 +3356,10 @@ func handleReact(cfg config) http.HandlerFunc {
 				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
 			}
 			if cfg.neverSilent.Enabled() {
-				act.Timestamp = time.Now().Add(-waited)
+				// never-silent judges by the moment the session asked; the
+				// stopwatch keeps when the reaction landed.
+				act.landed = time.Now()
+				act.Timestamp = act.landed.Add(-waited)
 				act.NoticeNoActivity = !fresh
 				if !act.NoticeNoActivity {
 					cfg.noticeError(cfg.neverSilent.Act(act.Channel, "", act.SessionID, act.Timestamp))
