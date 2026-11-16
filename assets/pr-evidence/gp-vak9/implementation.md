@@ -31,7 +31,9 @@ other membership states and HTTP 403/404 fall back to the last recorded list,
 or the discovery time when no list is recorded. A temporary failure aborts
 the refresh and the existing retry repeats it. The lookup has a 30-second
 deadline. Legacy credentials without a known identity hold this discovery
-while publishing remains available to establish the identity.
+while manual publishing and recovery of already-prepared outbound commands
+remain available to establish the identity. This exception applies only to the
+identity-discovery hold, and is cleared when the hold or generation ends.
 
 ## Operator log messages
 
@@ -44,6 +46,8 @@ Discovery sources are event, startup, recovery and sweep. These records contain
 no message text, display names or user IDs. The completion count reads delivered
 turns from the delivery ledger and survives pending receipts and a failed save
 after delivery, without maintaining a second list of every delivered turn.
+Both ordinary delivered receipts and fully landed pending receipts contribute
+to the count, matching the existing inbound turn counter.
 
 ## Existing tests and overlapping work
 

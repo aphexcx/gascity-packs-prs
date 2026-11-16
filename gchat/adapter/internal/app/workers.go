@@ -34,6 +34,7 @@ import (
 func (a *application) generation(ctx context.Context, source *token.Source, reloaded bool, registered *atomic.Bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer a.identityDiscoveryHeld.Store(false)
 	g := gcclient.New(a.cfg.Secrets.GCAPIBase, a.cfg.Secrets.CityName)
 	g.SetConnectionRefusedHandler(func(err error) { a.gcDown.Store(true); a.s.ObserveGCError(err) })
 	hc, err := source.Client(ctx)
@@ -354,6 +355,9 @@ func (a *application) poll(ctx context.Context, p *inbound.Processor, fatal chan
 func (a *application) retry(ctx context.Context, op string, fn func() error) error {
 	for ceiling := time.Second; ; ceiling = min(2*ceiling, time.Minute) {
 		err := fn()
+		if op == "freeze" {
+			a.identityDiscoveryHeld.Store(errors.Is(err, catchup.ErrIdentityUnavailable))
+		}
 		if err == nil {
 			if op == "subscription" {
 				a.subscriptionRecovered()

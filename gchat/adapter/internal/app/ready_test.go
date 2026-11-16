@@ -56,6 +56,10 @@ func TestLegacyIdentityHoldResumesInterruptedOutbound(t *testing.T) {
 				if err := os.WriteFile(path, []byte("recovered file"), 0600); err != nil {
 					t.Fatal(err)
 				}
+				path, err := filepath.EvalSymlinks(path)
+				if err != nil {
+					t.Fatal(err)
+				}
 				send.Upload = &ledger.SendUpload{Path: path}
 			}
 			l := ledger.New()
@@ -75,6 +79,9 @@ func TestLegacyIdentityHoldResumesInterruptedOutbound(t *testing.T) {
 					return false
 				}
 				s := saved.Sends[p.IdempotencyKey]
+				if s != nil && !s.RecordPending && !s.Recorded {
+					t.Fatalf("recovery ended without recording: receipt=%+v reason=%q", s.Receipt, s.RecordingReason)
+				}
 				return s != nil && s.Recorded && !s.RecordPending && s.Receipt != nil && s.Receipt.Delivered
 			})
 			f.health(t, "ready", 10*time.Second)
@@ -85,8 +92,8 @@ func TestLegacyIdentityHoldResumesInterruptedOutbound(t *testing.T) {
 // TestRetryingMessageLeavesHealthReadyAndOutboundRecoveryRunning: a message
 // that catch-up recovered and that gc keeps answering "not delivered" is the
 // poll's to retry (gp-dl26, ruling A). It must not keep health at catching-up,
-// which would also pause outbound recovery (retryPending runs only while
-// health is ready) for up to the retry bound.
+// which would also pause outbound recovery (only an identity-discovery hold
+// permits recovery before health is ready) for up to the retry bound.
 func TestRetryingMessageLeavesHealthReadyAndOutboundRecoveryRunning(t *testing.T) {
 	f := newFixture(t, true)
 	now := time.Now().UTC()

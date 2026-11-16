@@ -660,7 +660,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 				// The delivery ledger owns the result, even if the catch-up
 				// save failed after delivery or a pending receipt settled later.
 				for _, c := range l.Changes {
-					if c.Space != name || !c.CatchUp || c.Status != "committed" || c.Reason != "delivered" || c.Created.Before(first.SeenAt) {
+					if c.Space != name || !c.CatchUp || c.Status != "committed" || (c.Reason != "delivered" && c.Reason != "landed_unconfirmed") || c.Created.Before(first.SeenAt) {
 						continue
 					}
 					turns++

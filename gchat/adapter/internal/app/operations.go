@@ -115,7 +115,10 @@ func (a *application) retryPending(ctx context.Context, registered *atomic.Bool)
 				}
 				a.gcDown.Store(false)
 			}
-			if a.s.Health().State != "ready" {
+			state := a.s.Health().State
+			// An interrupted send can supply the identity that discovery is
+			// waiting for. Other recovery still waits for ordinary readiness.
+			if state != "ready" && !(state == "catching-up" && a.identityDiscoveryHeld.Load()) {
 				continue
 			}
 			if err := a.s.RetryPending(ctx); err != nil && ctx.Err() == nil {
