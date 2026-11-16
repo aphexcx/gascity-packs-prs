@@ -97,7 +97,7 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), spaceJoined: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
 	a.stateLock = lock
 	a.l.SetSaveGuard(a.checkStateLock)
-	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
+	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, LedgerReady: a.loaded.Load, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
 		if n := a.lastEvent.Load(); n != 0 {
 			return time.Unix(0, n)
 		}

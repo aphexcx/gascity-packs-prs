@@ -75,20 +75,27 @@ feature is needed. This box cannot accept invitations yet. A Workspace super adm
 Google describes this permission as "View, add, update, and remove members
 from conversations in Chat." The adapter uses it only to join one invited
 room after the owner's yes. The box's key holder must also hand out that
-permission. If it refuses the scope: "This box's software does not hand out
-that permission yet. The box needs an update; the admin's step alone will
-not help." The key holder and the customer's own setup instructions live
+permission. If it refuses the scope: "This box is not set up to hand out
+that permission yet. Whoever runs the box updates it or turns the permission
+on; the admin's step alone will not help." Only `delegation_not_authorized`
+means the admin's step above. Other permanent refusals name their code in
+`permission_error` and say: "The permission could not be given for another
+reason. The admin's permission step will not fix it; nothing changed."
+The key holder and the customer's own setup instructions live
 outside this repository. Desktop consent stays unchanged and cannot use join.
 
 `gc gchat join --check` checks only that permission. To accept one invitation,
 use `gc gchat join --space spaces/ID --request`, ask the owner in a direct
 message with the returned code, and pass the owner's reply as
 `gc gchat join --space spaces/ID --yes spaces/DM/messages/ID`. The code is
-random, belongs to that room, expires after 24 hours, and is stored only as a
-hash. A new request replaces it. The adapter checks the sender, the direct
+random, belongs to that room, and expires after 24 hours. The approval record
+stores only its hash, and the join audit contains no code. Ordinary outgoing
+and incoming message text retains its existing storage and may contain the
+code. A new request replaces it. The adapter checks the sender, the direct
 message's room and creation time, and the code, then saves its use before
 one write naming the identity herself. An already joined room needs no yes
-and no write permission. A lost answer is settled by a read on the next run.
+and no write permission. A lost write answer is reported as an unknown outcome;
+the next run reads membership before any new write.
 The skill gives the owner's ask and the rule after no or silence.
 
 UNPROVEN: Google's pages do not say that creating one's own membership

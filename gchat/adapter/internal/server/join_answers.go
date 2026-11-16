@@ -8,7 +8,8 @@ import (
 )
 
 const joinAdminStep = "This box cannot accept invitations yet. A Workspace super administrator must open Google Admin console > Security > Access and data control > API controls > Manage Domain Wide Delegation, edit this client's entry, add https://www.googleapis.com/auth/chat.memberships beside the existing permissions, and click Authorize; changes can take up to 24 hours."
-const joinSoftwareStep = "This box's software does not hand out that permission yet. The box needs an update; the admin's step alone will not help."
+const joinSoftwareStep = "This box is not set up to hand out that permission yet. Whoever runs the box updates it or turns the permission on; the admin's step alone will not help."
+const joinUncertain = "The join outcome is unknown; run it again to read membership before any new write."
 
 var joinMessages = map[string]string{
 	"already_member":     "Already a member of this room. Nothing changed.",
@@ -44,6 +45,9 @@ func joinAnswer(phase, state string, err error) joinResult {
 	if err != nil {
 		var e *chat.MembershipError
 		if !errors.As(err, &e) {
+			if phase == "create" {
+				return joinResult{Result: "google_no_answer", Message: "Google did not answer. " + joinUncertain}
+			}
 			return joinReply("google_no_answer")
 		}
 		code, status = e.HTTP, e.Status
@@ -56,7 +60,11 @@ func joinAnswer(phase, state string, err error) joinResult {
 	if phase == "read" && err == nil {
 		return joinReply("no_invitation")
 	}
-	return joinResult{Result: "google_unknown", Message: fmt.Sprintf("Google answered HTTP %d %s. Nothing changed.", code, statusWord(status))}
+	ending := "Nothing changed."
+	if phase == "create" {
+		ending = joinUncertain
+	}
+	return joinResult{Result: "google_unknown", Message: fmt.Sprintf("Google answered HTTP %d %s. %s", code, statusWord(status), ending)}
 }
 
 func statusWord(s string) string {

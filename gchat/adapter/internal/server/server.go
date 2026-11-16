@@ -62,8 +62,11 @@ type Options struct {
 	// LedgerMu must be shared with inbound, catch-up, and the subscription manager.
 	// Consumers must release it for I/O and between batches; continuous re-locking
 	// can starve the server's deadline-aware TryLock polling.
-	LedgerMu     *sync.Mutex
-	LedgerPath   string
+	LedgerMu   *sync.Mutex
+	LedgerPath string
+	// LedgerReady is false until the application's existing state is loaded.
+	// It must be safe to call concurrently. Standalone servers use health.
+	LedgerReady  func() bool
 	SettingsPath string
 	Chat         *chat.Client
 	GC           *gcclient.Client

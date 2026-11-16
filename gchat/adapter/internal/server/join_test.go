@@ -206,7 +206,11 @@ func TestJoinAnswersTable(t *testing.T) {
 				t.Fatal("Google body logged")
 			}
 			if tc.want == "google_unknown" {
-				if !strings.Contains(fmt.Sprint(v["message"]), "HTTP") || !strings.Contains(fmt.Sprint(v["message"]), "Nothing changed") {
+				ending := "Nothing changed"
+				if tc.write != nil {
+					ending = "outcome is unknown"
+				}
+				if !strings.Contains(fmt.Sprint(v["message"]), "HTTP") || !strings.Contains(fmt.Sprint(v["message"]), ending) {
 					t.Fatalf("unknown answer: %v", v)
 				}
 			}
@@ -386,11 +390,11 @@ func TestJoinSaysWhatHappened(t *testing.T) {
 	for _, row := range []struct{ name, result, message string }{
 		{"policy", "refused_invited", "An invitation exists, but Google refused the join. A setting of this room's organization or this identity's organization may keep outside people out; an administrator of that organization must allow it."},
 		{"missing", "permission_missing", "This box cannot accept invitations yet. A Workspace super administrator must open Google Admin console > Security > Access and data control > API controls > Manage Domain Wide Delegation, edit this client's entry, add https://www.googleapis.com/auth/chat.memberships beside the existing permissions, and click Authorize; changes can take up to 24 hours."},
-		{"software", "permission_missing", "This box's software does not hand out that permission yet. The box needs an update; the admin's step alone will not help."},
+		{"software", "permission_missing", "This box is not set up to hand out that permission yet. Whoever runs the box updates it or turns the permission on; the admin's step alone will not help."},
 		{"no_yes", "no_owner_yes", "Supply the owner's direct message with --yes MESSAGE."},
 		{"desktop", "not_available", "Not available on this sign-in. This box uses desktop sign-in."},
-		{"lost", "google_no_answer", "Google did not answer. Nothing changed; run it again."},
-		{"unknown", "google_unknown", "Google answered HTTP 409 ALREADY_EXISTS. Nothing changed."},
+		{"lost", "google_no_answer", "Google did not answer. The join outcome is unknown; run it again to read membership before any new write."},
+		{"unknown", "google_unknown", "Google answered HTTP 409 ALREADY_EXISTS. The join outcome is unknown; run it again to read membership before any new write."},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			f := setupJoin(t)
@@ -508,11 +512,15 @@ func TestMissingPermissionChangesNothing(t *testing.T) {
 				t.Fatalf("%v", v)
 			}
 			if code == "scope_not_allowed" {
-				if v["message"] != "This box's software does not hand out that permission yet. The box needs an update; the admin's step alone will not help." {
+				if v["message"] != "This box is not set up to hand out that permission yet. Whoever runs the box updates it or turns the permission on; the admin's step alone will not help." {
 					t.Fatalf("%v", v)
 				}
-			} else if !strings.Contains(fmt.Sprint(v["message"]), joinScopeTest) || !strings.Contains(fmt.Sprint(v["message"]), "super administrator") {
-				t.Fatalf("admin instruction: %v", v)
+			} else if code == "delegation_not_authorized" {
+				if !strings.Contains(fmt.Sprint(v["message"]), joinScopeTest) || !strings.Contains(fmt.Sprint(v["message"]), "super administrator") {
+					t.Fatalf("admin instruction: %v", v)
+				}
+			} else if v["message"] != "The permission could not be given for another reason. The admin's permission step will not fix it; nothing changed." || v["permission_error"] != code {
+				t.Fatalf("other permission refusal: %v", v)
 			}
 			if f.s.Health() != before || source.State() != token.Ready || len(f.writes()) != 0 {
 				t.Fatal("refused permission changed running adapter")
@@ -522,6 +530,11 @@ func TestMissingPermissionChangesNothing(t *testing.T) {
 				t.Fatal(err)
 			}
 			res.Body.Close()
+			f.kmu.Lock()
+			if len(f.scopes) != 2 || !reflect.DeepEqual(f.scopes[0], token.KeyholderScopes) || !reflect.DeepEqual(f.scopes[1], []string{joinScopeTest}) {
+				t.Error("permission refusal changed or refreshed the standing token")
+			}
+			f.kmu.Unlock()
 			if f.count() != 0 {
 				t.Fatal("join refusal posted a notice")
 			}

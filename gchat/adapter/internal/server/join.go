@@ -34,12 +34,13 @@ type joinInput struct {
 }
 
 type joinResult struct {
-	Result      string `json:"result"`
-	Message     string `json:"message"`
-	Code        string `json:"code,omitempty"`
-	ExpiresAt   string `json:"expires_at,omitempty"`
-	Recorded    bool   `json:"recorded"`
-	RecordError string `json:"record_error,omitempty"`
+	Result          string `json:"result"`
+	Message         string `json:"message"`
+	Code            string `json:"code,omitempty"`
+	ExpiresAt       string `json:"expires_at,omitempty"`
+	Recorded        bool   `json:"recorded"`
+	RecordError     string `json:"record_error,omitempty"`
+	PermissionError string `json:"permission_error,omitempty"`
 }
 
 // decodeJoin rejects duplicate fields as well as unknown fields: a second room
@@ -103,6 +104,17 @@ func decodeJoin(w http.ResponseWriter, r *http.Request) (joinInput, error) {
 }
 
 func (s *Server) joinHTTP(w http.ResponseWriter, r *http.Request) {
+	ready := s.Health().State != "initializing" && s.Health().State != "recovery-required"
+	if s.opts.LedgerReady != nil {
+		ready = s.opts.LedgerReady()
+	}
+	if !ready {
+		// The HTTP listener precedes ledger load. Neither a check nor an invalid
+		// command may replace the existing file with the initial empty ledger.
+		s.opts.Logger.Info("gchat join", "operation", "join", "at", time.Now().UTC(), "space", "", "owner_message", "", "result", "state_unavailable")
+		respond(w, http.StatusServiceUnavailable, joinResult{Result: "state_unavailable", Message: "The adapter is loading its state. Nothing changed; run it again.", RecordError: "The local attempt record could not be saved before state was loaded."})
+		return
+	}
 	input, err := decodeJoin(w, r)
 	status := http.StatusOK
 	var result joinResult
@@ -140,11 +152,14 @@ func joinPermission(ctx context.Context, cfg config.Config) (*oauth2.Token, join
 		return tok, joinResult{}
 	}
 	if code := token.JoinRefusal(err); code != "" {
-		message := joinAdminStep
-		if code == "scope_not_allowed" {
+		message := "The permission could not be given for another reason. The admin's permission step will not fix it; nothing changed."
+		switch code {
+		case "delegation_not_authorized":
+			message = joinAdminStep
+		case "scope_not_allowed":
 			message = joinSoftwareStep
 		}
-		return nil, joinResult{Result: "permission_missing", Message: message}
+		return nil, joinResult{Result: "permission_missing", Message: message, PermissionError: code}
 	}
 	return nil, joinResult{Result: "google_no_answer", Message: "The key holder did not answer with a usable permission. Nothing changed; run it again."}
 }

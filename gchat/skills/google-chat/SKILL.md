@@ -130,6 +130,11 @@ After a successful join, tell the owner in one line. You may use the existing
 spaces command to set mentions only. If permission is missing, tell the owner
 what the command said in plain words, once. The real Google join behavior is
 UNPROVEN until the test Workspace proof call; do not claim fakes prove it.
+For `scope_not_allowed`, its wording is: "This box is not set up to hand out
+that permission yet. Whoever runs the box updates it or turns the permission
+on; the admin's step alone will not help." Only `delegation_not_authorized`
+calls for the admin's permission step; other refusals name their code and say
+that step will not fix them.
 
 ## How to reply
 
