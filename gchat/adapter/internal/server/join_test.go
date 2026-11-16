@@ -29,15 +29,16 @@ const joinScopeTest = "https://www.googleapis.com/auth/chat.memberships"
 
 type joinFixture struct {
 	*fixture
-	kmu     sync.Mutex
-	scopes  [][]string
-	refusal string
-	logs    bytes.Buffer
+	kmu       sync.Mutex
+	scopes    [][]string
+	refusal   string
+	tokenLife time.Duration
+	logs      bytes.Buffer
 }
 
 func setupJoin(t *testing.T) *joinFixture {
 	t.Helper()
-	f := &joinFixture{fixture: setup(t)}
+	f := &joinFixture{fixture: setup(t), tokenLife: time.Hour}
 	dir, err := os.MkdirTemp("/tmp", "gchat-join-")
 	if err != nil {
 		t.Fatal(err)
@@ -62,13 +63,14 @@ func setupJoin(t *testing.T) *joinFixture {
 		f.kmu.Lock()
 		f.scopes = append(f.scopes, input.Scopes)
 		refusal := f.refusal
+		tokenLife := f.tokenLife
 		f.kmu.Unlock()
 		if reflect.DeepEqual(input.Scopes, []string{joinScopeTest}) && refusal != "" {
 			w.WriteHeader(403)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": refusal, "detail": "private-detail-must-not-escape"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "join-secret-never-log", "expires_at": time.Now().Add(time.Hour).UnixMilli()})
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "join-secret-never-log", "expires_at": time.Now().Add(tokenLife).UnixMilli()})
 	})}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
@@ -254,8 +256,8 @@ func TestJoinRefusesWithoutTheOwnersYes(t *testing.T) {
 		{"old", "The message was written before this request."},
 		{"expired", "This request has expired."},
 		{"late", "The message was written after this request expired."},
-		{"wrong_code", "The message does not carry this room's code."},
-		{"other_room_code", "The message does not carry this room's code."},
+		{"wrong_code", "The owner must reply with this room's code alone, nothing else."},
+		{"other_room_code", "The owner must reply with this room's code alone, nothing else."},
 		{"used", "This request was already used."},
 		{"no_owner", "No owner is configured for this box."},
 		{"no_yes", "Supply the owner's direct message with --yes MESSAGE."},
@@ -330,6 +332,99 @@ func TestJoinRefusesWithoutTheOwnersYes(t *testing.T) {
 			f.kmu.Unlock()
 		})
 	}
+	for _, row := range []struct {
+		name, text string
+		approved   bool
+	}{
+		{"refusal", "No, do not join CODE", false},
+		{"question", "What is CODE?", false},
+		{"quoted_ask", "> To say yes, reply with: CODE\nno thanks", false},
+		{"yes_code", "yes CODE", false},
+		{"twice", "CODE CODE", false},
+		{"words_before", "please join CODE", false},
+		{"words_after", "CODE please join", false},
+		{"words_around", "please CODE join", false},
+		{"longer_token", "prefixCODEsuffix", false},
+		{"punctuation", "CODE!", false},
+		{"empty", " \t\n", false},
+		{"exact_code", "CODE", true},
+		{"lowercase", "lowercase", true},
+		{"surrounding_whitespace", " \t\nCODE\r\n ", true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			f := setupJoin(t)
+			code := f.request(t, "spaces/room")
+			message := strings.ReplaceAll(row.text, "CODE", code)
+			if row.name == "lowercase" {
+				message = strings.ToLower(code)
+			}
+			yes := f.yes(message)
+			v := f.join(t, map[string]any{"space": "spaces/room", "yes": yes})
+			wantResult, wantWrites, wantMints := "no_owner_yes", 0, 1
+			if row.approved {
+				wantResult, wantWrites, wantMints = "joined", 1, 2
+			} else if v["message"] != "The owner must reply with this room's code alone, nothing else." {
+				t.Errorf("refusal does not explain the required reply: %v", v)
+			}
+			if v["result"] != wantResult || len(f.writes()) != wantWrites {
+				t.Errorf("result=%v writes=%d; want %s and %d", v["result"], len(f.writes()), wantResult, wantWrites)
+			}
+			f.kmu.Lock()
+			if len(f.scopes) != wantMints {
+				t.Error("unexpected permission request count")
+			}
+			f.kmu.Unlock()
+			b, err := os.ReadFile(f.options.LedgerPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored := decode[ledger.Ledger](t, b)
+			if stored.JoinRequests["spaces/room"].Used != row.approved {
+				t.Error("durable approval consumption does not match the owner's yes")
+			}
+		})
+	}
+}
+
+func TestJoinShortLivedPermissionPreservesYes(t *testing.T) {
+	f := setupJoin(t)
+	yes := f.yes(f.request(t, "spaces/room"))
+	f.kmu.Lock()
+	f.tokenLife = 5 * time.Second
+	f.kmu.Unlock()
+	v := f.join(t, map[string]any{"space": "spaces/room", "yes": yes})
+	if v["result"] != "google_no_answer" || !strings.Contains(fmt.Sprint(v["message"]), "Nothing changed") || !strings.Contains(fmt.Sprint(v["message"]), "same owner's yes") {
+		t.Errorf("short-lived permission answer: %v", v)
+	}
+	if len(f.writes()) != 0 {
+		t.Fatal("short-lived permission sent a create")
+	}
+	b, err := os.ReadFile(f.options.LedgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := decode[ledger.Ledger](t, b)
+	if stored.JoinRequests["spaces/room"].Used {
+		t.Error("short-lived permission consumed the durable request")
+	}
+	f.kmu.Lock()
+	f.tokenLife = time.Hour
+	f.kmu.Unlock()
+	v = f.join(t, map[string]any{"space": "spaces/room", "yes": yes})
+	if v["result"] != "joined" || len(f.writes()) != 1 {
+		t.Fatalf("same yes with a good token: %v; writes=%d", v, len(f.writes()))
+	}
+}
+
+func TestJoinAskNamesRoomAndID(t *testing.T) {
+	f := setupJoin(t)
+	v := f.join(t, map[string]any{"space": "spaces/room", "request": true})
+	message := fmt.Sprint(v["message"])
+	for _, want := range []string{"Example", "spaces/room", "code alone, nothing else"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("ask is missing %q", want)
+		}
+	}
 }
 
 func TestJoinReadsBeforeItWrites(t *testing.T) {
@@ -388,7 +483,7 @@ func TestJoinSaysWhatHappened(t *testing.T) {
 		})
 	}
 	for _, row := range []struct{ name, result, message string }{
-		{"policy", "refused_invited", "An invitation exists, but Google refused the join. A setting of this room's organization or this identity's organization may keep outside people out; an administrator of that organization must allow it."},
+		{"policy", "refused_invited", "An invitation exists, but Google refused the join. Google answered HTTP 403 PERMISSION_DENIED. The cause is not known yet."},
 		{"missing", "permission_missing", "This box cannot accept invitations yet. A Workspace super administrator must open Google Admin console > Security > Access and data control > API controls > Manage Domain Wide Delegation, edit this client's entry, add https://www.googleapis.com/auth/chat.memberships beside the existing permissions, and click Authorize; changes can take up to 24 hours."},
 		{"software", "permission_missing", "This box is not set up to hand out that permission yet. Whoever runs the box updates it or turns the permission on; the admin's step alone will not help."},
 		{"no_yes", "no_owner_yes", "Supply the owner's direct message with --yes MESSAGE."},
