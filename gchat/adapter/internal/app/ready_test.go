@@ -2,6 +2,8 @@ package app
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +15,50 @@ import (
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 )
+
+func TestLegacyIdentityHoldResumesInterruptedOutbound(t *testing.T) {
+	for _, upload := range []bool{false, true} {
+		t.Run(map[bool]string{false: "publish", true: "upload"}[upload], func(t *testing.T) {
+			f := newFixture(t, true) // legacy token: no identity in either credential or ledger
+			f.google.Configure(func(g *fakegoogle.Server) {
+				g.Spaces["spaces/room"] = &api.Space{Name: "spaces/room", SpaceType: "SPACE"}
+			})
+			p := wire.PublishRequest{SessionID: "example", IdempotencyKey: "interrupted", Text: "recover me", Conversation: wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "default", ConversationID: "spaces/room", Kind: "room"}}
+			f.gc.Bind(p.Conversation, p.SessionID)
+			send := &ledger.SendState{Key: p.IdempotencyKey, Space: p.Conversation.ConversationID, Request: &p, RecordPending: true, Parts: []ledger.SendPart{{RequestID: "interrupted-1", Text: p.Text}}}
+			if upload {
+				if err := os.MkdirAll(f.cfg.Endpoints.UploadRoot, 0700); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(f.cfg.Endpoints.UploadRoot, "recovered.txt")
+				if err := os.WriteFile(path, []byte("recovered file"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				send.Upload = &ledger.SendUpload{Path: path}
+			}
+			l := ledger.New()
+			l.Sends[p.IdempotencyKey] = send
+			if err := l.Save(f.cfg.Endpoints.StateFile); err != nil {
+				t.Fatal(err)
+			}
+			f.start(t)
+			f.health(t, "catching-up", 5*time.Second)
+			waitFor(t, 20*time.Second, func() bool {
+				data, err := os.ReadFile(f.cfg.Endpoints.StateFile)
+				if err != nil {
+					return false
+				}
+				var saved ledger.Ledger
+				if json.Unmarshal(data, &saved) != nil {
+					return false
+				}
+				s := saved.Sends[p.IdempotencyKey]
+				return s != nil && s.Recorded && !s.RecordPending && s.Receipt != nil && s.Receipt.Delivered
+			})
+			f.health(t, "ready", 10*time.Second)
+		})
+	}
+}
 
 // TestRetryingMessageLeavesHealthReadyAndOutboundRecoveryRunning: a message
 // that catch-up recovered and that gc keeps answering "not delivered" is the

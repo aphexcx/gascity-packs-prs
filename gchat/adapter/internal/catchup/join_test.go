@@ -302,6 +302,12 @@ func TestLegacyOpenReadKeepsItsBounds(t *testing.T) {
 }
 
 func TestFirstReadLogsCountConcludedPendingTurn(t *testing.T) {
+	for _, status := range []string{"delivered", "pending"} {
+		t.Run(status, func(t *testing.T) { testFirstReadLogsCountConcludedPendingTurn(t, status) })
+	}
+}
+
+func testFirstReadLogsCountConcludedPendingTurn(t *testing.T, status string) {
 	f := setup(t)
 	f.addSpace("spaces/joined", false)
 	joined := frozen.Add(-time.Minute)
@@ -316,7 +322,10 @@ func TestFirstReadLogsCountConcludedPendingTurn(t *testing.T) {
 	}
 	id := f.opts.Ledger.Changes[m.Name].ReceiptID
 	receipt := wire.ReceiptResponse{State: "concluded"}
-	receipt.Delivery.Status = "delivered"
+	receipt.Delivery.Status = status
+	if status == "pending" {
+		receipt.Delivery.Members = []wire.DeliveryMember{{Status: "pending", DeliveredBytes: 120, ExpectedBytes: 120}}
+	}
 	f.gc.SetReceipt(id, receipt)
 	if err := f.p.Poll(t.Context()); err != nil {
 		t.Fatal(err)
