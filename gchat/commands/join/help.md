@@ -7,8 +7,10 @@ Use --help or -h to display this help.
 Name exactly one room by its id from the invitation, never its display name.
 --request checks the invitation and permission, then returns a one-time code
 valid for 24 hours. A new request for this room replaces its previous code.
-Ask the owner in a direct message, naming the room and inviter and explaining
-that everyone in the room can write to the identity. With the owner's yes,
+Ask the owner in a direct message, naming the room, its exact id and inviter,
+and explaining that everyone in the room can write to the identity.
+To say yes, the owner must reply with the code alone, nothing else (letter
+case and surrounding whitespace do not matter). With the owner's yes,
 pass the name of that direct message to --yes; the adapter verifies its sender,
 time, direct-message space, and code for this room. A used approval is dead.
 

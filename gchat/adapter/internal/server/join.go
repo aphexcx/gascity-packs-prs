@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
@@ -236,6 +235,10 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	if failure.Result != "" {
 		return failure
 	}
+	create, err := c.PrepareJoinSelf(ctx, input.Space, identity, tok)
+	if err != nil {
+		return joinResult{Result: "google_no_answer", Message: "The permission could not be used to join. Nothing changed; run it again with the same owner's yes."}
+	}
 	// Commit consumption before the only write. A crash or an ambiguous response
 	// can never revive this approval; a retry first reads the actual membership.
 	if err = s.update(ctx, func(l *ledger.Ledger) error {
@@ -248,7 +251,7 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	}); err != nil {
 		return noJoinYes("The approval could not be saved as used, or it expired. Nothing changed; request approval again.")
 	}
-	membership, err = c.JoinSelf(ctx, input.Space, identity, tok)
+	membership, err = create()
 	state = ""
 	if membership != nil {
 		state = membership.State
@@ -290,6 +293,12 @@ func (s *Server) requestJoin(ctx context.Context, cfg config.Config, space, iden
 		return noJoinYes("The approval request could not be saved. Nothing changed.")
 	}
 	result := joinReply("requested")
+	name := space
+	c, _ := s.clients()
+	if room, err := c.GetSpace(ctx, space); err == nil && room != nil && room.DisplayName != "" {
+		name = room.DisplayName
+	}
+	result.Message = fmt.Sprintf("Ask the owner in a direct message about room %q (%s). To say yes, reply with this room's code alone, nothing else, before it expires in 24 hours.", name, space)
 	result.Code = code
 	result.ExpiresAt = pending.ExpiresAt.Format(time.RFC3339Nano)
 	return result
@@ -326,10 +335,9 @@ func checkJoinYes(ctx context.Context, c *chat.Client, cfg config.Config, name, 
 	if !posted.Before(pending.ExpiresAt) {
 		return "The message was written after this request expired."
 	}
-	for _, word := range strings.FieldsFunc(m.Text, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
-		if subtle.ConstantTimeCompare([]byte(joinCodeHash(word)), []byte(pending.CodeHash)) == 1 {
-			return ""
-		}
+	code := strings.ToUpper(strings.TrimSpace(m.Text))
+	if subtle.ConstantTimeCompare([]byte(joinCodeHash(code)), []byte(pending.CodeHash)) == 1 {
+		return ""
 	}
-	return "The message does not carry this room's code."
+	return "The owner must reply with this room's code alone, nothing else."
 }

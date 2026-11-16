@@ -86,17 +86,24 @@ outside this repository. Desktop consent stays unchanged and cannot use join.
 
 `gc gchat join --check` checks only that permission. To accept one invitation,
 use `gc gchat join --space spaces/ID --request`, ask the owner in a direct
-message with the returned code, and pass the owner's reply as
+message naming the room and its exact id as Google gives it. Ask the owner
+to reply with the returned code alone, nothing else, and pass that reply as
 `gc gchat join --space spaces/ID --yes spaces/DM/messages/ID`. The code is
 random, belongs to that room, and expires after 24 hours. The approval record
 stores only its hash, and the join audit contains no code. Ordinary outgoing
 and incoming message text retains its existing storage and may contain the
 code. A new request replaces it. The adapter checks the sender, the direct
-message's room and creation time, and the code, then saves its use before
+message's room and creation time, and that the whole reply is the code (letter
+case and surrounding whitespace ignored), then saves its use before
 one write naming the identity herself. An already joined room needs no yes
 and no write permission. A lost write answer is reported as an unknown outcome;
 the next run reads membership before any new write.
 The skill gives the owner's ask and the rule after no or silence.
+A token with too little time left is refused before approval is used; nothing
+changes, and the same owner's yes can be retried with a usable token.
+A create answered HTTP 403 PERMISSION_DENIED or HTTP 400 FAILED_PRECONDITION
+reports Google's answer and says the cause is not known yet; it does not
+promise that an organization setting will fix it.
 
 UNPROVEN: Google's pages do not say that creating one's own membership
 accepts an invitation. This command has only fake coverage and awaits a real

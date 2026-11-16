@@ -14,11 +14,11 @@ const joinUncertain = "The join outcome is unknown; run it again to read members
 var joinMessages = map[string]string{
 	"already_member":     "Already a member of this room. Nothing changed.",
 	"no_invitation":      "Google shows no invitation for this identity in this room. Check the room id with the person who invited you.",
-	"refused_invited":    "An invitation exists, but Google refused the join. A setting of this room's organization or this identity's organization may keep outside people out; an administrator of that organization must allow it.",
+	"refused_invited":    "An invitation exists, but Google did not join this identity. The cause is not known yet.",
 	"not_available":      "Not available on this sign-in. This box uses desktop sign-in.",
 	"google_no_answer":   "Google did not answer. Nothing changed; run it again.",
 	"permission_present": "The permission to accept invitations is present. No room was touched.",
-	"requested":          "Ask the owner in a direct message to reply with this room's code before it expires in 24 hours.",
+	"requested":          "Ask the owner in a direct message to reply with this room's code alone, nothing else, before it expires in 24 hours.",
 }
 
 // The complete set of modeled API outcomes. State names and meanings are
@@ -54,6 +54,9 @@ func joinAnswer(phase, state string, err error) joinResult {
 	}
 	for _, row := range joinAnswers {
 		if row.phase == phase && row.http == code && row.status == status && row.state == state {
+			if row.result == "refused_invited" && err != nil {
+				return joinResult{Result: row.result, Message: fmt.Sprintf("An invitation exists, but Google refused the join. Google answered HTTP %d %s. The cause is not known yet.", code, status)}
+			}
 			return joinReply(row.result)
 		}
 	}

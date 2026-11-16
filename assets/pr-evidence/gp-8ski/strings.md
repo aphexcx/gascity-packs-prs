@@ -1,5 +1,9 @@
 # Text added by gp-8ski
 
+This is the round 1 inventory. [Round 2](round2.md) records the replacement
+approval, ask, token and refusal text; the product files contain final help,
+skill and README wording.
+
 Normal result words: `joined`, `already_member`, `no_invitation`, `refused_invited`, `permission_missing`, `no_owner_yes`, `not_available`, `google_no_answer`, `google_unknown`, `requested`, `permission_present`. Invalid inputs return `invalid_request`; before ledger load the service returns HTTP 503 with `state_unavailable`. `recorded` and `record_error` report audit persistence. Permanent key holder refusals identify the known code in `permission_error`; no new permission-result word is introduced.
 
 ## Command answers and refusals

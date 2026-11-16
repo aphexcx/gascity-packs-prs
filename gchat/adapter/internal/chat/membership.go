@@ -46,10 +46,13 @@ func (c *Client) ReadOwnMembership(ctx context.Context, space, identity string) 
 	return membershipCall(ctx, c.httpClient, c.ep.ChatAPIBase, http.MethodGet, space+"/members/"+strings.TrimPrefix(identity, "users/"), nil)
 }
 
-// JoinSelf is the single candidate acceptance call. UNPROVEN: Google documents
+// PrepareJoinSelf validates the candidate acceptance call before approval is
+// consumed. The returned function sends it after consumption is durable, without
+// a second local expiry check that could spend approval without sending a write.
+// UNPROVEN: Google documents
 // create's shape (G3/G4), not whether an invited user can accept by naming herself
 // (U1). There is exactly one POST: no retries, refresh, or redirects.
-func (c *Client) JoinSelf(ctx context.Context, space, identity string, tok *oauth2.Token) (*api.Membership, error) {
+func (c *Client) PrepareJoinSelf(ctx context.Context, space, identity string, tok *oauth2.Token) (func() (*api.Membership, error), error) {
 	if !membershipSpace.MatchString(space) || !validUserID.MatchString(identity) || tok == nil || !tok.Valid() {
 		return nil, errors.New("invalid self join")
 	}
@@ -58,7 +61,9 @@ func (c *Client) JoinSelf(ctx context.Context, space, identity string, tok *oaut
 		return nil, err
 	}
 	client := &http.Client{Transport: &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return membershipCall(ctx, client, c.ep.ChatAPIBase, http.MethodPost, space+"/members", body)
+	return func() (*api.Membership, error) {
+		return membershipCall(ctx, client, c.ep.ChatAPIBase, http.MethodPost, space+"/members", body)
+	}, nil
 }
 
 func membershipCall(ctx context.Context, client *http.Client, base, method, name string, body []byte) (*api.Membership, error) {

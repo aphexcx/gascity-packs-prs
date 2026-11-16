@@ -4,6 +4,10 @@ UNPROVEN: all Google and key holder requests in this work use local fakes.
 Google does not document that a self-create accepts an invitation. A proof
 call must settle U1-U4 before this draft is considered for release.
 
+Round 2 tightens approval to the code alone and preserves approval when a
+permission cannot be used. See [the round 2 receipt](round2.md) for its
+delta, verification and review; the original receipts below describe round 1.
+
 ## Answers modeled by the fake
 
 | Read or create answer | Command result | Evidence |
@@ -13,8 +17,8 @@ call must settle U1-U4 before this draft is considered for release.
 | Read: NOT_A_MEMBER or missing membership (404 NOT_FOUND) | no_invitation | ASSUMED U3; state meaning DOCUMENTED G1 |
 | Read: any other membership state | no_invitation | ASSUMED U2/U3; fail closed |
 | Create self: JOINED | joined | ASSUMED U1; request shape DOCUMENTED G3/G4 |
-| Create: 400 FAILED_PRECONDITION | refused_invited | ASSUMED U4; G10 documents the adder, not the invitee |
-| Create: 403 PERMISSION_DENIED | refused_invited | ASSUMED U4; G10 documents the adder, not the invitee |
+| Create: 400 FAILED_PRECONDITION | refused_invited; reports HTTP/status, cause not known yet | ASSUMED U4; no organization setting promised as a cure |
+| Create: 403 PERMISSION_DENIED | refused_invited; reports HTTP/status, cause not known yet | ASSUMED U4; no organization setting promised as a cure |
 | Create: 404 NOT_FOUND | no_invitation | ASSUMED U3 |
 | Create: still INVITED | refused_invited | ASSUMED U1 |
 | Unrecognized read HTTP/status pair | google_unknown; HTTP and status word, nothing changed | ASSUMED U2/U3; fail closed |
