@@ -132,6 +132,7 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("GET /read", s.read)
 	s.mux.HandleFunc("GET /spaces", s.spaces)
 	s.mux.HandleFunc("POST /spaces", s.spaces)
+	s.mux.HandleFunc("POST /join", s.joinHTTP)
 	s.mux.HandleFunc("GET /status", s.status)
 	s.mux.HandleFunc("POST /resolve", s.resolve)
 	s.mux.HandleFunc("POST /state", s.state)

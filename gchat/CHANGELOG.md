@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add `gc gchat join` for one invited room, with a one-time code checked in
+  the owner's direct-message reply. The membership write permission is asked
+  for only by join, separately from standing credentials. Until the admin adds
+  it and the box's key holder serves it, the command explains what is missing
+  and joins nothing. Updating alone preserves startup scopes, every existing
+  command, inbound delivery, health, and existing ledger fields; optional join
+  records are discarded on rollback. No version change. Google acceptance is
+  UNPROVEN: fake coverage awaits a real proof call.
+
 - The skill gives reactions fixed meanings, with the same tables and rules
   as the Slack fragment and the WhatsApp skill, in place of any emoji that
   fits (gp-adh3). The rows are a catalog, `reactions.json` at the pack's

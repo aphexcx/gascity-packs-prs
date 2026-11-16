@@ -53,10 +53,11 @@ type Server struct {
 	// People maps users/<id> to the address the directory (People API) answers.
 	People map[string]string
 	// Membership fixtures model assumptions, not proof of Google's invitation flow.
-	Memberships          map[string]*chat.Membership
-	MembershipCalls      []MembershipCall
-	MembershipReadError  *MembershipError
-	MembershipWriteError *MembershipError
+	Memberships           map[string]*chat.Membership
+	MembershipCalls       []MembershipCall
+	MembershipReadError   *MembershipError
+	MembershipWriteError  *MembershipError
+	MembershipCreateState string
 	// MaxUploadBytes lowers the normal 200 MiB limit for small boundary tests.
 	MaxUploadBytes int64
 

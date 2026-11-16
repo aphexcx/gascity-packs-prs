@@ -64,6 +64,9 @@ func (s *Server) membership(w http.ResponseWriter, r *http.Request, path string)
 		return
 	}
 	member.Name, member.State = name, "JOINED"
+	if s.MembershipCreateState != "" {
+		member.State = s.MembershipCreateState
+	}
 	s.Memberships[name] = &member
 	s.respond(w, r, 200, &member)
 }

@@ -29,6 +29,7 @@ type Space = googlechat.Space
 // credentials: its reaction ownership and rate limits belong to that identity.
 type Client struct {
 	api                    *googlechat.Service
+	httpClient             *http.Client
 	limits                 Limiter
 	timing                 timing
 	retryBound             time.Duration
@@ -51,7 +52,7 @@ func New(ctx context.Context, httpClient *http.Client, ep config.Endpoints) (*Cl
 	if err != nil {
 		return nil, err
 	}
-	return &Client{api: api, ep: ep}, nil
+	return &Client{api: api, httpClient: httpClient, ep: ep}, nil
 }
 
 // SetIdentityUserID supplies the canonical users/<id> from the authenticated

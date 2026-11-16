@@ -70,6 +70,36 @@ with one `chat-access` notice and keeps retrying. The Pub/Sub topic,
 subscription and grants in the checklist above are still needed; boxboxbox's
 key holder creates them.
 
+To enable accepting room invitations, add one permission only when this
+feature is needed. This box cannot accept invitations yet. A Workspace super administrator must open Google Admin console > Security > Access and data control > API controls > Manage Domain Wide Delegation, edit this client's entry, add https://www.googleapis.com/auth/chat.memberships beside the existing permissions, and click Authorize; changes can take up to 24 hours.
+Google describes this permission as "View, add, update, and remove members
+from conversations in Chat." The adapter uses it only to join one invited
+room after the owner's yes. The box's key holder must also hand out that
+permission. If it refuses the scope: "This box's software does not hand out
+that permission yet. The box needs an update; the admin's step alone will
+not help." The key holder and the customer's own setup instructions live
+outside this repository. Desktop consent stays unchanged and cannot use join.
+
+`gc gchat join --check` checks only that permission. To accept one invitation,
+use `gc gchat join --space spaces/ID --request`, ask the owner in a direct
+message with the returned code, and pass the owner's reply as
+`gc gchat join --space spaces/ID --yes spaces/DM/messages/ID`. The code is
+random, belongs to that room, expires after 24 hours, and is stored only as a
+hash. A new request replaces it. The adapter checks the sender, the direct
+message's room and creation time, and the code, then saves its use before
+one write naming the identity herself. An already joined room needs no yes
+and no write permission. A lost answer is settled by a read on the next run.
+The skill gives the owner's ask and the rule after no or silence.
+
+UNPROVEN: Google's pages do not say that creating one's own membership
+accepts an invitation. This command has only fake coverage and awaits a real
+proof call. Updating the pack alone preserves the permissions requested at
+start, all existing commands, inbound delivery, health, and existing ledger
+fields. The only new command is `join`; until both the admin and key holder
+allow the permission, it explains what is missing and joins nothing. Its
+optional approval and attempt records are dropped by the released adapter
+on rollback, leaving its existing records intact. The pack version is unchanged.
+
 ## Install
 
 Requirements: gc with schema-2 packs, `proxy_process` services and the extmsg
@@ -575,7 +605,7 @@ Use unquoted fenced blocks and simple emphasis when exact presentation matters.
 | `delivery failed` | Inspect the JSON reason and retry hint; retry the same send with the printed key. |
 | `Delivered, but not recorded in gc` | Inspect binding/session and gc health; retry recording with the same key. |
 
-Validate source changes with `gc lint packs/gchat`, shellcheck and `bash -n`
+From the repository root, validate source changes with `gc lint gchat`, shellcheck and `bash -n`
 on every shell script, and the Python wrapper tests in `tests/`. From `adapter/`,
 run `gofmt -l .`, `go vet ./...`, and `staticcheck ./...`.
 Use `go test ./... -count=1 -timeout=30m` for the full suite and

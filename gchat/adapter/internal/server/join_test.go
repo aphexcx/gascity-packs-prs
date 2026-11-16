@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/ledger"
@@ -76,6 +77,14 @@ func setupJoin(t *testing.T) *joinFixture {
 	f.cfg.Secrets.Owners = []string{"owner@example.com"}
 	f.cfg.Endpoints.PeopleAPIBase = f.g.URL()
 	f.s.SetConfig(*f.cfg)
+	c, err := chat.New(context.Background(), http.DefaultClient, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.SetIdentityUserID(fakegoogle.UserID); err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetClients(c, f.options.GC)
 	f.s.opts.Logger = slog.New(slog.NewJSONHandler(&f.logs, nil))
 	f.g.Configure(func(g *fakegoogle.Server) {
 		g.Memberships["spaces/room/members/123456789"] = &api.Membership{Name: "spaces/room/members/123456789", State: "INVITED", Member: &api.User{Name: fakegoogle.UserID, Type: "HUMAN"}}
@@ -163,6 +172,8 @@ func TestJoinAnswersTable(t *testing.T) {
 	}{
 		{"DOCUMENTED_G1_joined", "JOINED", nil, nil, "already_member"},
 		{"ASSUMED_U2_invited", "INVITED", nil, nil, "joined"},
+		{"ASSUMED_U1_still_invited", "INVITED", nil, nil, "refused_invited"},
+		{"ASSUMED_U1_lost_answer", "INVITED", nil, nil, "google_no_answer"},
 		{"DOCUMENTED_G1_not_member", "NOT_A_MEMBER", nil, nil, "no_invitation"},
 		{"ASSUMED_U3_missing", "INVITED", &fakegoogle.MembershipError{HTTP: 404, Status: "NOT_FOUND"}, nil, "no_invitation"},
 		{"ASSUMED_U2_unknown_state", "STATE_UNSPECIFIED", nil, nil, "no_invitation"},
@@ -180,6 +191,12 @@ func TestJoinAnswersTable(t *testing.T) {
 				g.Memberships["spaces/room/members/123456789"].State = tc.state
 				g.MembershipReadError = tc.read
 				g.MembershipWriteError = tc.write
+				if tc.name == "ASSUMED_U1_still_invited" {
+					g.MembershipCreateState = "INVITED"
+				}
+				if tc.name == "ASSUMED_U1_lost_answer" {
+					g.DropNextResponse = true
+				}
 			})
 			v := f.join(t, map[string]any{"space": "spaces/room", "yes": yes})
 			if v["result"] != tc.want {
@@ -298,6 +315,15 @@ func TestJoinRefusesWithoutTheOwnersYes(t *testing.T) {
 			if len(f.writes()) != 0 {
 				t.Fatal("refusal wrote membership")
 			}
+			f.kmu.Lock()
+			wantMints := 1
+			if row.name == "other_room_code" {
+				wantMints = 2
+			}
+			if len(f.scopes) != wantMints {
+				t.Error("an invalid owner's yes requested a write token")
+			}
+			f.kmu.Unlock()
 		})
 	}
 }
@@ -353,6 +379,50 @@ func TestJoinSaysWhatHappened(t *testing.T) {
 			f.g.Configure(func(g *fakegoogle.Server) { g.Memberships["spaces/room/members/123456789"].State = row.state })
 			v := f.join(t, map[string]any{"space": "spaces/room", "yes": yes})
 			if v["message"] != row.want {
+				t.Fatalf("%v", v)
+			}
+		})
+	}
+	for _, row := range []struct{ name, result, message string }{
+		{"policy", "refused_invited", "An invitation exists, but Google refused the join. A setting of this room's organization or this identity's organization may keep outside people out; an administrator of that organization must allow it."},
+		{"missing", "permission_missing", "This box cannot accept invitations yet. A Workspace super administrator must open Google Admin console > Security > Access and data control > API controls > Manage Domain Wide Delegation, edit this client's entry, add https://www.googleapis.com/auth/chat.memberships beside the existing permissions, and click Authorize; changes can take up to 24 hours."},
+		{"software", "permission_missing", "This box's software does not hand out that permission yet. The box needs an update; the admin's step alone will not help."},
+		{"no_yes", "no_owner_yes", "Supply the owner's direct message with --yes MESSAGE."},
+		{"desktop", "not_available", "Not available on this sign-in. This box uses desktop sign-in."},
+		{"lost", "google_no_answer", "Google did not answer. Nothing changed; run it again."},
+		{"unknown", "google_unknown", "Google answered HTTP 409 ALREADY_EXISTS. Nothing changed."},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			f := setupJoin(t)
+			code := f.request(t, "spaces/room")
+			yes := f.yes(code)
+			switch row.name {
+			case "policy":
+				f.g.Configure(func(g *fakegoogle.Server) {
+					g.MembershipWriteError = &fakegoogle.MembershipError{HTTP: 403, Status: "PERMISSION_DENIED"}
+				})
+			case "missing":
+				f.kmu.Lock()
+				f.refusal = "delegation_not_authorized"
+				f.kmu.Unlock()
+			case "software":
+				f.kmu.Lock()
+				f.refusal = "scope_not_allowed"
+				f.kmu.Unlock()
+			case "no_yes":
+				yes = ""
+			case "desktop":
+				f.cfg.Secrets.TokenSource = config.TokenSourceOAuth
+				f.s.SetConfig(*f.cfg)
+			case "lost":
+				f.g.Configure(func(g *fakegoogle.Server) { g.DropNextResponse = true })
+			case "unknown":
+				f.g.Configure(func(g *fakegoogle.Server) {
+					g.MembershipWriteError = &fakegoogle.MembershipError{HTTP: 409, Status: "ALREADY_EXISTS"}
+				})
+			}
+			v := f.join(t, map[string]any{"space": "spaces/room", "yes": yes})
+			if v["result"] != row.result || v["message"] != row.message {
 				t.Fatalf("%v", v)
 			}
 		})
