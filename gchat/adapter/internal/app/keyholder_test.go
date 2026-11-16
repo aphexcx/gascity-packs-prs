@@ -288,6 +288,27 @@ func TestDeletedSpaceDoesNotHoldInterruptedSend(t *testing.T) {
 // new space but not the message posted there seconds later (seen live). The
 // membership alone must make the adapter read that space's history from the
 // join time and deliver the message.
+func TestTheMessageThatAddsTheIdentityIsATurn(t *testing.T) {
+	f := newFixture(t, false)
+	f.replaceIdentityToken(t, fakegoogle.UserID)
+	f.start(t)
+	f.health(t, "ready", 5*time.Second)
+	joined := time.Now().UTC().Add(-time.Second)
+	f.google.Configure(func(g *fakegoogle.Server) {
+		g.Spaces["spaces/joined"] = &api.Space{Name: "spaces/joined", SpaceType: "SPACE"}
+		g.Messages["spaces/joined/messages/adding"] = &api.Message{Name: "spaces/joined/messages/adding", Text: "@agent hello", Sender: &api.User{Name: "users/222", Type: "HUMAN"}, CreateTime: joined.Add(-2 * time.Second).Format(time.RFC3339Nano), Thread: &api.Thread{Name: "spaces/joined/threads/hello"}, Annotations: []*api.Annotation{{Type: "USER_MENTION", UserMention: &api.UserMentionMetadata{User: &api.User{Name: fakegoogle.UserID}}}}}
+	})
+	membership := `{"membership":{"name":"spaces/joined/members/123456789","state":"JOINED","createTime":"` + joined.Format(time.RFC3339Nano) + `","member":{"name":"` + fakegoogle.UserID + `","type":"HUMAN"}}}`
+	if _, err := f.pub.Publish(t.Context(), &pubsub.Message{Data: []byte(membership), Attributes: map[string]string{"ce-type": "google.workspace.chat.membership.v1.created", "ce-id": "adding", "ce-subject": "//chat.googleapis.com/spaces/joined"}}).Get(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 10*time.Second, func() bool { return len(f.gc.Inbound()) == 1 })
+	if got := f.gc.Inbound()[0]; got.ProviderMessageID != "spaces/joined/messages/adding" || !strings.HasPrefix(got.Text, "[catch-up]") {
+		t.Fatalf("adding turn: %+v", got)
+	}
+	f.health(t, "ready", 10*time.Second)
+}
+
 func TestJoinedSpaceHistoryIsSweptWithoutMessageEvents(t *testing.T) {
 	f := newFixture(t, false)
 	f.replaceIdentityToken(t, fakegoogle.UserID)
