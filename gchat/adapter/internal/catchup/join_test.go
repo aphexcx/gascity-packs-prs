@@ -11,6 +11,7 @@ import (
 
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 )
 
@@ -233,5 +234,146 @@ func TestMembershipReadThatMayPassFailsTheFreeze(t *testing.T) {
 	f.freeze(t)
 	if !f.opts.Ledger.Spaces["spaces/joined"].JoinedAt.Equal(frozen) {
 		t.Fatal("retry did not use time found")
+	}
+}
+
+func TestJoinReachbackCanBeDisabled(t *testing.T) {
+	f := setup(t)
+	f.opts.Config.Settings.JoinReachback = "0s"
+	f.addSpace("spaces/joined", false)
+	joined := frozen.Add(-time.Minute)
+	mention(f.addMessage("spaces/joined", 1, joined.Add(-2*time.Second)))
+	f.addMessage("spaces/joined", 2, joined.Add(time.Second))
+	join(t, f, joined)
+	f.freeze(t)
+	f.pass(t, 1, 0)
+	historyLower(t, f, joined)
+}
+
+func TestMembershipBoundNeverPrecedesRecordedList(t *testing.T) {
+	for _, state := range []string{"JOINED", "INVITED"} {
+		t.Run(state, func(t *testing.T) {
+			f := setup(t)
+			f.freeze(t)
+			f.addSpace("spaces/joined", false)
+			f.google.Memberships["spaces/joined/members/123"] = &api.Membership{State: state, CreateTime: frozen.Add(-time.Hour).Format(time.RFC3339Nano)}
+			if err := f.r.Freeze(t.Context(), frozen.Add(time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if !f.opts.Ledger.Spaces["spaces/joined"].JoinedAt.Equal(frozen) {
+				t.Fatal("membership bypassed list bound")
+			}
+		})
+	}
+}
+
+func TestTemporaryMembershipErrorsLeaveFreezeAtomic(t *testing.T) {
+	for _, code := range []int{429, 500, 503} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			f := setup(t)
+			f.addSpace("spaces/joined", false)
+			f.addSpace("spaces/other", false)
+			f.google.MembershipErrors["spaces/other/members/123"] = code
+			if err := f.r.Freeze(t.Context(), frozen); err == nil {
+				t.Fatal("transient failure accepted")
+			}
+			if len(f.opts.Ledger.Spaces) != 0 || !f.opts.Ledger.LastSpaceList.IsZero() || f.logs.Len() != 0 {
+				t.Fatal("failed Freeze published state")
+			}
+			delete(f.google.MembershipErrors, "spaces/other/members/123")
+			f.freeze(t)
+			if len(f.opts.Ledger.Spaces) != 2 {
+				t.Fatal("retry lost discovery")
+			}
+		})
+	}
+}
+
+func TestLegacyOpenReadKeepsItsBounds(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/joined", false)
+	p := progress{Version: 1, Phase: "messages", MessageLower: time.Unix(0, 0).UTC(), EventLower: frozen.Add(-24 * time.Hour)}
+	f.opts.Ledger.Spaces["spaces/joined"] = &ledger.SpaceState{FrozenUpper: frozen, PageToken: encode(p)}
+	f.freeze(t)
+	s := f.opts.Ledger.Spaces["spaces/joined"]
+	if s.PageToken != encode(p) || !s.JoinedAt.IsZero() || s.FirstRead != nil || len(f.google.MembershipRequests) != 0 {
+		t.Fatalf("legacy read changed: %+v", s)
+	}
+}
+
+func TestFirstReadLogsCountConcludedPendingTurn(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/joined", false)
+	joined := frozen.Add(-time.Minute)
+	m := f.addMessage("spaces/joined", 1, joined.Add(-2*time.Second))
+	mention(m)
+	join(t, f, joined)
+	f.gc.NextDelivery = "pending"
+	f.freeze(t)
+	f.pass(t, 0, 1)
+	if strings.Contains(f.logs.String(), "gchat space first read complete") {
+		t.Fatal("read logged complete while pending")
+	}
+	id := f.opts.Ledger.Changes[m.Name].ReceiptID
+	receipt := wire.ReceiptResponse{State: "concluded"}
+	receipt.Delivery.Status = "delivered"
+	f.gc.SetReceipt(id, receipt)
+	if err := f.p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.newRunner(t)
+	f.pass(t, 0, 0)
+	logs := f.logs.String()
+	if strings.Count(logs, "gchat space first seen") != 1 || strings.Count(logs, "gchat space first read complete") != 1 || !strings.Contains(logs, "turns=1 pre_join_turns=1") || !strings.Contains(logs, "found_by=event") {
+		t.Fatalf("logs: %s", logs)
+	}
+	if strings.Contains(logs, m.Text) || strings.Contains(logs, "users/") {
+		t.Fatal("content or user ID in first-read log")
+	}
+}
+
+func TestDiscoveryLogsOnceForEachExistingTrigger(t *testing.T) {
+	for _, source := range []string{"startup", "sweep", "recovery"} {
+		t.Run(source, func(t *testing.T) {
+			f := setup(t)
+			f.addSpace("spaces/joined", false)
+			if err := f.r.FreezeFrom(t.Context(), frozen, source); err != nil {
+				t.Fatal(err)
+			}
+			f.pass(t, 0, 0)
+			f.freeze(t)
+			f.pass(t, 0, 0)
+			logs := f.logs.String()
+			if strings.Count(logs, "gchat space first seen") != 1 || strings.Count(logs, "gchat space first read complete") != 1 || !strings.Contains(logs, "found_by="+source) {
+				t.Fatalf("logs: %s", logs)
+			}
+		})
+	}
+}
+
+func TestFirstReadCountSurvivesSaveFailureAfterDelivery(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/joined", false)
+	joined := frozen.Add(-time.Minute)
+	m := f.addMessage("spaces/joined", 1, joined.Add(-2*time.Second))
+	mention(m)
+	join(t, f, joined)
+	f.freeze(t)
+	f.r.opts.Save = func(l *ledger.Ledger) error {
+		if l.Changes[m.Name] != nil && len(l.Spaces["spaces/joined"].Backlog) == 0 {
+			return errors.New("scripted disk failure")
+		}
+		return l.Save(f.opts.LedgerPath)
+	}
+	if _, _, err := f.r.Pass(t.Context()); err == nil {
+		t.Fatal("expected post-delivery save failure")
+	}
+	if len(f.gc.Inbound()) != 1 {
+		t.Fatal("fixture did not deliver")
+	}
+	f.newRunner(t)
+	f.pass(t, 0, 0)
+	if len(f.gc.Inbound()) != 1 || !strings.Contains(f.logs.String(), "turns=1 pre_join_turns=1") {
+		t.Fatalf("recovered completion: %s", f.logs.String())
 	}
 }

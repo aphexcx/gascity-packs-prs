@@ -11,13 +11,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
+	"gchat-adapter/internal/catchup"
+	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/gcclient"
+	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
@@ -307,6 +312,35 @@ func TestTheMessageThatAddsTheIdentityIsATurn(t *testing.T) {
 		t.Fatalf("adding turn: %+v", got)
 	}
 	f.health(t, "ready", 10*time.Second)
+	// Run the hourly sweep against the completed app ledger on a separate
+	// persistence path, advancing the frozen upper bound without an hour's wait.
+	l, err := ledger.Load(f.cfg.Endpoints.StateFile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu := &sync.Mutex{}
+	path := filepath.Join(t.TempDir(), "sweep.json")
+	c, err := chat.New(t.Context(), http.DefaultClient, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: l, LedgerMu: mu, LedgerPath: path, Chat: c, GC: gcclient.New(f.gc.URL(), "examplecity"), IdentityUserID: fakegoogle.UserID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := catchup.New(catchup.Options{Config: f.cfg, Ledger: l, LedgerMu: mu, LedgerPath: path, Chat: c, Processor: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.FreezeFrom(t.Context(), time.Now().Add(time.Hour), "sweep"); err != nil {
+		t.Fatal(err)
+	}
+	if delivered, remaining, err := r.Pass(t.Context()); err != nil || delivered != 0 || remaining != 0 {
+		t.Fatalf("hourly sweep: %d %d %v", delivered, remaining, err)
+	}
+	if len(f.gc.Inbound()) != 1 {
+		t.Fatal("hourly sweep repeated adding message")
+	}
 }
 
 func TestJoinedSpaceHistoryIsSweptWithoutMessageEvents(t *testing.T) {
