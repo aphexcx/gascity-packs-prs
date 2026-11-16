@@ -2,6 +2,10 @@ package app
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,6 +24,24 @@ func TestLegacyIdentityHoldResumesInterruptedOutbound(t *testing.T) {
 	for _, upload := range []bool{false, true} {
 		t.Run(map[bool]string{false: "publish", true: "upload"}[upload], func(t *testing.T) {
 			f := newFixture(t, true) // legacy token: no identity in either credential or ledger
+			// Route gc's recording callback back through the running adapter,
+			// as the real city's service proxy does for an interrupted command.
+			gcTarget, _ := url.Parse(f.cfg.Secrets.GCAPIBase)
+			gcProxy := httputil.NewSingleHostReverseProxy(gcTarget)
+			adapterTarget, _ := url.Parse("http://adapter")
+			adapterProxy := httputil.NewSingleHostReverseProxy(adapterTarget)
+			adapterProxy.Transport = f.client.Transport
+			prefix := f.cfg.Secrets.ServiceURLPrefix
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, prefix+"/") {
+					r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
+					adapterProxy.ServeHTTP(w, r)
+					return
+				}
+				gcProxy.ServeHTTP(w, r)
+			}))
+			defer gateway.Close()
+			f.cfg.Secrets.GCAPIBase = gateway.URL
 			f.google.Configure(func(g *fakegoogle.Server) {
 				g.Spaces["spaces/room"] = &api.Space{Name: "spaces/room", SpaceType: "SPACE"}
 			})
