@@ -175,15 +175,21 @@ func TestManagedSourceChatRefusalRetriesWithoutSignIn(t *testing.T) {
 	defer chatServer.Close()
 	f.cfg.Endpoints.ChatAPIBase = chatServer.URL
 	var notices atomic.Int32
+	var kindsMu sync.Mutex
 	var kinds []string
 	f.startOptions(t, Options{Notify: func(_ context.Context, subject, _ string) error {
-		notices.Add(1)
+		kindsMu.Lock()
 		kinds = append(kinds, subject)
+		kindsMu.Unlock()
+		notices.Add(1)
 		return nil
 	}})
 	waitFor(t, 10*time.Second, func() bool { return notices.Load() == 1 })
-	if kinds[0] != "gchat: chat-access" {
-		t.Fatalf("notice kind: %v", kinds)
+	kindsMu.Lock()
+	gotKinds := append([]string(nil), kinds...)
+	kindsMu.Unlock()
+	if len(gotKinds) != 1 || gotKinds[0] != "gchat: chat-access" {
+		t.Fatalf("notice kind: %v", gotKinds)
 	}
 	h := f.health(t, "initializing", time.Second)
 	if !strings.Contains(h.Reason, "Chat refuses") {
