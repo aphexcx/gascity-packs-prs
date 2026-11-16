@@ -66,6 +66,9 @@ to the count, matching the existing inbound turn counter.
 - Credential-independent startup/lock tests use current credentials with an
   identity ID. A dedicated legacy-credential test preserves publishing while
   identity discovery waits.
+- `TestManagedSourceChatRefusalRetriesWithoutSignIn` now synchronizes its
+  notification slice after the required race run exposed an existing test race.
+  Its notification, retry and recovery assertions remain intact.
 
 This branch does not build on the separate first-start PR. Both changes touch
 `catchup.go`'s row creation in `Freeze` (base lines 131–135) and lower-bound
