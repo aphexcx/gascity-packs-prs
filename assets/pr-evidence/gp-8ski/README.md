@@ -42,12 +42,14 @@ The key holder's ability to grant a new scope (U5) remains outside this reposito
 
 ## Verification receipts
 
-[Named test receipts](named-tests.md) contain all 24 exact invocations, baseline
-and implementation exit codes, and counts: 24 top-level tests, 49 subtests,
-zero skips. Twenty feature tests are red against the dispatched main production
+[Named test receipts](named-tests.md) contain all 27 exact invocations, baseline
+and implementation exit codes, and counts: 27 top-level tests, 55 subtests,
+zero skips at both revisions. Twenty-three feature tests are red against the dispatched main production
 and green at the implementation. Three existing-behavior pins and the fake
 model test pass at both stages. The initial test/fake commit is `99e03320`;
-the implementation tested is `bd69c499486c036f465233bac71dc4464e67333a`.
+the final implementation tested is `20d2103f4d50daf0df5387387a155339696d180f`,
+against base production `68884bf15089e79230bc88c55b591033e3fe927f` with
+the final tests and fake Google overlaid.
 
 The Python join baseline was `make test PYTEST_DIRS='tests gchat/tests'
 PYTEST_ARGS='-q -k join'`: 12 failures (including ten validation subcases),

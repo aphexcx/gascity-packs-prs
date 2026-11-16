@@ -1,8 +1,8 @@
 # Named Go test receipts
 
-Base production: `68884bf15089e79230bc88c55b591033e3fe927f` with only the final tests and fake Google overlaid in the same lane. Implementation: `bd69c499486c036f465233bac71dc4464e67333a`.
+Base production: `68884bf15089e79230bc88c55b591033e3fe927f` with only the final tests and fake Google overlaid in the same lane. Implementation: `20d2103f4d50daf0df5387387a155339696d180f`.
 
-Three existing-behavior pins pass at both revisions: standing scope lists, application start/restart/refresh, and auth check. `TestMembershipModel` verifies the new fake scaffold itself. The other twenty named tests fail against baseline production and pass with the implementation. No named run skipped a test.
+Three existing-behavior pins pass at both revisions: standing scope lists, application start/restart/refresh, and auth check. `TestMembershipModel` verifies the new fake scaffold itself. The other 23 named tests fail against baseline production and pass with the implementation. Both revisions ran 27 top-level tests and 55 subtests. No named run skipped a test.
 
 | Test | Baseline exit | Implementation exit | Top-level / subtests |
 | --- | ---: | ---: | ---: |
@@ -25,6 +25,9 @@ Three existing-behavior pins pass at both revisions: standing scope lists, appli
 | TestJoinPermissionFailureKeepsPendingRequest | 1 | 0 | 1 / 0 |
 | TestJoinUnknownReadNeverAsksForApproval | 1 | 0 | 1 / 0 |
 | TestJoinRecordEveryAttemptWithoutMessageText | 1 | 0 | 1 / 0 |
+| TestJoinBeforeLedgerLoadPreservesExistingState | 1 | 0 | 1 / 4 |
+| TestJoinAmbiguousWritesNeverClaimNothingChanged | 1 | 0 | 1 / 2 |
+| TestJoinWorkflowKeepsCodesOutOfJoinRecords | 1 | 0 | 1 / 0 |
 | TestNothingAsksForTheWriteScopeAtStart | 0 | 0 | 1 / 0 |
 | TestJoinRefusalDoesNotNotify | 1 | 0 | 1 / 0 |
 | TestJoinLedgerCompatibility | 1 | 0 | 1 / 0 |
@@ -55,10 +58,12 @@ env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run ^TestJoinFailureNee
 env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run ^TestJoinPermissionFailureKeepsPendingRequest$ -count=1 -timeout=2m -json
 env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run ^TestJoinUnknownReadNeverAsksForApproval$ -count=1 -timeout=2m -json
 env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run ^TestJoinRecordEveryAttemptWithoutMessageText$ -count=1 -timeout=2m -json
+env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run ^TestJoinBeforeLedgerLoadPreservesExistingState$ -count=1 -timeout=2m -json
+env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run ^TestJoinAmbiguousWritesNeverClaimNothingChanged$ -count=1 -timeout=2m -json
+env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run ^TestJoinWorkflowKeepsCodesOutOfJoinRecords$ -count=1 -timeout=2m -json
 env -u GC_BIN -u NEVER_SILENT go test ./internal/app -run ^TestNothingAsksForTheWriteScopeAtStart$ -count=1 -timeout=2m -json
 env -u GC_BIN -u NEVER_SILENT go test ./internal/app -run ^TestJoinRefusalDoesNotNotify$ -count=1 -timeout=2m -json
 env -u GC_BIN -u NEVER_SILENT go test ./internal/ledger -run ^TestJoinLedgerCompatibility$ -count=1 -timeout=2m -json
 env -u GC_BIN -u NEVER_SILENT go test ./internal/fakes/fakegoogle -run ^TestMembershipModel$ -count=1 -timeout=2m -json
 env -u GC_BIN -u NEVER_SILENT go test ./cmd/gc-gchat-adapter -run ^TestAuthCheckKeepsStandingScopes$ -count=1 -timeout=2m -json
 ```
-
