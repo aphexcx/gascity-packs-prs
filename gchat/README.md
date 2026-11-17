@@ -238,8 +238,8 @@ Links and nested folders are left in place and reported for operator attention.
 The first start after an update leaves files of past deletions alone: only
 cleanup obligations recorded by the new code are retried. A rollback to the
 released adapter drops these obligations, attachment links and remembered
-media roots; other ledger
-state remains, and that adapter does not remove saved attachments.
+media roots. Fields understood by that adapter remain, and it does not remove
+saved attachments.
 
 Only the adapter's saved files are removed. Ledger text, turns already sent
 to the mayor's session, and copies made elsewhere remain. Deletions in rooms

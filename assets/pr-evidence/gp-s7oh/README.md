@@ -4,7 +4,9 @@ This change deletes files on a box when the adapter learns that their message
 was deleted, or accepts an edit that took their attachment away. Expiry by age
 is not included. A merge changes no box.
 
-Base: `68884bf15089e79230bc88c55b591033e3fe927f`.
+Dispatched base: `68884bf15089e79230bc88c55b591033e3fe927f`.
+Integrated base: `226a0f34049fc5148a531530a063cdc063348235`.
+Final source for full verification: `6e4318dd88ed3c87a12c6dcf072c040d5d2f2710`.
 Tests first: `578f0ace` (all new named tests, before implementation).
 Initial implementation tested: `d36ad43181196c224e29bea7fe6c410cacc71ac5`.
 Review regressions first: `550ef677`, all four red before their fixes.
@@ -58,13 +60,72 @@ obligation, bypassing event validation.
 
 ## Verification
 
-Final reviewed source: `e52a20ed85b39d97026818b09276cad17b989f8b`.
+Scoped-reviewed cleanup source: `e52a20ed85b39d97026818b09276cad17b989f8b`.
+Current main was then integrated locally at `6e4318dd`; the two textual
+conflicts retained both application state fields and both changelog entries.
+No pull request was merged by the worker. Named checks, rollback and pack
+verification were rerun on the integrated source, and full Go verification
+was restarted there. This preserves all earlier review commits in history.
 All 25 named tests pass individually: 25 top-level tests, 55 subtests, zero
 skips and zero failures. Final pack verification also passes: 463 Python tests
 and 250 subtests, 127 skips; pack lint reports zero errors; all 16 scripts pass
-`bash -n` and shellcheck. Formatting and vet pass. Final full Go runs are in
-progress and will be recorded before publication. The initial full-suite
-results below are retained separately from those final results.
+`bash -n` and shellcheck. Formatting and vet pass. The final non-race Go suite
+passes all 22 packages: 730 top-level tests, 1,300 subtests, two skips and zero
+failures. The final race run completed with exit 1: 22 packages (21 passed,
+`internal/app` failed), 730 top-level tests, 1,300 subtests and two skips.
+Its only failures were the two application deadlines described below; there
+were zero data-race reports. All 25 named tests and 55 subtests passed in the
+full race run, and the 3,000-message catch-up scenario completed. The initial
+full-suite results below are retained separately from these final results.
+
+Current main's Makefile adds a `reachable` Node prerequisite to `make test`.
+The first integrated attempt used host Node 26.12.1 and failed two of 91
+upstream Node tests (a CLI latency bound and an EAGAIN write), before Python
+ran. The required Node 24.21.0 run passed: `pnpm exec node --version`, then
+`pnpm exec make test PYTEST_DIRS='tests gchat/tests'`, from the repository root
+with the city toolchain and verified Python wrapper first on PATH. All 91
+Node tests passed without skips, followed by 463 Python passes, 250 subtest
+passes and 127 skips. No Node or Python package was installed or code changed
+for these execution failures.
+
+The final-source full race run reported two application deadline failures:
+`TestLivePullAndQuarantine` at `app_test.go:288` exceeded the status client's
+one-second deadline; `TestNeverSilentGateLockLoss/no-credentials/missing` at
+`never_silent_gate_test.go:110` missed its three-second needs-sign-in deadline.
+Each exact test then passed alone under `-race` at integrated head:
+one top-level test/no subtests for live pull, and one
+top-level test/one subtest for lock loss, without skips or failures. These
+retries do not establish behavior at main. No assertion or production code
+was changed for them. The full head application-package retry also passes:
+66 top-level tests, 32 subtests, no skips or failures.
+
+The first attempted main comparison was invalid: a repository-relative Git
+path was run from the Go module, producing an empty overlay. Those apparent
+baseline runs actually tested head and are excluded from baseline evidence.
+The corrected helper pins Git's working directory to the repository root and
+asserts all 15 changed Go source/test replacements before starting. Both exact
+tests passed on the corrected main overlay with the same individual counts.
+The corrected full main application-package race run also passed: 64 top-level
+tests, 29 subtests, no skips or failures. Its test inventory excludes the two
+new application tests and their three subtests, confirming the comparison.
+Neither deadline failure reproduced at main. Handoff remains subject to the
+requested ruling on these two unreproduced failures; clean retries are not
+presented as a clean original full race run.
+
+From `gchat/adapter`, with both `GC_BIN` and `NEVER_SILENT` unset:
+
+```sh
+go test -race ./internal/app -run '^TestLivePullAndQuarantine$' -count=1 -timeout=15m -json
+go test -race ./internal/app -run '^TestNeverSilentGateLockLoss$/^no-credentials$/^missing$' -count=1 -timeout=15m -json
+go test -overlay "$EVIDENCE/main-corrected-source.json" -race ./internal/app -run '^TestLivePullAndQuarantine$' -count=1 -timeout=15m -json
+go test -overlay "$EVIDENCE/main-corrected-source.json" -race ./internal/app -run '^TestNeverSilentGateLockLoss$/^no-credentials$/^missing$' -count=1 -timeout=15m -json
+go test -race ./internal/app -run . -count=1 -timeout=15m -json
+go test -overlay "$EVIDENCE/main-corrected-source.json" -race ./internal/app -run . -count=1 -timeout=15m -json
+```
+
+The main-source overlay restores every modified Go source and test file from
+the integrated base and excludes added Go files with an ignore build tag.
+This comparison creates no second worktree and changes no checked-out file.
 
 The review regressions use the same individual invocation above. Each
 failed behaviorally at the reviewed commit and passes after correction:
@@ -140,11 +201,12 @@ the verified interpreter on PATH through a temporary wrapper that unsets
 before starting Python. That leaves nested make probes at their defaults;
 the same complete suite then passed, with no test or repository change.
 
-The full race run reported a pre-existing test-owned slice race in
+The initial, pre-integration full race run reported a test-owned slice race in
 `TestManagedSourceChatRefusalRetriesWithoutSignIn`: the notification callback
 increments `notices` before appending to `kinds`, while the test reads
 `kinds[0]` after observing the counter. The implicated files,
-`internal/app/keyholder_test.go` and `internal/app/operations.go`, are unchanged.
+`internal/app/keyholder_test.go` and `internal/app/operations.go`, were unchanged
+by the cleanup implementation at that stage.
 The isolated command below failed with the same two race reports both at the
 implementation and with all changed production Go files overlaid from the
 dispatched base. Added production files were excluded by build tags in that
@@ -156,11 +218,14 @@ env -u GC_BIN -u NEVER_SILENT go test -overlay "$EVIDENCE/baseline-overlay.json"
 ```
 
 Each isolated run executed one top-level test, no subtests, no skips, and
-exited 1. This test was not changed. The read is at
+exited 1. The cleanup change did not repair this test. The historical read is at
 `gchat/adapter/internal/app/keyholder_test.go:180`, and the write is at line
-176. The handoff ruling permits the draft with this baseline failure listed;
-repair belongs to a separate change. A clean full race run was not shown.
-The three normalized diagnostic records are
+176. The original handoff ruling permits the draft with this baseline failure
+listed and leaves its repair to another change. Those runs did not show a
+clean full race suite. Upstream main `226a0f34` subsequently supplied the
+repair, inherited by the integration; these files have no changes in this PR's
+diff against that base. The final integrated results are reported separately.
+The three normalized historical diagnostic records are
 [current](current-keyholder-race.txt), [base](baseline-keyholder-race.txt),
 and [full run](full-race-keyholder-extract.txt).
 
@@ -283,8 +348,8 @@ README text replacing the expiry statement and adding the cleanup paragraphs:
 > The first start after an update leaves files of past deletions alone: only
 > cleanup obligations recorded by the new code are retried. A rollback to the
 > released adapter drops these obligations, attachment links and remembered
-> media roots; other ledger
-> state remains, and that adapter does not remove saved attachments.
+> media roots. Fields understood by that adapter remain, and it does not remove
+> saved attachments.
 >
 > Only the adapter's saved files are removed. Ledger text, turns already sent
 > to the mayor's session, and copies made elsewhere remain. Deletions in rooms
