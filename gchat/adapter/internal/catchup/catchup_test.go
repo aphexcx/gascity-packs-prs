@@ -255,7 +255,7 @@ func TestNewSpaceUsesDefaultWake(t *testing.T) {
 	m.Annotations = []*api.Annotation{{Type: "USER_MENTION", UserMention: &api.UserMentionMetadata{User: &api.User{Name: "users/123"}}}}
 	f.freeze(t)
 	s := f.opts.Ledger.Spaces["spaces/joined"]
-	if s == nil || s.Wake != "mentions" || !s.MessageCursor.IsZero() || !s.EventCursor.IsZero() {
+	if s == nil || s.Wake != "mentions" || !s.MessageCursor.Equal(frozen) || !s.EventCursor.Equal(frozen) {
 		t.Fatalf("discovered state: %+v", s)
 	}
 	f.pass(t, 1, 0)
@@ -264,14 +264,14 @@ func TestNewSpaceUsesDefaultWake(t *testing.T) {
 func TestDelayedNewSpaceDoesNotReportHistoryLoss(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/joined", false)
-	f.addMessage("spaces/joined", 1, frozen.Add(-time.Minute))
+	mention(f.addMessage("spaces/joined", 1, frozen.Add(-time.Minute)))
 	f.freeze(t)
 	f.opts.Now = func() time.Time { return frozen.Add(2 * time.Minute) }
 	f.google.Now = f.opts.Now
 	f.newRunner(t)
 	f.pass(t, 1, 0)
 	if f.opts.Ledger.Counters["unrecoverable:spaces/joined"] != 0 || strings.Contains(f.logs.String(), "level=WARN") {
-		t.Fatalf("zero cursor reported lost history: %v %s", f.opts.Ledger.Counters, f.logs.String())
+		t.Fatalf("new discovery bound reported lost history: %v %s", f.opts.Ledger.Counters, f.logs.String())
 	}
 }
 
@@ -1230,6 +1230,9 @@ func TestRetainedWindowUsesGoogleClock(t *testing.T) {
 					switch cursor {
 					case "zero":
 						s.MessageCursor, s.EventCursor = time.Time{}, time.Time{}
+						// A legacy read already open at upgrade keeps its epoch
+						// bound; a bare row now gets the membership/list bound.
+						f.r.begin(s, frozen)
 					case "aged":
 						s.EventCursor = boundary.Add(-time.Hour)
 						wantLoss = 1 // Only the genuinely aged-out interval is reported.

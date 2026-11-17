@@ -92,6 +92,9 @@ func TestNeverSilentGateLockLoss(t *testing.T) {
 			name := map[bool]string{false: "no-credentials", true: "credentials-running"}[credential] + "/" + map[bool]string{false: "missing", true: "replaced"}[replaced]
 			t.Run(name, func(t *testing.T) {
 				f := newFixture(t, credential)
+				if credential {
+					f.replaceIdentityToken(t, fakegoogle.UserID)
+				}
 				f.cfg.NeverSilent.Enabled = true
 				f.cfg.NeverSilent.OperatorContext = "example-operator"
 				f.google.Configure(func(g *fakegoogle.Server) {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recover the mention that adds the identity to a room with a bounded first-read margin; bound rooms discovered without an event by membership/inventory time and log first discovery and read completion (gp-vak9).
+
 - The skill gives reactions fixed meanings, with the same tables and rules
   as the Slack fragment and the WhatsApp skill, in place of any emoji that
   fits (gp-adh3). The rows are a catalog, `reactions.json` at the pack's
