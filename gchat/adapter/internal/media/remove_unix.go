@@ -19,6 +19,10 @@ func Remove(root, space, message string, selection map[string]bool) Removal {
 	if root == "" || !safeSegment(space) || !safeSegment(message) {
 		return Removal{Remaining: -1, Cause: "unsafe"}
 	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return Removal{Remaining: -1, Cause: "unsafe"}
+	}
 	room, err := openRemovalDirectory(root, space)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -42,7 +46,7 @@ func Remove(root, space, message string, selection map[string]bool) Removal {
 	}
 	result := Removal{}
 	for _, entry := range entries {
-		if selection != nil && !selection[FileID(entry.Name())] {
+		if selection != nil && !selection[FileID(root, entry.Name())] {
 			continue
 		}
 		var stat unix.Stat_t

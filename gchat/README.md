@@ -211,14 +211,21 @@ names are assumed to stay the same across edits (UNPROVEN). If Google changes
 a kept attachment's name, its earlier paths stop working and the edit saves
 a fresh copy. Text edits and history reads still save additional copies.
 
-Failed removals remain in the ledger and are retried by the regular recovery
-pass, also after restart, without holding later messages. The adapter log
+Failed removals remain in the ledger and are retried at startup and every
+five seconds, independently of credentials, registration, subscriptions and
+history recovery, without holding later messages. Configured media roots are
+remembered across settings reloads and restarts, so a deletion also reaches
+copies in earlier stores. Attachment links use a digest scoped to their store;
+reusing a vacant filename cannot transfer an old removal to a kept attachment.
+An edit checkpoint keeps its revision across a crash, preventing older edits
+from restoring removed attachments. The adapter log
 reports the message id, removed count, and, on failure, a remaining count and
 one cause word; `remaining=-1` means the directory could not be inspected.
 Links and nested folders are left in place and reported for operator attention.
 The first start after an update leaves files of past deletions alone: only
 cleanup obligations recorded by the new code are retried. A rollback to the
-released adapter drops these obligations and attachment links; other ledger
+released adapter drops these obligations, attachment links and remembered
+media roots; other ledger
 state remains, and that adapter does not remove saved attachments.
 
 Only the adapter's saved files are removed. Ledger text, turns already sent

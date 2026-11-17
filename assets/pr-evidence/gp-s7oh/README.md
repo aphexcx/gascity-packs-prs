@@ -6,7 +6,8 @@ is not included. A merge changes no box.
 
 Base: `68884bf15089e79230bc88c55b591033e3fe927f`.
 Tests first: `578f0ace` (all new named tests, before implementation).
-Implementation tested: `d36ad43181196c224e29bea7fe6c410cacc71ac5`.
+Initial implementation tested: `d36ad43181196c224e29bea7fe6c410cacc71ac5`.
+Review regressions first: `550ef677`, all four red before their fixes.
 Tests use temporary directories and in-process fakes. No Google service or
 running adapter was contacted. Existing assertions were not weakened.
 
@@ -49,6 +50,21 @@ unsafe-ID test additionally exercises recovery with a malformed persisted
 obligation, bypassing event validation.
 
 ## Verification
+
+The initial suite results below precede the review fixes. Final source
+verification is running; its result will be recorded before publication.
+All 20 named tests already pass individually on the corrected source:
+20 top-level tests, 46 subtests, zero skips and zero failures.
+
+The four review regressions use the same individual invocation above. Each
+failed behaviorally at the reviewed commit and passes after correction:
+
+| Package | Name | Before fix | After fix | Subtests |
+| --- | --- | --- | --- | ---: |
+| inbound | TestCleanupDebtDoesNotDeleteReusedFiles | red | pass | 2 |
+| inbound | TestEditCleanupCheckpointRejectsOlderRevisions | red | pass | 0 |
+| inbound | TestCleanupFollowsSavedMediaRoots | red | pass | 3 |
+| app | TestStartupCleanupDoesNotWaitForRemoteServices | red | pass | 3 |
 
 Go: `go1.27.3 darwin/arm64`. Python for pytest: `3.13.13` from an existing
 environment whose pytest, PyYAML and jsonschema imports were verified. No
@@ -119,7 +135,8 @@ The released 0.5.0 ledger source at
 `d2f453b83a428546dfe7fa01dc2bd831c0b47ae0` was compiled in an isolated fixture
 module with its released wire types. A checkpoint loaded and saved by the new
 ledger was then loaded and saved by that released ledger (`go run .`, exit 0).
-The comparison proved that rollback drops only `media`; every field of the
+The final-source comparison proved that rollback drops only `media` and
+`media_roots`; every field of the
 released fixture stays equal. `TestLedger050LoadsAndSavesUnchanged` also guards
 loading the released fixture with no new fields.
 
@@ -135,22 +152,26 @@ loading the released fixture with no new fields.
 3. One info line reports a positive removed count. A failed attempt adds one
    warning with the resource ID, remaining count and cause. No filename, local
    path, size, sender, content or raw filesystem error enters these logs.
-4. The ledger maps each message's file-name digests to attachment resource IDs.
-   It stores neither filenames nor paths in the new records. Both save callers
+4. The ledger maps each message's root-scoped filename digests to attachment
+   resource IDs, and separately remembers configured media store roots.
+   It stores no attachment filenames or paths below a store root. Both save callers
    reserve the link before downloading, covering a stop during a history save.
    This keeps the existing flat folder layout and old turn paths intact.
    Removed attachment IDs enqueue all linked copies; old unlinked files stay
    until message deletion. Attachment-ID stability across edits is UNPROVEN.
-5. Cleanup is a separate durable obligation, not a failed delivery. Each regular
+5. Cleanup is a separate durable obligation, not a failed delivery. Each local
    recovery pass makes one attempt per pending message; a refusal does not hold
    another turn behind it. Every failed attempt is visible in the adapter log.
-6. Tombstone and deletion obligation are saved together. The regular pass runs
-   after startup without changing health startup. Past tombstones without an
+6. Tombstone and deletion obligation are saved together. A service-owned pass
+   runs immediately and every five seconds without waiting for credentials,
+   registration, subscriptions or history recovery. Past tombstones without an
    obligation are not enrolled; past deletions stay untouched at an update.
 7. Cleanup, edits and downloads share the existing normalization gate. A
    deletion waits for a running download and removes it; later history saves
    recheck the durable tombstone. Accepted edit revisions also suppress saves
-   of attachments removed by an equal or newer edit.
+   of attachments removed by an equal or newer edit. A durable edit revision
+   cannot be lowered after an interrupted turn checkpoint. Reusing a vacant
+   filename clears its previous removal debt before the new download.
 8. The deletion turn and provenance frame are unchanged; no sentence was added
    to the turn. Existing deletion tests were left unchanged.
 9. Documentation names the deletion behavior, absence of expiry and the limits.
@@ -188,14 +209,21 @@ README text replacing the expiry statement and adding the cleanup paragraphs:
 > a kept attachment's name, its earlier paths stop working and the edit saves
 > a fresh copy. Text edits and history reads still save additional copies.
 >
-> Failed removals remain in the ledger and are retried by the regular recovery
-> pass, also after restart, without holding later messages. The adapter log
+> Failed removals remain in the ledger and are retried at startup and every
+> five seconds, independently of credentials, registration, subscriptions and
+> history recovery, without holding later messages. Configured media roots are
+> remembered across settings reloads and restarts, so a deletion also reaches
+> copies in earlier stores. Attachment links use a digest scoped to their store;
+> reusing a vacant filename cannot transfer an old removal to a kept attachment.
+> An edit checkpoint keeps its revision across a crash, preventing older edits
+> from restoring removed attachments. The adapter log
 > reports the message id, removed count, and, on failure, a remaining count and
 > one cause word; `remaining=-1` means the directory could not be inspected.
 > Links and nested folders are left in place and reported for operator attention.
 > The first start after an update leaves files of past deletions alone: only
 > cleanup obligations recorded by the new code are retried. A rollback to the
-> released adapter drops these obligations and attachment links; other ledger
+> released adapter drops these obligations, attachment links and remembered
+> media roots; other ledger
 > state remains, and that adapter does not remove saved attachments.
 >
 > Only the adapter's saved files are removed. Ledger text, turns already sent
@@ -229,6 +257,23 @@ excerpts were normalized to repository-relative paths. The added source,
 fixtures, evidence and PR text contain no private paths, real messaging IDs,
 private names or unrelated city bead IDs. Test attachments are invented.
 
-The SAFETY self-review result will be recorded before publication. The separate
-gate and second-model read belong to the draft PR's handoff. The worker does
-not merge, mark ready, release or deploy.
+SAFETY self-review round 1 reviewed
+`2dd8954229a3c35d87468280289b4b67c49b353c`: BLOCK, four MAJOR findings.
+Each was reproduced before its fix, including all cases in its fault class:
+
+1. Stale removal debt after pathname reuse: a failed download or externally
+   removed file left a reservation that could delete a later kept attachment.
+   Correction retires the former debt when a vacant name is reserved again.
+2. Split edit checkpoints: a crash after the media checkpoint allowed an older
+   event to lower the accepted revision. Correction keeps media revisions
+   monotonic and prevents older events or unsent intents overtaking them.
+3. Incomplete durable store identity: changing the configured media root left
+   earlier copies behind. Correction remembers canonical configured roots
+   before activating them and scopes file digests to the root.
+4. Recovery coupled to remote readiness: registration, credentials or
+   subscriptions could block local cleanup. Correction runs local recovery
+   independently of those services, with immediate and periodic attempts.
+
+The next review and final verification will be recorded before publication.
+The separate gate and second-model read belong to the draft PR's handoff.
+The worker does not merge, mark ready, release or deploy.

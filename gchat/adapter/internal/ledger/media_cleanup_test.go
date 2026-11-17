@@ -20,8 +20,13 @@ func TestMediaCleanupLedgerCompatibility(t *testing.T) {
 	if err = json.Unmarshal(before, &raw); err != nil {
 		t.Fatal(err)
 	}
-	// Only resource identifiers, opaque digests and recovery state are added.
+	// Only resource identifiers, opaque digests, store roots and recovery state
+	// are added; no attachment filename is persisted in this checkpoint.
 	raw["media"] = json.RawMessage(`{"spaces/example/messages/one":{"delete_pending":true,"files":{"0123456789abcdef":"spaces/example/messages/one/attachments/file"}}}`)
+	raw["media_roots"], err = json.Marshal([]string{t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, err := json.Marshal(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -46,12 +51,14 @@ func TestMediaCleanupLedgerCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got, want any
-	json.Unmarshal(loaded["media"], &got)
-	json.Unmarshal(raw["media"], &want)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatal("cleanup checkpoint lost on load, clone or save")
+	for _, key := range []string{"media", "media_roots"} {
+		json.Unmarshal(loaded[key], &got)
+		json.Unmarshal(raw[key], &want)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatal("cleanup checkpoint lost on load, clone or save")
+		}
+		delete(loaded, key)
 	}
-	delete(loaded, "media")
 	clean, err := json.Marshal(loaded)
 	if err != nil {
 		t.Fatal(err)

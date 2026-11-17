@@ -9,6 +9,7 @@ import (
 
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/media"
+	"gchat-adapter/internal/puller"
 	api "google.golang.org/api/chat/v1"
 )
 
@@ -18,6 +19,17 @@ import (
 type MediaStore struct {
 	Snapshot func() (*ledger.Ledger, error)
 	Update   func(func(*ledger.Ledger)) error
+}
+
+// RememberMediaRoot records an already-canonical configured inbound directory.
+// The caller persists the ledger before enabling the new configuration. These
+// are store roots, never attachment names or paths inside a message directory.
+func RememberMediaRoot(l *ledger.Ledger, root string) bool {
+	if root == "" || slices.Contains(l.MediaRoots, root) {
+		return false
+	}
+	l.MediaRoots = append(l.MediaRoots, root)
+	return true
 }
 
 func mediaState(l *ledger.Ledger, message string) *ledger.MediaState {
@@ -77,7 +89,13 @@ func (s *MediaStore) reserve(m *api.Message, attachment, dest string) string {
 		if state.Files == nil {
 			state.Files = make(map[string]string)
 		}
-		state.Files[media.FileID(filepath.Base(dest))] = attachment
+		root := filepath.Dir(filepath.Dir(filepath.Dir(dest)))
+		RememberMediaRoot(l, root)
+		id := media.FileID(root, filepath.Base(dest))
+		// A reservation can outlive a failed download or a file removed by an
+		// operator. Reusing that now-free name retires its old cleanup debt.
+		delete(state.Remove, id)
+		state.Files[id] = attachment
 	})
 	if err != nil {
 		return "media state unavailable"
@@ -107,7 +125,11 @@ func (p *Processor) editMedia(ctx context.Context, m *api.Message) error {
 	defer func() { <-mediaNormalizationGate }()
 	return p.update(func(l *ledger.Ledger) {
 		state := mediaState(l, m.Name)
-		state.Revision, _ = time.Parse(time.RFC3339Nano, m.LastUpdateTime)
+		revision, _ := time.Parse(time.RFC3339Nano, m.LastUpdateTime)
+		if revision.Before(state.Revision) {
+			return
+		}
+		state.Revision = revision
 		state.Retained = nil
 		for _, a := range m.Attachment {
 			if a != nil {
@@ -128,7 +150,11 @@ func (p *Processor) editMedia(ctx context.Context, m *api.Message) error {
 // cleanupMedia makes one local attempt. Its debt was committed before this
 // point; failure never Nacks a turn or holds later turns behind that message.
 func (p *Processor) cleanupMedia(ctx context.Context, name string) {
-	l, err := p.snapshot()
+	p.mediaStore().cleanup(ctx, p.opts.Config.Endpoints.MediaDir, name, p.opts.Logger)
+}
+
+func (s *MediaStore) cleanup(ctx context.Context, root, name string, logger puller.Logger) {
+	l, err := s.Snapshot()
 	if err != nil {
 		return
 	}
@@ -140,7 +166,7 @@ func (p *Processor) cleanupMedia(ctx context.Context, name string) {
 		return
 	}
 	defer func() { <-mediaNormalizationGate }()
-	l, err = p.snapshot()
+	l, err = s.Snapshot()
 	if err != nil {
 		return
 	}
@@ -155,13 +181,36 @@ func (p *Processor) cleanupMedia(ctx context.Context, name string) {
 		if state.DeletePending {
 			selection = nil
 		}
-		result = media.Remove(p.opts.Config.Endpoints.MediaDir, parts[1], parts[3], selection)
+		roots := append(slices.Clone(l.MediaRoots), root)
+		seen := make(map[string]bool)
+		result = media.Removal{}
+		for _, candidate := range roots {
+			canonical, err := filepath.Abs(candidate)
+			if err != nil || candidate == "" {
+				result.Remaining, result.Cause = -1, "unsafe"
+				continue
+			}
+			if seen[canonical] {
+				continue
+			}
+			seen[canonical] = true
+			next := media.Remove(canonical, parts[1], parts[3], selection)
+			result.Removed += next.Removed
+			if result.Remaining < 0 || next.Remaining < 0 {
+				result.Remaining = -1
+			} else {
+				result.Remaining += next.Remaining
+			}
+			if next.Cause != "" {
+				result.Cause = next.Cause
+			}
+		}
 	}
 	if result.Removed > 0 {
-		p.opts.Logger.Info("saved attachments removed", "message", name, "count", result.Removed)
+		logger.Info("saved attachments removed", "message", name, "count", result.Removed)
 	}
 	if result.Cause == "" {
-		err = p.update(func(l *ledger.Ledger) {
+		err = s.Update(func(l *ledger.Ledger) {
 			current := mediaState(l, name)
 			if state.DeletePending {
 				delete(l.Media, name)
@@ -177,17 +226,32 @@ func (p *Processor) cleanupMedia(ctx context.Context, name string) {
 		}
 	}
 	if result.Cause != "" {
-		p.opts.Logger.Warn("saved attachment removal deferred", "message", name, "remaining", result.Remaining, "cause", result.Cause)
+		logger.Warn("saved attachment removal deferred", "message", name, "remaining", result.Remaining, "cause", result.Cause)
 	}
 }
 
 func (p *Processor) cleanupMediaPass(ctx context.Context, l *ledger.Ledger) {
+	p.mediaStore().recoverSnapshot(ctx, p.opts.Config.Endpoints.MediaDir, l, p.opts.Logger)
+}
+
+// Recover needs only local storage, so the service can run it before Google or
+// gc is ready. It enrolls no tombstone that lacks an explicit cleanup debt.
+func (s *MediaStore) Recover(ctx context.Context, root string, logger puller.Logger) error {
+	l, err := s.Snapshot()
+	if err != nil {
+		return err
+	}
+	s.recoverSnapshot(ctx, root, l, logger)
+	return nil
+}
+
+func (s *MediaStore) recoverSnapshot(ctx context.Context, root string, l *ledger.Ledger, logger puller.Logger) {
 	for name, state := range l.Media {
 		if ctx.Err() != nil {
 			return
 		}
 		if state != nil && (state.DeletePending || len(state.Remove) > 0) {
-			p.cleanupMedia(ctx, name)
+			s.cleanup(ctx, root, name, logger)
 		}
 	}
 }

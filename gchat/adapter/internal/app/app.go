@@ -287,6 +287,12 @@ func (a *application) run(ctx context.Context) error {
 	if err = canonicalize(a.cfg); err != nil {
 		return err
 	}
+	initialMediaRoot, statePath := a.cfg.Endpoints.MediaDir, a.cfg.Endpoints.StateFile
+	if !recovery {
+		if err = a.rememberMediaRoots(initialMediaRoot); err != nil {
+			return err
+		}
+	}
 	a.s.SetConfig(*a.cfg)
 	source, err := NewSource(a.cfg)
 	if err != nil {
@@ -302,6 +308,7 @@ func (a *application) run(ctx context.Context) error {
 	}
 	a.s.SetNeverSilent(a.neverSilent)
 	var auxiliaries sync.WaitGroup
+	auxiliaries.Go(func() { a.pollMediaCleanup(ctx, initialMediaRoot, statePath) })
 	auxiliaries.Go(func() { a.notifyLoop(ctx) })
 	auxiliaries.Go(func() { a.pollNeverSilent(ctx) })
 	// Sweeps belong to the service, not a credential generation. A reload does
@@ -381,6 +388,9 @@ func (a *application) run(ctx context.Context) error {
 			}
 			// /state is only admitted while recovery-required, when no generation
 			// owns the ledger. It has already replaced and saved the shared value.
+			if err = a.rememberMediaRoots(initialMediaRoot, a.cfg.Endpoints.MediaDir); err != nil {
+				return err
+			}
 			recovery = false
 			a.loaded.Store(true)
 			a.credentialHold.Store(false)
@@ -481,6 +491,11 @@ func (a *application) run(ctx context.Context) error {
 							a.health("initializing", "settings changed; rebuilding clients")
 						}
 						stopGeneration()
+						if !recovery {
+							if err = a.rememberMediaRoots(a.cfg.Endpoints.MediaDir, next.Endpoints.MediaDir); err != nil {
+								return err
+							}
+						}
 						if next.Identity().TokenFile != a.cfg.Identity().TokenFile {
 							fresh, tokenErr := NewSource(next)
 							if tokenErr != nil {

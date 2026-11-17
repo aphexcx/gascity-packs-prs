@@ -58,6 +58,9 @@ type Ledger struct {
 	// Media holds attachment links and cleanup obligations introduced after
 	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
 	Media map[string]*MediaState `json:"media,omitempty"`
+	// MediaRoots remembers configured inbound stores across reloads/restarts,
+	// including stores containing legacy files without attachment links.
+	MediaRoots []string `json:"media_roots,omitempty"`
 }
 
 // MediaState stores resource IDs and file-name digests, never file names,
@@ -449,6 +452,7 @@ func (l *Ledger) Clone() *Ledger {
 		}
 	}
 	out.Messages = copyRecords(l.Messages)
+	out.MediaRoots = slices.Clone(l.MediaRoots)
 	out.Media = copyRecords(l.Media)
 	for _, state := range out.Media {
 		if state != nil {

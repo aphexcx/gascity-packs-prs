@@ -7,8 +7,11 @@ import (
 )
 
 // FileID links an attachment to a directory entry without storing its name or
-// local path in the cleanup ledger. It is scoped by the message's resource ID.
-func FileID(name string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(name))) }
+// local path in the cleanup ledger. Roots are canonical absolute paths, so
+// equal basenames in two configured stores retain independent ownership.
+func FileID(root, name string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(root+"\x00"+name)))
+}
 
 // Removal contains only counts and a closed failure category, never an OS error
 // that could disclose a local path. Remaining is -1 when the directory could

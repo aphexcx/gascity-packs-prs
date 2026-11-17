@@ -762,7 +762,9 @@ func spaceKind(s *api.Space) string {
 
 func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) error {
 	m := c.Message
-	defer p.cleanupMedia(ctx, m.Name)
+	if c.Kind == "message.updated" || c.Kind == "message.deleted" {
+		defer p.cleanupMedia(ctx, m.Name)
+	}
 	id := m.Name
 	l, err := p.snapshot()
 	if err != nil {
@@ -784,6 +786,12 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 		if base.Kind == "message.updated" && previous != nil && previous.Revision.Equal(updated) {
 			id = m.Name
 		}
+	}
+	// An edit's cleanup checkpoint can be ahead of its turn after a stop.
+	// Equal revisions still finish that interrupted turn; older ones cannot
+	// roll back attachment ownership or resurrect a removed attachment.
+	if checkpoint := l.Media[m.Name]; c.Kind != "message.deleted" && checkpoint != nil && updated.Before(checkpoint.Revision) {
+		return nil
 	}
 	if l.Changes[id] != nil {
 		return p.resume(ctx, id)
@@ -1213,6 +1221,9 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 		return false
 	}
 	if state.Deleted {
+		return true
+	}
+	if checkpoint := l.Media[c.Message]; checkpoint != nil && checkpoint.Revision.After(state.Revision) {
 		return true
 	}
 	if stamp, ok := strings.CutPrefix(c.ID, c.Message+"#updated#"); ok {
