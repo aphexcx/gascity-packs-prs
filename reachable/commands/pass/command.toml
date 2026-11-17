@@ -1,0 +1,2 @@
+description = "Mark a known conversation as seen without sending words"
+run = "run.sh"

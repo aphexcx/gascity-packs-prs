@@ -1,0 +1,19 @@
+node --test --test-reporter=tap --test-name-pattern='empty active log:' | exit=1
+node --test --test-reporter=tap --test-name-pattern='empty active log:' | exit=0
+node --test --test-reporter=tap | exit=0
+node <synthetic-pass-probe> | exit=0
+PATH=<toolchain-shim>:$PATH make test | exit=0
+codex-gate.sh review --class DEEP --model gpt-6-astra | exit=1
+node --test --test-reporter=tap --test-name-pattern='empty active log:' (legacy collision) | exit=1
+node --test --test-reporter=tap --test-name-pattern='empty active log:' (legacy class) | exit=1
+node --test --test-reporter=tap (publication identity fix) | exit=0
+node --test --test-reporter=tap --test-name-pattern='empty active log:' (pending tail) | exit=1
+node --test --test-reporter=tap (complete publication class) | exit=0
+node --test --test-reporter=tap --test-name-pattern='empty active log:' (complete publication class) | exit=0
+node --test --test-reporter=tap (137ca7d6) | exit=0
+node --test --test-reporter=tap (frozen base with complete class tests) | exit=1
+node assets/pr-evidence/gp-7w04/round2/pass-probe.cjs (137ca7d6) | exit=0
+PATH=<toolchain-shim>:$PATH make test (complete publication class) | exit=2
+codex-gate.sh review --class DEEP --model gpt-6-astra (137ca7d6) | exit=0
+gascity: env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k PnpmShimTests | exit=0
+PATH=<toolchain-shim>:$PATH make test (retry 137ca7d6) | exit=2

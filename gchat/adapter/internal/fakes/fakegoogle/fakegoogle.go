@@ -49,6 +49,9 @@ type Server struct {
 	Reactions                  map[string]*chat.Reaction
 	Subscriptions              map[string]*events.Subscription
 	SpaceEvents                map[string][]*chat.SpaceEvent
+	MembershipErrors           map[string]int
+	MembershipRequests         []string
+	HistoryRequests            []HistoryRequest
 	Media                      map[string][]byte
 	// People maps users/<id> to the address the directory (People API) answers.
 	People map[string]string
@@ -80,6 +83,11 @@ type resumableUpload struct {
 	name   string // populated only after completion
 }
 
+type HistoryRequest struct {
+	Space        string
+	Lower, Upper time.Time
+}
+
 type operation struct {
 	result       events.Operation
 	failure      *events.Status
@@ -97,8 +105,8 @@ func New(t testing.TB, publisher *pubsub.Publisher) *Server {
 		Spaces: map[string]*chat.Space{}, Messages: map[string]*chat.Message{},
 		Reactions: map[string]*chat.Reaction{}, Subscriptions: map[string]*events.Subscription{},
 		SpaceEvents: map[string][]*chat.SpaceEvent{}, Media: map[string][]byte{}, People: map[string]string{},
-		Memberships: map[string]*chat.Membership{},
-		operations:  map[string]*operation{}, requests: map[string]string{}, lastWrite: map[string]time.Time{}, uploads: map[string]*resumableUpload{}}
+		Memberships: map[string]*chat.Membership{}, MembershipErrors: map[string]int{},
+		operations: map[string]*operation{}, requests: map[string]string{}, lastWrite: map[string]time.Time{}, uploads: map[string]*resumableUpload{}}
 	s.http = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
 	return s
@@ -742,6 +750,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, space stri
 	}
 	threads := filter["thread.name="]
 	since, until := filter.time("create_time>"), filter.time("create_time<")
+	s.HistoryRequests = append(s.HistoryRequests, HistoryRequest{Space: space, Lower: since, Upper: until})
 	list := make([]*chat.Message, 0)
 	for name, m := range s.Messages {
 		if !strings.HasPrefix(name, space+"/messages/") {

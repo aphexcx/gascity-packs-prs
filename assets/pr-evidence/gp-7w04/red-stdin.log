@@ -1,0 +1,55 @@
+TAP version 13
+# Subtest: 11: malformed hook stdin fails open and records one error using the installed city argument
+not ok 1 - 11: malformed hook stdin fails open and records one error using the installed city argument
+  ---
+  duration_ms: 34.60625
+  type: 'test'
+  location: '<worktree>/reachable/test/bounds.test.cjs:44:1'
+  failureType: 'testCodeFailure'
+  error: "ENOENT: no such file or directory, open '<fixture-path>'"
+  code: 'ENOENT'
+  stack: |-
+    Object.readFileSync (node:fs:483:20)
+    TestContext.<anonymous> (<worktree>/reachable/test/bounds.test.cjs:50:18)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+1..0
+# Subtest: decision.test.cjs
+ok 2 - decision.test.cjs
+  ---
+  duration_ms: 41.646166
+  type: 'test'
+  ...
+1..0
+# Subtest: events.test.cjs
+ok 3 - events.test.cjs
+  ---
+  duration_ms: 40.060875
+  type: 'test'
+  ...
+1..0
+# Subtest: pack.test.cjs
+ok 4 - pack.test.cjs
+  ---
+  duration_ms: 37.82675
+  type: 'test'
+  ...
+1..0
+# Subtest: runtime.test.cjs
+ok 5 - runtime.test.cjs
+  ---
+  duration_ms: 40.797125
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 4
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 83.417416

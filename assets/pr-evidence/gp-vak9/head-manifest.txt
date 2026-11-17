@@ -1,0 +1,5 @@
+source_sha=5640396ad41fd76f67314f82d6d0ada96e97dfb7
+go version go1.27.3 darwin/arm64
+command=env -u GC_BIN gofmt -l . | cwd=gchat/adapter | exit=0 | elapsed=0.0s | log=final-gofmt.log
+command=env -u GC_BIN go vet ./... | cwd=gchat/adapter | exit=0 | elapsed=1.0s | log=final-vet.log
+command=env -u GC_BIN go test -p 1 -count=1 -timeout=30m -json ./... | cwd=gchat/adapter | exit=1 | elapsed=1080.6s | log=final-test.jsonl

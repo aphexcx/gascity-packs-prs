@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestJoinLedgerCompatibility(t *testing.T) {
@@ -61,5 +62,41 @@ func TestJoinLedgerCompatibility(t *testing.T) {
 	_ = os.WriteFile(path, b, 0600)
 	if _, err = Load(path, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestJoinAndFirstReadLedgerRoundTripClone(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	l := New()
+	l.LastSpaceList = at
+	l.Spaces["spaces/room"] = &SpaceState{}
+	l.Spaces["spaces/room"].StartFirstRead(at, at.Add(time.Minute), 5*time.Minute, "membership", "event")
+	l.Spaces["spaces/room"].FirstRead.PreJoinMessages = map[string]bool{"spaces/room/messages/adding": true}
+	l.JoinRequests = map[string]*JoinRequest{
+		"spaces/room": {CodeHash: "example-hash", Identity: "users/123456789", CreatedAt: at, ExpiresAt: at.Add(24 * time.Hour)},
+	}
+	l.JoinAttempts = []JoinAttempt{{At: at, Space: "spaces/room", OwnerMessage: "spaces/dm/messages/approval", Result: "joined"}}
+	path := filepath.Join(t.TempDir(), "ledger.json")
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, l) {
+		t.Fatal("save/load changed first-read or join state")
+	}
+	clone := loaded.Clone()
+	if !reflect.DeepEqual(clone, loaded) {
+		t.Fatal("clone changed first-read or join state")
+	}
+	clone.LastSpaceList = at.Add(time.Hour)
+	clone.Spaces["spaces/room"].FirstRead.Complete = true
+	clone.Spaces["spaces/room"].FirstRead.PreJoinMessages["spaces/room/messages/adding"] = false
+	clone.JoinRequests["spaces/room"].Used = true
+	clone.JoinAttempts[0].Result = "refused_invited"
+	if !reflect.DeepEqual(loaded, l) {
+		t.Fatal("clone mutation reached the original")
 	}
 }

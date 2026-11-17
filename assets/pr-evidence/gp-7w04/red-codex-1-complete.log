@@ -1,0 +1,162 @@
+TAP version 13
+1..0
+# Subtest: bounds.test.cjs
+ok 1 - bounds.test.cjs
+  ---
+  duration_ms: 40.045375
+  type: 'test'
+  ...
+1..0
+# Subtest: decision.test.cjs
+ok 2 - decision.test.cjs
+  ---
+  duration_ms: 40.515
+  type: 'test'
+  ...
+1..0
+# Subtest: events.test.cjs
+ok 3 - events.test.cjs
+  ---
+  duration_ms: 39.00625
+  type: 'test'
+  ...
+1..0
+# Subtest: pack.test.cjs
+ok 4 - pack.test.cjs
+  ---
+  duration_ms: 36.197375
+  type: 'test'
+  ...
+# Subtest: codex 1: first install preserves valid hooks without matcher properties
+ok 5 - codex 1: first install preserves valid hooks without matcher properties
+  ---
+  duration_ms: 7.543
+  type: 'test'
+  ...
+# Subtest: codex 1: maintenance callers cannot teach the worker identity as a mayor
+ok 6 - codex 1: maintenance callers cannot teach the worker identity as a mayor
+  ---
+  duration_ms: 5.862709
+  type: 'test'
+  ...
+# Subtest: codex 1: an empty caller session cannot match an unrouted message
+ok 7 - codex 1: an empty caller session cannot match an unrouted message
+  ---
+  duration_ms: 3.576792
+  type: 'test'
+  ...
+# Subtest: codex 1: worker status preserves established legacy mayor sessions
+not ok 8 - codex 1: worker status preserves established legacy mayor sessions
+  ---
+  duration_ms: 2.166959
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:155:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    0 !== 1
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:159:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: codex 1: unknown legacy routing is not consumed by an unbound operator
+not ok 9 - codex 1: unknown legacy routing is not consumed by an unbound operator
+  ---
+  duration_ms: 1.850333
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:162:1'
+  failureType: 'testCodeFailure'
+  error: 'Missing expected exception.'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  operator: 'throws'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:165:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: codex 1: distinct tool-free turns and duplicate Stop use genuine transcript identities
+not ok 10 - codex 1: distinct tool-free turns and duplicate Stop use genuine transcript identities
+  ---
+  duration_ms: 6.396833
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:168:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    1 !== 0
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:179:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: codex 1: lifecycle snapshots retry a rotation during directory discovery
+not ok 11 - codex 1: lifecycle snapshots retry a rotation during directory discovery
+  ---
+  duration_ms: 37.847333
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:181:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    1 !== 0
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:199:34)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+1..0
+# Subtest: runtime.test.cjs
+ok 6 - runtime.test.cjs
+  ---
+  duration_ms: 37.135083
+  type: 'test'
+  ...
+1..12
+# tests 12
+# suites 0
+# pass 8
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 117.809416

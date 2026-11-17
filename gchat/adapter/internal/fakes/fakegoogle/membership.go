@@ -27,6 +27,11 @@ func (s *Server) membership(w http.ResponseWriter, r *http.Request, path string)
 	defer func() { s.MembershipCalls = append(s.MembershipCalls, call) }()
 	parts := strings.Split(path, "/")
 	if r.Method == http.MethodGet && len(parts) == 4 {
+		s.MembershipRequests = append(s.MembershipRequests, path)
+		if code := s.MembershipErrors[path]; code != 0 {
+			s.fail(w, code, "UNKNOWN", "scripted membership failure")
+			return
+		}
 		if e := s.MembershipReadError; e != nil {
 			s.fail(w, e.HTTP, e.Status, e.Detail)
 			return

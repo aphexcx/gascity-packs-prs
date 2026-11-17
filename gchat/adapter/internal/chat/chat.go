@@ -146,6 +146,17 @@ func (c *Client) ListSpaces(ctx context.Context) ([]Space, error) {
 	}
 }
 
+// GetMembership reads one membership at an existing inventory refresh. A
+// temporary failure belongs to the caller's Freeze retry, not a fallback bound.
+func (c *Client) GetMembership(ctx context.Context, space, userID string) (*googlechat.Membership, error) {
+	if !validUserID.MatchString(userID) {
+		return nil, localError{errors.New("chat: canonical identity user ID required for membership")}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return c.api.Spaces.Members.Get(space + "/members/" + strings.TrimPrefix(userID, "users/")).Context(ctx).Do()
+}
+
 func (c *Client) CreateMessage(ctx context.Context, space, text, thread, requestID string, named bool) (name, threadName string, err error) {
 	return c.CreateMessageWithAttachments(ctx, space, text, thread, requestID, named, nil)
 }
