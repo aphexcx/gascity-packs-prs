@@ -1,0 +1,8 @@
+--- before.txt
++++ after.txt
+@@ -3 +3 @@
+-  --model gpt-6-astra
++  --model gpt-6.2-astra
+@@ -6 +6 @@
+-The helper invokes `codex -p city -m gpt-6-astra exec --skip-git-repo-check`
++The helper invokes `codex -p city -m gpt-6.2-astra exec --skip-git-repo-check`
