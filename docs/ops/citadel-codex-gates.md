@@ -52,7 +52,7 @@ Place it at the top level, above the file's first TOML table, because Codex sile
 Use the city's `city.config.toml` for this top-level key so it applies only to `-p city`, or use `config.toml` in a Codex home dedicated to the city.
 Keep the key out of a base `config.toml` shared with ordinary sessions.
 Every session sharing that file would use the replacement catalog, changing instructions and metadata for existing models, and a missing catalog file would stop every command in that home.
-Without the entry, the CLI warns “Model metadata for gpt-6.2-astra not found. Defaulting to fallback metadata” and uses generic metadata.
+Without the entry, the CLI warns ``Model metadata for `gpt-6.2-astra` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.`` and uses generic metadata.
 Add `gpt-6.2-astra` to the CLIProxyAPI hub's model catalog so it can route the ID. Otherwise it returns HTTP 400, “unknown provider for model gpt-6.2-astra”.
 Remove these overrides once the Codex release bundles the metadata and the hub's upstream catalog lists the ID.
 
@@ -78,8 +78,8 @@ beads keep it under `/Users/tailor512/city/assets/ops/pr-evidence/<bead>/`.
 `--raw` keeps Codex's bytes; the default strips trailing whitespace so a
 committed `.out` passes `git diff --check`.
 
-Both modes use `-p city -m gpt-6.2-astra`, read-only execution, `-C`,
-and `--skip-git-repo-check`; the prompt and the contract reach Codex on stdin.
+Both modes use `-p city -m MODEL`, read-only execution, `-C`, and `--skip-git-repo-check`. The prompt and the contract reach Codex on stdin.
+`MODEL` comes from `--model` when supplied. Otherwise the helper passes its own `model=` value, so an older installation keeps its previous ID until updated to `gpt-6.2-astra` (see “Moving a city to a new gate model”).
 `--model MODEL` explicitly overrides both the normal model and the optional
 review model. Review mode
 resolves REF and HEAD to commit IDs, computes their merge base, and asks
@@ -126,7 +126,7 @@ The body and ego app's source file are unchanged. The original directory symlink
 was saved at `~/.agents/ego-browser.bak-20260906-185347`, outside skill discovery.
 Claude-side skills, including superpowers, were not modified.
 
-The mayor owns `city.toml`. Its `codex-astra` provider pins GPT-6.2 Astra.
+The mayor owns `city.toml` and sets the `codex-astra` provider's model default there when the city switches to GPT-6.2 Astra.
 Its command and resume command still need `-p city` to select the new profile.
 The plain `codex` provider also needs the explicit GPT-6.2 Astra model and city profile
 if it is used for city work. No city.toml change is included in this task.
