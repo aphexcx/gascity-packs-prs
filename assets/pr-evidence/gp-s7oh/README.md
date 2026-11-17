@@ -8,6 +8,9 @@ Base: `68884bf15089e79230bc88c55b591033e3fe927f`.
 Tests first: `578f0ace` (all new named tests, before implementation).
 Initial implementation tested: `d36ad43181196c224e29bea7fe6c410cacc71ac5`.
 Review regressions first: `550ef677`, all four red before their fixes.
+Round 1 fixes: `4507ae6a36eddbe4bbe9f8c2fa3dcfd97e91c888`.
+Round 2 regressions first: `b99a9ba1`, both red before their fixes; its two
+test seams only extract existing code without changing behavior.
 Tests use temporary directories and in-process fakes. No Google service or
 running adapter was contacted. Existing assertions were not weakened.
 
@@ -52,9 +55,10 @@ obligation, bypassing event validation.
 ## Verification
 
 The initial suite results below precede the review fixes. Final source
-verification is running; its result will be recorded before publication.
-All 20 named tests already pass individually on the corrected source:
-20 top-level tests, 46 subtests, zero skips and zero failures.
+verification will be recorded before publication. After round 1, all 20
+then-current named tests passed individually: 20 top-level tests, 46 subtests,
+zero skips and zero failures. The round 2 corrections add two named tests
+and four subtests; both passed individually after their fixes.
 
 The four review regressions use the same individual invocation above. Each
 failed behaviorally at the reviewed commit and passes after correction:
@@ -65,6 +69,21 @@ failed behaviorally at the reviewed commit and passes after correction:
 | inbound | TestEditCleanupCheckpointRejectsOlderRevisions | red | pass | 0 |
 | inbound | TestCleanupFollowsSavedMediaRoots | red | pass | 3 |
 | app | TestStartupCleanupDoesNotWaitForRemoteServices | red | pass | 3 |
+| media | TestRemovalKeepsDebtUntilDirectoryChangesAreDurable | red | pass | 4 |
+| app | TestCleanupAllowsReloadToCancelDownloads | red | pass | 0 |
+
+For the durability regression, directory-sync failures are injected through
+the removal helper's local dependency. Delete, edit, absent-entry retry and
+parent-directory retry each retained debt only after the correction. The
+reload regression holds a real fake-HTTP download and proves that the health
+transition can reach generation cancellation while cleanup waits for it.
+
+An intermediate full run was stopped for the round 2 production corrections.
+Before stopping, unchanged `TestRunQuarantineRecoversDuringRun` hit its deadline
+in all three rows. The individual test (one top-level, three subtests) then
+passed, as did the whole puller package on both current and dispatched-base
+source. No puller code or assertion changed. Final verification supersedes
+this interrupted run; its result is not counted as a completed suite.
 
 Go: `go1.27.3 darwin/arm64`. Python for pytest: `3.13.13` from an existing
 environment whose pytest, PyYAML and jsonschema imports were verified. No
@@ -166,6 +185,11 @@ loading the released fixture with no new fields.
    runs immediately and every five seconds without waiting for credentials,
    registration, subscriptions or history recovery. Past tombstones without an
    obligation are not enrolled; past deletions stay untouched at an update.
+   File unlinks are synced through the message directory, and removal of that
+   directory through its parent, before debt can clear. A failed sync retains
+   debt, including when a retry finds the message directory already absent.
+   State-reset exclusion uses a separate mutex from health transitions, so
+   credential/settings reload can still cancel a stalled download.
 7. Cleanup, edits and downloads share the existing normalization gate. A
    deletion waits for a running download and removes it; later history saves
    recheck the durable tombstone. Accepted edit revisions also suppress saves
@@ -216,7 +240,10 @@ README text replacing the expiry statement and adding the cleanup paragraphs:
 > copies in earlier stores. Attachment links use a digest scoped to their store;
 > reusing a vacant filename cannot transfer an old removal to a kept attachment.
 > An edit checkpoint keeps its revision across a crash, preventing older edits
-> from restoring removed attachments. The adapter log
+> from restoring removed attachments. Directory removals are synchronized before
+> their ledger obligation is cleared; synchronization failures remain retryable.
+> Cleanup does not hold the health lock while waiting for downloads, so a
+> credential or settings reload can cancel a stalled download. The adapter log
 > reports the message id, removed count, and, on failure, a remaining count and
 > one cause word; `remaining=-1` means the directory could not be inspected.
 > Links and nested folders are left in place and reported for operator attention.
@@ -274,6 +301,24 @@ Each was reproduced before its fix, including all cases in its fault class:
    subscriptions could block local cleanup. Correction runs local recovery
    independently of those services, with immediate and periodic attempts.
 
+All four round 1 findings are FIXED by
+`4507ae6a36eddbe4bbe9f8c2fa3dcfd97e91c888`. Their original locations were
+`internal/inbound/media_cleanup.go:76`, `:108`, `:158`, and
+`internal/inbound/inbound.go:283` (paths relative to `gchat/adapter`).
+
+SAFETY self-review round 2 reviewed
+`4507ae6a36eddbe4bbe9f8c2fa3dcfd97e91c888`: BLOCK, two MAJOR findings.
+
+1. Crash-consistency ordering (`internal/media/remove_unix.go:86`): unlinks
+   could be lost in a host crash after the ledger on another filesystem had
+   cleared the obligation. The fix syncs message and parent directories,
+   preserves debt on sync failure, and retries parent sync when already absent.
+2. Cancellation blocked by lock scope (`internal/app/media_cleanup.go:57`):
+   cleanup held the health mutex while waiting for a download, preventing
+   reload from reaching cancellation. The fix separates reset exclusion from
+   health transitions, including the HTTP state-reset lock acquisition order.
+
+Both were reproduced by the two round 2 tests above before correction.
 The next review and final verification will be recorded before publication.
 The separate gate and second-model read belong to the draft PR's handoff.
 The worker does not merge, mark ready, release or deploy.

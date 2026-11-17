@@ -64,8 +64,8 @@ func (a *application) pollMediaCleanup(ctx context.Context, root, statePath stri
 }
 
 func (a *application) recoverMedia(ctx context.Context, root string, store *inbound.MediaStore) {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
+	a.mediaResetMu.Lock()
+	defer a.mediaResetMu.Unlock()
 	if a.loaded.Load() && a.checkStateLock() == nil {
 		_ = store.Recover(ctx, root, a.log)
 	}

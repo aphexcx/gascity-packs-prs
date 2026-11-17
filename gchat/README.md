@@ -218,7 +218,10 @@ remembered across settings reloads and restarts, so a deletion also reaches
 copies in earlier stores. Attachment links use a digest scoped to their store;
 reusing a vacant filename cannot transfer an old removal to a kept attachment.
 An edit checkpoint keeps its revision across a crash, preventing older edits
-from restoring removed attachments. The adapter log
+from restoring removed attachments. Directory removals are synchronized before
+their ledger obligation is cleared; synchronization failures remain retryable.
+Cleanup does not hold the health lock while waiting for downloads, so a
+credential or settings reload can cancel a stalled download. The adapter log
 reports the message id, removed count, and, on failure, a remaining count and
 one cause word; `remaining=-1` means the directory could not be inspected.
 Links and nested folders are left in place and reported for operator attention.

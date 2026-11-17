@@ -49,6 +49,7 @@ type application struct {
 	l                  *ledger.Ledger
 	mu                 sync.Mutex
 	stateMu            sync.Mutex // excludes app health transitions during POST /state
+	mediaResetMu       sync.Mutex // excludes local cleanup during POST /state
 	s                  *server.Server
 	manager            atomic.Pointer[events.Manager]
 	chatClient         atomic.Pointer[chat.Client]
@@ -129,6 +130,10 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	defer s.Close()
 	h := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/state" {
+			// Acquire the cleanup exclusion first: waiting for a download must
+			// never hold the health lock needed by a reload that cancels it.
+			a.mediaResetMu.Lock()
+			defer a.mediaResetMu.Unlock()
 			a.stateMu.Lock()
 			defer a.stateMu.Unlock()
 			if err := a.checkStateLock(); err != nil {

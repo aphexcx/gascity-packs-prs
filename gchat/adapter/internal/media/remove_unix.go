@@ -38,6 +38,11 @@ func removeWithSync(root, space, message string, selection map[string]bool, sync
 	fd, err := unix.Openat(int(room.Fd()), message, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			// A previous attempt may have removed the message directory but
+			// failed to persist its parent. Absence alone does not settle debt.
+			if err := syncDirectory(room); err != nil {
+				return Removal{Remaining: -1, Cause: "io"}
+			}
 			return Removal{}
 		}
 		return Removal{Remaining: -1, Cause: removalCause(err)}
@@ -78,6 +83,13 @@ func removeWithSync(root, space, message string, selection map[string]bool, sync
 		}
 		result.Removed++
 	}
+	// The ledger can live on another filesystem. Persist file unlinks before
+	// returning success to the caller that durably clears its cleanup debt.
+	// Sync even with no matching entries: this can be a retry of a failed sync.
+	if err := syncDirectory(dir); err != nil {
+		result.Cause, result.Remaining = "io", -1
+		return result
+	}
 	if selection != nil || result.Cause != "" {
 		return result
 	}
@@ -88,6 +100,10 @@ func removeWithSync(root, space, message string, selection map[string]bool, sync
 		return result
 	}
 	if err := unix.Unlinkat(int(room.Fd()), message, unix.AT_REMOVEDIR); err != nil && !errors.Is(err, os.ErrNotExist) {
+		result.Cause, result.Remaining = "io", -1
+		return result
+	}
+	if err := syncDirectory(room); err != nil {
 		result.Cause, result.Remaining = "io", -1
 	}
 	return result
