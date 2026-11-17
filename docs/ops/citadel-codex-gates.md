@@ -47,8 +47,11 @@ plugin catalogue or plugin skill entries.
 
 ## GPT-6.2 Astra until a Codex release bundles it
 
-In the Codex home's `config.toml`, point `model_catalog_json` at a local copy of OpenAI's
-`codex-rs/models-manager/models.json` from `openai/codex` commit `6c0cee502` or later.
+Set `model_catalog_json` to a local copy of OpenAI's `codex-rs/models-manager/models.json` from `openai/codex` commit `6c0cee502` or later.
+Place it at the top level, above the file's first TOML table, because Codex silently ignores it under a table.
+Use the city's `city.config.toml` for this top-level key so it applies only to `-p city`, or use `config.toml` in a Codex home dedicated to the city.
+Keep the key out of a base `config.toml` shared with ordinary sessions.
+Every session sharing that file would use the replacement catalog, changing instructions and metadata for existing models, and a missing catalog file would stop every command in that home.
 Without the entry, the CLI warns “Model metadata for gpt-6.2-astra not found. Defaulting to fallback metadata” and uses generic metadata.
 Add `gpt-6.2-astra` to the CLIProxyAPI hub's model catalog so it can route the ID. Otherwise it returns HTTP 400, “unknown provider for model gpt-6.2-astra”.
 Remove these overrides once the Codex release bundles the metadata and the hub's upstream catalog lists the ID.
