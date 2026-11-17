@@ -84,9 +84,13 @@ dialogs, slash commands and multiple identities are outside this version.
 - [ ] The identity's user account granted Pub/Sub Subscriber on the subscription (or the project).
 - [ ] Project id, topic and subscription names into the secrets file; `gc gchat auth` at the keyboard; the route line into `city.toml`; `gc reload`; the live checklist.
 
-To confirm in the first live test: that the `spaces/-` subscription covers
-spaces joined after it was created; end-to-end event latency; whether the
-sender's email is present under user authentication.
+Seen live: the `spaces/-` subscription delivers the identity's membership in
+a space joined after the subscription was created. The message that added
+the identity was older than the recorded join and did not arrive on the live
+stream; the first history read now reaches back for it. Whether later messages
+in a newly joined space arrive on the live stream at once remains unmeasured.
+Also to confirm: end-to-end event latency and whether the sender's email is
+present under user authentication.
 
 Use an account belonging to the agent identity. An External consent screen in
 Testing issues refresh tokens that expire after seven days; use Internal for
@@ -127,6 +131,50 @@ off for the user, a new user with no conversation yet) stays `initializing`
 with one `chat-access` notice and keeps retrying. The Pub/Sub topic,
 subscription and grants in the checklist above are still needed; boxboxbox's
 key holder creates them.
+
+To enable accepting room invitations, add one permission only when this
+feature is needed. This box cannot accept invitations yet. A Workspace super administrator must open Google Admin console > Security > Access and data control > API controls > Manage Domain Wide Delegation, edit this client's entry, add https://www.googleapis.com/auth/chat.memberships beside the existing permissions, and click Authorize; changes can take up to 24 hours.
+Google describes this permission as "View, add, update, and remove members
+from conversations in Chat." The adapter uses it only to join one invited
+room after the owner's yes. The box's key holder must also hand out that
+permission. If it refuses the scope: "This box is not set up to hand out
+that permission yet. Whoever runs the box updates it or turns the permission
+on; the admin's step alone will not help." Only `delegation_not_authorized`
+means the admin's step above. Other permanent refusals name their code in
+`permission_error` and say: "The permission could not be given for another
+reason. The admin's permission step will not fix it; nothing changed."
+The key holder and the customer's own setup instructions live
+outside this repository. Desktop consent stays unchanged and cannot use join.
+
+`gc gchat join --check` checks only that permission. To accept one invitation,
+use `gc gchat join --space spaces/ID --request`, ask the owner in a direct
+message naming the room and its exact id as Google gives it. Ask the owner
+to reply with the returned code alone, nothing else, and pass that reply as
+`gc gchat join --space spaces/ID --yes spaces/DM/messages/ID`. The code is
+random, belongs to that room, and expires after 24 hours. The approval record
+stores only its hash, and the join audit contains no code. Ordinary outgoing
+and incoming message text retains its existing storage and may contain the
+code. A new request replaces it. The adapter checks the sender, the direct
+message's room and creation time, and that the whole reply is the code (letter
+case and surrounding whitespace ignored), then saves its use before
+one write naming the identity herself. An already joined room needs no yes
+and no write permission. A lost write answer is reported as an unknown outcome;
+the next run reads membership before any new write.
+The skill gives the owner's ask and the rule after no or silence.
+A token with too little time left is refused before approval is used; nothing
+changes, and the same owner's yes can be retried with a usable token.
+A create answered HTTP 403 PERMISSION_DENIED or HTTP 400 FAILED_PRECONDITION
+reports Google's answer and says the cause is not known yet; it does not
+promise that an organization setting will fix it.
+
+UNPROVEN: Google's pages do not say that creating one's own membership
+accepts an invitation. This command has only fake coverage and awaits a real
+proof call. Updating the pack alone preserves the permissions requested at
+start, all existing commands, inbound delivery, health, and existing ledger
+fields. The only new command is `join`; until both the admin and key holder
+allow the permission, it explains what is missing and joins nothing. Its
+optional approval and attempt records are dropped by the released adapter
+on rollback, leaving its existing records intact. The pack version is unchanged.
 
 ## Install
 
@@ -226,6 +274,8 @@ uses defaults, but create it before changing wake policies with `spaces`.
 Settings example:
 
 ```toml
+join_reachback = "5m"
+
 [defaults]
 wake = "all"
 
@@ -526,6 +576,32 @@ pull; there is no minute-by-minute Chat polling. Message and event cursors are
 separate and advance only when a frozen interval has been handled; live
 deliveries never advance them. Backlog drains over repeated budgeted passes.
 
+The identity's join event also triggers a read, and the hourly inventory sweep
+recovers rooms discovered without an event. A room's first message read starts
+`join_reachback` before its join time (default `"5m"`, maximum `"60m"`;
+`"0s"` disables it). Negative or invalid durations are refused. Before the
+join, only messages mentioning the identity or messages in a direct message
+can become turns. Other pre-join messages are discarded before queuing and use
+no delivery budget. Space events still start at the join. The saved lower bound
+survives a restart in the middle of the read; subsequent reads use the normal
+cursors and overlap. A known room with cursors never gains this reach-back,
+including when the identity leaves and rejoins. Existing open reads are preserved.
+
+For a listed room with no row, or a bare row with no join, cursors or open read,
+the same inventory refresh gets the identity's membership once. Its creation
+time supplies the join bound, no earlier than the last successful inventory.
+An absent/invalid time, a state other than JOINED, or HTTP 403/404 uses that
+recorded inventory time; without one, it uses the time found. The same first-read
+margin applies. Temporary failures fail the refresh without saving a new room;
+the existing retry handles them. Newly discovered rooms never start at 1970.
+
+Two Info messages identify this lifecycle: `gchat space first seen` records
+the space resource, `found_by` (`event`, `sweep`, `startup`, or `recovery`),
+`joined_at`, `time_source`, and `message_lower`. `gchat space first read complete`
+records the space, discovery source, `turns`, `pre_join_turns`, and
+`elapsed_seconds`. Each is emitted once per newly bounded room. They contain
+no message text, display name or user ID.
+
 When Google refuses a space's history, status shows `History held` and its
 reason; `unavailable:<space>` and a WARN appear for each new hold, not every
 retry. The first hourly inventory refresh at least one hour after the last
@@ -633,7 +709,7 @@ Use unquoted fenced blocks and simple emphasis when exact presentation matters.
 | `delivery failed` | Inspect the JSON reason and retry hint; retry the same send with the printed key. |
 | `Delivered, but not recorded in gc` | Inspect binding/session and gc health; retry recording with the same key. |
 
-Validate source changes with `gc lint packs/gchat`, shellcheck and `bash -n`
+From the repository root, validate source changes with `gc lint gchat`, shellcheck and `bash -n`
 on every shell script, and the Python wrapper tests in `tests/`. From `adapter/`,
 run `gofmt -l .`, `go vet ./...`, and `staticcheck ./...`.
 Use `go test ./... -count=1 -timeout=30m` for the full suite and

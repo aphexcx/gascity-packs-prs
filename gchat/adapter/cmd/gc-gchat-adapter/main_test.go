@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/fakes/fakegc"
 	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/token"
 	"golang.org/x/oauth2"
 )
 
@@ -492,6 +494,15 @@ func keyholderFixture(t *testing.T, refuse string) string {
 			_, _ = w.Write([]byte(`{"subject":"agent1@example.com"}`))
 			return
 		}
+		var input struct {
+			Scopes []string `json:"scopes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		if !reflect.DeepEqual(input.Scopes, token.KeyholderScopes) {
+			t.Errorf("auth check requested non-standing scopes: %v", input.Scopes)
+		}
 		if refuse != "" {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"` + refuse + `","detail":"scripted"}`))
@@ -533,4 +544,13 @@ func TestAuthWithKeyholderSource(t *testing.T) {
 			t.Fatalf("code=%d stdout=%q stderr=%q", code, &stdout, &stderr)
 		}
 	})
+}
+
+// Pin: the command behind gc gchat auth --check never requests join authority.
+func TestAuthCheckKeepsStandingScopes(t *testing.T) {
+	env := keyholderFixture(t, "")
+	var stdout, stderr bytes.Buffer
+	if code := run(t.Context(), []string{"auth", "--check"}, &stdout, &stderr, envAt(env), nil); code != 0 {
+		t.Fatalf("auth check: %d %s", code, stderr.String())
+	}
 }

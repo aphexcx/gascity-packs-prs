@@ -38,6 +38,7 @@ type Client struct {
 	// coordinates and Google's original timestamp, including idempotent replays.
 	MessageCreated         func(space, message, thread, stamp string)
 	api                    *googlechat.Service
+	httpClient             *http.Client
 	limits                 Limiter
 	timing                 timing
 	retryBound             time.Duration
@@ -60,7 +61,7 @@ func New(ctx context.Context, httpClient *http.Client, ep config.Endpoints) (*Cl
 	if err != nil {
 		return nil, err
 	}
-	return &Client{api: api, ep: ep}, nil
+	return &Client{api: api, httpClient: httpClient, ep: ep}, nil
 }
 
 // SetIdentityUserID supplies the canonical users/<id> from the authenticated
@@ -152,6 +153,17 @@ func (c *Client) ListSpaces(ctx context.Context) ([]Space, error) {
 		}
 		call.PageToken(result.NextPageToken)
 	}
+}
+
+// GetMembership reads one membership at an existing inventory refresh. A
+// temporary failure belongs to the caller's Freeze retry, not a fallback bound.
+func (c *Client) GetMembership(ctx context.Context, space, userID string) (*googlechat.Membership, error) {
+	if !validUserID.MatchString(userID) {
+		return nil, localError{errors.New("chat: canonical identity user ID required for membership")}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return c.api.Spaces.Members.Get(space + "/members/" + strings.TrimPrefix(userID, "users/")).Context(ctx).Do()
 }
 
 func (c *Client) CreateMessage(ctx context.Context, space, text, thread, requestID string, named bool) (name, threadName string, err error) {

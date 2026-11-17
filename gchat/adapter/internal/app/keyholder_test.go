@@ -11,13 +11,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
+	"gchat-adapter/internal/catchup"
+	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/gcclient"
+	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
@@ -26,10 +31,13 @@ import (
 // A key holder that mints for one subject, with a scripted refusal, and the
 // directory that knows that subject's Chat id.
 type fakeKeyholder struct {
-	socket string
-	status atomic.Int32
-	code   atomic.Value
-	mints  atomic.Int32
+	socket      string
+	status      atomic.Int32
+	code        atomic.Value
+	mints       atomic.Int32
+	mu          sync.Mutex
+	scopes      [][]string
+	joinRefusal string
 }
 
 func newFakeKeyholder(t *testing.T) *fakeKeyholder {
@@ -48,7 +56,22 @@ func newFakeKeyholder(t *testing.T) *fakeKeyholder {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/token", func(w http.ResponseWriter, r *http.Request) {
 		k.mints.Add(1)
+		var input struct {
+			Scopes []string `json:"scopes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		k.mu.Lock()
+		k.scopes = append(k.scopes, input.Scopes)
+		refusal := k.joinRefusal
+		k.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if len(input.Scopes) == 1 && input.Scopes[0] == "https://www.googleapis.com/auth/chat.memberships" && refusal != "" {
+			w.WriteHeader(403)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": refusal})
+			return
+		}
 		if status := int(k.status.Load()); status != 0 {
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": k.code.Load().(string), "detail": "scripted"})
@@ -170,15 +193,21 @@ func TestManagedSourceChatRefusalRetriesWithoutSignIn(t *testing.T) {
 	defer chatServer.Close()
 	f.cfg.Endpoints.ChatAPIBase = chatServer.URL
 	var notices atomic.Int32
+	var kindsMu sync.Mutex
 	var kinds []string
 	f.startOptions(t, Options{Notify: func(_ context.Context, subject, _ string) error {
-		notices.Add(1)
+		kindsMu.Lock()
 		kinds = append(kinds, subject)
+		kindsMu.Unlock()
+		notices.Add(1)
 		return nil
 	}})
 	waitFor(t, 10*time.Second, func() bool { return notices.Load() == 1 })
-	if kinds[0] != "gchat: chat-access" {
-		t.Fatalf("notice kind: %v", kinds)
+	kindsMu.Lock()
+	gotKinds := append([]string(nil), kinds...)
+	kindsMu.Unlock()
+	if len(gotKinds) != 1 || gotKinds[0] != "gchat: chat-access" {
+		t.Fatalf("notice kind: %v", gotKinds)
 	}
 	h := f.health(t, "initializing", time.Second)
 	if !strings.Contains(h.Reason, "Chat refuses") {
@@ -288,6 +317,56 @@ func TestDeletedSpaceDoesNotHoldInterruptedSend(t *testing.T) {
 // new space but not the message posted there seconds later (seen live). The
 // membership alone must make the adapter read that space's history from the
 // join time and deliver the message.
+func TestTheMessageThatAddsTheIdentityIsATurn(t *testing.T) {
+	f := newFixture(t, false)
+	f.replaceIdentityToken(t, fakegoogle.UserID)
+	f.start(t)
+	f.health(t, "ready", 5*time.Second)
+	joined := time.Now().UTC().Add(-time.Second)
+	f.google.Configure(func(g *fakegoogle.Server) {
+		g.Spaces["spaces/joined"] = &api.Space{Name: "spaces/joined", SpaceType: "SPACE"}
+		g.Messages["spaces/joined/messages/adding"] = &api.Message{Name: "spaces/joined/messages/adding", Text: "@agent hello", Sender: &api.User{Name: "users/222", Type: "HUMAN"}, CreateTime: joined.Add(-2 * time.Second).Format(time.RFC3339Nano), Thread: &api.Thread{Name: "spaces/joined/threads/hello"}, Annotations: []*api.Annotation{{Type: "USER_MENTION", UserMention: &api.UserMentionMetadata{User: &api.User{Name: fakegoogle.UserID}}}}}
+	})
+	membership := `{"membership":{"name":"spaces/joined/members/123456789","state":"JOINED","createTime":"` + joined.Format(time.RFC3339Nano) + `","member":{"name":"` + fakegoogle.UserID + `","type":"HUMAN"}}}`
+	if _, err := f.pub.Publish(t.Context(), &pubsub.Message{Data: []byte(membership), Attributes: map[string]string{"ce-type": "google.workspace.chat.membership.v1.created", "ce-id": "adding", "ce-subject": "//chat.googleapis.com/spaces/joined"}}).Get(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 10*time.Second, func() bool { return len(f.gc.Inbound()) == 1 })
+	if got := f.gc.Inbound()[0]; got.ProviderMessageID != "spaces/joined/messages/adding" || !strings.HasPrefix(got.Text, "[catch-up]") {
+		t.Fatalf("adding turn: %+v", got)
+	}
+	f.health(t, "ready", 10*time.Second)
+	// Run the hourly sweep against the completed app ledger on a separate
+	// persistence path, advancing the frozen upper bound without an hour's wait.
+	l, err := ledger.Load(f.cfg.Endpoints.StateFile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu := &sync.Mutex{}
+	path := filepath.Join(t.TempDir(), "sweep.json")
+	c, err := chat.New(t.Context(), http.DefaultClient, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: l, LedgerMu: mu, LedgerPath: path, Chat: c, GC: gcclient.New(f.gc.URL(), "examplecity"), IdentityUserID: fakegoogle.UserID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := catchup.New(catchup.Options{Config: f.cfg, Ledger: l, LedgerMu: mu, LedgerPath: path, Chat: c, Processor: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.FreezeFrom(t.Context(), time.Now().Add(time.Hour), "sweep"); err != nil {
+		t.Fatal(err)
+	}
+	if delivered, remaining, err := r.Pass(t.Context()); err != nil || delivered != 0 || remaining != 0 {
+		t.Fatalf("hourly sweep: %d %d %v", delivered, remaining, err)
+	}
+	if len(f.gc.Inbound()) != 1 {
+		t.Fatal("hourly sweep repeated adding message")
+	}
+}
+
 func TestJoinedSpaceHistoryIsSweptWithoutMessageEvents(t *testing.T) {
 	f := newFixture(t, false)
 	f.replaceIdentityToken(t, fakegoogle.UserID)

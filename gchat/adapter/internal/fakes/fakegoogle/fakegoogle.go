@@ -49,9 +49,18 @@ type Server struct {
 	Reactions                  map[string]*chat.Reaction
 	Subscriptions              map[string]*events.Subscription
 	SpaceEvents                map[string][]*chat.SpaceEvent
+	MembershipErrors           map[string]int
+	MembershipRequests         []string
+	HistoryRequests            []HistoryRequest
 	Media                      map[string][]byte
 	// People maps users/<id> to the address the directory (People API) answers.
 	People map[string]string
+	// Membership fixtures model assumptions, not proof of Google's invitation flow.
+	Memberships           map[string]*chat.Membership
+	MembershipCalls       []MembershipCall
+	MembershipReadError   *MembershipError
+	MembershipWriteError  *MembershipError
+	MembershipCreateState string
 	// MaxUploadBytes lowers the normal 200 MiB limit for small boundary tests.
 	MaxUploadBytes int64
 	// RepeatedReactionConflicts answers a reaction create with 409
@@ -80,6 +89,11 @@ type resumableUpload struct {
 	name   string // populated only after completion
 }
 
+type HistoryRequest struct {
+	Space        string
+	Lower, Upper time.Time
+}
+
 type operation struct {
 	result       events.Operation
 	failure      *events.Status
@@ -97,6 +111,7 @@ func New(t testing.TB, publisher *pubsub.Publisher) *Server {
 		Spaces: map[string]*chat.Space{}, Messages: map[string]*chat.Message{},
 		Reactions: map[string]*chat.Reaction{}, Subscriptions: map[string]*events.Subscription{},
 		SpaceEvents: map[string][]*chat.SpaceEvent{}, Media: map[string][]byte{}, People: map[string]string{},
+		Memberships: map[string]*chat.Membership{}, MembershipErrors: map[string]int{},
 		operations: map[string]*operation{}, requests: map[string]string{}, lastWrite: map[string]time.Time{}, uploads: map[string]*resumableUpload{}}
 	s.http = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -569,6 +584,18 @@ func (s *Server) complete(op *operation) {
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request, path string) {
 	parts := strings.Split(path, "/")
+	if len(parts) == 2 && r.Method == http.MethodGet {
+		if room := s.Spaces[path]; room != nil {
+			s.respond(w, r, 200, room)
+		} else {
+			s.fail(w, 404, "NOT_FOUND", "space not found")
+		}
+		return
+	}
+	if len(parts) >= 3 && parts[2] == "members" {
+		s.membership(w, r, path)
+		return
+	}
 	if len(parts) < 3 {
 		s.fail(w, 404, "NOT_FOUND", "route not found")
 		return
@@ -737,6 +764,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, space stri
 	}
 	threads := filter["thread.name="]
 	since, until := filter.time("create_time>"), filter.time("create_time<")
+	s.HistoryRequests = append(s.HistoryRequests, HistoryRequest{Space: space, Lower: since, Upper: until})
 	list := make([]*chat.Message, 0)
 	for name, m := range s.Messages {
 		if !strings.HasPrefix(name, space+"/messages/") {

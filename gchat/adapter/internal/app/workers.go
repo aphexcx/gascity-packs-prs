@@ -35,6 +35,7 @@ import (
 func (a *application) generation(ctx context.Context, source *token.Source, reloaded bool, registered *atomic.Bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer a.identityDiscoveryHeld.Store(false)
 	g := gcclient.New(a.cfg.Secrets.GCAPIBase, a.cfg.Secrets.CityName)
 	g.SetConnectionRefusedHandler(func(err error) { a.gcDown.Store(true); a.s.ObserveGCError(err) })
 	hc, err := source.Client(ctx)
@@ -285,7 +286,7 @@ func (a *application) catchup(ctx context.Context, r *catchup.Runner, m *events.
 		case <-m.RecoveryNeeded():
 			caught.Store(false)
 			a.health("catching-up", "subscription recovered; recovering history")
-			if err := a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
+			if err := a.retry(ctx, "freeze", func() error { return r.FreezeFrom(ctx, time.Now(), "recovery") }); err != nil {
 				return err
 			}
 			pass = a.frozenHistory()
@@ -295,7 +296,7 @@ func (a *application) catchup(ctx context.Context, r *catchup.Runner, m *events.
 			// the subscription late or not at all, so read them from history.
 			caught.Store(false)
 			a.health("catching-up", "joined a space; reading its history")
-			if err := a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
+			if err := a.retry(ctx, "freeze", func() error { return r.FreezeFrom(ctx, time.Now(), "event") }); err != nil {
 				return err
 			}
 			pass = a.frozenHistory()
@@ -305,7 +306,7 @@ func (a *application) catchup(ctx context.Context, r *catchup.Runner, m *events.
 			// hourly history sweep, including spaces whose recovery completed.
 			caught.Store(false)
 			a.health("catching-up", "hourly history sweep")
-			if err := a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
+			if err := a.retry(ctx, "freeze", func() error { return r.FreezeFrom(ctx, time.Now(), "sweep") }); err != nil {
 				return err
 			}
 			pass = a.frozenHistory()
@@ -356,6 +357,9 @@ func (a *application) poll(ctx context.Context, p *inbound.Processor, fatal chan
 func (a *application) retry(ctx context.Context, op string, fn func() error) error {
 	for ceiling := time.Second; ; ceiling = min(2*ceiling, time.Minute) {
 		err := fn()
+		if op == "freeze" {
+			a.identityDiscoveryHeld.Store(errors.Is(err, catchup.ErrIdentityUnavailable))
+		}
 		if err == nil {
 			if op == "subscription" {
 				a.subscriptionRecovered()
@@ -367,6 +371,11 @@ func (a *application) retry(ctx context.Context, op string, fn func() error) err
 		}
 		if (op == "subscription" && subscriptionCredentialsError(err)) || (op != "subscription" && credentialsError(err)) {
 			return err
+		}
+		if op == "freeze" && errors.Is(err, catchup.ErrIdentityUnavailable) {
+			// Legacy tokens may learn the identity from their first outbound
+			// response. Keep publishing available while discovery waits.
+			a.health("catching-up", "Chat identity not yet known; run gc gchat auth or send an outbound message")
 		}
 		cause := safeReason("retrying", err)
 		if op == "subscription" {

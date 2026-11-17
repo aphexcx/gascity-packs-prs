@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gchat-adapter/internal/ack"
 	"gchat-adapter/internal/redact"
@@ -101,8 +102,9 @@ type Settings struct {
 	} `toml:"defaults,omitempty"`
 	Identities    []Identity `toml:"identity"`
 	Spaces        []Space    `toml:"space"`
-	Media         Media      `toml:"media,omitempty"`         // as decoded; effective values are in Endpoints
-	CatchupBudget int        `toml:"catchup_budget,omitzero"` // per space per pass, default 50
+	Media         Media      `toml:"media,omitempty"`          // as decoded; effective values are in Endpoints
+	CatchupBudget int        `toml:"catchup_budget,omitzero"`  // per space per pass, default 50
+	JoinReachback string     `toml:"join_reachback,omitempty"` // duration, default 5m, maximum 60m
 }
 
 type Config struct {
@@ -200,6 +202,9 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	catchupBudget := 50
 	if metadata.IsDefined("catchup_budget") {
 		catchupBudget = c.Settings.CatchupBudget
+	}
+	if metadata.IsDefined("join_reachback") && c.Settings.JoinReachback == "" {
+		return nil, fmt.Errorf("settings %s: join_reachback must be a duration between 0s and 60m", settingsFile)
 	}
 	if err := c.validateSettings(mediaMaxBytes, mediaMaxAttachments, mediaMaxTotalBytes, catchupBudget); err != nil {
 		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
@@ -349,6 +354,15 @@ func (c *Config) CatchupBudget() int {
 	return 50
 }
 
+// JoinReachback applies only to the first message read of a newly bounded room.
+func (c *Config) JoinReachback() time.Duration {
+	if c.Settings.JoinReachback == "" {
+		return 5 * time.Minute
+	}
+	d, _ := time.ParseDuration(c.Settings.JoinReachback) // validated at load
+	return d
+}
+
 // Identities returns a fresh slice with resolved token paths, or the default
 // identity when none are configured. Settings is never modified.
 func (c *Config) Identities() []Identity {
@@ -405,6 +419,12 @@ func (c *Config) validateSettings(mediaMaxBytes int64, mediaMaxAttachments int, 
 	}
 	if catchupBudget <= 0 {
 		return fmt.Errorf("catchup_budget must be positive")
+	}
+	if c.Settings.JoinReachback != "" {
+		d, err := time.ParseDuration(c.Settings.JoinReachback)
+		if err != nil || d < 0 || d > time.Hour {
+			return fmt.Errorf("join_reachback must be a duration between 0s and 60m")
+		}
 	}
 	return nil
 }

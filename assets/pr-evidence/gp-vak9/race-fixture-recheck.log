@@ -1,0 +1,12 @@
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.69s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.61s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.05s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.48s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (2.86s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.54s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.75s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.57s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.31s)
+PASS gchat-adapter/internal/app/TestManagedSourceChatRefusalRetriesWithoutSignIn (3.08s)
+PASS gchat-adapter/internal/app (35.418s)
+COUNTS {"package_pass": 1, "test_pass": 10}
