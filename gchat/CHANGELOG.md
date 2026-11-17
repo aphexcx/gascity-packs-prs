@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Remove saved attachments when a message deletion is learned, and files of
+  attachments an accepted edit took away. Cleanup retries survive restart;
+  past deletions are left alone at an update. Nothing expires by age or is
+  removed to make room. Ledger text, delivered turns and other copies stay;
+  commands, settings, subscriptions and deletion turns are unchanged. Deletions
+  outside membership or event retention cannot be learned. A merge changes
+  no box (gp-s7oh).
+
 - The skill gives reactions fixed meanings, with the same tables and rules
   as the Slack fragment and the WhatsApp skill, in place of any emoji that
   fits (gp-adh3). The rows are a catalog, `reactions.json` at the pack's

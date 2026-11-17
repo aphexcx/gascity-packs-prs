@@ -97,6 +97,28 @@ func TestRemovalRefusesUnsafeIds(t *testing.T) {
 					t.Fatal("unsafe id accepted")
 				}
 				assertCleanupFile(t, keep)
+				// Recovery is a separate boundary: bypass event validation with
+				// a durable malformed obligation and exercise the removal checks.
+				encoded, err := json.Marshal(f.l)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var raw map[string]any
+				if err = json.Unmarshal(encoded, &raw); err != nil {
+					t.Fatal(err)
+				}
+				raw["media"] = map[string]any{"spaces/" + room + "/messages/" + msg: map[string]bool{"delete_pending": true}}
+				encoded, err = json.Marshal(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = json.Unmarshal(encoded, f.l); err != nil {
+					t.Fatal(err)
+				}
+				if err = f.p.Poll(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				assertCleanupFile(t, keep)
 			})
 		}
 	}

@@ -1,8 +1,11 @@
 // Package media keeps the inbound attachment store bounded. A space member
 // chooses how many files a message carries and how large they are, so the
 // adapter caps the count per message and the bytes under the media root; it
-// never deletes on a schedule, because the agent may still be reading a file
-// whose path it was handed.
+// removes saved files when a message deletion is learned or an accepted edit
+// takes an attachment away. Durable obligations retry after restart; past
+// deletions alone do not enroll files. Nothing expires by age or is removed to
+// make room. Ledger text, delivered turns and copies elsewhere remain; missed
+// deletions outside membership or event retention cannot trigger cleanup.
 package media
 
 import (

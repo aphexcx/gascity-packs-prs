@@ -55,6 +55,19 @@ type Ledger struct {
 	Unresolved       map[string]*ChangeState  `json:"unresolved"`
 	Quarantine       []QuarantinedEvent       `json:"quarantine"`
 	Counters         map[string]int64         `json:"counters"`
+	// Media holds attachment links and cleanup obligations introduced after
+	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
+	Media map[string]*MediaState `json:"media,omitempty"`
+}
+
+// MediaState stores resource IDs and file-name digests, never file names,
+// local paths, sizes, senders or content. Files are reserved before download.
+type MediaState struct {
+	Files         map[string]string `json:"files,omitempty"`
+	Remove        map[string]bool   `json:"remove,omitempty"`
+	DeletePending bool              `json:"delete_pending,omitempty"`
+	Revision      time.Time         `json:"revision,omitzero"`
+	Retained      []string          `json:"retained,omitempty"`
 }
 
 type SubscriptionState struct {
@@ -436,6 +449,14 @@ func (l *Ledger) Clone() *Ledger {
 		}
 	}
 	out.Messages = copyRecords(l.Messages)
+	out.Media = copyRecords(l.Media)
+	for _, state := range out.Media {
+		if state != nil {
+			state.Files = maps.Clone(state.Files)
+			state.Remove = maps.Clone(state.Remove)
+			state.Retained = slices.Clone(state.Retained)
+		}
+	}
 	out.Changes = copyRecords(l.Changes)
 	out.Unresolved = copyRecords(l.Unresolved)
 	out.Sends = copyRecords(l.Sends)
