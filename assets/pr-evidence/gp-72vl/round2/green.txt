@@ -1,0 +1,7 @@
+R1 commit 7ff00eb8 (exit 0)
+.                                                                        [100%]
+1 passed in 0.01s
+
+Implementation head 0c50c775 (exit 0)
+.                                                                        [100%]
+1 passed in 0.02s
