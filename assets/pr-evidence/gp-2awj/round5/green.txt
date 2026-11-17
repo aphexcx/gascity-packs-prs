@@ -1,0 +1,163 @@
+[go-version]
+cwd: <clone>
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go version
+result: go1.27.3 darwin/arm64; exit 0; wall 0.01s
+
+[node-version]
+cwd: <clone>
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE pnpm exec node --version
+result: v24.21.0; exit 0; wall 0.07s
+
+[full-gchat]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test ./... -p=1 -count=1 -timeout=30m -json
+result: 2217 passed; 0 failed; 2 skipped; exit 0; wall 1262.50s
+skipped: TestRealGCContract, TestRealGCReplyReminder
+
+[new-green-after-overlays]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/inbound ./internal/config -run 'TestFirstReadAcknowledgementBoundary|TestArrivalAndJoinReachbackLoadTogether'
+result: 4 passed; 0 failed; 0 skipped; exit 0; wall 2.53s
+
+[named-app]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/app -run 'Round4|ReactionCount'
+result: 10 passed; 0 failed; 0 skipped; exit 0; wall 3.86s
+
+[named-catchup]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/catchup -run 'Join|Reach|Membership|FirstRead|Discovery|RoomFound|KnownRoom|OlderHistory|LegacyOpenRead'
+result: 31 passed; 0 failed; 0 skipped; exit 0; wall 26.31s
+
+[named-config]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/config -run '^TestJoinReachbackValidation$'
+result: 8 passed; 0 failed; 0 skipped; exit 0; wall 0.98s
+
+[named-main-app]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/app -run '^TestTheMessageThatAddsTheIdentityIsATurn$'
+result: 1 passed; 0 failed; 0 skipped; exit 0; wall 3.46s
+
+[named-server]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/server -run '^TestJoin'
+result: 89 passed; 0 failed; 0 skipped; exit 0; wall 5.15s
+
+[named-shared]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/ack/... ./internal/stopwatch/... ./internal/arrival/...
+result: 18 passed; 0 failed; 0 skipped; exit 0; wall 1.92s
+
+[named-hold]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/app -run '^TestLegacyIdentityHoldResumesInterruptedOutbound$'
+result: 3 passed; 0 failed; 0 skipped; exit 0; wall 19.13s
+
+[named-status]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/server -run '^TestStatusJevKeyIsOnlyPresence$'
+result: 1 passed; 0 failed; 0 skipped; exit 0; wall 1.01s
+
+[named-fake]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/fakes/fakegoogle -run 'TestRepeatedReactionConflictsIsOptIn|TestMembership'
+result: 3 passed; 0 failed; 0 skipped; exit 0; wall 1.08s
+
+[gofmt]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE gofmt -l .
+result: empty output; exit 0; wall 0.04s
+
+[vet]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go vet ./...
+result: clean; exit 0; wall 1.01s
+
+[names-pr]
+cwd: /private<tmp>/pr/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -list '.*' ./...
+result: 722 names; exit 0; wall 16.13s
+
+[names-main]
+cwd: /private<tmp>/main/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -list '.*' ./...
+result: 737 names; exit 0; wall 16.80s
+
+[names-merge]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -list '.*' ./...
+result: 775 names; exit 0; wall 12.87s
+
+[base-parity]
+cwd: /private<tmp>/parity/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/inbound -run OffParity
+result: 5 passed; 0 failed; 0 skipped; exit 0; wall 6.69s
+
+[python-root]
+cwd: <clone>
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest -q tests/test_stopwatch.py tests/test_reaction_catalog.py tests/test_redaction_copies.py tests/test_texting_rules.py
+result: 111 passed in 1.85s; exit 0; wall 2.40s
+
+[python-gchat]
+cwd: <clone>/gchat
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest -q tests
+result: 52 passed, 101 subtests passed in 20.66s; exit 0; wall 20.84s
+
+[python-slack]
+cwd: <clone>/slack-full
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest -q tests
+result: 986 passed, 3 skipped, 2 warnings, 10 subtests passed in 50.72s; exit 0; wall 50.91s
+
+[pair-final]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json ./internal/inbound -run '^TestFirstReadAcknowledgementBoundary$'
+result: 3 passed; 0 failed; 0 skipped; exit 0; wall 1.88s
+
+[named-inbound]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION go test -p 1 -count=1 ./internal/inbound -run 'OffParity|Ack|OwnReaction|BothSwitches' -json
+result: 11 passed; 0 failed; 0 skipped; exit 0
+
+[initial-new-tests]
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION go test -p 1 -count=1 ./internal/inbound ./internal/config -run 'TestFirstReadAcknowledgementBoundary|TestArrivalAndJoinReachbackLoadTogether' -json
+result: 4 passed; 0 failed; 0 skipped; exit 0
+
+[shared-copies]
+command: cmp each file under gchat/adapter/internal/ack and internal/stopwatch with the corresponding slack-full/adapter file
+result: 11 file pairs equal; each exit 0
+
+[main-shared-channel-diff]
+command: git diff --stat 68884bf15089e79230bc88c55b591033e3fe927f 1a5be02947899847d3d7334f91d12fabf6aff6ed -- slack-full whatsapp
+result: empty; exit 0. Slack and WhatsApp adapter suites not required.
+
+[name-union]
+PR 722; main 737; merged code 775. Missing from the union: [].
+New names: TestFirstReadAcknowledgementBoundary, TestArrivalAndJoinReachbackLoadTogether.
+
+[python-warnings]
+The Slack suite emitted two DeprecationWarnings at tests/test_slack_company_outbound.py:698:
+the existing fork test calls os.fork() from a process with multiple threads.
+No unsupported-engine warning was emitted.
+
+[exact-shared-copy-comparisons]
+cmp gchat/adapter/internal/ack/catalog.go slack-full/adapter/internal/ack/catalog.go: exit 0
+cmp gchat/adapter/internal/ack/choice.go slack-full/adapter/internal/ack/choice.go: exit 0
+cmp gchat/adapter/internal/ack/choice_test.go slack-full/adapter/internal/ack/choice_test.go: exit 0
+cmp gchat/adapter/internal/ack/placed_test.go slack-full/adapter/internal/ack/placed_test.go: exit 0
+cmp gchat/adapter/internal/ack/prune_test.go slack-full/adapter/internal/ack/prune_test.go: exit 0
+cmp gchat/adapter/internal/ack/reactions.json slack-full/adapter/internal/ack/reactions.json: exit 0
+cmp gchat/adapter/internal/ack/service.go slack-full/adapter/internal/ack/service.go: exit 0
+cmp gchat/adapter/internal/ack/service_test.go slack-full/adapter/internal/ack/service_test.go: exit 0
+cmp gchat/adapter/internal/stopwatch/round2_test.go slack-full/adapter/internal/stopwatch/round2_test.go: exit 0
+cmp gchat/adapter/internal/stopwatch/stopwatch.go slack-full/adapter/internal/stopwatch/stopwatch.go: exit 0
+cmp gchat/adapter/internal/stopwatch/stopwatch_test.go slack-full/adapter/internal/stopwatch/stopwatch_test.go: exit 0
+
+[diff-check]
+command: git diff --check
+result: empty; exit 0
+
+[conflict-markers]
+command: rg -n '^(<<<<<<<|=======|>>>>>>>)' gchat slack-full whatsapp
+result: no matches; exit 1 (the expected rg result)
