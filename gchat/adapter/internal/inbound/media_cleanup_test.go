@@ -448,6 +448,53 @@ func TestStartLeavesFilesOfMessagesDeletedBefore(t *testing.T) {
 	assertCleanupFile(t, path)
 }
 
+func TestPendingRemovalSurvivesVacantNameReuse(t *testing.T) {
+	f := setup(t)
+	m := message()
+	a, b := cleanupAttachment(m, "removed"), cleanupAttachment(m, "retained")
+	a.ContentName, b.ContentName = "shared.txt", "shared.txt"
+	m.Attachment = []*api.Attachment{a}
+	paths := saveCleanupMessage(t, f, m, "message.created", "create")
+	old := paths[0]
+	m.LastUpdateTime = "2026-10-22T10:01:00Z"
+	m.Attachment = []*api.Attachment{b}
+	if err := f.p.editMedia(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	// Model the checkpoint after unlink succeeds but directory sync fails:
+	// the name is vacant in the live filesystem, while durable debt remains.
+	if err := os.Remove(old); err != nil {
+		t.Fatal(err)
+	}
+	f.google.Configure(func(g *fakegoogle.Server) { g.Media[b.AttachmentDataRef.ResourceName] = []byte("retained fixture") })
+	_, attachments := NormalizeContent(context.Background(), f.opts.Chat, f.opts.Config.Endpoints, m, f.p.mediaStore())
+	if len(attachments) != 1 {
+		t.Fatal("retained attachment was not normalized")
+	}
+	current, err := url.Parse(attachments[0].URL)
+	if err != nil || current.Scheme != "file" {
+		t.Fatal("retained attachment was not saved")
+	}
+	if current.Path == old {
+		t.Fatal("new reservation reused a name whose removal is not durable")
+	}
+	id := media.FileID(f.opts.Config.Endpoints.MediaDir, filepath.Base(old))
+	if state := f.l.Media[m.Name]; state == nil || !state.Remove[id] || state.Files[id] != a.Name {
+		t.Fatal("new reservation discarded the unsynchronized removal obligation")
+	}
+	// Model a host crash losing that unlink while preserving the ledger on a
+	// different filesystem. Recovery must remove A and preserve the new B.
+	if err := os.WriteFile(old, []byte("restored removed fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	restartCleanupProcessor(t, f)
+	if err := f.p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertCleanupGone(t, old)
+	assertCleanupFile(t, current.Path)
+}
+
 func TestCleanupDebtDoesNotDeleteReusedFiles(t *testing.T) {
 	for _, absent := range []string{"failed_download", "removed_file"} {
 		t.Run(absent, func(t *testing.T) {
