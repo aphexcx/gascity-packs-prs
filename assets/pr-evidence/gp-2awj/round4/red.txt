@@ -1,0 +1,284 @@
+PR 104 round 4: the tests before their fixes, and scratch checks that they can fail. The commands
+are as run; <clone> is the lane's clone, <toolchain> the toolchain wrapper that puts pnpm on PATH,
+<scratch> a git archive of the code head with one change, never committed.
+
+1. The R2 and P2 tests at 4831fc4b, the commit after the merge (60a6d802) and before any fix.
+   Expected red, and red:
+   - Slack and Google Chat: the class (class/ack-eyes-session-eyes-restart) and P1 case (i)
+     (repeat/ack-eyes-session-eyes-twice). Each fails on the session's first eyes: Slack
+     journals it "not counted" and never-silent holds no act; Google Chat answers 502 on
+     Google's 409; after the restart and three minutes one owner line is posted.
+   - WhatsApp: P2 only (no stopwatch line for the session's reaction).
+   Green there, as each is a guard and not a missing count: the silent-session control (round
+   3's R4 across a restart), the switch unset with the acknowledgement's files on disk (main's
+   answer), P1 cases (ii) and (iii) (their first reaction is a fresh placement; they fail a
+   marker-only fix, part 3), the Google Chat guard TestRound4RepeatedSessionReactionWithoutAckIsNoNewAnswer
+   and the fake's TestRepeatedReactionConflictsIsOptIn, and WhatsApp's three R2 cases (green
+   at the merge with no code, as the spec read from code).
+
+2. The self-review's M1 tests at a71f0c3f, after round 4's first fix (be5c9d75, ad07c56d,
+   ee9abca9), which wrote the placement record after the channel's answer: lost-answer and
+   in-flight fail on Slack and Google Chat. The company-room test (m2) passes there: it covers
+   a record that existed but was untested.
+
+3. Scratch checks at the code head c7ac084e: the lookup replaced by "the attempt marker exists"
+   (option A as first worded: it fails lost-answer, in-flight and all three repeats on both
+   adapters, and Slack's company room); the switch gate removed (TakePlaced's Enabled check, and
+   on Google Chat also arrival.Wire's: the switch-unset case fails on both); the company route's
+   record removed (the self-review's m2 mutation: the company-room test fails).
+
+== slack R2 at 4831fc4b
+$ (cd <clone>/slack-full/adapter) set -o pipefail; env -u GC_BIN go test . -run 'TestRound4' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/'
+start 2026-11-14T16:07:34Z load 15.10 9.67 10.35
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart
+    round4_reaction_counts_test.go:273: never-silent acts=0 after the session's eyes, want 1: the acknowledgement hid the session's answer
+    round4_reaction_counts_test.go:276: journal session_react rows="eyes:not counted", want "eyes:counted" (a restart's reconcile replays only a counted row)
+    round4_reaction_counts_test.go:280: owner lines=1 after the session answered with eyes and a restart, want 0
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice
+    round4_reaction_counts_test.go:350: after the session's first eyes: acts=0, want 1 (it counts)
+    round4_reaction_counts_test.go:357: after the session's second eyes: acts=0, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:360: journal session_react rows="eyes:not counted,eyes:not counted", want "eyes:counted,eyes:not counted"
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice
+--- FAIL: TestRound4SessionReactionCountsAsWithAckOff (4.25s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.10s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.32s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (2.53s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (1.08s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.12s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	4.460s
+FAIL
+exit 1 (5.1s)
+
+== gchat R2 at 4831fc4b
+$ (cd <clone>/gchat/adapter) set -o pipefail; env -u GC_BIN go test ./internal/app/ ./internal/fakes/fakegoogle/ -run 'TestRound4|TestRepeatedReactionConflictsIsOptIn' -count=1 -v 2>&1 | grep -v 'level=\|^20[0-9][0-9]/'
+start 2026-11-14T16:07:39Z load 14.21 9.57 10.31
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart
+    round4_reaction_counts_test.go:294: react status=502 {"error":"googleapi: Error 409: the user already reacted with this emoji"}, want 200: the acknowledgement's eyes is there, and the session's eyes is its answer
+    round4_reaction_counts_test.go:297: never-silent acts=0 after the session's eyes, want 1
+    round4_reaction_counts_test.go:301: owner lines=1 after the session answered with eyes and a restart, want 0
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice
+    round4_reaction_counts_test.go:367: first react status=502 {"error":"googleapi: Error 409: the user already reacted with this emoji"}, want 200
+    round4_reaction_counts_test.go:370: after the session's first 👀: acts=0, want 1 (it counts)
+    round4_reaction_counts_test.go:377: after the session's second 👀: acts=0, want 1 (a repeat is no new answer)
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice
+=== RUN   TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice
+--- FAIL: TestRound4SessionReactionCountsAsWithAckOff (1.36s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.30s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.16s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.17s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.24s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.24s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.25s)
+=== RUN   TestRound4RepeatedSessionReactionWithoutAckIsNoNewAnswer
+--- PASS: TestRound4RepeatedSessionReactionWithoutAckIsNoNewAnswer (0.29s)
+FAIL
+FAIL	gchat-adapter/internal/app	1.853s
+=== RUN   TestRepeatedReactionConflictsIsOptIn
+--- PASS: TestRepeatedReactionConflictsIsOptIn (0.00s)
+PASS
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.195s
+FAIL
+exit 1 (3.0s)
+
+== whatsapp R2 and P2 at 4831fc4b
+$ (cd <clone>/whatsapp/adapter) PATH=<toolchain>:$PATH GC_NO_INSTALL=1 env -u GC_BIN pnpm exec node --test --test-timeout=240000 test/round4-reaction-counts.test.js 2>&1
+start 2026-11-14T16:07:14Z load 13.75 9.01 10.14
+✔ round 4 (R2): both switches on, the session's reaction of the acknowledged emoji counts, across a restart (852.755167ms)
+✔ round 4 (R2): the control, the session silent across the same restart: the owner line is posted (618.783666ms)
+✔ round 4 (R2): the switch unset after an acknowledgement, the session's reaction counts as main counts it (750.327208ms)
+✖ round 4 (P2): the react verb writes the session's reaction to the stopwatch; a removal writes nothing (10926.971958ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13208.011792
+
+✖ failing tests:
+
+test at test/round4-reaction-counts.test.js:127:1
+✖ round 4 (P2): the react verb writes the session's reaction to the stopwatch; a removal writes nothing (10926.971958ms)
+  Error: timed out waiting for the third reaction line
+      at waitFor (file://<clone>/whatsapp/adapter/test/fakes.js:32:38)
+      at async TestContext.<anonymous> (file://<clone>/whatsapp/adapter/test/round4-reaction-counts.test.js:139:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+exit 1 (13.3s)
+
+== slack round 4 tests at a71f0c3f (review tests, before the fix)
+$ (cd <clone>/slack-full/adapter) set -o pipefail; env -u GC_BIN go test . -run 'TestRound4' -count=1 -v 2>&1 | grep -E -- '--- |_test.go:|^ok|^FAIL'
+start 2026-11-14T16:39:06Z load 5.57 5.67 6.60
+    round4_reaction_counts_test.go:366: after the session's first eyes: acts=0, want 1 (the eyes already there is the acknowledgement's)
+    round4_reaction_counts_test.go:373: after the session's second eyes: acts=0, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:376: journal session_react rows="eyes:not counted,eyes:not counted", want "eyes:counted,eyes:not counted"
+    round4_reaction_counts_test.go:400: after the in-flight eyes: acts=0, want 1
+    round4_reaction_counts_test.go:409: journal session_react rows="eyes:not counted,eyes:counted", want "eyes:counted,eyes:not counted"
+--- FAIL: TestRound4SessionReactionCountsAsWithAckOff (0.70s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.11s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.11s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.06s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.08s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.08s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.08s)
+--- PASS: TestRound4CompanyRoomReactionCountsAsWithAckOff (0.19s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	1.084s
+FAIL
+exit 1 (1.7s)
+
+== gchat round 4 tests at a71f0c3f (review tests, before the fix)
+$ (cd <clone>/gchat/adapter) set -o pipefail; env -u GC_BIN go test ./internal/app/ -run 'TestRound4' -count=1 -v 2>&1 | grep -E -- '--- |_test.go:|^ok|^FAIL'
+start 2026-11-14T16:39:07Z load 5.92 5.74 6.62
+    round4_reaction_counts_test.go:387: first react status=502 {"error":"googleapi: Error 409: the user already reacted with this emoji"}, want 200 (the eyes already there is the acknowledgement's)
+    round4_reaction_counts_test.go:390: after the session's first eyes: acts=0, want 1
+    round4_reaction_counts_test.go:397: after the session's second eyes: acts=0, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:422: the in-flight react status=502, want 200
+    round4_reaction_counts_test.go:425: after the in-flight eyes: acts=0, want 1
+    round4_reaction_counts_test.go:428: second react status=200 {"name":"","removed":false}, want main's 502 for a repeat
+--- FAIL: TestRound4SessionReactionCountsAsWithAckOff (2.12s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.29s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.17s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.19s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.24s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.44s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.26s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.25s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.27s)
+--- PASS: TestRound4RepeatedSessionReactionWithoutAckIsNoNewAnswer (0.29s)
+FAIL
+FAIL	gchat-adapter/internal/app	2.622s
+FAIL
+exit 1 (3.9s)
+
+== Slack, the lookup replaced by the attempt marker alone (option A as first worded; scratch)
+$ (cd <scratch>/marker-only/slack-full/adapter) set -o pipefail; env -u GC_BIN go test . -run 'TestRound4' -count=1 -v 2>&1 | grep -E -- '--- |_test.go:|^ok|^FAIL'
+start 2026-11-14T16:41:40Z load 4.94 5.42 6.34
+    round4_reaction_counts_test.go:373: after the session's second eyes: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:376: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+    round4_reaction_counts_test.go:406: after the session's second eyes: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:409: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+    round4_reaction_counts_test.go:442: after the session's second eyes: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:445: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+    round4_reaction_counts_test.go:442: after the session's second thumbsup: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:445: journal session_react rows="thumbsup:counted,thumbsup:counted", want "thumbsup:counted,thumbsup:not counted"
+    round4_reaction_counts_test.go:442: after the session's second eyes: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:445: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+--- FAIL: TestRound4SessionReactionCountsAsWithAckOff (0.79s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.11s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.10s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.10s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.10s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.09s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.10s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.09s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.10s)
+    round4_reaction_counts_test.go:537: after the session's second eyes: acts=2, want 1 (a repeat is no new answer)
+--- FAIL: TestRound4CompanyRoomReactionCountsAsWithAckOff (1.79s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	2.871s
+FAIL
+exit 1 (6.4s)
+
+== Google Chat, the lookup replaced by the attempt marker alone (scratch)
+$ (cd <scratch>/marker-only/gchat/adapter) set -o pipefail; env -u GC_BIN go test ./internal/app/ -run 'TestRound4' -count=1 -v 2>&1 | grep -E -- '--- |_test.go:|^ok|^FAIL'
+start 2026-11-14T16:41:47Z load 5.07 5.44 6.34
+    round4_reaction_counts_test.go:394: second react status=200 {"name":"","removed":false}, want main's 502 for a repeat
+    round4_reaction_counts_test.go:397: after the session's second eyes: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:428: second react status=200 {"name":"","removed":false}, want main's 502 for a repeat
+    round4_reaction_counts_test.go:431: after the session's second eyes: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:461: second react status=200 {"name":"","removed":false}, want main's 502 for a repeat
+    round4_reaction_counts_test.go:464: after the session's second 👀: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:461: second react status=200 {"name":"","removed":false}, want main's 502 for a repeat
+    round4_reaction_counts_test.go:464: after the session's second 👍: acts=2, want 1 (a repeat is no new answer)
+    round4_reaction_counts_test.go:461: second react status=200 {"name":"","removed":false}, want main's 502 for a repeat
+    round4_reaction_counts_test.go:464: after the session's second 👀: acts=2, want 1 (a repeat is no new answer)
+--- FAIL: TestRound4SessionReactionCountsAsWithAckOff (2.16s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.29s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.17s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.18s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.27s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.45s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.27s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.25s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.28s)
+--- PASS: TestRound4RepeatedSessionReactionWithoutAckIsNoNewAnswer (0.30s)
+FAIL
+FAIL	gchat-adapter/internal/app	2.695s
+FAIL
+exit 1 (5.5s)
+
+== Slack, the switch gate removed (scratch)
+$ (cd <scratch>/no-gate/slack-full/adapter) set -o pipefail; env -u GC_BIN go test . -run 'TestRound4' -count=1 -v 2>&1 | grep -E -- '--- |_test.go:|^ok|^FAIL'
+start 2026-11-14T16:41:52Z load 4.99 5.41 6.32
+    round4_reaction_counts_test.go:338: never-silent acts=1, want 0: with the switch unset already_reacted is main's no-op
+    round4_reaction_counts_test.go:341: acknowledgement files ["ack-attempts/<digest>" "ack-placed/<digest>"] became ["ack-attempts/<digest>"] with the switch unset
+    round4_reaction_counts_test.go:345: owner lines=0, want 1 (main's rule with the switch unset)
+--- FAIL: TestRound4SessionReactionCountsAsWithAckOff (0.75s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.12s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.10s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.11s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.08s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.08s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.08s)
+--- PASS: TestRound4CompanyRoomReactionCountsAsWithAckOff (0.20s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	1.176s
+FAIL
+exit 1 (4.7s)
+
+== Google Chat, both switch gates removed (scratch)
+$ (cd <scratch>/no-gate/gchat/adapter) set -o pipefail; env -u GC_BIN go test ./internal/app/ -run 'TestRound4' -count=1 -v 2>&1 | grep -E -- '--- |_test.go:|^ok|^FAIL'
+start 2026-11-14T16:41:57Z load 7.79 5.99 6.52
+    round4_reaction_counts_test.go:362: react status=200 {"name":"","removed":false}, want main's 502
+    round4_reaction_counts_test.go:365: never-silent acts=1, want 0 (main's rule with the switch unset)
+    round4_reaction_counts_test.go:368: acknowledgement files ["ack-attempts/<digest>" "ack-placed/<digest>"] became ["ack-attempts/<digest>"] with the switch unset
+    round4_reaction_counts_test.go:372: owner lines=0, want 1 (main's rule with the switch unset)
+--- FAIL: TestRound4SessionReactionCountsAsWithAckOff (2.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.30s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.17s)
+    --- FAIL: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.17s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.26s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.43s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.25s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.25s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.25s)
+--- PASS: TestRound4RepeatedSessionReactionWithoutAckIsNoNewAnswer (0.29s)
+FAIL
+FAIL	gchat-adapter/internal/app	2.625s
+FAIL
+exit 1 (4.3s)
+
+== Slack, the company route's record removed (review m2's mutation; scratch)
+$ (cd <scratch>/no-company-record/slack-full/adapter) set -o pipefail; env -u GC_BIN go test . -run 'TestRound4' -count=1 -v 2>&1 | grep -E -- '--- |_test.go:|^ok|^FAIL'
+start 2026-11-14T16:42:01Z load 7.79 5.99 6.52
+--- PASS: TestRound4SessionReactionCountsAsWithAckOff (0.80s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.12s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.10s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.11s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.10s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.10s)
+    round4_reaction_counts_test.go:531: after the session's eyes on the company room: acts=0, want 1
+    round4_reaction_counts_test.go:537: after the session's second eyes: acts=0, want 1 (a repeat is no new answer)
+--- FAIL: TestRound4CompanyRoomReactionCountsAsWithAckOff (0.19s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	1.262s
+FAIL
+exit 1 (4.9s)

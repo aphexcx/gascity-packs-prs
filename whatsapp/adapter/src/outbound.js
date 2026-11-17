@@ -250,6 +250,7 @@ export function createPublisher({
   mediaDir,
   outboundRootConfig,
   mediaGateway = gateway,
+  stopwatch,
 }) {
   const progress = createProgressStore({ file: path.join(stateDir, PROGRESS_FILE), clock, log });
   const updatesFile = path.join(stateDir, UPDATES_FILE);
@@ -538,10 +539,13 @@ export function createPublisher({
     }
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer, activity;
+      const sendKey = textChunkKey(key, conversationId, text, i);
+      const uncertain = (await stopwatch?.attempt(sendKey)) ?? false;
       try {
-        ({ answer, activity } = await sendWithActivity({ to, idempotency_key: textChunkKey(key, conversationId, text, i), type: 'text', text: chunks[i],
+        ({ answer, activity } = await sendWithActivity({ to, idempotency_key: sendKey, type: 'text', text: chunks[i],
           ...(i === 0 ? quoteContext(entry.quote) : {}) },
           conversationId, entry.delivered > 0 ? (entry.session_id ?? sessionId) : sessionId));
+        stopwatch?.words(conversationId, answer.message_id, uncertain);
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
         if (err?.status === 422 && err.json?.error === 'window_closed') {
@@ -673,6 +677,7 @@ export function createPublisher({
             // The gateway checks that key before the window and grant. This sentinel
             // is not a gateway UUID handle, so even a window reopening during the
             // request cannot cause a new Meta send. No upload is made for the probe.
+            const uncertain = (await stopwatch?.attempt(`file-send:${operation}`)) ?? false;
             const request = { to, idempotency_key: `file-send:${operation}`, type: file.kind, ...quoteContext(entry.quote),
               media: { id: entry.media_id ?? `unuploaded:${operation}`, ...(caption ? { caption } : {}), ...(file.kind === 'document' ? { filename: file.name } : {}) } };
             const { answer: sent, activity } = caption.trim()
@@ -680,6 +685,7 @@ export function createPublisher({
               : { answer: await gateway.send(request) };
             killPoint('after-media-send', key);
             if (!str(sent?.message_id)) throw Object.assign(new Error('missing message id'), { noMessageId: true });
+            stopwatch?.words(conversationId, sent.message_id, uncertain || recoverOnly);
             entry.delivered = 1;
             entry.message_ids = [sent.message_id];
             entry.receipt = { conversation, delivered: true, message_id: sent.message_id, idempotency_key: key,
@@ -817,6 +823,9 @@ export function createPublisher({
               progress.save(key, entry);
               ledger?.noteSend?.(conversationId, { type: 'reaction', message_id: sent.message_id, at: activity?.at ?? clock() });
               restoreActivity(activity);
+              // The session's reaction for the stopwatch, as the Google Chat
+              // and Slack react verbs record it; a removal is none.
+              if (body.emoji) stopwatch?.record({ event: 'reaction', conversation: conversationId, message: body.message_id, at: new Date(clock()).toISOString(), actor: 'agent' });
               log(`reaction to …${lastFour(conversationId)} ${body.emoji ? 'placed' : 'removed'}`);
               return { status: 200, json: entry.receipt };
             } catch (err) {
@@ -840,8 +849,11 @@ export function createPublisher({
     if (existing?.receipt) return { status: 200, json: existing.receipt };
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
     let answer, activity;
+    const sendKey = templateKey(key, to, template);
+    const uncertain = (await stopwatch?.attempt(sendKey)) ?? false;
     try {
-      ({ answer, activity } = await sendWithActivity({ to: recipient, idempotency_key: templateKey(key, to, template), type: 'template', template }, to, sessionId));
+      ({ answer, activity } = await sendWithActivity({ to: recipient, idempotency_key: sendKey, type: 'template', template }, to, sessionId));
+      stopwatch?.words(to, answer.message_id, uncertain);
     } catch (err) {
       return failure(err, { conversationId: to, conversation, key, chunks: 1, delivered: 0 });
     }

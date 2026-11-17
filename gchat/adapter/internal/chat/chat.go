@@ -28,6 +28,15 @@ type Space = googlechat.Space
 // Client belongs to one authenticated identity. Do not reuse it after switching
 // credentials: its reaction ownership and rate limits belong to that identity.
 type Client struct {
+	// ArrivalPlaced is installed before sharing the client while the arrival
+	// acknowledgement is on (arrival.Wire). The react verb asks it on
+	// Google's definite answer to the session's reaction, created or 409 for
+	// one already there: true means the reaction was the acknowledgement's own,
+	// so the session's counts as new.
+	ArrivalPlaced func(message, emoji string) bool
+	// MessageCreated is installed before sharing the client. It receives only
+	// coordinates and Google's original timestamp, including idempotent replays.
+	MessageCreated         func(space, message, thread, stamp string)
 	api                    *googlechat.Service
 	httpClient             *http.Client
 	limits                 Limiter
@@ -234,6 +243,9 @@ func (c *Client) CreateMessageWithAttachmentsAndTime(ctx context.Context, space,
 	if result.Sender != nil && result.Sender.Name != "" {
 		c.learnIdentityUserID(result.Sender.Name)
 	}
+	if c.MessageCreated != nil {
+		c.MessageCreated(space, result.Name, threadName, result.CreateTime)
+	}
 	createdAt, _ = time.Parse(time.RFC3339Nano, result.CreateTime)
 	return result.Name, threadName, createdAt, nil
 }
@@ -384,6 +396,71 @@ func (c *Client) CreateReaction(ctx context.Context, message, emoji string) (str
 		c.learnIdentityUserID(result.User.Name)
 	}
 	return result.Name, nil
+}
+
+// EnableArrivalPace makes the identity's reactions share the
+// acknowledgement's deadline queue. Call it before the client is shared, and
+// only when the acknowledgement is on.
+func (c *Client) EnableArrivalPace() {
+	c.limits.mu.Lock()
+	c.limits.arrivalPace = true
+	c.limits.mu.Unlock()
+}
+
+// CreateArrivalReaction overlaps the choice with the identity's existing pace.
+// Unlike explicit agent actions, an acknowledgement is attempted only once.
+func (c *Client) CreateArrivalReaction(ctx context.Context, message string, deadline time.Time, fallback string, choose func(context.Context) (string, string)) (string, error) {
+	return c.PlaceArrivalReaction(ctx, message, deadline, fallback, choose, nil, nil)
+}
+
+// PlaceArrivalReaction is CreateArrivalReaction with the acknowledgement's
+// placement record. placing, when set, gets the emoji just before the request
+// (the choice, or fallback when the choice was late); nothing, when set, gets
+// it when Google answers that the request placed nothing: 409 for the
+// identity's reaction already there, or another refusal. A request whose
+// answer is lost or unclear calls nothing.
+func (c *Client) PlaceArrivalReaction(ctx context.Context, message string, deadline time.Time, fallback string, choose func(context.Context) (string, string), placing, nothing func(emoji string)) (string, error) {
+	choiceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ready := make(chan struct{})
+	var emoji, how string
+	go func() { emoji, how = choose(choiceCtx); close(ready) }()
+	chosen, err := c.limits.waitReactionChoice(ctx, deadline, ready)
+	if err != nil {
+		return "", err
+	}
+	selected, method := fallback, "default"
+	if chosen {
+		selected, method = emoji, how
+	}
+	cancel()
+	if placing != nil {
+		placing(selected)
+	}
+	requestCtx, requestCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer requestCancel()
+	result, err := c.api.Spaces.Messages.Reactions.Create(message, &googlechat.Reaction{Emoji: &googlechat.Emoji{Unicode: selected}}).Context(requestCtx).Do()
+	var apiError *googleapi.Error
+	if nothing != nil && errors.As(err, &apiError) && apiError.Code >= 400 && apiError.Code < 500 && apiError.Code != http.StatusRequestTimeout {
+		nothing(selected)
+	}
+	if AlreadyThere(err) {
+		return method, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if result.User != nil && result.User.Name != "" {
+		c.learnIdentityUserID(result.User.Name)
+	}
+	return method, nil
+}
+
+// AlreadyThere reports Google's 409 to a reaction create: this identity's
+// reaction of that emoji is already on the message.
+func AlreadyThere(err error) bool {
+	var apiError *googleapi.Error
+	return errors.As(err, &apiError) && apiError.Code == http.StatusConflict
 }
 
 func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) error {
@@ -737,10 +814,15 @@ func (t timing) Sleep(ctx context.Context, d time.Duration) error {
 // distinct spaces are independent; reactions share an identity-wide 5/s gate.
 // No burst is allowed. Canceled waiters do not consume future capacity.
 type Limiter struct {
-	mu        sync.Mutex
-	timing    timing
-	spaces    map[string]*pace
-	reactions *pace
+	mu              sync.Mutex
+	timing          timing
+	spaces          map[string]*pace
+	reactions       *pace
+	reactionChoices *reactionQueue
+	// arrivalPace puts every reaction in the deadline queue shared with the
+	// acknowledgement (RULING 2 of round 1). It is set only when the
+	// acknowledgement is on; otherwise reactions take the base's gate.
+	arrivalPace bool
 }
 type pace struct {
 	gate chan struct{}
@@ -750,7 +832,18 @@ type pace struct {
 func (l *Limiter) WaitWrite(ctx context.Context, space string) error {
 	return l.acquire(ctx, space, false)
 }
-func (l *Limiter) WaitReaction(ctx context.Context) error { return l.acquire(ctx, "", true) }
+func (l *Limiter) WaitReaction(ctx context.Context) error {
+	l.mu.Lock()
+	shared := l.arrivalPace
+	l.mu.Unlock()
+	if !shared {
+		return l.acquire(ctx, "", true)
+	}
+	ready := make(chan struct{})
+	close(ready)
+	_, err := l.waitReactionChoice(ctx, time.Time{}, ready)
+	return err
+}
 
 func (l *Limiter) acquire(ctx context.Context, space string, reaction bool) error {
 	l.mu.Lock()

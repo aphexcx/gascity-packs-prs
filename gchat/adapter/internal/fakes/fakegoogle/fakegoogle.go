@@ -63,6 +63,12 @@ type Server struct {
 	MembershipCreateState string
 	// MaxUploadBytes lowers the normal 200 MiB limit for small boundary tests.
 	MaxUploadBytes int64
+	// RepeatedReactionConflicts answers a reaction create with 409
+	// ALREADY_EXISTS when the same user already has that emoji on that
+	// message: the answer chat.CreateArrivalReaction expects from Google (not
+	// verified live). Off by default: tests that place one emoji several
+	// times keep getting a new reaction each time.
+	RepeatedReactionConflicts bool
 
 	mu         sync.Mutex
 	http       *httptest.Server
@@ -634,6 +640,14 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, path string) {
 			if reaction.Emoji == nil {
 				s.fail(w, 400, "INVALID_ARGUMENT", "emoji required")
 				return
+			}
+			if s.RepeatedReactionConflicts {
+				for key, have := range s.Reactions {
+					if strings.HasPrefix(key, name+"/reactions/") && have.User != nil && have.User.Name == UserID && have.Emoji != nil && have.Emoji.Unicode == reaction.Emoji.Unicode {
+						s.fail(w, 409, "ALREADY_EXISTS", "the user already reacted with this emoji")
+						return
+					}
+				}
 			}
 			reaction.Name = name + "/reactions/" + s.id()
 			reaction.User = &chat.User{Name: UserID, Type: "HUMAN"}

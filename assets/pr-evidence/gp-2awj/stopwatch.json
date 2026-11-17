@@ -1,0 +1,34 @@
+[
+  {
+    "release": "release-a",
+    "first_message": "2020-01-01T00:00:00Z",
+    "messages": 3,
+    "reaction": {
+      "count": 2,
+      "median_seconds": 1.0,
+      "p90_seconds": 3.0
+    },
+    "words": {
+      "count": 3,
+      "median_seconds": 5.0,
+      "p90_seconds": 6.0
+    },
+    "without_words_over_hour": 0
+  },
+  {
+    "release": "release-b",
+    "first_message": "2020-02-01T00:00:00Z",
+    "messages": 1,
+    "reaction": {
+      "count": 0,
+      "median_seconds": null,
+      "p90_seconds": null
+    },
+    "words": {
+      "count": 0,
+      "median_seconds": null,
+      "p90_seconds": null
+    },
+    "without_words_over_hour": 1
+  }
+]

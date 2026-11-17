@@ -1,0 +1,1 @@
+{"model":"jev-latest","questions":{"ack":{"criteria":{"option_001":"Received.","option_002":"Welcome.","option_003":"A fixture arrival."},"instructions":"Pick the reaction that best acknowledges this chat message to an assistant. If two reactions fit, a request outranks a feeling; otherwise the narrower one wins.","type":"choice"}},"state":"A synthetic message"}

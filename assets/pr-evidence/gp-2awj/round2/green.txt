@@ -1,0 +1,82 @@
+# GREEN: the VERIFY suites. Google Chat at a377a6cb (no Google Chat file changes after it); Slack at 4fe0a56d (no Slack file changes after it); WhatsApp and the root at the code head 0652a7a7 (Fri 2026-11-13 UTC)
+## gchat/adapter (at a377a6cb)
+$ gofmt -l .
+exit=0
+$ go vet ./...
+exit=0
+
+$ env -u GC_BIN go test ./... -count=1 -timeout=30m -json   (from gchat/adapter)
+ok    gchat-adapter/cmd/gc-gchat-adapter 25.349s
+ok    gchat-adapter/internal/ack 0.36s
+ok    gchat-adapter/internal/app 125.066s
+SKIP  gchat-adapter/internal/arrival 0s
+ok    gchat-adapter/internal/catchup 130.096s
+ok    gchat-adapter/internal/chat 8.523s
+ok    gchat-adapter/internal/config 11.904s
+ok    gchat-adapter/internal/events 17.574s
+ok    gchat-adapter/internal/fakes/fakegc 1.884s
+ok    gchat-adapter/internal/fakes/fakegoogle 2.138s
+ok    gchat-adapter/internal/gcclient 0.387s
+ok    gchat-adapter/internal/inbound 143.751s
+ok    gchat-adapter/internal/ledger 3.7560000000000002s
+ok    gchat-adapter/internal/markdown 2.049s
+ok    gchat-adapter/internal/media 0.351s
+ok    gchat-adapter/internal/principal 30.534s
+ok    gchat-adapter/internal/provenance 0.275s
+ok    gchat-adapter/internal/puller 27.162s
+ok    gchat-adapter/internal/redact 0.416s
+ok    gchat-adapter/internal/server 123.814s
+ok    gchat-adapter/internal/stopwatch 0.251s
+ok    gchat-adapter/internal/token 13.654s
+ok    gchat-adapter/internal/wire 0.341s
+ok    gchat-adapter/test/contract 0.707s
+ok    gchat-adapter/test/e2e 748.619s
+tests: 1965 pass, 0 fail, 2 skip (Go counts include named subtests); exit=0
+
+## slack-full/adapter at 4fe0a56d (gofmt lists company_thread_ambient.go, unchanged, also at the base)
+$ gofmt -l .
+company_thread_ambient.go
+$ go vet ./...
+exit=0
+
+$ env -u GC_BIN go test ./... -count=1 -json   (from slack-full/adapter, at 4fe0a56d)
+ok    github.com/sjarmak/gc-slack-adapter 190.83s
+ok    github.com/sjarmak/gc-slack-adapter/internal/ack 0.281s
+ok    github.com/sjarmak/gc-slack-adapter/internal/stopwatch 0.249s
+ok    github.com/sjarmak/gc-slack-adapter/redact 0.209s
+tests: 13376 pass, 0 fail, 3 skip (Go counts include named subtests); exit=0
+
+## whatsapp/adapter: the wrapper refuses pnpm test under GC_NO_INSTALL=1 (the adapter has no dependencies and no lockfile)
+$ pnpm exec node --version
+v24.21.0
+$ GC_NO_INSTALL=1 pnpm test
+pnpm wrapper: verify-deps error for test (round 3, GC_NO_INSTALL=1)
+[ERR_PNPM_VERIFY_DEPS_BEFORE_RUN] Cannot check whether dependencies are outdated
+
+Run "pnpm install"
+exit=1
+
+## whatsapp/adapter at 0652a7a7: the package's test script through the wrapper's pnpm exec (Node v24.21.0). One restore test's wait ran out; the three quiet runs of this head in wa-runs.txt passed 279 of 279.
+12:00  up 3 days, 23:23, 5 users, load averages: 7.20 9.23 8.91
+$ GC_NO_INSTALL=1 pnpm exec node --test --test-concurrency=2 'test/*.test.js'   (at 0652a7a7)
+exit=1
+✖ (11d) a never-accepted entry in a conversation whose watermark reads behind: the marked path, two POSTs, the second marked (24103.702667ms)
+ℹ tests 279
+ℹ pass 278
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ duration_ms 129631.7115
+✖ failing tests:
+✖ (11d) a never-accepted entry in a conversation whose watermark reads behind: the marked path, two POSTs, the second marked (24103.702667ms)
+
+## repository root at 0652a7a7
+$ env -u GC_BIN make test PYTEST_DIRS=whatsapp/tests   (at 0652a7a7)
+........................................................................ [ 94%]
+....                                                                     [100%]
+76 passed in 37.02s
+exit=0
+$ env -u GC_BIN make test PYTEST_DIRS='tests/test_stopwatch.py tests/test_reaction_catalog.py tests/test_redaction_copies.py'   (at 0652a7a7)
+............................                                             [100%]
+28 passed in 0.77s
+exit=0

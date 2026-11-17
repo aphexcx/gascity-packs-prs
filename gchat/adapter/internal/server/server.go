@@ -31,6 +31,7 @@ import (
 	"gchat-adapter/internal/markdown"
 	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/provenance"
+	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/wire"
 	"github.com/BurntSushi/toml"
 	api "google.golang.org/api/chat/v1"
@@ -57,8 +58,9 @@ type Health struct {
 }
 
 type Options struct {
-	Config *config.Config
-	Ledger *ledger.Ledger
+	Stopwatch *stopwatch.Writer
+	Config    *config.Config
+	Ledger    *ledger.Ledger
 	// LedgerMu must be shared with inbound, catch-up, and the subscription manager.
 	// Consumers must release it for I/O and between batches; continuous re-locking
 	// can starve the server's deadline-aware TryLock polling.
@@ -1361,10 +1363,20 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 		err = c.DeleteReaction(r.Context(), v.Message, v.Emoji)
 	} else {
 		name, err = c.CreateReaction(r.Context(), v.Message, v.Emoji)
+		// With ACK_REACTION on, the reaction already there may be the
+		// acknowledgement's own (arrival.Wire): the session's then counts as
+		// it would with the acknowledgement off. Google's created answer meets
+		// that placement too, so a later 409 is the session's repeat.
+		if (err == nil || chat.AlreadyThere(err)) && c.ArrivalPlaced != nil && c.ArrivalPlaced(v.Message, v.Emoji) {
+			err = nil
+		}
 	}
 	if err != nil {
 		problem(w, 502, err)
 		return
+	}
+	if !v.Remove {
+		s.opts.Stopwatch.Record(stopwatch.Event{Event: "reaction", Conversation: strings.Split(v.Message, "/messages/")[0], Message: v.Message, At: time.Now(), Actor: "agent"})
 	}
 	if !v.Remove && v.SessionID != "" {
 		space, _, valid := strings.Cut(v.Message, "/messages/")
@@ -1702,6 +1714,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
 	status["pending"], status["deliveries"], status["stuck"] = inFlight, deliveries, stuck
+	status["jev_api_key"] = "not set"
+	s.mu.RLock()
+	if s.cfg.Acknowledgement.Key != "" {
+		status["jev_api_key"] = "set"
+	}
+	s.mu.RUnlock()
 	status["never_silent"] = s.notices().Status()
 	if s.opts.SubscriptionStatus != nil {
 		failures, next, state, err := s.opts.SubscriptionStatus()

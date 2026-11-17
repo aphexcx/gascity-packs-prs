@@ -1,0 +1,40 @@
+Temporary Go overlays only; no mutation was committed or applied to the worktree.
+The unmodified merge already passed the added tests. These runs deliberately remove
+one protected behavior at a time, then green.txt records the unmodified code passing again.
+Go counts include parent tests and subtests, so one failed case also fails its parent.
+Overlay JSON Replace entries map the named source files to their changed copies under <tmp>.
+
+[red-catchup-ack]
+mutation: inbound.HandleChange: insert p.observeArrivals(&puller.Event{Changes: []puller.Change{c}}) before the existing catch-up handle call.
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json -overlay <tmp>/catchup-ack.json ./internal/inbound -run '^TestFirstReadAcknowledgementBoundary$'
+result: 1 passed; 2 failed; 0 skipped; exit 1
+first_read_ack_test.go:125: first read acknowledged a catch-up delivery
+
+[red-no-reachback]
+mutation: catchup.Runner.begin: replace p.MessageLower = s.FirstRead.Lower with p.MessageLower = s.JoinedAt.
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json -overlay <tmp>/no-reachback.json ./internal/inbound -run '^TestFirstReadAcknowledgementBoundary$'
+result: 1 passed; 2 failed; 0 skipped; exit 1
+first_read_ack_test.go:116: turns across live and first read = 0, want 1
+
+[red-no-ack-config]
+mutation: config.Load: insert os.Unsetenv("ACK_REACTION") on entry, suppressing the inherited switch.
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json -overlay <tmp>/no-ack-config.json ./internal/config -run '^TestArrivalAndJoinReachbackLoadTogether$'
+result: exit status recorded; exit 1
+arrival_test.go:51: reachback=10m0s acknowledgement=""
+
+[red-no-reachback-validation]
+mutation: config validation: remove the d > time.Hour condition from the join_reachback rejection.
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json -overlay <tmp>/no-reachback-validation.json ./internal/config -run '^TestArrivalAndJoinReachbackLoadTogether$'
+result: exit status recorded; exit 1
+arrival_test.go:55: invalid reachback with acknowledgement on: <nil>
+
+[red-no-dedup]
+mutation: Disable the committed-record check in catchup.drain and both existing-record guards in inbound.message with false &&. This removes the live/history duplicate-delivery protection at both layers without changing the fake server.
+cwd: <clone>/gchat/adapter
+command: env -u GC_BIN -u NEVER_SILENT -u ACK_REACTION -u GC_TEMPLATE go test -p 1 -count=1 -json -overlay <tmp>/no-dedup.json ./internal/inbound -run '^TestFirstReadAcknowledgementBoundary$'
+result: 1 passed; 2 failed; 0 skipped; exit 1
+first_read_ack_test.go:116: turns across live and first read = 2, want 1

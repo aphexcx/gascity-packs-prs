@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"gchat-adapter/internal/ack"
+	"gchat-adapter/internal/arrival"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/events"
@@ -25,6 +27,7 @@ import (
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/neversilent"
 	"gchat-adapter/internal/server"
+	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/token"
 )
 
@@ -43,6 +46,9 @@ type Options struct {
 var errIdentityChanged = errors.New("app: observed identity changed; rebuilding client")
 
 type application struct {
+	arrival               *ack.Service
+	watch                 *stopwatch.Writer
+	stateDir              string
 	cfg                   *config.Config
 	opts                  Options
 	log                   *slog.Logger
@@ -87,6 +93,19 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	stateDir := os.Getenv("GC_SERVICE_STATE_ROOT")
+	if stateDir == "" {
+		stateDir = filepath.Dir(cfg.Endpoints.StateFile)
+	}
+	var a *application // assigned below, before any arrival can run
+	service, watch, err := arrival.New(arrival.Options{Acknowledgement: cfg.Acknowledgement, StateDir: stateDir,
+		Log:  func(message string) { opts.Logger.Warn(message) },
+		Chat: func() *chat.Client { return a.chatClient.Load() }})
+	if err != nil {
+		return err
+	}
+	// The writer drains last, after every producer below has stopped.
+	defer watch.Close()
 	lock, err := LockState(cfg.Endpoints.StateFile)
 	if err != nil {
 		return err
@@ -95,10 +114,11 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if err := lock.RecordSocket(cfg.Secrets.ServiceSocket); err != nil {
 		return err
 	}
-	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), spaceJoined: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
+	a = &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), spaceJoined: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
+	a.watch, a.arrival, a.stateDir = watch, service, stateDir
 	a.stateLock = lock
 	a.l.SetSaveGuard(a.checkStateLock)
-	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, LedgerReady: a.loaded.Load, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
+	s, err := server.New(server.Options{Stopwatch: a.watch, Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, LedgerReady: a.loaded.Load, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
 		if n := a.lastEvent.Load(); n != 0 {
 			return time.Unix(0, n)
 		}
@@ -127,6 +147,7 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	}
 	serviceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	go ack.KeepPruned(serviceCtx, a.stateDir)
 	defer s.Close()
 	h := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/state" {

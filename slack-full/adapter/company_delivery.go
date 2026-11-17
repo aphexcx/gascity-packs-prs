@@ -670,6 +670,9 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 			return true
 		}
 		w.WriteHeader(http.StatusOK)
+		// Resume owed delivery without treating the duplicate as a new arrival,
+		// including when the first process exited before creating an ack marker.
+		env.replayed = true
 		g.mentionOnlyForCompanyRoom(env, ev, room)
 		return true
 	}
@@ -677,6 +680,7 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	// no dispatch slot is free the receipt stays pending and the sweep
 	// recovers it — backpressure, never a silent drop.
 	w.WriteHeader(http.StatusOK)
+	g.observeArrival(env, ev, receipt)
 	g.triggerDelivery(origin)
 	// Mention-only sessions outside company membership get their copy
 	// from the gateway too (jg-vobf70 round 5): the legacy dispatcher
@@ -840,6 +844,7 @@ func (g *companyGateway) deliverReceipt(origin ReceiptOrigin) deliverOutcome {
 			case botResolveOK:
 				msg.ResolvedBotUserID = res.Agent.BotUserID
 				authorAgent = res.Agent
+				g.recordCompanyWords(msg, authorAgent)
 			}
 			// botResolveUnknown: leave ResolvedBotUserID empty.
 		}
@@ -879,6 +884,11 @@ func (g *companyGateway) deliverReceipt(origin ReceiptOrigin) deliverOutcome {
 			if overlay := g.admitRosterDriftWakes(dir, room, decision, msg); len(overlay) > 0 {
 				decision.Wakes = overlay
 				decision.Reason = ""
+				// The arrival task never probes; on a cold member cache it
+				// could not see this wake. Start it now (it waits on nothing);
+				// a second observation is absorbed by the attempt marker and
+				// the stopwatch's first-only line.
+				g.observeAdmittedArrival(r, body)
 			} else {
 				// Admitted but nobody woken (bot author, empty ambient set,
 				// mentioned-but-ineligible with no live-member drift, …): terminal
@@ -1333,18 +1343,42 @@ func (g *companyGateway) admitRosterDriftWakes(dir *CompanyDirectory, room *Comp
 	if !ok {
 		return nil // probe failed — keep today's fail-closed mentioned_no_eligible
 	}
+	out := rosterDriftOverlay(decision, members)
+	for _, w := range out {
+		g.rosterDriftWakes.Add(1)
+		log.Printf("company: roster-drift eligibility overlay admitted agent=%s bot_user_id=%s room=%s channel=%s (live channel member, directory roster stale — recapture declaratively)",
+			w.Agent.Name, w.Agent.BotUserID, room.Name, msg.ChannelID)
+	}
+	return out
+}
+
+// rosterDriftOverlay is the overlay's decision alone: the mentioned overlay
+// candidates whose bots are in the live member set. It counts, logs and
+// probes nothing, so the arrival task can share it with the worker.
+func rosterDriftOverlay(decision RouteDecision, members map[string]bool) []WakeTarget {
 	var out []WakeTarget
 	for i := range decision.OverlayCandidates {
 		a := decision.OverlayCandidates[i]
-		if !members[a.BotUserID] {
-			continue
+		if members[a.BotUserID] {
+			out = append(out, WakeTarget{Agent: a, Kind: wakeKindTargeted, Overlay: true})
 		}
-		out = append(out, WakeTarget{Agent: a, Kind: wakeKindTargeted, Overlay: true})
-		g.rosterDriftWakes.Add(1)
-		log.Printf("company: roster-drift eligibility overlay admitted agent=%s bot_user_id=%s room=%s channel=%s (live channel member, directory roster stale — recapture declaratively)",
-			a.Name, a.BotUserID, room.Name, msg.ChannelID)
 	}
 	return out
+}
+
+// cachedChannelMembers is the read half of liveChannelMembers: a fresh cache
+// entry or nothing, never a probe.
+func (g *companyGateway) cachedChannelMembers(channel string) (map[string]bool, bool) {
+	if g == nil || channel == "" {
+		return nil, false
+	}
+	now := g.now()
+	g.channelMembersMu.Lock()
+	defer g.channelMembersMu.Unlock()
+	if ent, ok := g.channelMembersCache[channel]; ok && now.Sub(ent.fetchedAt) < companyChannelMembersTTL {
+		return ent.members, true
+	}
+	return nil, false
 }
 
 // liveChannelMembers returns the LIVE member id set for a channel, served from a
