@@ -105,6 +105,21 @@ func TestHistoryReadSavesAreRemovedToo(t *testing.T) {
 }
 
 func TestCatchupSnapshotReconcilesHistoryCopiesBeforeDedup(t *testing.T) {
+	t.Run("older_history_after_snapshot", func(t *testing.T) {
+		f, p, older := cleanupHistory(t, http.DefaultClient)
+		current := *older
+		current.LastUpdateTime = "2026-10-22T10:02:00Z"
+		current.Attachment = nil
+		if _, err := p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: &current}); err != nil {
+			t.Fatal(err)
+		}
+		// An older history response can finish after catch-up learned the edit,
+		// even when no file link existed at the instant its snapshot was taken.
+		f.call(t, "/read?space=spaces/room", nil)
+		if n, err := media.Usage(f.cfg.Endpoints.MediaDir); err != nil || n != 0 {
+			t.Fatal("older history restored an attachment absent from catch-up")
+		}
+	})
 	for _, recorded := range []bool{false, true} {
 		name := "unseen"
 		if recorded {
