@@ -1,0 +1,6 @@
+Trial merge with the two new tests, before resolution:
+env -u GC_BIN -u NEVER_SILENT go test ./internal/fakes/fakegoogle ./internal/ledger -run '^TestMembershipCatchupAndJoinShareModel$|^TestJoinAndFirstReadLedgerRoundTripClone$' -count=1 -json
+Working directory: <clone>/gchat/adapter
+Exit: 1. The fake package cannot compile with git's unresolved constructor conflict. Its automatic merge also duplicates the Memberships field and shadows main's GET branch.
+The ledger package compiles and its new save/load/clone test passes at the trial merge: one top-level pass, zero subtests, zero skips. Its automatic merge already preserves both features.
+No behavioral red result is claimed for a fake test that could not compile.

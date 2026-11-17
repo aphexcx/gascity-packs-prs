@@ -1,0 +1,102 @@
+TAP version 13
+1..0
+# Subtest: bounds.test.cjs
+ok 1 - bounds.test.cjs
+  ---
+  duration_ms: 43.209958
+  type: 'test'
+  ...
+1..0
+# Subtest: decision.test.cjs
+ok 2 - decision.test.cjs
+  ---
+  duration_ms: 41.912792
+  type: 'test'
+  ...
+1..0
+# Subtest: events.test.cjs
+ok 3 - events.test.cjs
+  ---
+  duration_ms: 39.915167
+  type: 'test'
+  ...
+1..0
+# Subtest: pack.test.cjs
+ok 4 - pack.test.cjs
+  ---
+  duration_ms: 37.321542
+  type: 'test'
+  ...
+# Subtest: codex 3: cold replay retains old wake and inbound identities for recent replies
+not ok 5 - codex 3: cold replay retains old wake and inbound identities for recent replies
+  ---
+  duration_ms: 7.36175
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:239:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+    + {
+    +   hookSpecificOutput: {
+    +     hookEventName: 'PreToolUse',
+    +     permissionDecision: 'deny',
+    +     permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+    +   }
+    + }
+    - {}
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    hookSpecificOutput:
+      hookEventName: 'PreToolUse'
+      permissionDecision: 'deny'
+      permissionDecisionReason: 'A person has waited 60 seconds for an answer in example/room-example. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-example. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:247:12)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+# Subtest: codex 3: multiple archives preserve progress before the per-call deadline
+not ok 6 - codex 3: multiple archives preserve progress before the per-call deadline
+  ---
+  duration_ms: 2006.028792
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:251:1'
+  failureType: 'testCodeFailure'
+  error: 'spawnSync /example/node ETIMEDOUT'
+  code: 'ETIMEDOUT'
+  stack: |-
+    Object.spawnSync (node:internal/child_process:1160:20)
+    spawnSync (node:child_process:928:24)
+    execFileSync (node:child_process:971:15)
+    archiveSlice (<worktree>/reachable/reachable.cjs:60:10)
+    readEvents (<worktree>/reachable/reachable.cjs:154:26)
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:259:18)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+  ...
+1..0
+# Subtest: runtime.test.cjs
+ok 6 - runtime.test.cjs
+  ---
+  duration_ms: 41.149167
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 5
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2069.021833

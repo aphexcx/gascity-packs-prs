@@ -1,0 +1,40 @@
+node --test test (reader red): 1
+cd reachable/test && node --test (reader red): 1
+cd reachable/test && node --test --test-reporter=tap (reader green): 0
+cd reachable/test && node --test --test-reporter=tap (decision red): 1
+cd reachable/test && node --test --test-reporter=tap (decision green): 0
+cd reachable/test && node --test --test-reporter=tap (runtime red): 1
+cd reachable/test && node --test --test-reporter=tap (runtime green): 0
+cd reachable/test && node --test --test-reporter=tap (bounds red): 1
+cd reachable/test && node --test --test-reporter=tap (bounds green): 0
+cd reachable/test && node --test --test-reporter=tap --test-name-pattern=1,18,19 (pack red): 1
+cd reachable/test && node --test --test-reporter=tap --test-name-pattern=malformed-hook-stdin (red): 1
+cd reachable/test && node --test --test-reporter=tap (pack green): 0
+PATH=city-toolchain:$PATH make test: 2
+review red node --test: 1
+review fixes node --test: 0
+cd gascity && env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k PnpmShimTests: 0
+old implementation error concurrency and rotation tests: 1
+self-review followup reproductions: 1
+deferred history Stop fence reproduction: 1
+cd reachable/test && node --test --test-reporter=tap (final self-review fixes): 1
+archive partial-write reproduction: 1
+cd reachable/test && node --test --test-reporter=tap (self-review final): 0
+PATH=city-toolchain:$PATH make test final: 0
+Codex 1 early reproductions: 1
+Codex 1 focused fixes: 0
+Codex identity class empty-session reproduction: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 1 fixes): 0
+DEEP Codex round 1: 1
+Codex 1 full class reproductions: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 1 complete fixes): 0
+Codex 2 canonical outbound reproduction: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 2 outbound fix): 0
+DEEP Codex round 2: 1
+Codex 2 named-session and city-path reproductions: 1
+Codex 2 canonical named outbound at reviewed revision: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 2 complete fixes): 0
+DEEP Codex round 3: 1
+Codex 3 cold identity and archive progress reproductions: 1
+cd reachable/test && node --test --test-reporter=tap (Codex 3 fixes): 0
+DEEP Codex round 4: 0

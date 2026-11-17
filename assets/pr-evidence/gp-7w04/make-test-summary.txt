@@ -1,0 +1,10 @@
+Command: make test (city Node toolchain first on PATH)
+Node: v24.21.0
+Node phase: 54 tests, 54 passed, 0 failed
+Python phase: 2695 passed, 126 skipped, 2 warnings, 10734 subtests passed in 432.36s
+Exit: 0
+
+First full run: 1 failed, 2694 passed, 126 skipped, 2 warnings, 10734 subtests passed
+Failure: existing PnpmShimTests concurrent wait-message count assertion
+Independent PnpmShimTests rerun: 17 passed, 513 deselected
+Final standalone reachable suite after fourteen further regression cases: 68 passed, 0 failed

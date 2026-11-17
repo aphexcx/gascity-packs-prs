@@ -1,0 +1,5 @@
+source_sha=5640396ad41fd76f67314f82d6d0ada96e97dfb7
+go version go1.27.3 darwin/arm64
+command=env -u GC_BIN go test -p 1 -count=10 -timeout=30m -json ./internal/server -run '^TestExpiredDirectCommandFailureSurvivesRestart$' | cwd=gchat/adapter | exit=0 | elapsed=7.9s | log=server-deadline-recheck.jsonl
+command=env -u GC_BIN go test -p 1 -count=1 -timeout=30m -json ./internal/server | cwd=gchat/adapter | exit=0 | elapsed=72.7s | log=server-package-recheck.jsonl
+command=env -u GC_BIN go test -p 1 -race -count=1 -timeout=30m -json ./... | cwd=gchat/adapter | exit=-15 | elapsed=222.8s | log=final-race.jsonl

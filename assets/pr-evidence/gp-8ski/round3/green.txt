@@ -1,0 +1,6 @@
+Resolved merge:
+env -u GC_BIN -u NEVER_SILENT go test ./internal/fakes/fakegoogle ./internal/ledger -run '^TestMembershipCatchupAndJoinShareModel$|^TestJoinAndFirstReadLedgerRoundTripClone$' -count=1 -json
+Working directory: <clone>/gchat/adapter
+Exit: 0. Two packages, two top-level tests pass, zero subtests, zero skips.
+TestMembershipCatchupAndJoinShareModel: PASS
+TestJoinAndFirstReadLedgerRoundTripClone: PASS

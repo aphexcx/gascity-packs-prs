@@ -1,0 +1,116 @@
+{
+  "mode": "enforce",
+  "registered": true,
+  "current": true,
+  "caught_up": true,
+  "waiting": [
+    {
+      "provider": "example",
+      "conversation_id": "room-0",
+      "seconds": 91
+    },
+    {
+      "provider": "example",
+      "conversation_id": "room-1",
+      "seconds": 90
+    },
+    {
+      "provider": "example",
+      "conversation_id": "room-2",
+      "seconds": 89
+    }
+  ],
+  "history": [
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-0",
+      "seconds": 60
+    },
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-1",
+      "seconds": 59
+    },
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-2",
+      "seconds": 58
+    },
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-0",
+      "seconds": 60
+    },
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-1",
+      "seconds": 59
+    },
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-2",
+      "seconds": 58
+    },
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-0",
+      "seconds": 60
+    },
+    {
+      "type": "let_go",
+      "at": 1767355200000,
+      "mode": "enforce",
+      "provider": "example",
+      "conversation_id": "room-0"
+    },
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-1",
+      "seconds": 59
+    },
+    {
+      "type": "let_go",
+      "at": 1767355200000,
+      "mode": "enforce",
+      "provider": "example",
+      "conversation_id": "room-1"
+    },
+    {
+      "type": "refusal",
+      "at": 1767355200000,
+      "provider": "example",
+      "conversation_id": "room-2",
+      "seconds": 58
+    },
+    {
+      "type": "let_go",
+      "at": 1767355200000,
+      "mode": "enforce",
+      "provider": "example",
+      "conversation_id": "room-2"
+    },
+    {
+      "type": "long_call",
+      "at": 1767355231000,
+      "tool": "Bash",
+      "seconds": 31,
+      "waiting": true
+    }
+  ]
+}

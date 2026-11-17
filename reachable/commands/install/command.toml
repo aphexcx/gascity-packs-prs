@@ -1,0 +1,2 @@
+description = "Install the city-local Claude hook in observe mode"
+run = "run.sh"

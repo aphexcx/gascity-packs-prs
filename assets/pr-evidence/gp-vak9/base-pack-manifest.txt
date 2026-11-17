@@ -1,0 +1,1 @@
+env -u GC_BIN make test PYTEST_DIRS=gchat/tests exit=0
