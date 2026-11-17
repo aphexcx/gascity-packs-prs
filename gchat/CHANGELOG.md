@@ -10,6 +10,10 @@
   command, inbound delivery, health, and existing ledger fields; optional join
   records are discarded on rollback. No version change. Google acceptance is
   UNPROVEN: fake coverage awaits a real proof call.
+- The join rechecks its identity before it spends the owner's yes and again
+  before it writes. If the identity turned conflicted meanwhile, the yes stays
+  unspent and nothing is written; past the spend, nothing is sent and the
+  answer says to request approval again (gp-bmx4).
 - Recover the mention that adds the identity to a room with a bounded first-read margin; bound rooms discovered without an event by membership/inventory time and log first discovery and read completion (gp-vak9).
 
 - The skill gives reactions fixed meanings, with the same tables and rules

@@ -163,6 +163,10 @@ func joinPermission(ctx context.Context, cfg config.Config) (*oauth2.Token, join
 	return nil, joinResult{Result: "google_no_answer", Message: "The key holder did not answer with a usable permission. Nothing changed; run it again."}
 }
 
+// errJoinIdentityChanged leaves the owner's yes unspent: the consumption update
+// saves nothing when the identity no longer matches the one the join read.
+var errJoinIdentityChanged = errors.New("join identity changed")
+
 func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	cfg := s.configuration()
 	if cfg.Secrets.TokenSource != config.TokenSourceKeyholder {
@@ -184,10 +188,14 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 		return joinResult{Result: "google_no_answer", Message: "The adapter is not ready to check this invitation. Nothing changed; run it again."}
 	}
 	c, _ := s.clients()
+	const unknownIdentity = "The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity."
 	identity, err := c.JoinIdentity()
 	if err != nil {
-		return noJoinYes("The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity.")
+		return noJoinYes(unknownIdentity)
 	}
+	// The join waits on Google and the key holder after this read. Recheck the
+	// identity before the yes is spent and again before the one write.
+	stillMine := func() bool { id, err := c.JoinIdentity(); return err == nil && id == identity }
 	membership, err := c.ReadOwnMembership(ctx, input.Space, identity)
 	state := ""
 	if membership != nil {
@@ -246,10 +254,18 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 		if p == nil || p.Used || p.CodeHash != pending.CodeHash || !time.Now().Before(p.ExpiresAt) {
 			return errors.New("approval changed or expired")
 		}
+		if !stillMine() {
+			return errJoinIdentityChanged
+		}
 		p.Used = true
 		return nil
-	}); err != nil {
+	}); errors.Is(err, errJoinIdentityChanged) {
+		return noJoinYes(unknownIdentity)
+	} else if err != nil {
 		return noJoinYes("The approval could not be saved as used, or it expired. Nothing changed; request approval again.")
+	}
+	if !stillMine() {
+		return noJoinYes("The identity is not known safely yet. Nothing was sent to Google, but this owner's yes is now used; request approval again after the adapter learns its identity.")
 	}
 	membership, err = create()
 	state = ""
