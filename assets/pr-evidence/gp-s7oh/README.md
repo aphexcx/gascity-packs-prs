@@ -11,6 +11,8 @@ Review regressions first: `550ef677`, all four red before their fixes.
 Round 1 fixes: `4507ae6a36eddbe4bbe9f8c2fa3dcfd97e91c888`.
 Round 2 regressions first: `b99a9ba1`, both red before their fixes; its two
 test seams only extract existing code without changing behavior.
+Round 2 fixes: `d052cba2ee9590492f8d816c52dafedb220b26eb`.
+Round 3 regression first: `87cdee7b`, red before its fix.
 Tests use temporary directories and in-process fakes. No Google service or
 running adapter was contacted. Existing assertions were not weakened.
 
@@ -60,7 +62,7 @@ then-current named tests passed individually: 20 top-level tests, 46 subtests,
 zero skips and zero failures. The round 2 corrections add two named tests
 and four subtests; both passed individually after their fixes.
 
-The four review regressions use the same individual invocation above. Each
+The review regressions use the same individual invocation above. Each
 failed behaviorally at the reviewed commit and passes after correction:
 
 | Package | Name | Before fix | After fix | Subtests |
@@ -71,6 +73,7 @@ failed behaviorally at the reviewed commit and passes after correction:
 | app | TestStartupCleanupDoesNotWaitForRemoteServices | red | pass | 3 |
 | media | TestRemovalKeepsDebtUntilDirectoryChangesAreDurable | red | pass | 4 |
 | app | TestCleanupAllowsReloadToCancelDownloads | red | pass | 0 |
+| inbound | TestPendingRemovalSurvivesVacantNameReuse | red | pass | 0 |
 
 For the durability regression, directory-sync failures are injected through
 the removal helper's local dependency. Delete, edit, absent-entry retry and
@@ -84,6 +87,10 @@ in all three rows. The individual test (one top-level, three subtests) then
 passed, as did the whole puller package on both current and dispatched-base
 source. No puller code or assertion changed. Final verification supersedes
 this interrupted run; its result is not counted as a completed suite.
+The next intermediate run was also stopped for a review correction. Its
+unchanged `TestSubscriptionRefusalRetriesWithoutSignIn/404` row exceeded the
+five-second ready deadline while catching up. This result is retained, not
+counted as a completed suite or silently replaced by the final run.
 
 Go: `go1.27.3 darwin/arm64`. Python for pytest: `3.13.13` from an existing
 environment whose pytest, PyYAML and jsonschema imports were verified. No
@@ -194,8 +201,9 @@ loading the released fixture with no new fields.
    deletion waits for a running download and removes it; later history saves
    recheck the durable tombstone. Accepted edit revisions also suppress saves
    of attachments removed by an equal or newer edit. A durable edit revision
-   cannot be lowered after an interrupted turn checkpoint. Reusing a vacant
-   filename clears its previous removal debt before the new download.
+   cannot be lowered after an interrupted turn checkpoint. A new download
+   chooses another filename when a vacant name still has pending removal
+   debt, preserving both ownership and crash recovery for the earlier copy.
 8. The deletion turn and provenance frame are unchanged; no sentence was added
    to the turn. Existing deletion tests were left unchanged.
 9. Documentation names the deletion behavior, absence of expiry and the limits.
@@ -238,7 +246,7 @@ README text replacing the expiry statement and adding the cleanup paragraphs:
 > history recovery, without holding later messages. Configured media roots are
 > remembered across settings reloads and restarts, so a deletion also reaches
 > copies in earlier stores. Attachment links use a digest scoped to their store;
-> reusing a vacant filename cannot transfer an old removal to a kept attachment.
+> while a filename has pending removal debt, new downloads choose another name.
 > An edit checkpoint keeps its revision across a crash, preventing older edits
 > from restoring removed attachments. Directory removals are synchronized before
 > their ledger obligation is cleared; synchronization failures remain retryable.
@@ -290,7 +298,8 @@ Each was reproduced before its fix, including all cases in its fault class:
 
 1. Stale removal debt after pathname reuse: a failed download or externally
    removed file left a reservation that could delete a later kept attachment.
-   Correction retires the former debt when a vacant name is reserved again.
+   The first correction retired old debt when reusing a vacant name; round 3
+   strengthens this by preserving pending debt and choosing another name.
 2. Split edit checkpoints: a crash after the media checkpoint allowed an older
    event to lower the accepted revision. Correction keeps media revisions
    monotonic and prevents older events or unsent intents overtaking them.
@@ -319,6 +328,23 @@ SAFETY self-review round 2 reviewed
    health transitions, including the HTTP state-reset lock acquisition order.
 
 Both were reproduced by the two round 2 tests above before correction.
+Both round 2 findings are FIXED by
+`d052cba2ee9590492f8d816c52dafedb220b26eb`.
+
+SAFETY self-review round 3 reviewed
+`d052cba2ee9590492f8d816c52dafedb220b26eb`: BLOCK, one MAJOR finding at
+`internal/inbound/media_cleanup.go:95`. Crash-consistency ordering also
+applies to filename reuse: a failed unlink sync leaves a vacant name whose
+debt must not be cleared by the next download. The combined regression
+`TestPendingRemovalSurvivesVacantNameReuse` reproduces this before correction,
+then models a lost unlink across restart and checks that the old copy is
+removed while the new copy survives. The fix preserves the original debt
+and owner, choosing another filename for the new reservation. Its first
+green attempt exposed a fixture-payload mismatch in the existing exact-content
+helper; aligning the new fixture's bytes retained that assertion unchanged.
+
+The concrete combined failure in the newly added sync-durability handling
+justifies round 4 under the review policy; it is not a speculative finding.
 The next review and final verification will be recorded before publication.
 The separate gate and second-model read belong to the draft PR's handoff.
 The worker does not merge, mark ready, release or deploy.

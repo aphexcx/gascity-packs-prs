@@ -1557,7 +1557,15 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 					quotaBound = true
 				}
 			}
-			if reason = store.reserve(m, a.Name, dest); reason != "" {
+			var pending bool
+			reason, pending = store.reserve(m, a.Name, dest)
+			if pending {
+				// Keep a prior removal recoverable even if its path is currently
+				// vacant. The new copy gets its own exclusive reservation.
+				dest = filepath.Join(dir, rand.Text()+"-"+filename)
+				reason, _ = store.reserve(m, a.Name, dest)
+			}
+			if reason != "" {
 				break
 			}
 			written, err := client.DownloadMedia(ctx, a.AttachmentDataRef.ResourceName, dest, limit)

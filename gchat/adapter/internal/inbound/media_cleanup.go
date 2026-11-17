@@ -75,11 +75,12 @@ func (s *MediaStore) allowed(m *api.Message, attachment string) string {
 
 // Reserve before writing: even a stop during a history download leaves a link
 // for a later edit. A failed download may leave a harmless link to no file.
-func (s *MediaStore) reserve(m *api.Message, attachment, dest string) string {
+func (s *MediaStore) reserve(m *api.Message, attachment, dest string) (string, bool) {
 	if s == nil {
-		return ""
+		return "", false
 	}
 	reason := ""
+	pending := false
 	err := s.Update(func(l *ledger.Ledger) {
 		reason = mediaAllowed(l, m, attachment)
 		if reason != "" {
@@ -92,15 +93,18 @@ func (s *MediaStore) reserve(m *api.Message, attachment, dest string) string {
 		root := filepath.Dir(filepath.Dir(filepath.Dir(dest)))
 		RememberMediaRoot(l, root)
 		id := media.FileID(root, filepath.Base(dest))
-		// A reservation can outlive a failed download or a file removed by an
-		// operator. Reusing that now-free name retires its old cleanup debt.
-		delete(state.Remove, id)
+		// A vacant pathname may still have an unlink awaiting synchronization.
+		// Preserve that debt and its owner; the caller can choose another name.
+		if state.Remove[id] {
+			reason, pending = "media state unavailable", true
+			return
+		}
 		state.Files[id] = attachment
 	})
 	if err != nil {
-		return "media state unavailable"
+		return "media state unavailable", false
 	}
-	return reason
+	return reason, pending
 }
 
 func (p *Processor) mediaStore() *MediaStore {

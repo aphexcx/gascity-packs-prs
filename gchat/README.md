@@ -216,7 +216,7 @@ five seconds, independently of credentials, registration, subscriptions and
 history recovery, without holding later messages. Configured media roots are
 remembered across settings reloads and restarts, so a deletion also reaches
 copies in earlier stores. Attachment links use a digest scoped to their store;
-reusing a vacant filename cannot transfer an old removal to a kept attachment.
+while a filename has pending removal debt, new downloads choose another name.
 An edit checkpoint keeps its revision across a crash, preventing older edits
 from restoring removed attachments. Directory removals are synchronized before
 their ledger obligation is cleared; synchronization failures remain retryable.

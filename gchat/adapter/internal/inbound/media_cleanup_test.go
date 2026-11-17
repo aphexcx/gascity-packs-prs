@@ -466,7 +466,7 @@ func TestPendingRemovalSurvivesVacantNameReuse(t *testing.T) {
 	if err := os.Remove(old); err != nil {
 		t.Fatal(err)
 	}
-	f.google.Configure(func(g *fakegoogle.Server) { g.Media[b.AttachmentDataRef.ResourceName] = []byte("retained fixture") })
+	f.google.Configure(func(g *fakegoogle.Server) { g.Media[b.AttachmentDataRef.ResourceName] = []byte("fixture bytes") })
 	_, attachments := NormalizeContent(context.Background(), f.opts.Chat, f.opts.Config.Endpoints, m, f.p.mediaStore())
 	if len(attachments) != 1 {
 		t.Fatal("retained attachment was not normalized")
