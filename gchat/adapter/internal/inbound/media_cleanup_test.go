@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/media"
@@ -444,4 +446,134 @@ func TestStartLeavesFilesOfMessagesDeletedBefore(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCleanupFile(t, path)
+}
+
+func TestCleanupDebtDoesNotDeleteReusedFiles(t *testing.T) {
+	for _, absent := range []string{"failed_download", "removed_file"} {
+		t.Run(absent, func(t *testing.T) {
+			f := setup(t)
+			m := message()
+			a, b := cleanupAttachment(m, "first"), cleanupAttachment(m, "second")
+			a.ContentName, b.ContentName = "shared.txt", "shared.txt"
+			m.Attachment = []*api.Attachment{a, b}
+			f.google.Configure(func(g *fakegoogle.Server) {
+				g.Media[b.AttachmentDataRef.ResourceName] = []byte("fixture bytes")
+				if absent == "removed_file" {
+					g.Media[a.AttachmentDataRef.ResourceName] = []byte("fixture bytes")
+				}
+			})
+			handle(t, f, event("create", "message.created", m))
+			firstTurn := f.gc.Inbound()[0]
+			if absent == "removed_file" {
+				u, err := url.Parse(firstTurn.Attachments[0].URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.Remove(u.Path); err != nil {
+					t.Fatal(err)
+				}
+			} else if firstTurn.Attachments[0].URL != "" {
+				t.Fatal("first download unexpectedly succeeded")
+			}
+			old, err := url.Parse(firstTurn.Attachments[1].URL)
+			if err != nil || old.Scheme != "file" {
+				t.Fatal("retained attachment not saved")
+			}
+			m.LastUpdateTime = "2026-10-22T10:01:00Z"
+			m.Attachment = []*api.Attachment{b}
+			handle(t, f, event("edit", "message.updated", m))
+			turns := f.gc.Inbound()
+			current, err := url.Parse(turns[len(turns)-1].Attachments[0].URL)
+			if err != nil || current.Scheme != "file" {
+				t.Fatal("edited attachment not saved")
+			}
+			assertCleanupFile(t, old.Path)
+			assertCleanupFile(t, current.Path)
+		})
+	}
+}
+
+func TestEditCleanupCheckpointRejectsOlderRevisions(t *testing.T) {
+	f := setup(t)
+	m := message()
+	m.Attachment = []*api.Attachment{cleanupAttachment(m, "file")}
+	paths := saveCleanupMessage(t, f, m, "message.created", "create")
+	later := *m
+	later.LastUpdateTime = "2026-10-22T10:02:00Z"
+	later.Attachment = nil
+	// Stop after the edit checkpoint, before its turn and MessageState update.
+	if err := f.p.editMedia(context.Background(), &later); err != nil {
+		t.Fatal(err)
+	}
+	restartCleanupProcessor(t, f)
+	if err := f.p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertCleanupGone(t, paths[0])
+	m.LastUpdateTime = "2026-10-22T10:01:00Z"
+	handle(t, f, event("delayed", "message.updated", m))
+	if n, err := media.Usage(f.opts.Config.Endpoints.MediaDir); err != nil || n != 0 {
+		t.Fatal("older edit resurrected removed media")
+	}
+	if len(f.gc.Inbound()) != 1 {
+		t.Fatal("older checkpoint overtook accepted edit")
+	}
+	// Redelivery of the checkpoint's own revision must still make its turn.
+	handle(t, f, event("newer", "message.updated", &later))
+	if len(f.gc.Inbound()) != 2 {
+		t.Fatal("checkpoint lost its edit turn")
+	}
+}
+
+func TestCleanupFollowsSavedMediaRoots(t *testing.T) {
+	for _, change := range []string{"delete", "edit", "basename_reuse"} {
+		t.Run(change, func(t *testing.T) {
+			f := setup(t)
+			m := message()
+			a, b := cleanupAttachment(m, "first"), cleanupAttachment(m, "second")
+			m.Attachment = []*api.Attachment{a, b}
+			paths := saveCleanupMessage(t, f, m, "message.created", "create")
+			oldRoot := f.opts.Config.Endpoints.MediaDir
+			cfg := *f.opts.Config
+			cfg.Endpoints.MediaDir = filepath.Join(filepath.Dir(oldRoot), "new-media")
+			f.opts.Config = &cfg
+			restartCleanupProcessor(t, f)
+			kept := writeCleanupFile(t, filepath.Join(cfg.Endpoints.MediaDir, "room", "other"), "keep.txt")
+			if change == "delete" {
+				handle(t, f, event("delete", "message.deleted", &api.Message{Name: m.Name}))
+				for _, path := range paths {
+					assertCleanupGone(t, path)
+				}
+			} else {
+				// A local edit exercises durable cleanup without a download at
+				// the new root; a history read can already have saved there.
+				m.LastUpdateTime = "2026-10-22T10:01:00Z"
+				m.Attachment = []*api.Attachment{b}
+				if change == "basename_reuse" {
+					// The retained ID changes its content name; root identity
+					// must distinguish this copy from the removed ID at oldRoot.
+					b.ContentName = a.ContentName
+					client, err := chat.New(context.Background(), http.DefaultClient, cfg.Endpoints)
+					if err != nil {
+						t.Fatal(err)
+					}
+					f.p.opts.Chat = client
+				} else {
+					m.Sender.Name = identity
+				}
+				handle(t, f, event("edit", "message.updated", m))
+				assertCleanupGone(t, paths[0])
+				assertCleanupFile(t, paths[1])
+				if change == "basename_reuse" {
+					turns := f.gc.Inbound()
+					u, err := url.Parse(turns[len(turns)-1].Attachments[0].URL)
+					if err != nil || u.Scheme != "file" {
+						t.Fatal("new-root copy not saved")
+					}
+					assertCleanupFile(t, u.Path)
+				}
+			}
+			assertCleanupFile(t, kept)
+		})
+	}
 }
