@@ -255,6 +255,7 @@ func (r *sessionFirstRig) firstEyes(mode string, steps func(a string)) (string, 
 	a := slackTimestamp(r.now)
 	var actsAfterFirst atomic.Int64
 	actsAfterFirst.Store(-1)
+	firstDone := make(chan struct{})
 	first := func() {
 		if receipt := r.react(a, "eyes"); !receipt.Delivered {
 			r.t.Errorf("the session's first eyes: receipt=%+v, want delivered", receipt)
@@ -263,6 +264,7 @@ func (r *sessionFirstRig) firstEyes(mode string, steps func(a string)) (string, 
 		if steps != nil {
 			steps(a)
 		}
+		close(firstDone)
 	}
 	if mode != "" {
 		r.onJev = first
@@ -272,6 +274,13 @@ func (r *sessionFirstRig) firstEyes(mode string, steps func(a string)) (string, 
 		first()
 	} else if !r.jevRan.Load() {
 		r.t.Fatal("Jev was never asked: the acknowledgement's choice was not held")
+	}
+	// The Jev handler may outlive the adapter's wait for its answer.
+	// Read the sample only after its callback has finished.
+	select {
+	case <-firstDone:
+	case <-time.After(10 * time.Second):
+		r.t.Fatal("the session's first reaction callback did not finish within 10s")
 	}
 	return a, int(actsAfterFirst.Load())
 }
