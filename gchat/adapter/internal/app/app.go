@@ -43,34 +43,35 @@ type Options struct {
 var errIdentityChanged = errors.New("app: observed identity changed; rebuilding client")
 
 type application struct {
-	cfg                *config.Config
-	opts               Options
-	log                *slog.Logger
-	l                  *ledger.Ledger
-	mu                 sync.Mutex
-	stateMu            sync.Mutex // excludes app health transitions during POST /state
-	mediaResetMu       sync.Mutex // excludes local cleanup during POST /state
-	s                  *server.Server
-	manager            atomic.Pointer[events.Manager]
-	chatClient         atomic.Pointer[chat.Client]
-	noticeProvider     atomic.Pointer[noticeProvider]
-	credentialHold     atomic.Bool
-	neverSilent        *neversilent.Engine
-	loaded             atomic.Bool
-	lastEvent          atomic.Int64
-	gcDown             atomic.Bool
-	registrationMu     sync.Mutex
-	registrationNeeded atomic.Bool
-	healthyGeneration  atomic.Bool
-	restartDelay       time.Duration // owned by the run loop
-	resume             chan struct{}
-	spaceJoined        chan struct{}
-	notices            chan notification
-	noticeMu           sync.Mutex
-	notified           map[string]bool
-	legacyWarning      sync.Once
-	stateLock          *StateLock
-	lockWarning        sync.Once
+	cfg                   *config.Config
+	opts                  Options
+	log                   *slog.Logger
+	l                     *ledger.Ledger
+	mu                    sync.Mutex
+	stateMu               sync.Mutex // excludes app health transitions during POST /state
+	mediaResetMu          sync.Mutex // excludes local cleanup during POST /state
+	s                     *server.Server
+	manager               atomic.Pointer[events.Manager]
+	chatClient            atomic.Pointer[chat.Client]
+	noticeProvider        atomic.Pointer[noticeProvider]
+	credentialHold        atomic.Bool
+	identityDiscoveryHeld atomic.Bool
+	neverSilent           *neversilent.Engine
+	loaded                atomic.Bool
+	lastEvent             atomic.Int64
+	gcDown                atomic.Bool
+	registrationMu        sync.Mutex
+	registrationNeeded    atomic.Bool
+	healthyGeneration     atomic.Bool
+	restartDelay          time.Duration // owned by the run loop
+	resume                chan struct{}
+	spaceJoined           chan struct{}
+	notices               chan notification
+	noticeMu              sync.Mutex
+	notified              map[string]bool
+	legacyWarning         sync.Once
+	stateLock             *StateLock
+	lockWarning           sync.Once
 }
 
 func Run(ctx context.Context, cfg *config.Config) error { return RunWithOptions(ctx, cfg, Options{}) }

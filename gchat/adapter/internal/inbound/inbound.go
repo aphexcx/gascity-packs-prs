@@ -549,6 +549,12 @@ func (p *Processor) identity() string {
 	return p.opts.Chat.IdentityUserID()
 }
 
+// IdentityUserID is the same authenticated identity used by the wake policy.
+func (p *Processor) IdentityUserID() string { return p.identity() }
+
+// MentionsIdentity shares the wake policy's annotation check with first reads.
+func (p *Processor) MentionsIdentity(m *api.Message) bool { return mentions(m, p.identity()) }
+
 // Copy-on-save keeps a failed write from making an in-memory terminal record
 // look durable. Assignment preserves the shared ledger pointer used by the app.
 func (p *Processor) update(fn func(*ledger.Ledger)) error {
@@ -636,21 +642,34 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 		if c.Kind == "membership.deleted" || m.Member == nil || m.Member.Name != p.identity() || (m.State != "" && m.State != "JOINED") {
 			return nil
 		}
-		// History before the join is not the identity's to read into the
-		// city: both cursors start at the join time (now, if Google omits it).
-		joined := p.opts.Now().UTC()
-		if t, err := time.Parse(time.RFC3339Nano, m.CreateTime); err == nil {
+		seen := p.opts.Now().UTC()
+		joined, source := seen, "adapter_clock"
+		if t, err := time.Parse(time.RFC3339Nano, m.CreateTime); err == nil && t.After(time.Unix(0, 0)) {
 			joined = t.UTC()
+			source = "event_create_time"
 		}
 		added := false
+		var fields []any
 		err := p.update(func(l *ledger.Ledger) {
-			if l.Spaces[c.Space] == nil {
-				l.Spaces[c.Space] = &ledger.SpaceState{Wake: string(p.opts.Config.Wake(c.Space)), JoinedAt: joined, MessageCursor: joined, EventCursor: joined}
+			if l.Spaces[c.Space].Bare() {
+				s := l.Spaces[c.Space]
+				if s == nil {
+					s = &ledger.SpaceState{}
+					l.Spaces[c.Space] = s
+				}
+				if s.Wake == "" {
+					s.Wake = string(p.opts.Config.Wake(c.Space))
+				}
+				s.StartFirstRead(joined, seen, p.opts.Config.JoinReachback(), "event", source)
+				fields = s.FirstSeenFields(c.Space)
 				added = true
 			}
 		})
-		if err == nil && added && p.opts.SpaceJoined != nil {
-			p.opts.SpaceJoined(c.Space)
+		if err == nil && added {
+			p.opts.Logger.Info("gchat space first seen", fields...)
+			if p.opts.SpaceJoined != nil {
+				p.opts.SpaceJoined(c.Space)
+			}
 		}
 		return err
 	case strings.HasPrefix(c.Kind, "reaction."):

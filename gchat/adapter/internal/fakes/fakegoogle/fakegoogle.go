@@ -49,6 +49,10 @@ type Server struct {
 	Reactions                  map[string]*chat.Reaction
 	Subscriptions              map[string]*events.Subscription
 	SpaceEvents                map[string][]*chat.SpaceEvent
+	Memberships                map[string]*chat.Membership
+	MembershipErrors           map[string]int
+	MembershipRequests         []string
+	HistoryRequests            []HistoryRequest
 	Media                      map[string][]byte
 	// People maps users/<id> to the address the directory (People API) answers.
 	People map[string]string
@@ -74,6 +78,11 @@ type resumableUpload struct {
 	name   string // populated only after completion
 }
 
+type HistoryRequest struct {
+	Space        string
+	Lower, Upper time.Time
+}
+
 type operation struct {
 	result       events.Operation
 	failure      *events.Status
@@ -91,6 +100,7 @@ func New(t testing.TB, publisher *pubsub.Publisher) *Server {
 		Spaces: map[string]*chat.Space{}, Messages: map[string]*chat.Message{},
 		Reactions: map[string]*chat.Reaction{}, Subscriptions: map[string]*events.Subscription{},
 		SpaceEvents: map[string][]*chat.SpaceEvent{}, Media: map[string][]byte{}, People: map[string]string{},
+		Memberships: map[string]*chat.Membership{}, MembershipErrors: map[string]int{},
 		operations: map[string]*operation{}, requests: map[string]string{}, lastWrite: map[string]time.Time{}, uploads: map[string]*resumableUpload{}}
 	s.http = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -568,6 +578,17 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	space := strings.Join(parts[:2], "/")
+	if len(parts) == 4 && parts[2] == "members" && r.Method == http.MethodGet {
+		s.MembershipRequests = append(s.MembershipRequests, path)
+		if code := s.MembershipErrors[path]; code != 0 {
+			s.fail(w, code, "UNKNOWN", "scripted membership failure")
+		} else if member := s.Memberships[path]; member != nil {
+			s.respond(w, r, 200, member)
+		} else {
+			s.fail(w, 404, "NOT_FOUND", "membership not found")
+		}
+		return
+	}
 	if len(parts) == 3 && parts[2] == "spaceEvents" && r.Method == http.MethodGet {
 		s.spaceEvents(w, r, space)
 		return
@@ -723,6 +744,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, space stri
 	}
 	threads := filter["thread.name="]
 	since, until := filter.time("create_time>"), filter.time("create_time<")
+	s.HistoryRequests = append(s.HistoryRequests, HistoryRequest{Space: space, Lower: since, Upper: until})
 	list := make([]*chat.Message, 0)
 	for name, m := range s.Messages {
 		if !strings.HasPrefix(name, space+"/messages/") {

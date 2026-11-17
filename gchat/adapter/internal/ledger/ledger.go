@@ -40,9 +40,10 @@ func (e *RecoveryError) Unwrap() error        { return e.Err }
 type Ledger struct {
 	saveGuard func() error
 
-	Version        int    `json:"version"`
-	IdentityUserID string `json:"identity_user_id,omitempty"`
-	IdentitySeed   string `json:"identity_seed,omitempty"`
+	Version        int       `json:"version"`
+	IdentityUserID string    `json:"identity_user_id,omitempty"`
+	IdentitySeed   string    `json:"identity_seed,omitempty"`
+	LastSpaceList  time.Time `json:"last_space_list,omitzero"`
 	// IdentityDomainID is the Workspace domain the identity belongs to, as Chat
 	// reports it on the identity's own messages; senders in it are the organization.
 	IdentityDomainID string                   `json:"identity_domain_id,omitempty"`
@@ -84,9 +85,10 @@ type SubscriptionState struct {
 type SpaceState struct {
 	Kind        string `json:"kind"`
 	DisplayName string `json:"display_name,omitempty"`
-	// JoinedAt is the earliest history allowed by an observed membership. Old
-	// ledgers have no known join bound; never infer one from a moving cursor.
-	JoinedAt time.Time `json:"joined_at,omitzero"`
+	// JoinedAt is the observed join time or discovery bound. FirstRead alone
+	// permits a bounded message reach-back. Never infer a join from a cursor.
+	JoinedAt  time.Time       `json:"joined_at,omitzero"`
+	FirstRead *FirstReadState `json:"first_read,omitempty"`
 	// ChatType distinguishes named SPACE from GROUP_CHAT; both have gc kind room.
 	ChatType      string    `json:"chat_type,omitempty"`
 	Wake          string    `json:"wake"`
@@ -95,6 +97,39 @@ type SpaceState struct {
 	Backlog       []string  `json:"backlog"`
 	PageToken     string    `json:"page_token"`
 	FrozenUpper   time.Time `json:"frozen_upper"`
+}
+
+// FirstReadState is absent in older ledgers. Absence never grants reach-back
+// to a row with existing cursors or an open interval. Complete stays durable
+// even when the first upper bound equals the join time.
+type FirstReadState struct {
+	SeenAt     time.Time `json:"seen_at"`
+	FoundBy    string    `json:"found_by"`
+	TimeSource string    `json:"time_source"`
+	Lower      time.Time `json:"lower"`
+	Complete   bool      `json:"complete,omitempty"`
+	// PreJoinMessages retains only the creations that crossed the join. Counts
+	// come from the delivery ledger at completion, including concluded receipts.
+	PreJoinMessages map[string]bool `json:"pre_join_messages,omitempty"`
+}
+
+func (s *SpaceState) Bare() bool {
+	return s == nil || (s.JoinedAt.IsZero() && s.MessageCursor.IsZero() && s.EventCursor.IsZero() && s.FrozenUpper.IsZero() && s.PageToken == "" && len(s.Backlog) == 0 && s.FirstRead == nil)
+}
+
+func (s *SpaceState) StartFirstRead(joined, seen time.Time, margin time.Duration, foundBy, source string) {
+	s.JoinedAt, s.MessageCursor, s.EventCursor = joined, joined, joined
+	lower := joined.Add(-margin)
+	if lower.Before(time.Unix(0, 0).UTC()) {
+		lower = time.Unix(0, 0).UTC()
+	}
+	s.FirstRead = &FirstReadState{SeenAt: seen, FoundBy: foundBy, TimeSource: source, Lower: lower}
+}
+
+// FirstSeenFields contains only resource/bound metadata, never message content.
+func (s *SpaceState) FirstSeenFields(name string) []any {
+	f := s.FirstRead
+	return []any{"space", name, "found_by", f.FoundBy, "joined_at", s.JoinedAt, "time_source", f.TimeSource, "message_lower", f.Lower}
 }
 
 type MessageState struct {
@@ -450,6 +485,11 @@ func (l *Ledger) Clone() *Ledger {
 	for _, space := range out.Spaces {
 		if space != nil {
 			space.Backlog = slices.Clone(space.Backlog)
+			if space.FirstRead != nil {
+				first := *space.FirstRead
+				first.PreJoinMessages = maps.Clone(first.PreJoinMessages)
+				space.FirstRead = &first
+			}
 		}
 	}
 	out.Messages = copyRecords(l.Messages)

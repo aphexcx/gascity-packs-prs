@@ -26,9 +26,13 @@ dialogs, slash commands and multiple identities are outside this version.
 - [ ] The identity's user account granted Pub/Sub Subscriber on the subscription (or the project).
 - [ ] Project id, topic and subscription names into the secrets file; `gc gchat auth` at the keyboard; the route line into `city.toml`; `gc reload`; the live checklist.
 
-To confirm in the first live test: that the `spaces/-` subscription covers
-spaces joined after it was created; end-to-end event latency; whether the
-sender's email is present under user authentication.
+Seen live: the `spaces/-` subscription delivers the identity's membership in
+a space joined after the subscription was created. The message that added
+the identity was older than the recorded join and did not arrive on the live
+stream; the first history read now reaches back for it. Whether later messages
+in a newly joined space arrive on the live stream at once remains unmeasured.
+Also to confirm: end-to-end event latency and whether the sender's email is
+present under user authentication.
 
 Use an account belonging to the agent identity. An External consent screen in
 Testing issues refresh tokens that expire after seven days; use Internal for
@@ -168,6 +172,8 @@ uses defaults, but create it before changing wake policies with `spaces`.
 Settings example:
 
 ```toml
+join_reachback = "5m"
+
 [defaults]
 wake = "all"
 
@@ -507,6 +513,32 @@ most an hour from its POST. Live delivery uses Pub/Sub streaming
 pull; there is no minute-by-minute Chat polling. Message and event cursors are
 separate and advance only when a frozen interval has been handled; live
 deliveries never advance them. Backlog drains over repeated budgeted passes.
+
+The identity's join event also triggers a read, and the hourly inventory sweep
+recovers rooms discovered without an event. A room's first message read starts
+`join_reachback` before its join time (default `"5m"`, maximum `"60m"`;
+`"0s"` disables it). Negative or invalid durations are refused. Before the
+join, only messages mentioning the identity or messages in a direct message
+can become turns. Other pre-join messages are discarded before queuing and use
+no delivery budget. Space events still start at the join. The saved lower bound
+survives a restart in the middle of the read; subsequent reads use the normal
+cursors and overlap. A known room with cursors never gains this reach-back,
+including when the identity leaves and rejoins. Existing open reads are preserved.
+
+For a listed room with no row, or a bare row with no join, cursors or open read,
+the same inventory refresh gets the identity's membership once. Its creation
+time supplies the join bound, no earlier than the last successful inventory.
+An absent/invalid time, a state other than JOINED, or HTTP 403/404 uses that
+recorded inventory time; without one, it uses the time found. The same first-read
+margin applies. Temporary failures fail the refresh without saving a new room;
+the existing retry handles them. Newly discovered rooms never start at 1970.
+
+Two Info messages identify this lifecycle: `gchat space first seen` records
+the space resource, `found_by` (`event`, `sweep`, `startup`, or `recovery`),
+`joined_at`, `time_source`, and `message_lower`. `gchat space first read complete`
+records the space, discovery source, `turns`, `pre_join_turns`, and
+`elapsed_seconds`. Each is emitted once per newly bounded room. They contain
+no message text, display name or user ID.
 
 When Google refuses a space's history, status shows `History held` and its
 reason; `unavailable:<space>` and a WARN appear for each new hold, not every

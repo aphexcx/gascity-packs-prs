@@ -1,0 +1,2 @@
+description = "Remove only reachable's city-local hook entries"
+run = "run.sh"

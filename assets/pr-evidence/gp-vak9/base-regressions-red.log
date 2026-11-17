@@ -1,0 +1,39 @@
+--- FAIL: TestOlderHistoryOfAJoinedRoomIsNeverATurn (0.40s)
+    --- FAIL: TestOlderHistoryOfAJoinedRoomIsNeverATurn/room (0.24s)
+        join_test.go:76: Pass = (1, 0, <nil>), want (2, 0, nil)
+    --- FAIL: TestOlderHistoryOfAJoinedRoomIsNeverATurn/dm (0.17s)
+        join_test.go:76: Pass = (1, 0, <nil>), want (3, 0, nil)
+--- FAIL: TestTheReachBackHappensOnce (23.09s)
+    join_test.go:122: frozen lower=2026-10-22 11:59:00 +0000 UTC want 2026-10-22 11:54:00 +0000 UTC
+--- FAIL: TestJoinEventOnABareRowSetsTheJoinTime (0.03s)
+    join_test.go:146: bare row: &{Kind: DisplayName: JoinedAt:0001-01-01 00:00:00 +0000 UTC ChatType: Wake:mentions MessageCursor:0001-01-01 00:00:00 +0000 UTC EventCursor:0001-01-01 00:00:00 +0000 UTC Backlog:[] PageToken: FrozenUpper:0001-01-01 00:00:00 +0000 UTC}
+--- FAIL: TestRoomFoundWithoutAnEventNeverReadsFromTheEpoch (0.69s)
+    --- FAIL: TestRoomFoundWithoutAnEventNeverReadsFromTheEpoch/missing (0.34s)
+        join_test.go:180: Pass = (3, 0, <nil>), want (2, 0, nil)
+    --- FAIL: TestRoomFoundWithoutAnEventNeverReadsFromTheEpoch/bare (0.35s)
+        join_test.go:180: Pass = (3, 0, <nil>), want (2, 0, nil)
+--- FAIL: TestMembershipWithoutATimeTakesTheRecordedList (0.13s)
+    --- FAIL: TestMembershipWithoutATimeTakesTheRecordedList/#00 (0.05s)
+        join_test.go:211: bound=0001-01-01 00:00:00 +0000 UTC want recorded list 2026-10-22 12:00:00 +0000 UTC
+    --- FAIL: TestMembershipWithoutATimeTakesTheRecordedList/Forbidden (0.05s)
+        join_test.go:211: bound=0001-01-01 00:00:00 +0000 UTC want recorded list 2026-10-22 12:00:00 +0000 UTC
+    --- FAIL: TestMembershipWithoutATimeTakesTheRecordedList/Not_Found (0.04s)
+        join_test.go:211: bound=0001-01-01 00:00:00 +0000 UTC want recorded list 2026-10-22 12:00:00 +0000 UTC
+--- FAIL: TestMembershipReadThatMayPassFailsTheFreeze (0.02s)
+    join_test.go:227: membership failure accepted
+FAIL
+FAIL	gchat-adapter/internal/catchup	24.706s
+--- FAIL: TestJoinReachbackValidation (0.01s)
+    --- FAIL: TestJoinReachbackValidation/0s (0.00s)
+        join_test.go:14: valid margin refused: settings <temporary-path> unknown key join_reachback
+    --- FAIL: TestJoinReachbackValidation/5m (0.00s)
+        join_test.go:14: valid margin refused: settings <temporary-path> unknown key join_reachback
+    --- FAIL: TestJoinReachbackValidation/60m (0.00s)
+        join_test.go:14: valid margin refused: settings <temporary-path> unknown key join_reachback
+FAIL
+FAIL	gchat-adapter/internal/config	0.131s
+--- FAIL: TestTheMessageThatAddsTheIdentityIsATurn (11.25s)
+    keyholder_test.go:305: condition did not become true
+FAIL
+FAIL	gchat-adapter/internal/app	11.466s
+FAIL
