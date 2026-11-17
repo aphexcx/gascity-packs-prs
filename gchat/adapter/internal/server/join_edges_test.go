@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -407,6 +408,7 @@ func TestJoinRechecksIdentityBeforeConsumingAndWriting(t *testing.T) {
 			c, _ := f.s.clients()
 			if row.name == "prepare" {
 				free()
+				joinAtLedgerLock(t)
 			}
 			if err := c.SetIdentityUserID("users/999"); err == nil {
 				t.Error("the identity conflict was not injected")
@@ -442,6 +444,23 @@ func TestJoinRechecksIdentityBeforeConsumingAndWriting(t *testing.T) {
 			}
 		})
 	}
+}
+
+// joinAtLedgerLock waits until the join's consumption update waits for the
+// ledger lock the test holds, so the mint and the prepare are behind it. It
+// never fails fatally: the caller still holds that lock.
+func joinAtLedgerLock(t *testing.T) {
+	t.Helper()
+	buf := make([]byte, 1<<20)
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		n := runtime.Stack(buf, true)
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+			if strings.Contains(g, ").lockLedger(") && strings.Contains(g, ").update(") && strings.Contains(g, ").runJoin(") {
+				return
+			}
+		}
+	}
+	t.Error("the join never reached the consumption update's ledger lock")
 }
 
 // heldGET holds the first GET of one path, then forwards every request.
