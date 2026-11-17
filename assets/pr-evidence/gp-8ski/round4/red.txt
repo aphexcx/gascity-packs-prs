@@ -1,0 +1,95 @@
+TestJoinRechecksIdentityBeforeConsumingAndWriting, RED against the base code.
+
+All runs from gchat/adapter. Base: a5800f565dc1a7e0223a9109ffeec5c922fed5b2.
+
+Red reason per row (every row: the join answers `joined` and sends one
+POST spaces/room/members naming users/123456789, the identity it read
+before the conflict):
+- owner_yes_check: conflict injected while the GET of the owner's message
+  is held; the yes is spent (Used=true) and the write is sent.
+- mint: conflict injected while the join-scope mint is held; Used=true and
+  the write is sent.
+- prepare: conflict injected once the join waits for the ledger lock the
+  test holds, past the mint and the prepare; Used=true and the write is
+  sent.
+- consumption_save: conflict injected while the consumption save is held;
+  Used=true is expected for this row, so it is red on the write and the
+  answer only.
+
+## Run 1: the test-only commit
+
+Commit af6794ae636dc1996ffd1be17a1ce52dd6c41270 (the test alone on the base;
+join.go unchanged). Load averages 9.37 9.16 10.58.
+
+env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run '^TestJoinRechecksIdentityBeforeConsumingAndWriting$' -count=1 -v
+
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/owner_yes_check
+2026/11/16 23:41:28 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+    join_edges_test.go:432: membership write after the identity conflict: [{POST spaces/room/members users/123456789}]
+    join_edges_test.go:435: answer=map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined], want no_owner_yes: The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity.
+    join_edges_test.go:441: approval &{CodeHash:4e701c84d56606ee4ece482b53ce75f7a7b1d19645abc10c8bc752bdcf5e62dc Identity:users/123456789 CreatedAt:2026-11-17 05:41:27.996482 +0000 UTC ExpiresAt:2026-11-18 05:41:27.996482 +0000 UTC Used:true}, want used=false
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/mint
+2026/11/16 23:41:28 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+    join_edges_test.go:432: membership write after the identity conflict: [{POST spaces/room/members users/123456789}]
+    join_edges_test.go:435: answer=map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined], want no_owner_yes: The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity.
+    join_edges_test.go:441: approval &{CodeHash:7e495ddc22f7b844c214655000ab65753f325a9f44966ab0e8ac6c51c99f71f4 Identity:users/123456789 CreatedAt:2026-11-17 05:41:28.076329 +0000 UTC ExpiresAt:2026-11-18 05:41:28.076329 +0000 UTC Used:true}, want used=false
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/prepare
+2026/11/16 23:41:28 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+    join_edges_test.go:432: membership write after the identity conflict: [{POST spaces/room/members users/123456789}]
+    join_edges_test.go:435: answer=map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined], want no_owner_yes: The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity.
+    join_edges_test.go:441: approval &{CodeHash:2599448e072e0aed12bd7538f631c9029691131ce18dea632a4e825c4f846be3 Identity:users/123456789 CreatedAt:2026-11-17 05:41:28.147888 +0000 UTC ExpiresAt:2026-11-18 05:41:28.147888 +0000 UTC Used:true}, want used=false
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/consumption_save
+2026/11/16 23:41:28 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+    join_edges_test.go:432: membership write after the identity conflict: [{POST spaces/room/members users/123456789}]
+    join_edges_test.go:435: answer=map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined], want no_owner_yes: The identity is not known safely yet. Nothing was sent to Google, but this owner's yes is now used; request approval again after the adapter learns its identity.
+--- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting (0.27s)
+    --- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting/owner_yes_check (0.08s)
+    --- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting/mint (0.07s)
+    --- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting/prepare (0.06s)
+    --- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting/consumption_save (0.06s)
+FAIL
+FAIL	gchat-adapter/internal/server	0.504s
+FAIL
+exit=1
+
+## Run 2: the final test against the base join.go
+
+The self-review tightened the prepare row (commit
+b10092eff709248fcb5c67f825d4008ad5d64a83: it now injects only once the join
+waits for the consumption update's ledger lock). That test was run at
+b10092ef with internal/server/join.go replaced, through a go test overlay,
+by `git show a5800f565dc1a7e0223a9109ffeec5c922fed5b2:gchat/adapter/internal/server/join.go`.
+Load averages 5.60 7.22 9.83.
+
+env -u GC_BIN -u NEVER_SILENT go test -overlay <tmp>/base.json ./internal/server -run '^TestJoinRechecksIdentityBeforeConsumingAndWriting$' -count=1 -v
+
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/owner_yes_check
+2026/11/16 23:58:26 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+    join_edges_test.go:434: membership write after the identity conflict: [{POST spaces/room/members users/123456789}]
+    join_edges_test.go:437: answer=map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined], want no_owner_yes: The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity.
+    join_edges_test.go:443: approval &{CodeHash:3c27bcdc8bce1e4987cad7c6b72afeb4e7d5fbf7d5fca68362403e9063705a92 Identity:users/123456789 CreatedAt:2026-11-17 05:58:26.897827 +0000 UTC ExpiresAt:2026-11-18 05:58:26.897827 +0000 UTC Used:true}, want used=false
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/mint
+2026/11/16 23:58:27 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+    join_edges_test.go:434: membership write after the identity conflict: [{POST spaces/room/members users/123456789}]
+    join_edges_test.go:437: answer=map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined], want no_owner_yes: The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity.
+    join_edges_test.go:443: approval &{CodeHash:50c5a9876ad359619bc031e1ade94e8b51960097a8731e601b15e752c3936671 Identity:users/123456789 CreatedAt:2026-11-17 05:58:26.968769 +0000 UTC ExpiresAt:2026-11-18 05:58:26.968769 +0000 UTC Used:true}, want used=false
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/prepare
+2026/11/16 23:58:27 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+    join_edges_test.go:434: membership write after the identity conflict: [{POST spaces/room/members users/123456789}]
+    join_edges_test.go:437: answer=map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined], want no_owner_yes: The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity.
+    join_edges_test.go:443: approval &{CodeHash:b3c95fe2e3049c1943c3a49ef677c705490f42c89b2ca4a3f247841b5bdb95ef Identity:users/123456789 CreatedAt:2026-11-17 05:58:27.038256 +0000 UTC ExpiresAt:2026-11-18 05:58:27.038256 +0000 UTC Used:true}, want used=false
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/consumption_save
+2026/11/16 23:58:27 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+    join_edges_test.go:434: membership write after the identity conflict: [{POST spaces/room/members users/123456789}]
+    join_edges_test.go:437: answer=map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined], want no_owner_yes: The identity is not known safely yet. Nothing was sent to Google, but this owner's yes is now used; request approval again after the adapter learns its identity.
+--- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting (0.29s)
+    --- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting/owner_yes_check (0.07s)
+    --- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting/mint (0.07s)
+    --- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting/prepare (0.09s)
+    --- FAIL: TestJoinRechecksIdentityBeforeConsumingAndWriting/consumption_save (0.05s)
+FAIL
+FAIL	gchat-adapter/internal/server	0.492s
+FAIL
+exit=1
