@@ -2,7 +2,9 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestArrivalEnvironmentPrecedence(t *testing.T) {
@@ -34,5 +36,22 @@ func TestArrivalEnvironmentPrecedence(t *testing.T) {
 	}
 	if c.Acknowledgement.Key != "" {
 		t.Fatal("explicit empty file value lost")
+	}
+}
+
+func TestArrivalAndJoinReachbackLoadTogether(t *testing.T) {
+	env, settings, dir := configFixture(t)
+	t.Setenv("ACK_REACTION", "eyes")
+	writeFixture(t, settings, "join_reachback = \"10m\"\n")
+	c, err := Load(env, settings, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.JoinReachback() != 10*time.Minute || c.Acknowledgement.Mode != "eyes" {
+		t.Fatalf("reachback=%v acknowledgement=%q", c.JoinReachback(), c.Acknowledgement.Mode)
+	}
+	writeFixture(t, settings, "join_reachback = \"61m\"\n")
+	if _, err := Load(env, settings, dir); err == nil || !strings.Contains(err.Error(), "join_reachback") {
+		t.Fatalf("invalid reachback with acknowledgement on: %v", err)
 	}
 }
