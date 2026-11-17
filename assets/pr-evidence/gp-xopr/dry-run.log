@@ -1,0 +1,5 @@
+reachable_status=0; python_status=0; \
+	(cd reachable/test && node --test --test-reporter=tap) || reachable_status=$?; \
+	env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q || python_status=$?; \
+	printf 'Test summary: reachable=%s; Python=%s (0=pass, nonzero=fail)\n' "$reachable_status" "$python_status"; \
+	test "$reachable_status" -eq 0 && test "$python_status" -eq 0

@@ -1,0 +1,16 @@
+{
+  "bounds_changed_lines": [
+    110
+  ],
+  "pytest_configuration": "byte-identical",
+  "reachable_target_command": "byte-identical",
+  "hook_change": "archiveWorker only; parent deadline and fail-open byte-identical",
+  "hook_numstat": "9\t1\treachable/reachable.cjs",
+  "workflows": "byte-identical",
+  "changed_tracked_paths": [
+    "Makefile",
+    "reachable/reachable.cjs",
+    "reachable/test/bounds.test.cjs",
+    "reachable/test/review.test.cjs"
+  ]
+}

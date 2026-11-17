@@ -1,0 +1,22 @@
+TAP version 13
+# Subtest: archive backpressure: a full pipe retries without losing partial writes
+ok 1 - archive backpressure: a full pipe retries without losing partial writes
+  ---
+  duration_ms: 161.804291
+  type: 'test'
+  ...
+# Subtest: archive backpressure: the parent deadline preserves fail-open and the cursor
+ok 2 - archive backpressure: the parent deadline preserves fail-open and the cursor
+  ---
+  duration_ms: 2012.199167
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2297.143625

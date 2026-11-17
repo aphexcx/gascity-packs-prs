@@ -1,0 +1,6 @@
+make -n test: exit=0; interpreter executions=2
+Traceback (most recent call last):
+  File "<clone>/assets/pr-evidence/gp-xopr/check-make-dry-run.py", line 27, in <module>
+    assert executions == 0, 'dry run executed an interpreter'
+           ^^^^^^^^^^^^^^^
+AssertionError: dry run executed an interpreter
