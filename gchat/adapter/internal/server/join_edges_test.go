@@ -2,16 +2,21 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/inbound"
@@ -324,4 +329,162 @@ func TestJoinWorkflowKeepsCodesOutOfJoinRecords(t *testing.T) {
 	if strings.Contains(f.logs.String(), code) {
 		t.Fatal("approval code reached command logs")
 	}
+}
+
+// Class: the join reads its identity once, then waits on the owner's message,
+// the key holder and the ledger. An identity that turns conflicted during any
+// of those waits must not spend the owner's yes, and must never reach the one
+// membership write. Each row holds one step, injects the conflict there, and
+// lets the join finish.
+func TestJoinRechecksIdentityBeforeConsumingAndWriting(t *testing.T) {
+	const unspent = "The identity is not known safely yet. Nothing changed; try again after the adapter learns its identity."
+	const spent = "The identity is not known safely yet. Nothing was sent to Google, but this owner's yes is now used; request approval again after the adapter learns its identity."
+	for _, row := range []struct {
+		name    string
+		used    bool
+		message string
+	}{
+		{"owner_yes_check", false, unspent},
+		{"mint", false, unspent},
+		{"prepare", false, unspent},
+		{"consumption_save", true, spent},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			f := setupJoin(t)
+			code := f.request(t, "spaces/room")
+			yes := f.yes(code)
+			entered, release := make(chan struct{}, 1), make(chan struct{})
+			free := sync.OnceFunc(func() { close(release) })
+			t.Cleanup(free) // A failed row must not leave the server's handler held.
+			var once sync.Once
+			hold := func() { once.Do(func() { entered <- struct{}{}; <-release }) }
+			switch row.name {
+			case "owner_yes_check":
+				transport := heldGET{path: "/v1/" + yes, hold: hold}
+				c, err := chat.New(context.Background(), &http.Client{Transport: transport}, f.cfg.Endpoints)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = c.SetIdentityUserID(fakegoogle.UserID); err != nil {
+					t.Fatal(err)
+				}
+				f.s.SetClients(c, f.options.GC)
+			case "mint", "prepare":
+				f.cfg.Secrets.KeyholderSocket = heldJoinMint(t, hold)
+				f.s.SetConfig(*f.cfg)
+			case "consumption_save":
+				f.mu.Lock()
+				f.l.SetSaveGuard(func() error { hold(); return nil })
+				f.mu.Unlock()
+			}
+			body, _ := json.Marshal(map[string]any{"space": "spaces/room", "yes": yes})
+			type answer struct {
+				status int
+				body   []byte
+				err    error
+			}
+			done := make(chan answer, 1)
+			go func() {
+				res, err := http.Post(f.url+"/join", "application/json", bytes.NewReader(body))
+				if err != nil {
+					done <- answer{err: err}
+					return
+				}
+				defer res.Body.Close()
+				b, err := io.ReadAll(res.Body)
+				done <- answer{res.StatusCode, b, err}
+			}()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the join never reached the held step")
+			}
+			if row.name == "prepare" {
+				// The prepare is local and has no seam. Hold the next step it must
+				// pass, the consumption update's ledger lock, past the conflict.
+				f.mu.Lock()
+			}
+			c, _ := f.s.clients()
+			if row.name == "prepare" {
+				free()
+			}
+			if err := c.SetIdentityUserID("users/999"); err == nil {
+				t.Error("the identity conflict was not injected")
+			}
+			if _, err := c.JoinIdentity(); err == nil {
+				t.Error("JoinIdentity still answers after the conflict")
+			}
+			if row.name == "prepare" {
+				f.mu.Unlock()
+			}
+			free()
+			var a answer
+			select {
+			case a = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the join did not answer")
+			}
+			if a.err != nil || a.status != http.StatusOK {
+				t.Fatalf("join status=%d err=%v: %s", a.status, a.err, a.body)
+			}
+			v := decode[map[string]any](t, a.body)
+			if w := f.writes(); len(w) != 0 {
+				t.Errorf("membership write after the identity conflict: %v", w)
+			}
+			if v["result"] != "no_owner_yes" || v["message"] != row.message {
+				t.Errorf("answer=%v, want no_owner_yes: %s", v, row.message)
+			}
+			f.mu.Lock()
+			p := f.l.JoinRequests["spaces/room"]
+			f.mu.Unlock()
+			if p == nil || p.Used != row.used {
+				t.Errorf("approval %+v, want used=%v", p, row.used)
+			}
+		})
+	}
+}
+
+// heldGET holds the first GET of one path, then forwards every request.
+type heldGET struct {
+	path string
+	hold func()
+}
+
+func (h heldGET) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, h.path) {
+		h.hold()
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// heldJoinMint serves a second key holder whose join-scope mint is held.
+func heldJoinMint(t *testing.T, hold func()) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "gchat-join-held-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "key.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/info" {
+			_ = json.NewEncoder(w).Encode(map[string]string{"subject": "agent@example.com"})
+			return
+		}
+		var input struct {
+			Scopes []string `json:"scopes"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&input)
+		if reflect.DeepEqual(input.Scopes, []string{joinScopeTest}) {
+			hold()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "join-secret-never-log", "expires_at": time.Now().Add(time.Hour).UnixMilli()})
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return socket
 }
