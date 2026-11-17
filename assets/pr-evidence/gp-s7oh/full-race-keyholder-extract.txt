@@ -1,0 +1,18 @@
+Race diagnostic excerpt; memory addresses normalized. No test assertions changed.
+Test: TestManagedSourceChatRefusalRetriesWithoutSignIn
+Source record: race.log
+
+WARNING: DATA RACE
+Read at <address> by goroutine 24171:
+      gchat/adapter/internal/app/keyholder_test.go:180 +<address>
+Previous write at <address> by goroutine 24286:
+      gchat/adapter/internal/app/keyholder_test.go:176 +<address>
+      gchat/adapter/internal/app/operations.go:167 +<address>
+WARNING: DATA RACE
+Read at <address> by goroutine 24171:
+      gchat/adapter/internal/app/keyholder_test.go:180 +<address>
+Previous write at <address> by goroutine 24286:
+      gchat/adapter/internal/app/keyholder_test.go:176 +<address>
+      gchat/adapter/internal/app/operations.go:167 +<address>
+    testing.go:1867: race detected during execution of test
+--- FAIL: TestManagedSourceChatRefusalRetriesWithoutSignIn (5.15s)
