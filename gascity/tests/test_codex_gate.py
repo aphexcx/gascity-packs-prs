@@ -38,7 +38,7 @@ def test_doc_examples_and_cli_pins_follow_the_gate_default():
     versions = re.findall(pin, README.read_text(encoding='utf-8'))
     assert len(versions) == 1, f'{README.name}: expected one Codex CLI install pin'
     cli = versions[0]
-    usage = re.search(r"^.*?<<'USAGE'\n(.*?)^USAGE$", script, re.M | re.S)
+    usage = re.search(r"<<'USAGE'\n(.*?)^USAGE$", script, re.M | re.S)
     assert usage and f'on Codex {cli})' in usage[1], f'{SCRIPT.name}: usage must name Codex {cli}'
     assert re.findall(pin, SHIM.read_text(encoding='utf-8')) == [cli, cli], (
         f'{SHIM.name}: both example pins must match Codex {cli}'
