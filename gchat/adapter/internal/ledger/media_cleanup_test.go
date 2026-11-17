@@ -22,7 +22,10 @@ func TestMediaCleanupLedgerCompatibility(t *testing.T) {
 	}
 	// Only resource identifiers, opaque digests, store roots and recovery state
 	// are added; no attachment filename is persisted in this checkpoint.
-	raw["media"] = json.RawMessage(`{"spaces/example/messages/one":{"delete_pending":true,"files":{"0123456789abcdef":"spaces/example/messages/one/attachments/file"}}}`)
+	raw["media"] = json.RawMessage(`{
+		"spaces/example/messages/one":{"delete_pending":true,"files":{"0123456789abcdef":"spaces/example/messages/one/attachments/file"}},
+		"spaces/example/messages/two":{"files":{"fedcba9876543210":"spaces/example/messages/two/attachments/file"},"sources":{"fedcba9876543210":"2026-10-22T10:03:00Z"}}
+	}`)
 	raw["media_roots"], err = json.Marshal([]string{t.TempDir()})
 	if err != nil {
 		t.Fatal(err)

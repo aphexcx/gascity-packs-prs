@@ -42,6 +42,15 @@ func mediaState(l *ledger.Ledger, message string) *ledger.MediaState {
 	return l.Media[message]
 }
 
+func mediaRevision(m *api.Message) time.Time {
+	revision := m.LastUpdateTime
+	if revision == "" {
+		revision = m.CreateTime
+	}
+	at, _ := time.Parse(time.RFC3339Nano, revision)
+	return at
+}
+
 func mediaAllowed(l *ledger.Ledger, m *api.Message, attachment string) string {
 	if state := l.Messages[m.Name]; state != nil && state.Deleted {
 		return "message deleted"
@@ -50,11 +59,7 @@ func mediaAllowed(l *ledger.Ledger, m *api.Message, attachment string) string {
 		if state.DeletePending {
 			return "message deleted"
 		}
-		revision := m.LastUpdateTime
-		if revision == "" {
-			revision = m.CreateTime
-		}
-		at, _ := time.Parse(time.RFC3339Nano, revision)
+		at := mediaRevision(m)
 		if !state.Revision.IsZero() && !at.After(state.Revision) && !slices.Contains(state.Retained, attachment) {
 			return "attachment removed"
 		}
@@ -100,6 +105,10 @@ func (s *MediaStore) reserve(m *api.Message, attachment, dest string) (string, b
 			return
 		}
 		state.Files[id] = attachment
+		if state.Sources == nil {
+			state.Sources = make(map[string]time.Time)
+		}
+		state.Sources[id] = mediaRevision(m)
 	})
 	if err != nil {
 		return "media state unavailable", false
@@ -120,8 +129,8 @@ func mediaLock(ctx context.Context) bool {
 	}
 }
 
-// An accepted edit durably records which attachments it retained, including
-// edits that wake no session. Cleanup is independent of turn delivery.
+// An accepted snapshot durably records which attachments it retained, including
+// snapshots deduplicated for delivery. Cleanup is independent of turn delivery.
 func (p *Processor) editMedia(ctx context.Context, m *api.Message) error {
 	if !mediaLock(ctx) {
 		return ctx.Err()
@@ -129,7 +138,7 @@ func (p *Processor) editMedia(ctx context.Context, m *api.Message) error {
 	defer func() { <-mediaNormalizationGate }()
 	return p.update(func(l *ledger.Ledger) {
 		state := mediaState(l, m.Name)
-		revision, _ := time.Parse(time.RFC3339Nano, m.LastUpdateTime)
+		revision := mediaRevision(m)
 		if revision.Before(state.Revision) {
 			return
 		}
@@ -141,7 +150,7 @@ func (p *Processor) editMedia(ctx context.Context, m *api.Message) error {
 			}
 		}
 		for id, attachment := range state.Files {
-			if !slices.Contains(state.Retained, attachment) {
+			if !state.Sources[id].After(revision) && !slices.Contains(state.Retained, attachment) {
 				if state.Remove == nil {
 					state.Remove = make(map[string]bool)
 				}
@@ -221,6 +230,7 @@ func (s *MediaStore) cleanup(ctx context.Context, root, name string, logger pull
 			} else {
 				for id := range state.Remove {
 					delete(current.Files, id)
+					delete(current.Sources, id)
 					delete(current.Remove, id)
 				}
 			}

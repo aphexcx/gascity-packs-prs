@@ -13,6 +13,8 @@ Round 2 regressions first: `b99a9ba1`, both red before their fixes; its two
 test seams only extract existing code without changing behavior.
 Round 2 fixes: `d052cba2ee9590492f8d816c52dafedb220b26eb`.
 Round 3 regression first: `87cdee7b`, red before its fix.
+Mayor-authorized final-round regressions first: `b296341e`, both red at
+`59ac97283a308ccbd66ae1aaa2f1cdd6e7b3d909` before correction.
 Tests use temporary directories and in-process fakes. No Google service or
 running adapter was contacted. Existing assertions were not weakened.
 
@@ -74,6 +76,19 @@ failed behaviorally at the reviewed commit and passes after correction:
 | media | TestRemovalKeepsDebtUntilDirectoryChangesAreDurable | red | pass | 4 |
 | app | TestCleanupAllowsReloadToCancelDownloads | red | pass | 0 |
 | inbound | TestPendingRemovalSurvivesVacantNameReuse | red | pass | 0 |
+| server | TestCatchupSnapshotReconcilesHistoryCopiesBeforeDedup | red | pass | 3 |
+| server | TestDelayedEditPreservesNewerHistoryCopies | red | pass | 2 |
+
+The final two regressions use real fake-server history reads. Both catch-up
+rows fail before correction (unseen and already-recorded creation); the newer
+history-copy row fails before correction, while its legacy-link row pins the
+required behavior for links without source revisions. An additional red row
+covers an older history response arriving after an edited catch-up snapshot
+when no saved link existed at snapshot time. The existing stale-edit pin also
+caught overly broad reconciliation of duplicate update events; retaining the
+original update acceptance guards fixes that regression without changing its
+assertion. The final production delta is 38 added and 14 removed lines across
+three Go files, below the authorized approximately 150-line limit.
 
 For the durability regression, directory-sync failures are injected through
 the removal helper's local dependency. Delete, edit, absent-entry retry and
@@ -185,6 +200,10 @@ loading the released fixture with no new fields.
    This keeps the existing flat folder layout and old turn paths intact.
    Removed attachment IDs enqueue all linked copies; old unlinked files stay
    until message deletion. Attachment-ID stability across edits is UNPROVEN.
+   Each link also records its source snapshot revision. An older edit cannot
+   remove a newer history copy; an old link without that revision is treated
+   as older than any edit. Catch-up snapshots reconcile saved copies before
+   turn deduplication, including equal revisions and already-recorded creations.
 5. Cleanup is a separate durable obligation, not a failed delivery. Each local
    recovery pass makes one attempt per pending message; a refusal does not hold
    another turn behind it. Every failed attempt is visible in the adapter log.
@@ -247,6 +266,10 @@ README text replacing the expiry statement and adding the cleanup paragraphs:
 > remembered across settings reloads and restarts, so a deletion also reaches
 > copies in earlier stores. Attachment links use a digest scoped to their store;
 > while a filename has pending removal debt, new downloads choose another name.
+> Each copy's link records the snapshot revision it came from; a delayed edit
+> cannot remove a copy from a newer snapshot. Links from an older ledger without
+> that source revision are treated as older than any edit. Catch-up snapshots
+> reconcile saved copies before delivery deduplication.
 > An edit checkpoint keeps its revision across a crash, preventing older edits
 > from restoring removed attachments. Directory removals are synchronized before
 > their ledger obligation is cleared; synchronization failures remain retryable.
@@ -345,6 +368,27 @@ helper; aligning the new fixture's bytes retained that assertion unchanged.
 
 The concrete combined failure in the newly added sync-durability handling
 justifies round 4 under the review policy; it is not a speculative finding.
+The round 3 finding is FIXED by
+`59ac97283a308ccbd66ae1aaa2f1cdd6e7b3d909`.
+
+SAFETY self-review round 4 reviewed
+`59ac97283a308ccbd66ae1aaa2f1cdd6e7b3d909`: BLOCK, two MAJOR findings.
+
+1. Cleanup skipped by delivery deduplication
+   (`internal/inbound/inbound.go:802`): a catch-up creation snapshot could
+   record the latest revision without removing a history copy absent from
+   that snapshot; the later equal-revision update was ignored.
+2. Lost revision provenance (`internal/inbound/media_cleanup.go:143`): a
+   delayed edit could remove a copy downloaded from a newer history snapshot.
+
+The worker stopped and escalated. The 2026-11-17 ruling authorized one scoped
+correction, after reproducing each case, and one review of only that round's
+delta. Both cases were REAL and SHOWN by the two final regressions above.
+The correction stores optional source revisions alongside existing links,
+treats missing revisions as older than any edit, and reconciles snapshots
+before delivery deduplication. No expiry or past-tombstone cleanup was added.
+The additive ledger field remains readable by the released rollback writer.
+
 The next review and final verification will be recorded before publication.
 The separate gate and second-model read belong to the draft PR's handoff.
 The worker does not merge, mark ready, release or deploy.

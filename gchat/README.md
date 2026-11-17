@@ -217,6 +217,10 @@ history recovery, without holding later messages. Configured media roots are
 remembered across settings reloads and restarts, so a deletion also reaches
 copies in earlier stores. Attachment links use a digest scoped to their store;
 while a filename has pending removal debt, new downloads choose another name.
+Each copy's link records the snapshot revision it came from; a delayed edit
+cannot remove a copy from a newer snapshot. Links from an older ledger without
+that source revision are treated as older than any edit. Catch-up snapshots
+reconcile saved copies before delivery deduplication.
 An edit checkpoint keeps its revision across a crash, preventing older edits
 from restoring removed attachments. Directory removals are synchronized before
 their ledger obligation is cleared; synchronization failures remain retryable.

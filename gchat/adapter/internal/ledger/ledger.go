@@ -66,11 +66,12 @@ type Ledger struct {
 // MediaState stores resource IDs and file-name digests, never file names,
 // local paths, sizes, senders or content. Files are reserved before download.
 type MediaState struct {
-	Files         map[string]string `json:"files,omitempty"`
-	Remove        map[string]bool   `json:"remove,omitempty"`
-	DeletePending bool              `json:"delete_pending,omitempty"`
-	Revision      time.Time         `json:"revision,omitzero"`
-	Retained      []string          `json:"retained,omitempty"`
+	Files         map[string]string    `json:"files,omitempty"`
+	Sources       map[string]time.Time `json:"sources,omitempty"` // absent revisions are older than any edit
+	Remove        map[string]bool      `json:"remove,omitempty"`
+	DeletePending bool                 `json:"delete_pending,omitempty"`
+	Revision      time.Time            `json:"revision,omitzero"`
+	Retained      []string             `json:"retained,omitempty"`
 }
 
 type SubscriptionState struct {
@@ -457,6 +458,7 @@ func (l *Ledger) Clone() *Ledger {
 	for _, state := range out.Media {
 		if state != nil {
 			state.Files = maps.Clone(state.Files)
+			state.Sources = maps.Clone(state.Sources)
 			state.Remove = maps.Clone(state.Remove)
 			state.Retained = slices.Clone(state.Retained)
 		}

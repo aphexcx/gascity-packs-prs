@@ -793,6 +793,18 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if checkpoint := l.Media[m.Name]; c.Kind != "message.deleted" && checkpoint != nil && updated.Before(checkpoint.Revision) {
 		return nil
 	}
+	// Catch-up delivers current snapshots as creations. Reconcile saved copies
+	// before turn deduplication, including an equal revision already delivered.
+	checkpoint := l.Media[m.Name]
+	created, _ := time.Parse(time.RFC3339Nano, m.CreateTime)
+	editedSnapshot := m.LastUpdateTime != "" && updated.After(created)
+	reconcile := c.Kind == "message.created" && (editedSnapshot || (checkpoint != nil && len(checkpoint.Files) != 0))
+	if reconcile && (previous == nil || (!previous.Deleted && !updated.Before(previous.Revision))) {
+		defer p.cleanupMedia(ctx, m.Name)
+		if err := p.editMedia(ctx, m); err != nil {
+			return err
+		}
+	}
 	if l.Changes[id] != nil {
 		return p.resume(ctx, id)
 	}
