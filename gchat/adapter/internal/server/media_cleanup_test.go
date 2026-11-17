@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -98,6 +99,119 @@ func TestHistoryReadSavesAreRemovedToo(t *testing.T) {
 				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 					t.Fatal("history file remains")
 				}
+			}
+		})
+	}
+}
+
+func TestCatchupSnapshotReconcilesHistoryCopiesBeforeDedup(t *testing.T) {
+	for _, recorded := range []bool{false, true} {
+		name := "unseen"
+		if recorded {
+			name = "already_recorded"
+		}
+		t.Run(name, func(t *testing.T) {
+			f, p, m := cleanupHistory(t, http.DefaultClient)
+			code, raw, _ := f.call(t, "/read?space=spaces/room", nil)
+			messages := decode[[]wire.InboundMessage](t, raw)
+			if code != 200 || len(messages) != 1 || len(messages[0].Attachments) != 1 {
+				t.Fatal("history did not save the initial attachment")
+			}
+			old, err := url.Parse(messages[0].Attachments[0].URL)
+			if err != nil || old.Scheme != "file" {
+				t.Fatal("history path missing")
+			}
+			if recorded {
+				if _, err := p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m.LastUpdateTime = "2026-10-22T10:02:00Z"
+			m.Attachment = nil
+			// Catch-up represents the edited current snapshot as a creation.
+			if _, err := p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(old.Path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("catch-up snapshot left removed history media behind")
+			}
+			if _, err := p.HandleChange(context.Background(), puller.Change{Kind: "message.updated", Space: "spaces/room", Message: m}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(old.Path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("equal-revision update restored the removed copy")
+			}
+		})
+	}
+}
+
+func TestDelayedEditPreservesNewerHistoryCopies(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		name := "known_revision"
+		if legacy {
+			name = "legacy_link"
+		}
+		t.Run(name, func(t *testing.T) {
+			f, p, m := cleanupHistory(t, http.DefaultClient)
+			if _, err := p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); err != nil {
+				t.Fatal(err)
+			}
+			original := m.Attachment[0]
+			newer := &api.Attachment{Name: m.Name + "/attachments/new", ContentName: "new.txt", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "spaces/room/media/new"}}
+			m.LastUpdateTime = "2026-10-22T10:03:00Z"
+			m.Attachment = []*api.Attachment{original, newer}
+			f.g.Configure(func(g *fakegoogle.Server) { g.Media[newer.AttachmentDataRef.ResourceName] = []byte("fixture bytes") })
+			code, raw, _ := f.call(t, "/read?space=spaces/room", nil)
+			messages := decode[[]wire.InboundMessage](t, raw)
+			if code != 200 || len(messages) != 1 || len(messages[0].Attachments) != 2 {
+				t.Fatal("newer history copy missing")
+			}
+			copyURL, err := url.Parse(messages[0].Attachments[1].URL)
+			if err != nil || copyURL.Scheme != "file" {
+				t.Fatal("newer attachment not saved")
+			}
+			if legacy {
+				// Model a prior checkpoint without per-copy revisions. Unknown
+				// source revisions are older than any edit, preserving old links.
+				func() {
+					f.mu.Lock()
+					defer f.mu.Unlock()
+					encoded, err := json.Marshal(f.l)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var raw map[string]any
+					if err = json.Unmarshal(encoded, &raw); err != nil {
+						t.Fatal(err)
+					}
+					for _, state := range raw["media"].(map[string]any) {
+						delete(state.(map[string]any), "sources")
+					}
+					encoded, err = json.Marshal(raw)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err = json.Unmarshal(encoded, f.l); err != nil {
+						t.Fatal(err)
+					}
+					if err = f.l.Save(f.options.LedgerPath); err != nil {
+						t.Fatal(err)
+					}
+				}()
+			}
+			delayed := *m
+			delayed.LastUpdateTime = "2026-10-22T10:02:00Z"
+			delayed.Attachment = []*api.Attachment{original}
+			if _, err := p.HandleChange(context.Background(), puller.Change{Kind: "message.updated", Space: "spaces/room", Message: &delayed}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(copyURL.Path)
+			if legacy {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("legacy copy was not treated as older than the edit")
+				}
+			} else if err != nil || string(data) != "fixture bytes" {
+				t.Fatal("delayed edit removed a newer history copy")
 			}
 		})
 	}
