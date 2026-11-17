@@ -46,12 +46,20 @@ function archiveWorker() {
   const input = fs.createReadStream(process.argv[1]);
   const stream = input.pipe(zlib.createGunzip());
   let skip = Number(process.argv[2]), left = Number(process.argv[3]);
+  const retry = new Int32Array(new SharedArrayBuffer(4));
   input.on('error', () => process.exit(1));
   stream.on('error', () => process.exit(1));
   stream.on('data', chunk => {
     const n = Math.min(skip, chunk.length); skip -= n; chunk = chunk.subarray(n);
     const part = chunk.subarray(0, left); left -= part.length;
-    for (let written = 0; written < part.length;) written += fs.writeSync(1, part.subarray(written));
+    for (let written = 0; written < part.length;) {
+      try { written += fs.writeSync(1, part.subarray(written)); }
+      catch (error) {
+        if (error.code !== 'EAGAIN') throw error;
+        // archiveSlice's parent timeout bounds retries to the remaining deadline.
+        Atomics.wait(retry, 0, 0, 1);
+      }
+    }
     if (!left) { input.destroy(); stream.destroy(); }
   });
 }
