@@ -2,11 +2,47 @@
 import json
 import os
 from pathlib import Path
+import re
+import shlex
 import subprocess
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'assets/scripts/codex-gate.sh'
+DOC = Path(__file__).resolve().parents[2] / 'docs/ops/citadel-codex-gates.md'
+SHIM = SCRIPT.parent / 'codex-infisical-shim.sh'
+README = Path(__file__).resolve().parents[1] / 'README.md'
+
+
+def test_doc_examples_and_cli_pins_follow_the_gate_default():
+    script = SCRIPT.read_text(encoding='utf-8')
+    models = re.findall(r'^model=(\S+)$', script, re.M)
+    assert len(models) == 1, f'{SCRIPT.name}: expected one model= default'
+    model = models[0]
+
+    doc = DOC.read_text(encoding='utf-8')
+    section = doc.partition('\n## Gate helper\n')[2].partition('\n## ')[0]
+    block = re.search(r'^```bash\n(.*?)^```$', section, re.M | re.S)
+    assert block, f'{DOC.name}: expected a bash example block under Gate helper'
+    examples = [shlex.split(line) for line in block[1].splitlines() if line.strip()]
+    assert [args[:2] for args in examples] == [
+        ['codex-gate.sh', 'review'], ['codex-gate.sh', 'exec'],
+    ], f'{DOC.name}: expected the review and exec examples under Gate helper'
+    for args in examples:
+        message = f'{DOC.name}: the {args[1]} example must pass --model {model}'
+        assert args.count('--model') == 1, message
+        index = args.index('--model') + 1
+        assert args[index:index + 1] == [model], message
+
+    pin = r'@openai/codex@(\d+\.\d+\.\d+)'
+    versions = re.findall(pin, README.read_text(encoding='utf-8'))
+    assert len(versions) == 1, f'{README.name}: expected one Codex CLI install pin'
+    cli = versions[0]
+    usage = re.search(r"^.*?<<'USAGE'\n(.*?)^USAGE$", script, re.M | re.S)
+    assert usage and f'on Codex {cli})' in usage[1], f'{SCRIPT.name}: usage must name Codex {cli}'
+    assert re.findall(pin, SHIM.read_text(encoding='utf-8')) == [cli, cli], (
+        f'{SHIM.name}: both example pins must match Codex {cli}'
+    )
 
 
 @pytest.fixture
