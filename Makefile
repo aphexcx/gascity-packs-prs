@@ -27,7 +27,7 @@ PYTEST_RUNNER = if $(PYTHON) -c 'import pytest, yaml, jsonschema' >/dev/null 2>&
 
 test:
 	@reachable_status=0; python_status=0; \
-	$(MAKE) test-reachable || reachable_status=$$?; \
+	(cd reachable/test && node --test --test-reporter=tap) || reachable_status=$$?; \
 	env -u GC_TEMPLATE $$($(PYTEST_RUNNER)) $(PYTEST_DIRS) $(PYTEST_ARGS) || python_status=$$?; \
 	printf 'Test summary: reachable=%s; Python=%s (0=pass, nonzero=fail)\n' "$$reachable_status" "$$python_status"; \
 	test "$$reachable_status" -eq 0 && test "$$python_status" -eq 0
