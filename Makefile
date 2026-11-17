@@ -23,13 +23,21 @@ PYTEST_DIRS ?= tests contributing-to-gascity/tests gascity/tests discord/tests g
 PYTEST_ARGS ?= -q
 PYTEST_RUNNER = if $(PYTHON) -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo '$(PYTHON) -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema $(PYTHON) -m pytest'; fi
 
-.PHONY: test test-reachable test-gascity registry-help registry-format-validate registry-validate registry-validate-all registry-publish registry-withdraw
+.PHONY: test test-reachable test-reachable-perf test-gascity registry-help registry-format-validate registry-validate registry-validate-all registry-publish registry-withdraw
 
-test: test-reachable
-	env -u GC_TEMPLATE $$($(PYTEST_RUNNER)) $(PYTEST_DIRS) $(PYTEST_ARGS)
+test:
+	@reachable_status=0; python_status=0; \
+	$(MAKE) test-reachable || reachable_status=$$?; \
+	env -u GC_TEMPLATE $$($(PYTEST_RUNNER)) $(PYTEST_DIRS) $(PYTEST_ARGS) || python_status=$$?; \
+	printf 'Test summary: reachable=%s; Python=%s (0=pass, nonzero=fail)\n' "$$reachable_status" "$$python_status"; \
+	test "$$reachable_status" -eq 0 && test "$$python_status" -eq 0
 
 test-reachable:
 	cd reachable/test && node --test --test-reporter=tap
+
+# Load-sensitive performance check: run on a quiet machine; excluded from make test and CI.
+test-reachable-perf:
+	cd reachable/test && REACHABLE_PERF=1 node --test --test-reporter=tap --test-name-pattern='^13: 256 MiB fixture' bounds.test.cjs
 
 test-gascity:
 	env -u GC_TEMPLATE $$($(PYTEST_RUNNER)) tests gascity/tests $(PYTEST_ARGS)
