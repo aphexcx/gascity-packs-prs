@@ -31,10 +31,13 @@ import (
 // A key holder that mints for one subject, with a scripted refusal, and the
 // directory that knows that subject's Chat id.
 type fakeKeyholder struct {
-	socket string
-	status atomic.Int32
-	code   atomic.Value
-	mints  atomic.Int32
+	socket      string
+	status      atomic.Int32
+	code        atomic.Value
+	mints       atomic.Int32
+	mu          sync.Mutex
+	scopes      [][]string
+	joinRefusal string
 }
 
 func newFakeKeyholder(t *testing.T) *fakeKeyholder {
@@ -53,7 +56,22 @@ func newFakeKeyholder(t *testing.T) *fakeKeyholder {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/token", func(w http.ResponseWriter, r *http.Request) {
 		k.mints.Add(1)
+		var input struct {
+			Scopes []string `json:"scopes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		k.mu.Lock()
+		k.scopes = append(k.scopes, input.Scopes)
+		refusal := k.joinRefusal
+		k.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if len(input.Scopes) == 1 && input.Scopes[0] == "https://www.googleapis.com/auth/chat.memberships" && refusal != "" {
+			w.WriteHeader(403)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": refusal})
+			return
+		}
 		if status := int(k.status.Load()); status != 0 {
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": k.code.Load().(string), "detail": "scripted"})

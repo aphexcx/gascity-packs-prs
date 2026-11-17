@@ -1,0 +1,2 @@
+description = "Accept one room invitation after the owner's yes"
+run = "../join.sh"

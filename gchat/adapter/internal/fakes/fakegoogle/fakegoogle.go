@@ -49,13 +49,18 @@ type Server struct {
 	Reactions                  map[string]*chat.Reaction
 	Subscriptions              map[string]*events.Subscription
 	SpaceEvents                map[string][]*chat.SpaceEvent
-	Memberships                map[string]*chat.Membership
 	MembershipErrors           map[string]int
 	MembershipRequests         []string
 	HistoryRequests            []HistoryRequest
 	Media                      map[string][]byte
 	// People maps users/<id> to the address the directory (People API) answers.
 	People map[string]string
+	// Membership fixtures model assumptions, not proof of Google's invitation flow.
+	Memberships           map[string]*chat.Membership
+	MembershipCalls       []MembershipCall
+	MembershipReadError   *MembershipError
+	MembershipWriteError  *MembershipError
+	MembershipCreateState string
 	// MaxUploadBytes lowers the normal 200 MiB limit for small boundary tests.
 	MaxUploadBytes int64
 
@@ -573,22 +578,23 @@ func (s *Server) complete(op *operation) {
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request, path string) {
 	parts := strings.Split(path, "/")
+	if len(parts) == 2 && r.Method == http.MethodGet {
+		if room := s.Spaces[path]; room != nil {
+			s.respond(w, r, 200, room)
+		} else {
+			s.fail(w, 404, "NOT_FOUND", "space not found")
+		}
+		return
+	}
+	if len(parts) >= 3 && parts[2] == "members" {
+		s.membership(w, r, path)
+		return
+	}
 	if len(parts) < 3 {
 		s.fail(w, 404, "NOT_FOUND", "route not found")
 		return
 	}
 	space := strings.Join(parts[:2], "/")
-	if len(parts) == 4 && parts[2] == "members" && r.Method == http.MethodGet {
-		s.MembershipRequests = append(s.MembershipRequests, path)
-		if code := s.MembershipErrors[path]; code != 0 {
-			s.fail(w, code, "UNKNOWN", "scripted membership failure")
-		} else if member := s.Memberships[path]; member != nil {
-			s.respond(w, r, 200, member)
-		} else {
-			s.fail(w, 404, "NOT_FOUND", "membership not found")
-		}
-		return
-	}
 	if len(parts) == 3 && parts[2] == "spaceEvents" && r.Method == http.MethodGet {
 		s.spaceEvents(w, r, space)
 		return
