@@ -61,8 +61,8 @@ Use the updated city helper (ci-cmju0n, 2026-10-23) at
 it over the city helper. Provision the city profile first.
 
 ```bash
-codex-gate.sh review --base origin/main -C "$REPO" --output "$REVIEW_OUTPUT" --class "$REVIEW_CLASS"
-codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$REVIEW_OUTPUT"
+codex-gate.sh review --base origin/main -C "$REPO" --output "$REVIEW_OUTPUT" --class "$REVIEW_CLASS" --model gpt-6.2-astra
+codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$REVIEW_OUTPUT" --model gpt-6.2-astra
 ```
 
 Set `REVIEW_CLASS` to the bead's recorded class: QUICK, STANDARD, DEEP or SAFETY.
@@ -103,6 +103,16 @@ prompt/output files outside the reviewed worktree.
 
 Codex QUICK reviews supplement the required Fable adversarial review for
 Codex-built changes. Publishing a PR does not authorize merging it.
+
+## Moving a city to a new gate model
+
+An installed helper whose `model=` line still names the previous model passes that ID in both `-m` and `review_model`, overriding the city profile's new default.
+
+1. Set `model` in `city.config.toml`. If the CLI does not yet bundle the model, set the catalog key as described above.
+2. Search the installed gate helper and every script that calls it for `model=`, `--model` and the previous ID. Update each pin.
+3. In `city.toml`, check the `codex-astra` provider's model default and any `-m` or `--model` flags in its `command` and `resume_command`.
+4. Run the installed helper with its callers' usual flags, adding `--dry-run` to print the Codex command without running it. Check for the new ID after `-m` and in `review_model=`.
+   For a helper without `--dry-run`, such as the repository copy, put a stub `codex` first on `PATH` to record the arguments, as in `gascity/tests/test_codex_gate.py`. Calling Codex through its home alone checks only the profile.
 
 ## Local ego-browser override and provider handoff
 
