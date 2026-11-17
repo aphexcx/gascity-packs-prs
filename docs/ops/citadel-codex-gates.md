@@ -2,19 +2,20 @@
 
 Afik approved the isolated profile and gate rollout on 2026-09-06
 (message 1788737744.207359): “we should always use codex with astra”.
-Use the city profile with `gpt-6-astra` and `xhigh` reasoning. Existing default
-profile settings are preserved; the default model remains `gpt-5.6-sol`.
+Use the city profile with `gpt-6.2-astra` and `xhigh` reasoning.
+Existing default profile settings are preserved.
 
 ## Profile compatibility and measurements
 
-Codex CLI 0.153.3 requires `~/.codex/city.config.toml` for `-p city`.
+GPT-6.2 Astra requires Codex CLI 0.166.0 or later. The profile was tested
+with Codex CLI 0.167.0, which reads `city.config.toml` in the Codex home for `-p city`.
 It rejects a same-name legacy `[profiles.city]` table in `config.toml`.
 The requested legacy table was tested and removed; the base file is
 byte-identical to its backup, `~/.codex/config.toml.bak-20260906-185000`.
 See [OpenAI profile documentation](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles)
 and the installed CLI's `codex --help`.
 
-The city overlay sets `model = "gpt-6-astra"` and
+The city overlay sets `model = "gpt-6.2-astra"` and
 `model_reasoning_effort = "xhigh"`. It disables `features.plugins`,
 `features.apps`, `features.recommended_plugins`, and `features.remote_plugin`,
 and sets `enabled = false` for all eleven configured plugins and both configured
@@ -44,6 +45,14 @@ Raw local evidence is in `~/city/assets/ops/gp-mj2q/`. `codex -p city mcp list`
 confirmed both servers disabled. The rendered city prompt has no recommended
 plugin catalogue or plugin skill entries.
 
+## GPT-6.2 Astra until a Codex release bundles it
+
+In the Codex home's `config.toml`, point `model_catalog_json` at a local copy of OpenAI's
+`codex-rs/models-manager/models.json` from `openai/codex` commit `6c0cee502` or later.
+Without the entry, the CLI warns “Model metadata for gpt-6.2-astra not found. Defaulting to fallback metadata” and uses generic metadata.
+Add `gpt-6.2-astra` to the CLIProxyAPI hub's model catalog so it can route the ID. Otherwise it returns HTTP 400, “unknown provider for model gpt-6.2-astra”.
+Remove these overrides once the Codex release bundles the metadata and the hub's upstream catalog lists the ID.
+
 ## Gate helper
 
 Use the updated city helper (ci-cmju0n, 2026-10-23) at
@@ -66,7 +75,7 @@ beads keep it under `/Users/tailor512/city/assets/ops/pr-evidence/<bead>/`.
 `--raw` keeps Codex's bytes; the default strips trailing whitespace so a
 committed `.out` passes `git diff --check`.
 
-Both modes use `-p city -m gpt-6-astra`, read-only execution, `-C`,
+Both modes use `-p city -m gpt-6.2-astra`, read-only execution, `-C`,
 and `--skip-git-repo-check`; the prompt and the contract reach Codex on stdin.
 `--model MODEL` explicitly overrides both the normal model and the optional
 review model. Review mode
@@ -104,7 +113,7 @@ The body and ego app's source file are unchanged. The original directory symlink
 was saved at `~/.agents/ego-browser.bak-20260906-185347`, outside skill discovery.
 Claude-side skills, including superpowers, were not modified.
 
-The mayor owns `city.toml`. Its `codex-astra` provider already pins the model;
-its command and resume command still need `-p city` to select the new profile.
-The plain `codex` provider also needs the explicit Astra model and city profile
+The mayor owns `city.toml`. Its `codex-astra` provider pins GPT-6.2 Astra.
+Its command and resume command still need `-p city` to select the new profile.
+The plain `codex` provider also needs the explicit GPT-6.2 Astra model and city profile
 if it is used for city work. No city.toml change is included in this task.

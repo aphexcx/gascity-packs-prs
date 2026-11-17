@@ -64,8 +64,8 @@ def test_city_astra_invocation_and_stdin(gate, mode):
     assert result.returncode == 0, result.stderr
     args = call['args']
     assert args[args.index('-p') + 1] == 'city'
-    assert args[args.index('-m') + 1] == 'gpt-6-astra'
-    assert 'review_model="gpt-6-astra"' in args
+    assert args[args.index('-m') + 1] == 'gpt-6.2-astra'
+    assert 'review_model="gpt-6.2-astra"' in args
     assert args[args.index('-s') + 1] == 'read-only'
     assert args[args.index('-a') + 1] == 'never'
     assert any(a.startswith('developer_instructions=') for a in args)

@@ -91,10 +91,10 @@ installed helper so the final verdict is validated:
 ```bash
 "$GC_CITY_PATH/assets/ops/mayor-tools/codex-gate.sh" review \
   --base "$REVIEW_BASE" -C "$REPO_DIR" --output "$REVIEW_OUTPUT" \
-  --model gpt-6-astra
+  --model gpt-6.2-astra
 ```
 
-The helper invokes `codex -p city -m gpt-6-astra exec --skip-git-repo-check`
+The helper invokes `codex -p city -m gpt-6.2-astra exec --skip-git-repo-check`
 with read-only execution and stdin from `/dev/null`. For a prompt-file gate,
 replace `review --base "$REVIEW_BASE"` with `exec "$PROMPT_FILE"`.
 Provision the `city` profile and helper on the host before using these commands.
