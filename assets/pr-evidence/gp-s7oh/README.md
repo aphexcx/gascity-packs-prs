@@ -58,11 +58,13 @@ obligation, bypassing event validation.
 
 ## Verification
 
-The initial suite results below precede the review fixes. Final source
-verification will be recorded before publication. After round 1, all 20
-then-current named tests passed individually: 20 top-level tests, 46 subtests,
-zero skips and zero failures. The round 2 corrections add two named tests
-and four subtests; both passed individually after their fixes.
+Final reviewed source: `e52a20ed85b39d97026818b09276cad17b989f8b`.
+All 25 named tests pass individually: 25 top-level tests, 55 subtests, zero
+skips and zero failures. Final pack verification also passes: 463 Python tests
+and 250 subtests, 127 skips; pack lint reports zero errors; all 16 scripts pass
+`bash -n` and shellcheck. Formatting and vet pass. Final full Go runs are in
+progress and will be recorded before publication. The initial full-suite
+results below are retained separately from those final results.
 
 The review regressions use the same individual invocation above. Each
 failed behaviorally at the reviewed commit and passes after correction:
@@ -389,6 +391,15 @@ treats missing revisions as older than any edit, and reconciles snapshots
 before delivery deduplication. No expiry or past-tombstone cleanup was added.
 The additive ledger field remains readable by the released rollback writer.
 
-The next review and final verification will be recorded before publication.
+Both round 4 findings are FIXED by
+`e52a20ed85b39d97026818b09276cad17b989f8b`.
+
+Authorized SAFETY self-review round 5 reviewed only the delta from
+`59ac97283a308ccbd66ae1aaa2f1cdd6e7b3d909` to
+`e52a20ed85b39d97026818b09276cad17b989f8b`: CLEAN, zero BLOCKER, MAJOR,
+MINOR or NIT findings and no additional outside-delta findings. All nine
+earlier findings have fixes and regression coverage. This scoped verdict
+follows the explicit ruling; the mayor's full-diff gate and second-model read
+remain pending.
 The separate gate and second-model read belong to the draft PR's handoff.
 The worker does not merge, mark ready, release or deploy.
