@@ -1,0 +1,175 @@
+TAP version 13
+# Subtest: 8: exact refusal, one line per conversation in oldest-first order
+ok 1 - 8: exact refusal, one line per conversation in oldest-first order
+  ---
+  duration_ms: 1.123
+  type: 'test'
+  ...
+# Subtest: 10,13: at most three refusals per message; duplicate call is identical and counted once
+ok 2 - 10,13: at most three refusals per message; duplicate call is identical and counted once
+  ---
+  duration_ms: 0.905208
+  type: 'test'
+  ...
+# Subtest: 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
+ok 3 - 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
+  ---
+  duration_ms: 0.085417
+  type: 'test'
+  ...
+# Subtest: 12: long calls record tool name and waiting at start or while running, never the command
+ok 4 - 12: long calls record tool name and waiting at start or while running, never the command
+  ---
+  duration_ms: 0.836
+  type: 'test'
+  ...
+# Subtest: 15: observe records would refuse, off and incomplete catch-up never refuse
+ok 5 - 15: observe records would refuse, off and incomplete catch-up never refuse
+  ---
+  duration_ms: 0.113459
+  type: 'test'
+  ...
+# Subtest: 9: exact measured read-only tool names each pass
+ok 6 - 9: exact measured read-only tool names each pass
+  ---
+  duration_ms: 0.062291
+  type: 'test'
+  ...
+# Subtest: 9: imported channel aliases, own verbs and handoff pass; shell composition is work
+ok 7 - 9: imported channel aliases, own verbs and handoff pass; shell composition is work
+  ---
+  duration_ms: 0.100458
+  type: 'test'
+  ...
+# Subtest: 13: cursor reads appended complete rows once and preserves partial rows
+ok 8 - 13: cursor reads appended complete rows once and preserves partial rows
+  ---
+  duration_ms: 3.175375
+  type: 'test'
+  ...
+# Subtest: 13: rotation recovers an unread archived row without repeating the cursor row
+ok 9 - 13: rotation recovers an unread archived row without repeating the cursor row
+  ---
+  duration_ms: 3.142583
+  type: 'test'
+  ...
+# Subtest: 11: malformed rows and sequence gaps fail measurement
+ok 10 - 11: malformed rows and sequence gaps fail measurement
+  ---
+  duration_ms: 1.050792
+  type: 'test'
+  ...
+# Subtest: 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
+ok 11 - 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
+  ---
+  duration_ms: 0.2895
+  type: 'test'
+  ...
+# Subtest: 4: only the mayor outbound in the same conversation clears a wait
+ok 12 - 4: only the mayor outbound in the same conversation clears a wait
+  ---
+  duration_ms: 0.130292
+  type: 'test'
+  ...
+# Subtest: 6,15: workers and subagents do no I/O; an uninstalled city stays off
+not ok 13 - 6,15: workers and subagents do no I/O; an uninstalled city stays off
+  ---
+  duration_ms: 2.0785
+  type: 'test'
+  location: '<worktree>/reachable/test/runtime.test.cjs:19:1'
+  failureType: 'testCodeFailure'
+  error: 'runHook is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/runtime.test.cjs:21:20)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+# Subtest: 2,14,15: modes, pass, exemptions and private atomic state
+not ok 14 - 2,14,15: modes, pass, exemptions and private atomic state
+  ---
+  duration_ms: 1.142333
+  type: 'test'
+  location: '<worktree>/reachable/test/runtime.test.cjs:27:1'
+  failureType: 'testCodeFailure'
+  error: 'command is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/runtime.test.cjs:29:3)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+# Subtest: 11: unreadable log, invalid state and backwards clock fail open and log one error
+not ok 15 - 11: unreadable log, invalid state and backwards clock fail open and log one error
+  ---
+  duration_ms: 0.787125
+  type: 'test'
+  location: '<worktree>/reachable/test/runtime.test.cjs:49:1'
+  failureType: 'testCodeFailure'
+  error: 'command is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/runtime.test.cjs:50:25)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
+not ok 16 - 16: install is idempotent, preserves other matchers, backs up, and uninstall removes only owned entries
+  ---
+  duration_ms: 1.209375
+  type: 'test'
+  location: '<worktree>/reachable/test/runtime.test.cjs:61:1'
+  failureType: 'testCodeFailure'
+  error: 'install is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/runtime.test.cjs:67:3)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
+not ok 17 - 17: doctor detects absent registration, stale copy, missing log and missing prompt fragment
+  ---
+  duration_ms: 0.803792
+  type: 'test'
+  location: '<worktree>/reachable/test/runtime.test.cjs:80:1'
+  failureType: 'testCodeFailure'
+  error: 'install is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/runtime.test.cjs:81:25)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+1..17
+# tests 17
+# suites 0
+# pass 12
+# fail 5
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 53.193209

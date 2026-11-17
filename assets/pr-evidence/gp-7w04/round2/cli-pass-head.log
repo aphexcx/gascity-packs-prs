@@ -1,0 +1,3 @@
+pending publication: exit=1; stderr=reachable: event_catchup_incomplete
+published archive, empty active log: exit=0; stdout={"conversation":"example/room-example","seen":true}
+next Write allowed; active log bytes=0

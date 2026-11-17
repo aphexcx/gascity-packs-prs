@@ -1,0 +1,171 @@
+TAP version 13
+# Subtest: 8: exact refusal, one line per conversation in oldest-first order
+not ok 1 - 8: exact refusal, one line per conversation in oldest-first order
+  ---
+  duration_ms: 0.408333
+  type: 'test'
+  location: '<worktree>/reachable/test/decision.test.cjs:14:1'
+  failureType: 'testCodeFailure'
+  error: 'decide is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/decision.test.cjs:16:15)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+# Subtest: 10,13: at most three refusals per message; duplicate call is identical and counted once
+not ok 2 - 10,13: at most three refusals per message; duplicate call is identical and counted once
+  ---
+  duration_ms: 0.075792
+  type: 'test'
+  location: '<worktree>/reachable/test/decision.test.cjs:23:1'
+  failureType: 'testCodeFailure'
+  error: 'decide is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/decision.test.cjs:25:17)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+# Subtest: 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
+not ok 3 - 7,4: Stop clears all waiting, and a duplicate Stop does not clear a later message
+  ---
+  duration_ms: 0.056
+  type: 'test'
+  location: '<worktree>/reachable/test/decision.test.cjs:34:1'
+  failureType: 'testCodeFailure'
+  error: 'decide is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/decision.test.cjs:37:3)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 12: long calls record tool name and waiting at start or while running, never the command
+not ok 4 - 12: long calls record tool name and waiting at start or while running, never the command
+  ---
+  duration_ms: 0.084667
+  type: 'test'
+  location: '<worktree>/reachable/test/decision.test.cjs:44:1'
+  failureType: 'testCodeFailure'
+  error: 'decide is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/decision.test.cjs:46:3)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 15: observe records would refuse, off and incomplete catch-up never refuse
+not ok 5 - 15: observe records would refuse, off and incomplete catch-up never refuse
+  ---
+  duration_ms: 0.059
+  type: 'test'
+  location: '<worktree>/reachable/test/decision.test.cjs:58:1'
+  failureType: 'testCodeFailure'
+  error: 'decide is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/decision.test.cjs:60:20)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 9: exact measured read-only tool names each pass
+not ok 6 - 9: exact measured read-only tool names each pass
+  ---
+  duration_ms: 0.05975
+  type: 'test'
+  location: '<worktree>/reachable/test/decision.test.cjs:66:1'
+  failureType: 'testCodeFailure'
+  error: "Cannot read properties of undefined (reading 'readOnly')"
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/decision.test.cjs:67:20)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 9: imported channel aliases, own verbs and handoff pass; shell composition is work
+not ok 7 - 9: imported channel aliases, own verbs and handoff pass; shell composition is work
+  ---
+  duration_ms: 0.061292
+  type: 'test'
+  location: '<worktree>/reachable/test/decision.test.cjs:72:1'
+  failureType: 'testCodeFailure'
+  error: 'allowed is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/decision.test.cjs:74:18)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: 13: cursor reads appended complete rows once and preserves partial rows
+ok 8 - 13: cursor reads appended complete rows once and preserves partial rows
+  ---
+  duration_ms: 3.798584
+  type: 'test'
+  ...
+# Subtest: 13: rotation recovers an unread archived row without repeating the cursor row
+ok 9 - 13: rotation recovers an unread archived row without repeating the cursor row
+  ---
+  duration_ms: 2.108666
+  type: 'test'
+  ...
+# Subtest: 11: malformed rows and sequence gaps fail measurement
+ok 10 - 11: malformed rows and sequence gaps fail measurement
+  ---
+  duration_ms: 1.317834
+  type: 'test'
+  ...
+# Subtest: 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
+ok 11 - 3: agent identity survives a handoff; other agents, duplicates and expired rows do not wait
+  ---
+  duration_ms: 0.280042
+  type: 'test'
+  ...
+# Subtest: 4: only the mayor outbound in the same conversation clears a wait
+ok 12 - 4: only the mayor outbound in the same conversation clears a wait
+  ---
+  duration_ms: 0.135791
+  type: 'test'
+  ...
+1..12
+# tests 12
+# suites 0
+# pass 5
+# fail 7
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 51.795791
