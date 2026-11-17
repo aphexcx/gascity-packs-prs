@@ -16,6 +16,10 @@ import (
 // FileIDs owed by an edit. Links, subdirectories and other nonregular entries
 // are left for the operator. No path component is followed through a symlink.
 func Remove(root, space, message string, selection map[string]bool) Removal {
+	return removeWithSync(root, space, message, selection, (*os.File).Sync)
+}
+
+func removeWithSync(root, space, message string, selection map[string]bool, syncDirectory func(*os.File) error) Removal {
 	if root == "" || !safeSegment(space) || !safeSegment(message) {
 		return Removal{Remaining: -1, Cause: "unsafe"}
 	}

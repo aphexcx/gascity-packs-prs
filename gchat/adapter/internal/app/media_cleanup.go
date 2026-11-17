@@ -54,15 +54,19 @@ func (a *application) pollMediaCleanup(ctx context.Context, root, statePath stri
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
-		a.stateMu.Lock()
-		if a.loaded.Load() && a.checkStateLock() == nil {
-			_ = store.Recover(ctx, root, a.log)
-		}
-		a.stateMu.Unlock()
+		a.recoverMedia(ctx, root, store)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+func (a *application) recoverMedia(ctx context.Context, root string, store *inbound.MediaStore) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if a.loaded.Load() && a.checkStateLock() == nil {
+		_ = store.Recover(ctx, root, a.log)
 	}
 }
