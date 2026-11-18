@@ -1,0 +1,4 @@
+$ env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN python3 -m pytest tests -q -k verify_skill_make_targets_exist --tb=short
+E   FileNotFoundError: [Errno 2] No such file or directory: '<repo>/.claude/skills/verify/SKILL.md'
+1 failed, 551 deselected in 7.35s
+exit=1 elapsed_seconds=7.61

@@ -1,0 +1,3 @@
+$ verify -C slack-full/cli go vet ./...
+(no output)
+exit=0 elapsed_seconds=2.28

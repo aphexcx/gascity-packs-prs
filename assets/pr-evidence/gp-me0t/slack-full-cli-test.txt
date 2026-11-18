@@ -1,0 +1,11 @@
+$ verify -C slack-full/cli go test -count=1 -json ./...
+Package completion events and counts of named test completion events (including subtests):
+.  pass  passed=11 skipped=0 failed=0
+cmd  pass  passed=129 skipped=0 failed=0
+internal/state/apps  pass  passed=33 skipped=0 failed=0
+internal/state/blockkit  pass  passed=6 skipped=0 failed=0
+internal/state/channels  pass  passed=14 skipped=0 failed=0
+internal/state/rigs  pass  passed=30 skipped=0 failed=0
+internal/state/rooms  pass  passed=8 skipped=0 failed=0
+internal/state/workspace  pass  passed=6 skipped=0 failed=0
+exit=0 elapsed_seconds=1.43

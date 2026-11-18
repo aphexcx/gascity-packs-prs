@@ -1,0 +1,30 @@
+$ (cd gchat/adapter && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go test -count=1 -json ./...)
+Package completion events and counts of named test completion events (including subtests):
+cmd/gc-gchat-adapter  pass  passed=85 skipped=0 failed=0
+internal/ack  pass  passed=14 skipped=0 failed=0
+internal/app  pass  passed=105 skipped=0 failed=0
+internal/arrival  skip  passed=0 skipped=0 failed=0
+internal/catchup  pass  passed=116 skipped=0 failed=0
+internal/chat  pass  passed=76 skipped=0 failed=0
+internal/config  pass  passed=72 skipped=0 failed=0
+internal/events  pass  passed=100 skipped=0 failed=0
+internal/fakes/fakegc  pass  passed=70 skipped=0 failed=0
+internal/fakes/fakegoogle  pass  passed=103 skipped=0 failed=0
+internal/gcclient  pass  passed=89 skipped=0 failed=0
+internal/inbound  pass  passed=316 skipped=0 failed=0
+internal/ledger  pass  passed=61 skipped=0 failed=0
+internal/markdown  pass  passed=222 skipped=0 failed=0
+internal/media  pass  passed=2 skipped=0 failed=0
+internal/neversilent  pass  passed=37 skipped=0 failed=0
+internal/principal  pass  passed=5 skipped=0 failed=0
+internal/provenance  pass  passed=3 skipped=0 failed=0
+internal/puller  pass  passed=96 skipped=0 failed=0
+internal/redact  pass  passed=102 skipped=0 failed=0
+internal/server  pass  passed=318 skipped=0 failed=0
+internal/stopwatch  pass  passed=4 skipped=0 failed=0
+internal/token  pass  passed=137 skipped=0 failed=0
+internal/wire  pass  passed=14 skipped=0 failed=0
+test/contract  pass  passed=0 skipped=2 failed=0
+test/e2e  fail  passed=68 skipped=0 failed=2
+e2e_test.go:912: catch-up did not drain before test budget: delivered 2281/3000; retained backlog 719
+exit=1 elapsed_seconds=549.93

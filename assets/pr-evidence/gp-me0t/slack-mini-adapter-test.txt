@@ -1,0 +1,4 @@
+$ verify -C slack-mini/adapter go test -count=1 -json ./...
+Package completion events and counts of named test completion events (including subtests):
+.  pass  passed=67 skipped=0 failed=0
+exit=0 elapsed_seconds=3.21

@@ -1,0 +1,12 @@
+$ verify make test
+# tests 93
+# suites 0
+# pass 92
+# fail 0
+# cancelled 0
+# skipped 1
+# todo 0
+# duration_ms 22794.485083
+2998 passed, 131 skipped, 2 warnings, 10746 subtests passed in 653.04s (0:10:53)
+Test summary: reachable=0; Python=0 (0=pass, nonzero=fail)
+exit=0 elapsed_seconds=683.69
