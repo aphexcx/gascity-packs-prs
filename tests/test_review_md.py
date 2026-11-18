@@ -427,6 +427,37 @@ def test_hidden_always_items_do_not_count() -> None:
         assert review_md_problems(text) == [NO_ALWAYS_REPORTED, NO_BY_HAND], before
 
 
+def test_a_heading_that_ends_the_section_ends_its_items() -> None:
+    for heading in ("# Appendix\n\n", " ## Appendix\n\n", "Appendix\n--------\n\n",
+                    "Appendix\n===\n\n"):
+        text = _replaced(
+            FULL_TEXT, ALWAYS_REPORTED + BY_HAND, heading + ALWAYS_REPORTED + BY_HAND
+        )
+        assert review_md_problems(text) == [NO_ALWAYS_REPORTED, NO_BY_HAND], heading
+
+
+def test_a_deeper_heading_inside_the_section_keeps_its_items() -> None:
+    text = _replaced(
+        FULL_TEXT, ALWAYS_REPORTED + BY_HAND, "### Always\n\n" + ALWAYS_REPORTED + BY_HAND
+    )
+    assert review_md_problems(text) == []
+
+
+def test_a_fence_line_ending_in_a_no_break_space_does_not_close_the_fence() -> None:
+    text = _replaced(
+        FULL_TEXT,
+        ALWAYS_REPORTED + BY_HAND,
+        "~~~\n" + ALWAYS_REPORTED + BY_HAND + "~~~\u00a0\n",
+    )
+    assert review_md_problems(text) == [
+        "missing heading '## Triggers (rules a diff can show)'",
+        "missing heading '## Pruning'",
+        NO_ALWAYS_REPORTED,
+        NO_BY_HAND,
+        "no 'Prune by: YYYY-MM-DD' line with a real date",
+    ]
+
+
 def test_a_shorter_fence_line_does_not_close_a_longer_fence() -> None:
     text = _pruning_wrapped("````\n```\n", "````\n")
     assert review_md_problems(text) == PRUNING_HIDDEN
