@@ -12,8 +12,9 @@ It reads the file as plain lines: a heading is a line of "#"s, a space and
 its text, and an item, a paragraph and a section end where section_blocks
 says. It reads no Markdown that can hide a line from the page or show it as
 code: HTML or a comment, a code fence or a link reference definition (after
-any list or quote markers too), front matter. Each line that holds one is a
-problem that names the line, so such a file is red whatever else it holds.
+any list or quote markers too), a link or an image, front matter. Each line
+that holds one is a problem that names the line, so such a file is red
+whatever else it holds.
 It never compares the date with today, so a calendar date can never turn
 the suite red on an unrelated pull request. It reads only the repository's
 own file and writes nothing.
@@ -71,7 +72,10 @@ LINE_END = re.compile(r"\r\n|\r|\n")
 CONTAINER = r"^\s*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]?)*"
 FRONT_MATTER = re.compile(r"^\ufeff?-{3,}\s*$")
 FENCE = re.compile(CONTAINER + r"(?:`{3,}|~{3,})")
-DEFINITION = re.compile(CONTAINER + r"\[[^\]]*\]:")
+# A label may hold an escaped bracket or wrap onto the next line.
+DEFINITION = re.compile(CONTAINER + r"\[(?:.*\]:|[^\]]*$)")
+# A link's title and an image's alt text can run over lines.
+LINK = re.compile(r"\]\(|!\[")
 HTML_START = re.compile(r"<[A-Za-z/!?]")
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 AUTOLINK = re.compile(
@@ -81,14 +85,17 @@ AUTOLINK = re.compile(
 FRONT_MATTER_WHAT = "front matter shows as a table, not as rules"
 FENCE_WHAT = "a code fence keeps the lines in it from reading as rules"
 DEFINITION_WHAT = "a link reference definition does not show on the page"
+LINK_WHAT = "a link's title or an image's alt text does not show on the page"
 HTML_WHAT = "HTML or a comment can hide text on the page"
 
 ATX = re.compile(r"^ {0,3}(#{1,6})(?=[ \t]|$)(.*)$")
 CLOSING_HASHES = re.compile(r"(?:^|[ \t]+)#+$")
 UNDERLINE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 ITEM = re.compile(r"^ {0,3}[-*+](?:[ \t]+|$)")
+ORDERED = re.compile(r"^ {0,3}(\d{1,9})[.)](?:[ \t]+|$)")
+CODE = re.compile(r"^(?: {4}|\t)")
 PARAGRAPH = re.compile(r"^ {0,3}[^ \t>|]")
-QUOTES = str.maketrans({"‘": "'", "’": "'"})
+QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'"})
 
 
 def _read(path: Path) -> str:
@@ -167,6 +174,9 @@ def _unread(line: str, first: bool) -> tuple[str, str] | None:
         rest = line[start.start() :]
         end = rest.find(">")
         return (rest[: end + 1] if 0 <= end < 20 else rest[:20]), HTML_WHAT
+    link = LINK.search(line)
+    if link is not None:
+        return line[link.start() :][:20], LINK_WHAT
     return None
 
 
@@ -186,11 +196,15 @@ def section_blocks(lines: list[str], heading: str, kind: str) -> list[str]:
     The section runs from its heading to a heading of level one or two, or to
     a line of "=" or "-" right under a paragraph's line, which makes that
     paragraph a heading. A line that starts with "-", "*" or "+" and a space
-    opens an item, read as "- " and its text. After a blank line or a heading,
-    a line with at most three spaces before it that does not start with ">"
-    or "|" opens a paragraph. Any other line goes on with the item or the
-    paragraph above it, as CommonMark joins a lazy line to the paragraph
-    above; after a blank line it opens a block that is neither.
+    opens an item, read as "- " and its text; a line that starts with a number
+    and "." or ")" opens an ordered item, which is neither, unless its number
+    is not 1 and it follows an item's or a paragraph's line, which it cannot
+    interrupt. After a blank line or a heading, a line with four spaces or a
+    tab before it opens an indented code block, which an unindented line ends,
+    and a line with at most three spaces before it that does not start with
+    ">" or "|" opens a paragraph. Any other line goes on with the block above
+    it, as CommonMark joins a lazy line to the paragraph above; after a blank
+    line it opens a block that is neither an item nor a paragraph.
     """
     start = [heading_of(line) for line in lines].index(heading) + 1
     blocks: list[list[str]] = []
@@ -199,6 +213,10 @@ def section_blocks(lines: list[str], heading: str, kind: str) -> list[str]:
         found = heading_of(line)
         if found is not None and len(found.split(" ", 1)[0]) <= 2:
             break
+        if current is not None and current[0] == "code" and line.strip():
+            if not CODE.match(line):
+                current = None
+        ordered = ORDERED.match(line)
         if UNDERLINE.match(line) and current is not None:
             if current[0] == "paragraph":
                 blocks.pop()
@@ -209,10 +227,23 @@ def section_blocks(lines: list[str], heading: str, kind: str) -> list[str]:
         elif ITEM.match(line):
             current = ["item", "- " + ITEM.sub("", line, count=1)]
             blocks.append(current)
+        elif ordered is not None and not (
+            ordered.group(1) != "1"
+            and current is not None
+            and current[0] in ("item", "paragraph")
+        ):
+            current = ["ordered", line]
+            blocks.append(current)
         elif current is not None:
             current[1] += "\n" + line
         else:
-            current = ["paragraph" if PARAGRAPH.match(line) else "other", line]
+            if CODE.match(line):
+                found_kind = "code"
+            elif PARAGRAPH.match(line):
+                found_kind = "paragraph"
+            else:
+                found_kind = "other"
+            current = [found_kind, line]
             blocks.append(current)
     return [_plain(text) for found_kind, text in blocks if found_kind == kind]
 
@@ -222,7 +253,9 @@ def _plain(text: str) -> str:
 
 
 def _begins_a_sentence(paragraph: str, sentences: str) -> bool:
-    return paragraph.startswith(sentences) or f". {sentences}" in paragraph
+    return paragraph.startswith(sentences) or any(
+        f"{stop} {sentences}" in paragraph for stop in ".?!"
+    )
 
 
 def _prune_date(line: str) -> datetime.date | None:
@@ -464,7 +497,7 @@ def test_an_item_in_another_list_marker_or_with_a_typographic_apostrophe_counts(
     for marker in ("* ", "+ "):
         text = FULL_TEXT.replace("\n- ", f"\n{marker}")
         assert review_md_problems(text) == [], marker
-    curly = _replaced(FULL_TEXT, "reviewer's replacement", "reviewer’s replacement")
+    curly = _replaced(FULL_TEXT, "reviewer's replacement", "reviewer\u2019s replacement")
     assert review_md_problems(curly) == []
 
 
@@ -606,7 +639,7 @@ def test_code_fences_are_not_read() -> None:
         ("~~~\n", "~~~\n"),
         ("````\n```\n", "````\n"),
         ("```\n```text\n", "```\n"),
-        ("~~~\n", "~~~ \n"),
+        ("~~~\n", "~~~\u00a0\n"),
         ("    ```\n", ""),
     )
     for before, after in cases:
@@ -702,7 +735,7 @@ def test_front_matter_is_not_read() -> None:
 
 
 def test_only_a_newline_or_a_carriage_return_ends_a_line() -> None:
-    for separator in (" ", " ", "\x0c", "\x0b", "\x1c", "\x85"):
+    for separator in ("\u2028", "\u2029", "\x0c", "\x0b", "\x1c", "\x85"):
         text = _replaced(FULL_TEXT, "\n## Pruning\n", f"{separator}## Pruning\n")
         assert review_md_problems(text) == ["missing heading '## Pruning'"], repr(
             separator
