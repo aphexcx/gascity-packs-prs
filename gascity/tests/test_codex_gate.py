@@ -64,6 +64,40 @@ def test_worker_prompt_gate_command_follows_the_gate_default():
     assert_passes_model(commands[0], model, f'{FRAGMENT.name}: the review command must pass --model {model}')
 
 
+@pytest.mark.usefixtures('gate')
+def test_doc_stub_run_writes_only_a_fresh_output(tmp_path):
+    commands = bash_commands(DOC, '## Moving a city to a new gate model')
+    assert len(commands) == 1, f'{DOC.name}: expected one stub-run command in the gate model recipe'
+    bindir, scratch, record = tmp_path / 'bin', tmp_path / 'scratch', tmp_path / 'record.txt'
+    bindir.mkdir()
+    scratch.mkdir()
+    (bindir / 'codex-gate.sh').symlink_to(SCRIPT)
+    (bindir / 'codex').write_text('#!/bin/sh\nexit 97\n')  # a run that loses the stub never reaches a real CLI
+    (bindir / 'codex').chmod(0o755)
+    record.write_text('VERDICT: BLOCK\n')
+    Path(f'{record}.log').write_text('the real transcript\n')
+    initial_path = str(bindir) + os.pathsep + os.environ['PATH']
+    result = subprocess.run(
+        ['bash', '-c', commands[0] + '\nstatus=$?\nprintf %s "$PATH"\nexit "$status"'],
+        text=True, capture_output=True, timeout=10,
+        env={'PATH': initial_path, 'TMPDIR': str(scratch),
+             'STUB_DIR': str(tmp_path), 'PROMPT_FILE': str(tmp_path / 'prompt file.txt'),
+             'REPO': str(tmp_path / 'repo'), 'REVIEW_OUTPUT': str(record), 'CAPTURE': str(tmp_path / 'capture.json'),
+             'ANSWER': 'VERDICT: CLEAN\n'},
+    )
+    assert result.returncode == 0, f'{DOC.name}: the stub run exited {result.returncode}: {result.stderr}'
+    message = f'{DOC.name}: the stub run must leave a real record and its log alone'
+    assert record.read_text() == 'VERDICT: BLOCK\n', message
+    assert Path(f'{record}.log').read_text() == 'the real transcript\n', message
+    args = json.loads((tmp_path / 'capture.json').read_text())['args']
+    assert args[args.index('-m') + 1] == gate_default_model()
+    answers = [p.read_text() for p in scratch.iterdir() if p.suffix != '.log']
+    assert answers == ['VERDICT: CLEAN\n'], f'{DOC.name}: the stub run must write a fresh mktemp output'
+    assert result.stdout == initial_path, (
+        f'{DOC.name}: the stub PATH must apply to the stub run alone'
+    )
+
+
 @pytest.fixture
 def gate(tmp_path):
     binary = tmp_path / 'codex'
