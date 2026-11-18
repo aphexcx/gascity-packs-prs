@@ -1,0 +1,47 @@
+.......F........................                                         [100%]
+=================================== FAILURES ===================================
+____________ test_pr_body_lines_note_carries_every_fact_of_its_bead ____________
+
+    def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
+        note = pr_body_lines_note()
+        for clause in (
+            "Whenever you open a PR or update its body",
+            "end the body with three lines, each on its own line and starting with its label",
+            "after every other section (a Deepening note included)",
+            "only the body's closing trailer or sign-off lines may follow them",
+            "the exact commands you ran, each with its counts and exit code",
+            "write `none: <why>` when you ran none",
+            "On the risk line, the tier comes from your city's written list of paths by risk tier: "
+            "the highest tier of any path the diff touches, and that path",
+            "without such a list, or when no path the diff touches is on it, write `not tiered` "
+            "and the highest-risk path the diff touches",
+            "the one command that undoes the change once merged",
+            # One instruction names every way a PR lands: a revert of the one sha
+            # a PR resolves to leaves a rebased PR's earlier commits in place. A
+            # range must start at the commit the PR landed on (`A..B` leaves A
+            # out; `git revert A B` reverts in the order listed and stops when B
+            # touched A's lines), and a fast-forward that merged its base stops
+            # at the merge commit without --no-merges.
+            "On the revert line, the command runs after the merge, so name what the PR landed as: "
+            "the squash commit when squashed; the first-parent change of the merge commit when "
+            "merged with two parents; the whole landed range, oldest to newest, when rebased or "
+            "fast-forwarded, as one range from the commit it landed on "
+            "(`git revert --no-merges <landed-on>..<newest>`, which reverts newest first). "
+            "Never name a branch commit the merge may not keep; when you cannot yet tell how the "
+            "PR will land, cover each way the repository allows; when no command undoes all of "
+            "the change, also say what a revert would leave behind (a migration that ran, "
+            "a deploy, a message sent).",
+            "On every line, write a secret (a token, a key, a password) as a placeholder such as "
+            "`<token>`, never its value",
+            "A later round that updates the body rewrites the three lines for its own head "
+            "and keeps them after every other section",
+            "Keep the labels exactly as written",
+        ):
+>           assert clause in note, f"THE PR BODY LINES lacks: {clause!r}"
+E           AssertionError: THE PR BODY LINES lacks: 'On the revert line, the command runs after the merge, so name what the PR landed as: the squash commit when squashed; the first-parent change of the merge commit when merged with two parents; the whole landed range, oldest to newest, when rebased or fast-forwarded, as one range from the commit it landed on (`git revert --no-merges <landed-on>..<newest>`, which reverts newest first). Never name a branch commit the merge may not keep; when you cannot yet tell how the PR will land, cover each way the repository allows; when no command undoes all of the change, also say what a revert would leave behind (a migration that ran, a deploy, a message sent).'
+E           assert 'On the revert line, the command runs after the merge, so name what the PR landed as: the squash commit when squashed;... undoes all of the change, also say what a revert would leave behind (a migration that ran, a deploy, a message sent).' in ". Whenever you open a PR or update its body, end the body with three lines, each on its own line and starting with it...s exactly as written: a reviewer reads these lines first, and a city's tools may read them by their labels. {{- end }}"
+
+tests/test_gc_standing_notes_fragment.py:192: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 7.34s

@@ -52,11 +52,15 @@ How to revert: <the one command that undoes the change once merged>
   risk tier: the highest tier of any path the diff touches, and that path;
   without such a list, or when no path the diff touches is on it, write
   `not tiered` and the highest-risk path the diff touches.
-- On the revert line, the command runs after the merge, so name the commit
-  through the PR (the revert of this PR's merge or squash commit, which has no
-  sha until the merge), never a branch commit the merge may not keep; when no
-  command undoes all of the change, say what a revert would leave behind: a
-  migration that ran, a deploy, a message sent.
+- On the revert line, the command runs after the merge, so name what the PR
+  landed as: the squash commit when squashed; the first-parent change of the
+  merge commit when merged with two parents; the whole landed range, oldest
+  to newest, when rebased or fast-forwarded, as one range from the commit it
+  landed on (`git revert --no-merges <landed-on>..<newest>`, which reverts
+  newest first). Never name a branch commit the merge may not keep; when you
+  cannot yet tell how the PR will land, cover each way the repository allows;
+  when no command undoes all of the change, also say what a revert would leave
+  behind (a migration that ran, a deploy, a message sent).
 - On every line, write a secret (a token, a key, a password) as a placeholder
   such as `<token>`, never its value: the body is read by everyone who can see
   the PR.

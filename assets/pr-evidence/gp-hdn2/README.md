@@ -1,8 +1,9 @@
 # gp-hdn2 evidence: THE PR BODY LINES
 
 The second note in `gascity/template-fragments/gc-standing-notes.template.md`,
-its README sentence, and its tests. Base: main at `148e4a0f`. Code head:
-`e65b23bf` (the commit after it adds only this directory).
+its README sentence, and its tests. Base: main at `148e4a0f`. Round 1's code
+head: `e65b23bf`. The gate fold's code head: `659265c0` (see "Round 2"
+below). The commits after each add only this directory.
 
 `<gc>` below is a dev build of gc (`gc version` prints `dev`); CI installs
 gastownhall/gascity `cmd/gc@latest`. Every run is under `env -i` with only
@@ -45,7 +46,8 @@ old copies of that test file. A clean clone has no `.gc/`: the same suite at
 - `red.txt`, `green.txt`: the targeted run, before and after.
 - `rendered-notes.txt`: a real gc render (`gc prime --strict`) of a city lane
   whose prompt calls `gc-role-worker` and then `gc-standing-notes`, at
-  `e65b23bf`. It holds what follows the role text, both notes.
+  `659265c0` (round 1's copy, at `e65b23bf`, differs only in the revert
+  bullet). It holds what follows the role text, both notes.
 - `mutations.txt`: the review folds shown to bite. The new tests fail on the
   text before each fold, and on mutations of the final text: the block split,
   a relative path, "last", the trailer clause gone, a clause hidden in a
@@ -77,3 +79,39 @@ Codex QUICK round 1 at `2d6715dd`: BLOCK (MAJOR 2, MINOR 2).
 | MAJOR 2: the revert line asked for a commit that does not exist yet | FIXED `e65b23bf`: name the commit through the PR, since its merge or squash commit has no sha until the merge |
 | MINOR 3: a tier list that no touched path is on | FIXED `e65b23bf`: `not tiered` and the highest-risk path |
 | MINOR 4: a clause hidden in a template comment passed the clause tests | FIXED `e65b23bf`: the clause tests read the renderable text |
+
+## Round 2: the mayor's gate round 1
+
+The mayor's gate round 1 at `e4d27c78`: BLOCK (MAJOR 1 / MINOR 2). The gate
+ordered one last step with no codex round: fix the MAJOR, fix MINOR 3 if it
+is a few lines, leave MINOR 2 for a follow-up, self-review the delta.
+
+| Finding | Outcome |
+| --- | --- |
+| MAJOR 1: the revert line assumes one commit is the whole PR, so a rebased or fast-forwarded PR is only partly undone by reverting the one sha the PR resolves to | FIXED `9ca68b17`, then `659265c0` (the self-review below). The revert instruction stays one bullet and names what the PR landed as: the squash commit when squashed; the first-parent change of the merge commit when merged with two parents; the whole landed range when rebased or fast-forwarded. The clause test pins the whole bullet as one clause and fails on the old wording |
+| MINOR 3: swapping the text after two labels passed both block checks | FIXED `9ca68b17`: the static test and the real-gc render test match the three lines whole, each label with its own instruction |
+| MINOR 2: an exact multi-line command (a heredoc) cannot sit on the one Testing line | NOT FIXED, by the gate's order: a follow-up |
+
+Self-review of `e4d27c78..9ca68b17` (a fresh reviewer subagent on the lane's
+model): BLOCKER 0, MAJOR 1, MINOR 3, NIT 3. Folded at `659265c0`.
+
+| Finding | Outcome |
+| --- | --- |
+| MAJOR: "the whole landed range, oldest to newest" leads to three wrong commands | FIXED `659265c0`. `r2-git-revert-facts.sh` builds a scratch repository per case and `r2-git-revert-facts.txt` holds its output (git 2.54.0). `git revert A B` reverts in the order listed and stops when B touched A's lines. `A..B` leaves A out. A fast-forward of a branch that merged its base stops at the merge commit. A range from the commit the PR landed on, `git revert --no-merges <landed-on>..<newest>`, restores the tree in both shapes and reverts newest first. The note now gives that form |
+| MINOR: a worker writing the line before the merge may not know how the PR will land | FIXED `659265c0`: it covers each way the repository allows |
+| MINOR: `9ca68b17` made what a revert leaves behind an alternative to the command ("or") | FIXED `659265c0`: "also", as before the gate fold |
+| MINOR: nothing pinned one revert instruction | FIXED `659265c0`: a second "On the revert line" fails the clause test |
+| NIT: the list after "never a branch commit the merge may not keep:" read as a list of branch commits | FIXED `659265c0`: the clause moved after the list |
+| NIT: "the first-parent change of the merge commit" is jargon; say `-m 1` | NOT CHANGED: the gate's own words for this case |
+| NIT: the label-prefix assert compares two test constants, and the three lines are written in both test files | NOT CHANGED: the assert guards the constants against each other; the second copy is the duplication the PR's Deepening note names |
+
+The targeted run, round 2:
+
+| Run | Tree | Result |
+| --- | --- | --- |
+| `r2-red.txt` | `659265c0`'s tests on `e4d27c78`'s note | 1 failed, 31 passed, exit 1 |
+| `r2-mutations.txt` | `659265c0`'s tests on `9ca68b17`'s note | 1 failed, 31 passed, exit 1 |
+| `r2-green.txt` | a clean clone at `659265c0` | 32 passed, exit 0 |
+| `r2-mutations.txt` | the swap at `e4d27c78`, and six mutations at `659265c0` | the swap passes the old tests; each of the six fails |
+| `env -i PATH HOME TMPDIR make test` | a clean clone at `659265c0` | reachable: 93 tests, 92 pass, 0 fail, 1 skipped; Python: 3002 passed, 132 skipped, 0 failed; exit 0 |
+| CI's gc step (as in round 1) | a clean clone at `659265c0` | 103 passed, exit 0 |
