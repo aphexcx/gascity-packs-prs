@@ -103,7 +103,6 @@ def command_env(tmp_path):
         'HOME': str(tmp_path), 'TMPDIR': str(scratch), 'GC_CITY_PATH': str(city),
         'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
         'UNEXPECTED_CALLS': str(tmp_path / 'unexpected-calls'),
-        'STUB_DIR': str(tmp_path), 'NEW_MODEL': gate_default_model(),
         'PROMPT_FILE': str(tmp_path / 'prompt file.txt'),
         'REPO': str(tmp_path / 'repo'), 'REPO_DIR': str(tmp_path / 'repo'),
         'REVIEW_OUTPUT': str(tmp_path / 'real record'), 'REVIEW_BASE': 'review-base',
@@ -125,19 +124,34 @@ print('VERDICT: CLEAN')  # A transcript match must never pass the gate.
 sys.exit(int(os.environ.get('CODEX_EXIT', '0')))
 ''')
     binary.chmod(0o755)
+    home = tmp_path / 'git-home'
+    hooks = home / 'empty-hooks'
+    hooks.mkdir(parents=True)
+    config = home / 'empty-config'
+    config.touch()
+    git_env = {
+        **os.environ,
+        'HOME': str(home),
+        'GIT_CONFIG_GLOBAL': str(config),
+        'GIT_CONFIG_SYSTEM': str(config),
+        'GIT_CONFIG_COUNT': '1',
+        'GIT_CONFIG_KEY_0': 'core.hooksPath',
+        'GIT_CONFIG_VALUE_0': str(hooks),
+    }
+    git_env.pop('GIT_CONFIG_PARAMETERS', None)  # An inherited git -c can override the hook path.
     repo = tmp_path / 'repo'
-    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=git_env)
     source = repo / 'source.txt'
     source.write_text('base\n')
-    subprocess.run(['git', '-C', str(repo), 'add', 'source.txt'], check=True)
+    subprocess.run(['git', '-C', str(repo), 'add', 'source.txt'], check=True, env=git_env)
     subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Gate Test',
                     '-c', 'user.email=gate@example.invalid', 'commit',
-                    '-qm', 'base'], check=True)
-    subprocess.run(['git', '-C', str(repo), 'branch', 'review-base'], check=True)
+                    '-qm', 'base'], check=True, env=git_env)
+    subprocess.run(['git', '-C', str(repo), 'branch', 'review-base'], check=True, env=git_env)
     source.write_text('delta\n')
     subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Gate Test',
                     '-c', 'user.email=gate@example.invalid', 'commit',
-                    '-qam', 'delta'], check=True)
+                    '-qam', 'delta'], check=True, env=git_env)
     prompt = tmp_path / 'prompt file.txt'
     prompt.write_text('Review a literal `command` and $(touch nope).\nSecond line.')
     output = tmp_path / 'answer file.txt'
@@ -149,12 +163,12 @@ sys.exit(int(os.environ.get('CODEX_EXIT', '0')))
         elif dirty:
             source.write_text('unreviewed\n')
             if dirty == 'staged':
-                subprocess.run(['git', '-C', str(repo), 'add', 'source.txt'], check=True)
+                subprocess.run(['git', '-C', str(repo), 'add', 'source.txt'], check=True, env=git_env)
         args = ['exec', str(prompt)] if mode == 'exec' else ['review', '--base', 'review-base']
         result = subprocess.run(
             ['bash', str(SCRIPT), *args, '-C', str(repo), '--output', str(output), *extra],
             input='inherited stdin must not reach Codex', text=True, capture_output=True,
-            env={**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'],
+            env={**git_env, 'PATH': str(tmp_path) + os.pathsep + git_env['PATH'],
                  'CAPTURE': str(capture), 'ANSWER': answer, 'CODEX_EXIT': str(exit_code)},
             timeout=10,
         )
