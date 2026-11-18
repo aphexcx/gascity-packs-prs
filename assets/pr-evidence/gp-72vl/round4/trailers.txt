@@ -1,0 +1,35 @@
+Command used for each range
+for c in $(git rev-list --reverse "$range"); do echo "== $c"; git log -1 --format=%B "$c" | git interpret-trailers --parse; done
+
+Previous round
+== 1f849cbcbd2805c1057f5edda493e8f8d0cc0451
+Co-Authored-By: Codex <noreply@openai.com>
+== 6f8347647adb29429959c1eb30c2a3d05ea7ee96
+Co-Authored-By: Codex <noreply@openai.com>
+== 931cffff4fdb9997c716131becdb6fc097aa4485
+Co-Authored-By: Codex <noreply@openai.com>
+== cdbaa58a4b939aa36b6c883a7fcf21c40d0797c7
+Co-Authored-By: Codex <noreply@openai.com>
+== a24a5ed170b6c995bd5f9f8dae535e1a0515f929
+Co-Authored-By: Codex <noreply@openai.com>
+== 02825004b40a72453b69bc3c0490225eda56a48a
+Co-Authored-By: Codex <noreply@openai.com>
+Current round
+== b54ab2c7a3b4a82b0553d75d3b25411beebdc9e9
+Bead: gp-ojwb
+Co-Authored-By: Codex <noreply@openai.com>
+== 24ad1cfc73c3f341f2edba82341c00222338e869
+Bead: gp-ojwb
+Co-Authored-By: Codex <noreply@openai.com>
+== d7450532b6e2f2695aaec37bea682c56f9152cbc
+Bead: gp-ojwb
+Co-Authored-By: Codex <noreply@openai.com>
+== 854402dbfa6eed924cda239dd2d32bdb7c35026d
+Bead: gp-ojwb
+Co-Authored-By: Codex <noreply@openai.com>
+== 734effbebe4b39abca7e6227958ab4d7951dd53f
+Bead: gp-ojwb
+Co-Authored-By: Codex <noreply@openai.com>
+== 475c6a10f389f83362a381fd7a2eba56bc714529
+Bead: gp-ojwb
+Co-Authored-By: Codex <noreply@openai.com>
