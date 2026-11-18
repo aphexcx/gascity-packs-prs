@@ -169,12 +169,19 @@ def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
         "and the highest-risk path the diff touches",
         "the one command that undoes the change once merged",
         # One instruction names every way a PR lands: a revert of the one sha
-        # a PR resolves to leaves a rebased PR's earlier commits in place.
-        "On the revert line, the command runs after the merge, so name what the PR landed as, "
-        "never a branch commit the merge may not keep: the squash commit when squashed; the "
-        "first-parent change of the merge commit when merged with two parents; the whole "
-        "landed range, oldest to newest, when rebased or fast-forwarded; or, when no command "
-        "undoes all of the change, what a revert would leave behind (a migration that ran, "
+        # a PR resolves to leaves a rebased PR's earlier commits in place. A
+        # range must start at the commit the PR landed on (`A..B` leaves A
+        # out; `git revert A B` reverts in the order listed and stops when B
+        # touched A's lines), and a fast-forward that merged its base stops
+        # at the merge commit without --no-merges.
+        "On the revert line, the command runs after the merge, so name what the PR landed as: "
+        "the squash commit when squashed; the first-parent change of the merge commit when "
+        "merged with two parents; the whole landed range, oldest to newest, when rebased or "
+        "fast-forwarded, as one range from the commit it landed on "
+        "(`git revert --no-merges <landed-on>..<newest>`, which reverts newest first). "
+        "Never name a branch commit the merge may not keep; when you cannot yet tell how the "
+        "PR will land, cover each way the repository allows; when no command undoes all of "
+        "the change, also say what a revert would leave behind (a migration that ran, "
         "a deploy, a message sent).",
         "On every line, write a secret (a token, a key, a password) as a placeholder such as "
         "`<token>`, never its value",
@@ -183,6 +190,8 @@ def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
         "Keep the labels exactly as written",
     ):
         assert clause in note, f"THE PR BODY LINES lacks: {clause!r}"
+    # One revert instruction: a second one could undo the first.
+    assert note.count("On the revert line") == 1
 
 
 def test_pr_body_lines_placement_leaves_room_for_the_closing_trailers() -> None:
