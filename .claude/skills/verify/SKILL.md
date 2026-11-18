@@ -9,38 +9,67 @@ Start each block in the repository root. Use Python 3.12, as CI does. Select an 
 
 Worker sessions can export a template, a real gc executable and adapter feature switches. Clear `GC_TEMPLATE` so the claim tests select their fixture route, `GC_BIN` so adapter tests use their fake CLI, and `NEVER_SILENT` so tests control their own feature switch. Leave `GC_TEST_BIN` unset to skip CI's real-gc integration fixtures.
 
-Run from a shell free of deployment settings and credentials. The measurements used installed tools and a populated Go module cache with `GOTOOLCHAIN=local` and `GOPROXY=off`.
+Define `verify` in Bash once per shell. It refuses worktree environment and credential files before launching a command, gives the command an empty home, and forwards only tool paths, caches and temporary-directory settings. Use trusted installed tools on PATH and a populated Go module cache.
+
+```bash
+verify() (
+  set -eu
+  root=$(git rev-parse --show-toplevel)
+  cd -- "$root"
+  config_files=$(git ls-files --cached --others -- \
+    ':(glob)**/.env' ':(glob)**/.env.*' ':(glob)**/env' \
+    ':(glob)**/.netrc' ':(glob)**/credentials.json' ':(glob)**/service-account*.json' \
+    ':(exclude,glob)**/*.example')
+  if [ -n "$config_files" ]; then
+    printf '%s\n' 'Use a checkout free of local credentials and environment files.' >&2
+    exit 2
+  fi
+  module_cache=
+  build_cache=
+  if command -v go >/dev/null; then
+    module_cache=$(GOTOOLCHAIN=local go env GOMODCACHE)
+    build_cache=$(GOTOOLCHAIN=local go env GOCACHE)
+  fi
+  temp_root=$(cd -- "${TMPDIR:-/tmp}" && pwd -P)
+  test_home=$(mktemp -d "$temp_root/verify.XXXXXXXX")
+  trap 'rm -rf -- "$test_home"' EXIT
+  if [ "${1:-}" = -C ]; then
+    cd -- "$2"
+    shift 2
+  fi
+  env -i -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN \
+    PATH="$PATH" HOME="$test_home" TMPDIR="$temp_root" \
+    GOCACHE="$build_cache" GOMODCACHE="$module_cache" GOTOOLCHAIN=local GOPROXY=off \
+    GC_NO_INSTALL=1 GIT_TERMINAL_PROMPT=0 "$@"
+)
+```
 
 ## Before a commit
 
 For changes under `reachable/`, run its Node suite. For Gas City or shared worker changes, run the root and Gas City pytest suites.
 
 ```sh
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN make test-reachable
+verify make test-reachable
 ```
 
 ```sh
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN make test-gascity
+verify make test-gascity
 ```
 
 Before handing off a change, run the Reachable Node tests and the repository's configured pytest directories together. The summary reports both exit codes.
 
 ```sh
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN make test
+verify make test
 ```
 
 For follow-through, also run the Node suite that CI exercises on Linux. For Gastown, run each shell test and stop on the first failure. On macOS, use provisioned Homebrew coreutils and GNU sed. The fixtures need a physical temporary path and GNU in-place editing.
 
 ```sh
-(cd follow-through/test && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN node --test)
+verify -C follow-through/test node --test
 ```
 
 ```sh
-if [ "$(uname -s)" = Darwin ]; then
-  export PATH="$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gnu-sed)/libexec/gnubin:$PATH"
-  export TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
-fi
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN bash -ec 'for script in gastown/tests/test_*.sh; do bash "$script"; done'
+verify bash -ec 'if [[ $(uname -s) == Darwin ]]; then PATH="$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gnu-sed)/libexec/gnubin:$PATH"; fi; for script in gastown/tests/test_*.sh; do bash "$script"; done'
 ```
 
 ## Registry and pack manifests
@@ -48,9 +77,9 @@ env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN bash -ec 'for script
 Use a complete Git checkout when changing `registry.toml` or a pack manifest. The Python validator checks release pins and content hashes against local Git history. CI additionally requires Git so a missing checkout cannot silently reduce coverage. The release validator requires a gc executable with pack release support and can fetch the public source repository to check releases.
 
 ```sh
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN make registry-format-validate
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN python3 validate_registry.py --require-git
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN make registry-validate
+verify make registry-format-validate
+verify python3 validate_registry.py --require-git
+verify make registry-validate
 ```
 
 ## Go modules
@@ -60,47 +89,53 @@ Run vet and tests in each touched module. Nested modules have independent packag
 The test flags force an uncached run and emit one JSON event per test action, including skips.
 
 ```sh
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go vet .
-env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go test -count=1 -json .
+verify go vet .
+verify go test -count=1 -json .
 ```
 
 ```sh
-(cd slack-full/adapter && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go vet ./...)
-(cd slack-full/adapter && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go test -count=1 -json ./...)
+verify -C slack-full/adapter go vet ./...
+verify -C slack-full/adapter go test -count=1 -json ./...
 ```
 
 ```sh
-(cd slack-full/cli && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go vet ./...)
-(cd slack-full/cli && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go test -count=1 -json ./...)
+verify -C slack-full/cli go vet ./...
+verify -C slack-full/cli go test -count=1 -json ./...
 ```
 
 ```sh
-(cd slack-channel/adapter && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go vet ./...)
-(cd slack-channel/adapter && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go test -count=1 -json ./...)
+verify -C slack-channel/adapter go vet ./...
+verify -C slack-channel/adapter go test -count=1 -json ./...
 ```
 
 ```sh
-(cd slack-mini/adapter && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go vet ./...)
-(cd slack-mini/adapter && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go test -count=1 -json ./...)
+verify -C slack-mini/adapter go vet ./...
+verify -C slack-mini/adapter go test -count=1 -json ./...
 ```
 
 ```sh
-(cd runtime-cloudflare/runtime && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go vet ./...)
-(cd runtime-cloudflare/runtime && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go test -count=1 -json ./...)
+verify -C runtime-cloudflare/runtime go vet ./...
+verify -C runtime-cloudflare/runtime go test -count=1 -json ./...
 ```
 
 ```sh
-(cd gchat/adapter && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go vet ./...)
+verify -C gchat/adapter go vet ./...
 ```
 
 Google Chat vet covers static checks only. Its full test run has a measured backlog timeout. [Full module transcript](../../../assets/pr-evidence/gp-me0t/gchat-adapter-test.txt)
 
 ```sh
-(cd board-watcher/watcher && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go vet ./...)
-(cd board-watcher/watcher && env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN go test -count=1 -json ./...)
+verify -C board-watcher/watcher go vet ./...
+verify -C board-watcher/watcher go test -count=1 -json ./...
 ```
 
+## Hosted verification
+
+On a pull request targeting main, CI runs on the synthetic merge commit. The checkout fetches full history. Its registry step runs `python3 validate_registry.py --require-git` at that commit. The Python step includes the root `tests/` directory even on a skill-only change. Go vet and Go test keep build products in caches or temporary directories. The checks open no persistent server or fixed port. After a test that reports a loopback port exits, `lsof -nP -iTCP:PORT -sTCP:LISTEN` should show no listener for that port. Substitute the numeric port from the test.
+
 ## Live integration
+
+Keep production commands out of verification, including message and mail senders, adapter and gateway launches, city workflow and tmux commands, provider hooks, deployment, registry publishing and withdrawal. [Repository entry points and exceptions](../../../assets/pr-evidence/gp-me0t/operational-commands.md)
 
 Use fixture data, temporary directories and local fakes for these checks. Keep deployed adapters, their state and media stores, their environment files, running processes, chat services and remote hosts outside the test environment. A founder provisions a scratch box for deployed-behavior checks. Customer boxes are outside that workflow.
 
