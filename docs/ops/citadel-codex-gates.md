@@ -109,10 +109,12 @@ Codex-built changes. Publishing a PR does not authorize merging it.
 
 ## Moving a city to a new gate model
 
-An installed helper whose `model=` line still names the previous model passes that ID in both `-m` and `review_model`, overriding the city profile's new default.
+An older model pin in any other layer the run uses can override a new default. Check the gate helper, its callers, the worker prompt and the provider command.
+For example, an installed helper whose `model=` line still names the previous model passes that ID in both `-m` and `review_model`, overriding the city profile's new default.
 
 1. Set `model` in `city.config.toml`. If the CLI does not yet bundle the model, set the catalog key as described above.
-2. Search the installed gate helper and every script that calls it for `model=`, `--model` and the previous ID. Update each pin.
+2. Search the installed gate helper, every script that calls it and the worker prompt template `gascity/template-fragments/gc-role-worker.template.md` for `model=`, `--model` and the previous ID. The template's review command passes `--model` explicitly.
+   Update each pin, then check the review command in a freshly rendered worker prompt (`gc prime <lane>`).
 3. In `city.toml`, check the `codex-astra` provider's model default and any `-m` or `--model` flags in its `command` and `resume_command`.
 4. Run the installed helper with its callers' usual flags, adding `--dry-run` to print the Codex command without running it. Check for the new ID after `-m` and in `review_model=`.
    For a helper without `--dry-run`, such as the repository copy, put a stub `codex` that records its arguments in `STUB_DIR`, as in `gascity/tests/test_codex_gate.py`, and run the helper once on that `PATH` with a fresh output of its own.
