@@ -4,6 +4,8 @@ Commands ran serially on macOS arm64 with Python 3.12.13, Node 24.21.0 and Go 1.
 
 ## New measurements
 
+The first hosted Linux Python run at `0da7234b` reported 3,039 passes, 136 skips and one failure. Its multicall coreutils rejected the fixture's symlink named vitest. The corrected fixture runs the system env binary under its own name and compares the shell's measured defaults. The local contract suite passed all 48 cases after the change. The 53 mutation controls also remained red. [Hosted failure](https://github.com/aphexcx/gascity-packs-prs/actions/runs/44310504589/job/134823085687) · [Corrected fixture run](round2-linux-fixture.txt)
+
 | Transcript | Result | Exit | Seconds | Starting load |
 | --- | --- | ---: | ---: | ---: |
 | [board-r2](round2-board-r2.txt) | 18 passed in 0.05s | 0 | 8.93 | 14.18 |
