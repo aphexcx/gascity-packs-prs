@@ -47,6 +47,10 @@ COMMENT_OPEN = "<!--"
 COMMENT_CLOSE = "-->"
 LINE_END = re.compile(r"\r\n|\r|\n")
 RAW_HTML_OPEN = re.compile(r"^ {0,3}<[A-Za-z/?!]")
+# A line that ends a level-two section on the page: an ATX heading of level
+# one or two (up to three spaces before it), or a setext underline. A bare
+# "-" or "---" line is read as one too, so a doubtful line ends the items.
+SECTION_END = re.compile(r"^ {0,3}(?:#{1,2}(?:[ \t]|$)|=+[ \t]*$|-+[ \t]*$)")
 AUTOLINK = re.compile(
     r"^ {0,3}<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>]+)>"
 )
@@ -100,7 +104,7 @@ def review_md_problems(text: str | None) -> list[str]:
 
 
 def visible_lines(text: str) -> list[str]:
-    """The file's lines, without trailing space, blank where the page hides them.
+    """The lines, trailing spaces and tabs cut, blank where the page hides them.
 
     Only a newline or a carriage return ends a line, as in CommonMark. A line
     inside a fenced code block or an HTML comment, and the lines that open
@@ -116,7 +120,7 @@ def visible_lines(text: str) -> list[str]:
     in_comment = False
     raw_html = False
     for line in LINE_END.split(text):
-        line = line.rstrip()
+        line = line.rstrip(" \t")
         opened = None if fence or in_comment or raw_html else _fence_opened(line)
         if raw_html:
             lines.append("")
@@ -173,7 +177,7 @@ def _cut_comments(line: str) -> tuple[str, bool]:
 
 
 def section_items(lines: list[str], heading: str) -> list[str]:
-    """The list items of a section, from its heading to the next "## " line.
+    """The list items of a section, from its heading to the line that ends it.
 
     An item is a line starting "- " with the lines that continue it; a blank
     line, a heading or the next item ends it.
@@ -181,7 +185,7 @@ def section_items(lines: list[str], heading: str) -> list[str]:
     items: list[str] = []
     open_item = False
     for line in lines[lines.index(heading) + 1 :]:
-        if line.startswith("## "):
+        if SECTION_END.match(line):
             break
         if line.startswith("- "):
             items.append(line)
