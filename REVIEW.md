@@ -28,9 +28,10 @@ what that city's agents are told.
   does.
 - NOTE: naming, wording, a test's shape, a cheaper way.
 
-A fault this file gives no other grade takes the grade of its effect
-under these four. A failing test, check or build with no other effect
-shown is MINOR, and a security fault is MAJOR at least.
+A fault this file gives no other grade takes the grade of its effect under
+these four. A failing test, check or build with no other effect shown is
+MINOR, and a security fault this file gives no other grade is MAJOR at
+least.
 
 Two terms this file uses:
 
@@ -40,12 +41,13 @@ Two terms this file uses:
 - No city of ours runs: no city of ours imports that pack, or uses that
   chat platform, provider, runtime or setting, today.
 
-This repository keeps no list of what our cities import or use. When the
-diff and the repository do not settle whether a city of ours runs a shape,
-the finding says UNKNOWN, names the fact that would settle it, and gives
-the grade it would have if a city ran the shape. A reviewer whose own
-brief marks such a finding PRECONDITION marks it so as well, with that
-grade beside it, and the mayor, who keeps the cities' imports, settles it.
+This repository keeps no list of the packs our cities import or the chat
+platforms and settings they use. When the diff and the repository do not
+settle whether a city of ours runs a shape, the finding says UNKNOWN,
+names the fact that would settle it, and gives the grade it would have if
+a city ran the shape. A finding the reviewer cannot place is marked
+UNKNOWN and keeps the grade beside it. It counts at that grade for the
+verdict, whatever label a brief adds, until the mayor settles it.
 
 ## What not to report
 
@@ -54,23 +56,29 @@ grade beside it, and the mayor, who keeps the cities' imports, settles it.
   error or a pack that will not stand up against gc from the Check job
   (.github/workflows/ci.yml), an alert from CodeQL
   (.github/workflows/codeql.yml), a failure from Latest pack releases
-  (.github/workflows/pack-release-compatibility.yml). A fault no job
-  printed is reported, whatever a job's name suggests it covers: a job
-  that did not run, or whose run the reviewer cannot see, printed nothing.
-  Among the suites no job runs are the Go tests of the Google Chat adapter
-  and of board-watcher, the JavaScript and TypeScript tests of the
-  WhatsApp adapter and gateway, the WeCom adapter and reachable, and
-  wecom/tests and board-watcher/tests (ci.yml:49-125).
+  (.github/workflows/pack-release-compatibility.yml). What is left out is
+  the printed failure itself; the fault the diff shows is reported even
+  when a job's output is its symptom. A fault no job printed is reported,
+  whatever a job's name suggests it covers: a job that did not run, or
+  whose run the reviewer cannot see, printed nothing. Among the suites no
+  job runs are the Go tests of the Google Chat adapter and of
+  board-watcher, the JavaScript and TypeScript tests of the WhatsApp
+  adapter and gateway, the WeCom adapter and reachable, and wecom/tests
+  and board-watcher/tests (ci.yml:49-125).
 - Always reported: a secret, a key, a token, an injection or any other
   security fault in the diff, whatever CodeQL says; the scanner is a
   floor, not the reviewer's replacement.
 - Always reviewed by hand: a change to REVIEW.md itself, whatever CI runs
   on its pull request. A heading, a rule or the Prune line it removes or
   breaks is MAJOR unless a commit message of the pull request names the
-  change and says why; then it is a NOTE that quotes that reason.
-- A fault that needs a chat platform, a provider, a runtime or a setting
-  no city of ours runs is reported as PRECONDITION, with the precondition
-  in one sentence, never as MAJOR.
+  change and says why; then it is a NOTE that quotes that reason, except
+  that a commit message never lowers the removal or the weakening of a
+  rule of this file: that stays MAJOR and goes to a person.
+- A fault that needs a runtime or a provider no city of ours runs is
+  reported as PRECONDITION, with the precondition in one sentence, never
+  as MAJOR. Our cities run on macOS and Linux boxes under tmux, with the
+  Claude and Codex providers. A chat platform or a pack is never
+  PRECONDITION: it is UNKNOWN at its grade.
 - At most five NOTE (or NIT) findings in one review: report the five that
   matter most and count the rest in one line. A MINOR is a real fault,
   never capped and never dropped. A SAFETY review names every finding,
@@ -105,8 +113,9 @@ what breaks it, with examples from main.
   gateway at whatsapp/pack.toml:6); when it is a noreply address, as a
   commit's author and its Co-Authored-By trailer are; or when it is a
   founder's name with a one-line quote that explains why the pack changed.
-  Private, on main: the home-directory path at
-  whatsapp/gateway/README.md:46, and the message timestamp that cites a
+  A quote whose document does not say which change it explains is a MINOR
+  that asks for that sentence. Private, on main: the home-directory path
+  at whatsapp/gateway/README.md:46, and the message timestamp that cites a
   founder's approval at docs/ops/citadel-codex-gates.md:4. Not private, on
   main: the ids and addresses at
   gchat/adapter/internal/principal/principal_test.go:16, the token at
@@ -121,8 +130,10 @@ what breaks it, with examples from main.
   real, whatever places it. Any other value that does not look invented,
   and that nothing in the diff, the pull request or the repository places,
   is a MINOR asking for an invented one, until the diff, the pull request
-  or a commit says or shows that it is real. This repository is public and
-  a pack's files reach every city that imports it. Packs PR 90 (opened
+  or a commit says or shows that it is real; such a value that is a full
+  phone number, or text that reads as a person's message, is graded as
+  real, as a provider-shaped token is. This repository is public and a
+  pack's files reach every city that imports it. Packs PR 90 (opened
   2026-11-12) carried a business number's phone-number id and account id
   in a design document.
 - The same test holds for commit messages, the pull request's title and
@@ -153,26 +164,23 @@ what breaks it, with examples from main.
 - A path is built from inbound data when some part of it is a value a
   sender or a chat platform chose (an attachment's file name, a message
   id, a conversation or chat name). Code that deletes or overwrites a file
-  at such a path keeps it in its own store at the call itself: it opens
-  the store once and walks down from it without following a link, so no
-  "../", absolute path or link inside the store can lead out
-  (gchat/adapter/internal/chat/media_unix.go:13-58, tested with a linked
-  directory at gchat/adapter/internal/chat/chat_test.go:560-589). Making
-  each such part one path component, with no separator and no leading dot
-  (whatsapp/adapter/src/media.js:97-107 and :121-135, used at :383-385),
-  stops "../" and an absolute path but not a link, and a path checked
-  before the call does not stop a link made after the check; each falls
-  short, at MAJOR. Joining a sender's raw file name to the store and
-  deleting there is CRITICAL. A diff that adds or changes such a call, or
-  anything that builds, cleans or checks its path or names its store, is
+  at such a path must change or remove no file outside its own store,
+  whatever a sender sends. Each grade here is of what the diff adds or
+  changes, never of what main already does. A diff that joins a sender's
+  raw file name to the store and deletes or overwrites there is CRITICAL.
+  A diff that lets "../" or an absolute path take such a path out of its
+  store is MAJOR. A diff that lets a link inside the store lead out is
+  MINOR, since only someone already working on the city's machine can make
+  one, and MAJOR when the diff itself lets a sender make one. A diff that
+  adds or changes a call that deletes or overwrites at such a path is
   reviewed at the SAFETY class, and its tests, run in a temporary
-  directory only, show the path cannot leave its store with a hostile
-  value ("../", an absolute path, a linked directory). A review of that
-  diff run below SAFETY is a class breach: its first finding says so, at
-  MAJOR, with the file:line of the call or of the code that builds its
-  path, so the review is run again at SAFETY. Packs PR 113 (opened
-  2026-11-17) was built under SAFETY because a wrong path there deletes a
-  user's files.
+  directory only, show that no value a sender can send ("../", an absolute
+  path, and a link when the diff lets a sender make one) makes the call
+  change or remove a file outside its store. A review of that diff run
+  below SAFETY is a class breach: its first finding says so, at MAJOR,
+  with the file:line of the call, so the review is run again at SAFETY.
+  Packs PR 113 (opened 2026-11-17) was built under SAFETY because a wrong
+  path there deletes a user's files.
 
 ## Pruning
 
