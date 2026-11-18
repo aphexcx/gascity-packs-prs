@@ -1,4 +1,5 @@
-"""Static checks on the `gc-standing-notes` template fragment (gp-rj21).
+"""Static checks on the `gc-standing-notes` template fragment (gp-rj21; the
+PR body lines, gp-hdn2).
 
 A city opts in with one line after its `gc-role-worker` call; the rendered
 order and the byte-identical render without the line are proven against a
@@ -12,6 +13,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRAGMENTS = REPO_ROOT / "gascity" / "template-fragments"
 FRAGMENT = FRAGMENTS / "gc-standing-notes.template.md"
@@ -24,6 +27,10 @@ PLAIN_CALL = '{{ template "gc-standing-notes" . }}'
 # prompt. A trimmed comment ({{- /* */ -}}) is not matched, so the body check
 # below refuses it: it would eat the whitespace next to it.
 TEMPLATE_COMMENT = re.compile(r"\{\{/\*.*?\*/\}\}", re.S)
+# Each note's heading, in the fragment's order, with its bead of record.
+NOTES = (("## Deepening note", "gp-gsww"), ("## PR body lines", "gp-hdn2"))
+# The PR body lines' labels, in the order the body carries them.
+PR_BODY_LABELS = ("Testing:", "Risk:", "How to revert:")
 
 
 def fragment() -> str:
@@ -39,10 +46,19 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
-def deepening_note() -> str:
+def note(marker: str) -> str:
+    """One note's text, from its marker to the next heading, on one line."""
     text = fragment()
-    assert text.count("THE DEEPENING NOTE") == 1
-    return flat(text.split("THE DEEPENING NOTE", 1)[1])
+    assert text.count(marker) == 1
+    return flat(text.split(marker, 1)[1].split("\n## ", 1)[0])
+
+
+def deepening_note() -> str:
+    return note("THE DEEPENING NOTE")
+
+
+def pr_body_lines_note() -> str:
+    return note("THE PR BODY LINES")
 
 
 def test_fragment_defines_exactly_one_template() -> None:
@@ -59,10 +75,21 @@ def test_fragment_defines_exactly_one_template() -> None:
     assert "{{" not in body and "}}" not in body
 
 
-def test_bead_of_record_is_cited_only_inside_a_template_comment() -> None:
+def test_notes_appear_once_each_in_order() -> None:
+    text = fragment()
+    for heading, _ in NOTES:
+        assert text.count(f"\n{heading}") == 1, heading
+    positions = [text.index(f"\n{heading}") for heading, _ in NOTES]
+    assert positions == sorted(positions)
+
+
+@pytest.mark.parametrize(("heading", "bead"), NOTES)
+def test_bead_of_record_is_cited_only_inside_a_template_comment(heading: str, bead: str) -> None:
     """The real render without it is proven in the GC_TEST_BIN render test."""
-    assert any("gp-gsww" in comment for comment in TEMPLATE_COMMENT.findall(fragment()))
-    assert "gp-gsww" not in renderable(fragment())
+    text = fragment()
+    assert f"{heading}{{{{/* Bead of record: {bead}." in text
+    assert any(bead in comment for comment in TEMPLATE_COMMENT.findall(text))
+    assert bead not in renderable(text)
 
 
 def test_define_name_is_unique_across_every_pack_fragment() -> None:
@@ -116,6 +143,39 @@ def test_deepening_note_glosses_the_deletion_test_for_a_lane_without_the_skill()
     assert "imagine the module deleted" in gloss
     assert "vanishes" in gloss and "pass-through" in gloss
     assert "reappears across its callers" in gloss
+
+
+def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
+    note = pr_body_lines_note()
+    for clause in (
+        "Whenever you open a PR or update its body",
+        "end the body with three lines, each on its own line and starting with its label",
+        "after every other section (a Deepening note included)",
+        "the exact commands you ran, each with its counts and exit code",
+        "write `none: <why>` when you ran none",
+        "On the risk line, the tier comes from your city's written list of paths by risk tier, "
+        "with the path that set it",
+        "without such a list, write `not tiered` and the highest-risk path the diff touches",
+        "the one command that undoes the change",
+        "when no command undoes all of the change, say what a revert would leave behind: "
+        "a migration that ran, a deploy, a message sent",
+        "A later round that updates the body rewrites the three lines for its own head "
+        "and keeps them last",
+        "Keep the labels exactly as written",
+    ):
+        assert clause in note, f"THE PR BODY LINES lacks: {clause!r}"
+
+
+def test_pr_body_lines_note_shows_each_label_once_at_a_line_start_in_order() -> None:
+    """The render test proves the same on real gc output; this one runs
+    everywhere."""
+    text = renderable(fragment()).split("THE PR BODY LINES", 1)[-1]
+    starts = []
+    for label in PR_BODY_LABELS:
+        assert text.count(label) == 1, label
+        assert len(re.findall(rf"(?m)^{re.escape(label)} \S", text)) == 1, label
+        starts.append(text.index(label))
+    assert starts == sorted(starts)
 
 
 # One city's particulars: a machine path, a home path, a date, a Slack
@@ -180,6 +240,8 @@ def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
         "A city that does not add the line renders exactly what it rendered before",
         "A note that belongs to one city stays in that city's own prompt template",
         "THE DEEPENING NOTE",
+        "Its second note is THE PR BODY LINES",
+        "`Testing:`, `Risk:` and `How to revert:`",
     ):
         assert clause in words, f"README Standing notes lacks: {clause!r}"
     assert words.index(CALL_LINE) < words.index(f"never as `{PLAIN_CALL}`")

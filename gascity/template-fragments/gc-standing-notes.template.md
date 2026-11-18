@@ -33,4 +33,28 @@ config, evidence and diffs under about forty changed lines, and say
 when the bead names a recipient, else the close reason). Never run a
 repository-wide pass from a lane, and never add a new seam with a single
 adapter.
+
+## PR body lines{{/* Bead of record: gp-hdn2. A comment renders nothing. */}}
+
+THE PR BODY LINES. Whenever you open a PR or update its body, end the body
+with three lines, each on its own line and starting with its label, after
+every other section (a Deepening note included); only the body's closing
+trailer or sign-off lines may follow them:
+
+```text
+Testing: <the exact commands you ran, each with its counts and exit code>
+Risk: <the tier and the path that set it>
+How to revert: <the one command that undoes the change>
+```
+
+- On the testing line, write `none: <why>` when you ran none.
+- On the risk line, the tier comes from your city's written list of paths by
+  risk tier, with the path that set it; without such a list, write
+  `not tiered` and the highest-risk path the diff touches.
+- On the revert line, when no command undoes all of the change, say what a
+  revert would leave behind: a migration that ran, a deploy, a message sent.
+
+A later round that updates the body rewrites the three lines for its own head
+and keeps them last. Keep the labels exactly as written: a reviewer reads these
+lines first, and a city's tools may read them by their labels.
 {{- end }}

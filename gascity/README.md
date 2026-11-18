@@ -251,7 +251,9 @@ pack's version, so every city that opts a lane in renders the same notes at
 the same pin. Its first note is THE DEEPENING NOTE: once per PR, at the
 worker's self-review and before the push, a deepening read of the modules the
 diff touched (the codebase-design skill), written as a `Deepening note`
-section of the PR body.
+section of the PR body. Its second note is THE PR BODY LINES: every PR body a
+worker writes or updates ends with three labelled lines, `Testing:`, `Risk:`
+and `How to revert:`, after every other section.
 
 The role fragment does not call it. A city opts a lane in with one line in
 that lane's `prompt.template.md`, right after its
