@@ -2,9 +2,9 @@
 
 Every reviewer of a pull request here reads REVIEW.md from the base branch
 (git show main:REVIEW.md). This test holds the root to a regular file named
-exactly REVIEW.md, and the file to four headings, the two items of "What not
-to report" that no skip overrides, and a "Prune by: YYYY-MM-DD" line, each
-counted only where the rendered file shows it. It never compares that date
+exactly REVIEW.md, and the file to four headings, the two sentences of "What
+not to report" that no skip overrides, and a "Prune by: YYYY-MM-DD" line,
+each counted only where the rendered file shows it. It never compares that date
 with today, so a calendar date can never turn the suite red on an unrelated
 pull request. It reads only the repository's own file and writes nothing.
 """
@@ -30,18 +30,26 @@ REQUIRED_HEADINGS = (
     "## Pruning",
 )
 
-# The items of "## What not to report" that no skip overrides: a list item
-# there whose first line starts with the marker and whose text names every
-# word, in any case.
-ALWAYS_ITEMS = (
-    ("- Always reported:", ("secret", "key", "token", "injection", "security")),
-    ("- Always reviewed by hand:", ("REVIEW.md",)),
+# The two sentences of "## What not to report" that no skip overrides. A
+# list item there must begin with each, whitespace aside, so a change to
+# either is made here as well as in REVIEW.md.
+ALWAYS_SENTENCES = (
+    "- Always reported: a secret, a key, a token, an injection or any other "
+    "security fault in the diff, whatever CodeQL says; the scanner is a "
+    "floor, not the reviewer's replacement.",
+    "- Always reviewed by hand: a change to REVIEW.md itself, whatever CI runs "
+    "on its pull request.",
 )
 
 PRUNE_BY = re.compile(r"^Prune by: (\d{4}-\d{2}-\d{2})$")
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 COMMENT_OPEN = "<!--"
 COMMENT_CLOSE = "-->"
+LINE_END = re.compile(r"\r\n|\r|\n")
+RAW_HTML_OPEN = re.compile(r"^ {0,3}<[A-Za-z/?!]")
+AUTOLINK = re.compile(
+    r"^ {0,3}<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>]+)>"
+)
 
 
 def _read(path: Path) -> str:
@@ -82,32 +90,37 @@ def review_md_problems(text: str | None) -> list[str]:
     skips = REQUIRED_HEADINGS[1]
     if skips in lines:
         items = section_items(lines, skips)
-        for marker, words in ALWAYS_ITEMS:
-            if not any(_names(item, marker, words) for item in items):
-                problems.append(
-                    f"{skips!r} has no item {marker!r} naming {', '.join(words)}"
-                )
+        begins = [" ".join(item.split()) for item in items]
+        for sentence in ALWAYS_SENTENCES:
+            if not any(item.startswith(sentence) for item in begins):
+                problems.append(f"{skips!r} has no item that begins {sentence!r}")
     if not any(_prune_date(line) for line in lines):
         problems.append("no 'Prune by: YYYY-MM-DD' line with a real date")
     return problems
 
 
 def visible_lines(text: str) -> list[str]:
-    """The file's lines as its rendered page shows them, without trailing space.
+    """The file's lines, without trailing space, blank where the page hides them.
 
-    A line inside a fenced code block or an HTML comment, and the lines that
-    open and close one, come back blank. A fence closes only on a line of its
-    own character, at least as long, with nothing after it. A fence or a
-    comment never closed hides the rest of the file. A comment that opens and
-    closes inside one line is cut out of that line.
+    Only a newline or a carriage return ends a line, as in CommonMark. A line
+    inside a fenced code block or an HTML comment, and the lines that open
+    and close one, come back blank. A fence closes only on a line of its own
+    character, at least as long, with nothing after it. A fence or a comment
+    never closed hides the rest of the file, and so does any other raw HTML
+    block. A comment that opens and closes inside one line is cut out of that
+    line. Where the page's rendering is in doubt the checker hides more than
+    the page does, never less, so a doubtful file fails red, never green.
     """
     lines: list[str] = []
     fence: tuple[str, int] | None = None
     in_comment = False
-    for line in text.splitlines():
+    raw_html = False
+    for line in LINE_END.split(text):
         line = line.rstrip()
-        opened = None if fence or in_comment else _fence_opened(line)
-        if fence is not None:
+        opened = None if fence or in_comment or raw_html else _fence_opened(line)
+        if raw_html:
+            lines.append("")
+        elif fence is not None:
             if _closes(line, fence):
                 fence = None
             lines.append("")
@@ -120,6 +133,9 @@ def visible_lines(text: str) -> list[str]:
         elif line.lstrip(" ").startswith(COMMENT_OPEN):
             after = line.split(COMMENT_OPEN, 1)[1]
             in_comment = COMMENT_CLOSE not in after
+            lines.append("")
+        elif RAW_HTML_OPEN.match(line) and not AUTOLINK.match(line):
+            raw_html = True
             lines.append("")
         else:
             line, in_comment = _cut_comments(line)
@@ -159,8 +175,8 @@ def _cut_comments(line: str) -> tuple[str, bool]:
 def section_items(lines: list[str], heading: str) -> list[str]:
     """The list items of a section, from its heading to the next "## " line.
 
-    An item is a line starting "- " with the lines indented under it; a
-    blank or unindented line ends it.
+    An item is a line starting "- " with the lines that continue it; a blank
+    line, a heading or the next item ends it.
     """
     items: list[str] = []
     open_item = False
@@ -170,17 +186,11 @@ def section_items(lines: list[str], heading: str) -> list[str]:
         if line.startswith("- "):
             items.append(line)
             open_item = True
-        elif open_item and line.startswith("  "):
+        elif open_item and line.strip() and not line.startswith("#"):
             items[-1] += "\n" + line
         else:
             open_item = False
     return items
-
-
-def _names(item: str, marker: str, words: tuple[str, ...]) -> bool:
-    return item.startswith(marker) and all(
-        word.lower() in item.lower() for word in words
-    )
 
 
 def _prune_date(line: str) -> datetime.date | None:
