@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import textwrap
 
 import pytest
 
@@ -21,12 +22,15 @@ def gate_default_model():
     return models[0]
 
 
-def bash_commands(path, heading):
-    """The first bash fence under HEADING in PATH, one string per command as bash joins it."""
+def fence_text(path, heading):
     section = path.read_text(encoding='utf-8').partition(f'\n{heading}\n')[2].partition('\n## ')[0]
     block = re.search(r'^( *)```bash\n(.*?)^\1```$', section, re.M | re.S)
     assert block, f'{path.name}: expected a bash block under {heading}'
-    return [line.strip() for line in block[2].replace('\\\n', '').splitlines() if line.strip()]
+    return textwrap.dedent(block[2])
+
+
+def bash_commands(path, heading):
+    return [line.strip() for line in fence_text(path, heading).replace('\\\n', '').splitlines() if line.strip()]
 
 
 def assert_passes_model(args, model, message):
@@ -64,43 +68,121 @@ def test_worker_prompt_gate_command_follows_the_gate_default():
     assert_passes_model(commands[0], model, f'{FRAGMENT.name}: the review command must pass --model {model}')
 
 
-@pytest.mark.usefixtures('gate')
-def test_doc_stub_run_writes_only_a_fresh_output(tmp_path):
-    commands = bash_commands(DOC, '## Moving a city to a new gate model')
-    assert len(commands) == 1, f'{DOC.name}: expected one stub-run command in the gate model recipe'
-    bindir, scratch, record = tmp_path / 'bin', tmp_path / 'scratch', tmp_path / 'record.txt'
+@pytest.fixture
+def command_env(tmp_path):
+    bindir, city, scratch = (tmp_path / name for name in ('bin', 'city', 'scratch'))
     bindir.mkdir()
     scratch.mkdir()
-    (bindir / 'codex-gate.sh').symlink_to(SCRIPT)
-    (bindir / 'codex').write_text('#!/bin/sh\nexit 97\n')  # a run that loses the stub never reaches a real CLI
-    (bindir / 'codex').chmod(0o755)
+    installed = city / 'assets/ops/mayor-tools/codex-gate.sh'
+    installed.parent.mkdir(parents=True)
+    installed.symlink_to(bindir / 'codex-gate.sh')
+    fallback = bindir / 'codex'
+    fallback.write_text('#!/bin/sh\necho fallback >> "$UNEXPECTED_CALLS"\nexit 97\n')
+    fallback.chmod(0o755)
+    env = {
+        'HOME': str(tmp_path), 'TMPDIR': str(scratch), 'GC_CITY_PATH': str(city),
+        'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
+        'UNEXPECTED_CALLS': str(tmp_path / 'unexpected-calls'),
+        'STUB_DIR': str(tmp_path), 'NEW_MODEL': gate_default_model(),
+        'PROMPT_FILE': str(tmp_path / 'prompt file.txt'),
+        'REPO': str(tmp_path / 'repo'), 'REPO_DIR': str(tmp_path / 'repo'),
+        'REVIEW_OUTPUT': str(tmp_path / 'real record'), 'REVIEW_BASE': 'review-base',
+        'REVIEW_CLASS': 'STANDARD',
+    }
+    assert Path(env['GC_CITY_PATH']).resolve().parent == tmp_path.resolve()
+    return env
+
+
+@pytest.fixture
+def run_probe(tmp_path, command_env):
+    (tmp_path / 'bin/codex-gate.sh').symlink_to(SCRIPT)
+    record = Path(command_env['REVIEW_OUTPUT'])
     record.write_text('VERDICT: BLOCK\n')
     Path(f'{record}.log').write_text('the real transcript\n')
-    initial_path = str(bindir) + os.pathsep + os.environ['PATH']
-    env = {
-        'PATH': initial_path,
-        'TMPDIR': str(scratch),
-        'STUB_DIR': str(tmp_path),
-        'PROMPT_FILE': str(tmp_path / 'prompt file.txt'),
-        'REPO': str(tmp_path / 'repo'),
-        'REVIEW_OUTPUT': str(record),
-        'CAPTURE': str(tmp_path / 'capture.json'),
-        'ANSWER': 'VERDICT: CLEAN\n',
-    }
-    message = f'{DOC.name}: the stub run must leave a real record and its log alone'
-    for run_number in (1, 2):
-        result = subprocess.run(
-            ['bash', '-c', commands[0] + '\nstatus=$?\nprintf %s "$PATH"\nexit "$status"'],
-            text=True, capture_output=True, timeout=10, env=env,
-        )
-        assert result.returncode == 0, f'{DOC.name}: the stub run exited {result.returncode}: {result.stderr}'
-        assert result.stdout == initial_path, f'{DOC.name}: the stub PATH must apply to the stub run alone'
-        assert record.read_text() == 'VERDICT: BLOCK\n', message
-        assert Path(f'{record}.log').read_text() == 'the real transcript\n', message
-        args = json.loads((tmp_path / 'capture.json').read_text())['args']
-        assert args[args.index('-m') + 1] == gate_default_model()
-        answers = [p.read_text() for p in scratch.iterdir() if p.suffix != '.log']
-        assert answers == [env['ANSWER']] * run_number, f'{DOC.name}: each stub run must write a fresh mktemp output'
+    fence = fence_text(DOC, '## Moving a city to a new gate model')
+
+    def run(*, prelude='', tail=''):
+        script = '\n'.join(part for part in (prelude, fence, tail) if part)
+        script += '\nstatus=$?\nprintf "PATH-AFTER=%s\\n" "$PATH"\nexit "$status"'
+        return subprocess.run(['bash', '-c', script], env=command_env, cwd=tmp_path,
+                              capture_output=True, text=True, timeout=10)
+    return run
+
+
+def assert_original_record(env):
+    record = Path(env['REVIEW_OUTPUT'])
+    assert record.read_text() == 'VERDICT: BLOCK\n', 'the probe replaced the real verdict'
+    assert Path(f'{record}.log').read_text() == 'the real transcript\n'
+
+
+def probe_records(result, env, models):
+    records = [Path(p) for p in re.findall(r"^.*the stub's record is (.+)$", result.stdout, re.M)]
+    assert len(records) == len(models), f'expected {len(models)} named records: {result.stderr}'
+    assert len(set(records)) == len(records)
+    calls = []
+    for path, model in zip(records, models):
+        assert path.resolve().parent == Path(env['TMPDIR']).resolve()
+        args = json.loads(path.read_text())['args']
+        assert args[args.index('-m') + 1] == model
+        assert [a for a in args if a.startswith('review_model=')] == [f'review_model="{model}"']
+        calls.append(args)
+    return calls
+
+
+@pytest.mark.usefixtures('gate')
+def test_gate_probe_reports_the_model_each_caller_sends(command_env, run_probe):
+    model = command_env['NEW_MODEL']
+    worker = fence_text(FRAGMENT, '## Codex gates')
+    assert worker.count(f'--model {model}') == 1
+    scratch = Path(command_env['TMPDIR'])
+    for worker_model in (model, 'previous-gate-model'):
+        existing = set(scratch.iterdir())
+        caller = worker.replace(f'--model {model}', f'--model {worker_model}')
+        result = run_probe(tail='gate_probe ' + caller)
+        assert_original_record(command_env)
+        assert result.stdout.splitlines()[-1] == 'PATH-AFTER=' + command_env['PATH']
+        reports = [line for line in result.stdout.splitlines() if line.startswith('gate_probe: -m ')]
+        expected = [f'gate_probe: -m {m}, review_model {m}: ' + ('OK' if m == model else 'STALE')
+                    for m in (model, worker_model)]
+        assert reports == expected, f'expected reports for default and worker: {result.stderr}'
+        assert result.returncode == (0 if worker_model == model else 1)
+        default_args, worker_args = probe_records(result, command_env, [model, worker_model])
+        assert Path(command_env['PROMPT_FILE']).read_text().strip() in default_args[-1]
+        assert 'Inspect git diff ' in worker_args[-1]
+        fresh = set(scratch.iterdir()) - existing
+        assert sum(p.read_text() == 'VERDICT: CLEAN\n' for p in fresh if p.suffix != '.log') == 2
+        assert not Path(command_env['UNEXPECTED_CALLS']).exists()
+
+
+@pytest.mark.usefixtures('gate')
+@pytest.mark.parametrize('stub', ['empty', 'non-executable', 'function'])
+def test_gate_probe_refuses_an_unusable_stub(tmp_path, command_env, run_probe, stub):
+    prelude = ''
+    if stub == 'function':
+        prelude = 'codex() { echo function >> "$UNEXPECTED_CALLS"; return 97; }; export -f codex'
+    else:
+        directory = tmp_path / stub
+        directory.mkdir()
+        command_env['STUB_DIR'] = str(directory)
+        if stub == 'non-executable':
+            binary = directory / 'codex'
+            binary.write_bytes((tmp_path / 'codex').read_bytes())
+            binary.chmod(0o644)
+    result = run_probe(prelude=prelude)
+    calls = Path(command_env['UNEXPECTED_CALLS'])
+    assert not calls.exists(), f'unexpected codex call: {calls.read_text().strip()}'
+    assert result.returncode != 0
+    assert len(result.stderr.splitlines()) == 1
+    assert_original_record(command_env)
+    assert not list(Path(command_env['TMPDIR']).iterdir())
+
+
+@pytest.mark.usefixtures('gate')
+def test_gate_probe_names_its_own_record(command_env, run_probe):
+    assert 'CAPTURE' not in command_env
+    result = run_probe()
+    probe_records(result, command_env, [command_env['NEW_MODEL']])
+    assert result.returncode == 0
 
 
 @pytest.fixture
