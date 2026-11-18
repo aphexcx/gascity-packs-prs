@@ -1,0 +1,92 @@
+[
+  {
+    "label": "pair-1-base",
+    "uptime": "23:44  up 7 days, 11:08, 5 users, load averages: 29.62 18.92 14.43",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "exit": 2,
+    "elapsed": 10.96,
+    "summary": [
+      "# tests 91",
+      "# pass 89",
+      "# fail 2",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up",
+      "not ok 50 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [
+      "# 256 MiB, 100 warm decisions: p95=1.793ms",
+      "# 256 MiB, 20 complete hook processes: p95=164.439ms"
+    ],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "pair-1-head",
+    "uptime": "23:45  up 7 days, 11:08, 5 users, load averages: 31.27 19.81 14.82",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "exit": 2,
+    "elapsed": 588.05,
+    "summary": [
+      "# tests 91",
+      "# pass 89",
+      "# fail 1",
+      "# skipped 1",
+      "2978 passed, 131 skipped, 2 warnings, 10734 subtests passed in 571.69s (0:09:31)"
+    ],
+    "failures": [
+      "not ok 50 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": [
+      "Test summary: reachable=1; Python=0 (0=pass, nonzero=fail)"
+    ]
+  },
+  {
+    "label": "pair-2-base",
+    "uptime": "23:56  up 7 days, 11:19, 5 users, load averages: 7.22 8.21 10.57",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "exit": 2,
+    "elapsed": 20.89,
+    "summary": [
+      "# tests 91",
+      "# pass 89",
+      "# fail 2",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up",
+      "not ok 50 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [
+      "# 256 MiB, 100 warm decisions: p95=50.474ms",
+      "# 256 MiB, 20 complete hook processes: p95=153.966ms"
+    ],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "pair-2-head",
+    "uptime": "23:56  up 7 days, 11:19, 5 users, load averages: 7.47 8.18 10.50",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "exit": 2,
+    "elapsed": 689.95,
+    "summary": [
+      "# tests 91",
+      "# pass 89",
+      "# fail 1",
+      "# skipped 1",
+      "2978 passed, 131 skipped, 2 warnings, 10734 subtests passed in 669.69s (0:11:09)"
+    ],
+    "failures": [
+      "not ok 50 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": [
+      "Test summary: reachable=1; Python=0 (0=pass, nonzero=fail)"
+    ]
+  }
+]

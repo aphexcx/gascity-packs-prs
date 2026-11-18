@@ -1,0 +1,88 @@
+TAP version 13
+# Subtest: 5: an exemption ignores future inbounds until explicitly removed
+ok 1 - 5: an exemption ignores future inbounds until explicitly removed
+  ---
+  duration_ms: 41.5285
+  type: 'test'
+  ...
+# Subtest: 11: an expired measurement never refuses and state-lock contention fails open
+ok 2 - 11: an expired measurement never refuses and state-lock contention fails open
+  ---
+  duration_ms: 6.256292
+  type: 'test'
+  ...
+# Subtest: 11: malformed hook stdin fails open and records one error using the installed city argument
+ok 3 - 11: malformed hook stdin fails open and records one error using the installed city argument
+  ---
+  duration_ms: 111.507584
+  type: 'test'
+  ...
+# Subtest: 3,4: a historical mayor wake identifies an old session reply after handoff
+ok 4 - 3,4: a historical mayor wake identifies an old session reply after handoff
+  ---
+  duration_ms: 0.186292
+  type: 'test'
+  ...
+# Subtest: 4: age expiry and an unrelated reaction do not stand in for words
+ok 5 - 4: age expiry and an unrelated reaction do not stand in for words
+  ---
+  duration_ms: 0.093583
+  type: 'test'
+  ...
+# Subtest: 13: duplicate Stop without a prompt ID cannot clear an intervening inbound
+ok 6 - 13: duplicate Stop without a prompt ID cannot clear an intervening inbound
+  ---
+  duration_ms: 0.171583
+  type: 'test'
+  ...
+# Subtest: 15: first install always starts observe; reinstall preserves an explicit mode
+ok 7 - 15: first install always starts observe; reinstall preserves an explicit mode
+  ---
+  duration_ms: 24.358583
+  type: 'test'
+  ...
+# Subtest: 16: uninstall preserves a later hook added to the same matcher and rejects symlinked settings
+ok 8 - 16: uninstall preserves a later hook added to the same matcher and rejects symlinked settings
+  ---
+  duration_ms: 4.920792
+  type: 'test'
+  ...
+# Subtest: 9: aliases come from all four pack rows, including a locally renamed directory
+ok 9 - 9: aliases come from all four pack rows, including a locally renamed directory
+  ---
+  duration_ms: 2.330833
+  type: 'test'
+  ...
+# Subtest: 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
+not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
+  ---
+  duration_ms: 3183.767417
+  type: 'test'
+  location: '<clone>/reachable/test/bounds.test.cjs:110:1'
+  failureType: 'testCodeFailure'
+  error: 'CLI p95 120.24504100000013ms'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (<clone>/reachable/test/bounds.test.cjs:140:10)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# 256 MiB, 100 warm decisions: p95=1.458ms
+# 256 MiB, 20 complete hook processes: p95=120.245ms
+1..10
+# tests 10
+# suites 0
+# pass 9
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3502.411125

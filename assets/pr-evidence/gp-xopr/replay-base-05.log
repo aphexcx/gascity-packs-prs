@@ -1,0 +1,72 @@
+TAP version 13
+# Subtest: review 4: archive replay advances in bounded chunks without dropping rows
+not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows
+  ---
+  duration_ms: 3079.912625
+  type: 'test'
+  location: '/private<tmp>/base/reachable/test/review.test.cjs:97:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Command failed: <clone> -e (function archiveWorker() {
+      const fs = require('node:fs');
+      const zlib = require('node:zlib');
+      const input = fs.createReadStream(process.argv[1]);
+      const stream = input.pipe(zlib.createGunzip());
+      let skip = Number(process.argv[2]), left = Number(process.argv[3]);
+      input.on('error', () => process.exit(1));
+      stream.on('error', () => process.exit(1));
+      stream.on('data', chunk => {
+        const n = Math.min(skip, chunk.length); skip -= n; chunk = chunk.subarray(n);
+        const part = chunk.subarray(0, left); left -= part.length;
+        for (let written = 0; written < part.length;) written += fs.writeSync(1, part.subarray(written));
+        if (!left) { input.destroy(); stream.destroy(); }
+      });
+    })() <tmp> 110118484 8388608
+    node:internal/fs/utils:349
+        throw err;
+        ^
+
+    Error: EAGAIN: resource temporarily unavailable, write
+        at Object.writeSync (node:fs:977:3)
+        at Gunzip.<anonymous> ([eval]:12:65)
+        at Gunzip.emit (node:events:514:28)
+        at addChunk (node:internal/streams/readable:568:12)
+        at readableAddChunkPushByteMode (node:internal/streams/readable:519:3)
+        at Readable.push (node:internal/streams/readable:399:5)
+        at Zlib.processCallback (node:zlib:550:32) {
+      errno: -35,
+      syscall: 'write',
+      code: 'EAGAIN'
+    }
+
+    Node.js v24.21.0
+
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    Object.writeSync (node:fs:977:3)
+    Gunzip.<anonymous> ([eval]:12:65)
+    Gunzip.emit (node:events:514:28)
+    addChunk (node:internal/streams/readable:568:12)
+    readableAddChunkPushByteMode (node:internal/streams/readable:519:3)
+    Readable.push (node:internal/streams/readable:399:5)
+    Zlib.processCallback (node:zlib:550:32) {
+    genericNodeError (node:internal/errors:986:15)
+    wrappedFn (node:internal/errors:540:14)
+    checkExecSyncError (node:child_process:942:11)
+    execFileSync (node:child_process:978:15)
+    archiveSlice (/private<tmp>/base/reachable/reachable.cjs:60:10)
+    readEvents (/private<tmp>/base/reachable/reachable.cjs:161:26)
+    TestContext.<anonymous> (/private<tmp>/base/reachable/test/review.test.cjs:106:20)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3156.2385
