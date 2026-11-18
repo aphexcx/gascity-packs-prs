@@ -122,9 +122,13 @@ what breaks it, with examples from main.
   gchat/adapter/internal/principal/principal_test.go:16, the token at
   slack-channel/adapter/config_test.go:11, and the secrets file every city
   keeps under $GC_CITY_PATH at whatsapp/README.md:108. A line the diff
-  does not add or change is not a finding of the diff. A line the diff
-  adds or changes is judged by what it shows and to whom, even when the
-  same value already appears somewhere on the base branch. A private value
+  does not add or change is not a finding of the diff, unless the diff
+  changes what that line does or who it reaches. A line the diff adds or
+  changes is judged by what the change itself newly shows and to whom,
+  even when the same value already appears somewhere else on the base
+  branch. A value that the same line already held on the base branch,
+  still shown to the same audience, is reported once as already on the
+  base and is never graded above NOTE for this diff. A private value
   the diff adds is MAJOR, and CRITICAL when it is text a person sent or a
   key's or a token's value. A key or a token in the shape its provider
   issues (a Slack token's full length, a private key's block) is graded as
