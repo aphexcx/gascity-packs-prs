@@ -29,8 +29,9 @@ def fence_text(path, heading):
     return textwrap.dedent(block[2])
 
 
-def bash_commands(path, heading):
-    return [line.strip() for line in fence_text(path, heading).replace('\\\n', '').splitlines() if line.strip()]
+def documented_argv(text, env):
+    lines = text.replace('\\\n', '').splitlines()
+    return [shlex.split(line, comments=True)[1:] for line in lines if line.strip()]
 
 
 def assert_passes_model(args, model, message):
@@ -39,14 +40,14 @@ def assert_passes_model(args, model, message):
     assert args[index:index + 1] == [model], message
 
 
-def test_doc_examples_and_cli_pins_follow_the_gate_default():
+def test_doc_examples_and_cli_pins_follow_the_gate_default(command_env):
     model = gate_default_model()
-    examples = [shlex.split(line, comments=True) for line in bash_commands(DOC, '## Gate helper')]
-    assert [args[:2] for args in examples] == [
-        ['codex-gate.sh', 'review'], ['codex-gate.sh', 'exec'],
-    ], f'{DOC.name}: expected the review and exec examples under Gate helper'
+    examples = documented_argv(fence_text(DOC, '## Gate helper'), command_env)
+    assert [args[:1] for args in examples] == [['review'], ['exec']], (
+        f'{DOC.name}: expected the review and exec examples under Gate helper'
+    )
     for args in examples:
-        assert_passes_model(args, model, f'{DOC.name}: the {args[1]} example must pass --model {model}')
+        assert_passes_model(args, model, f'{DOC.name}: the {args[0]} example must pass --model {model}')
 
     pin = r'@openai/codex@([^\s`\'"]+)'
     versions = re.findall(pin, README.read_text(encoding='utf-8'))
@@ -59,13 +60,22 @@ def test_doc_examples_and_cli_pins_follow_the_gate_default():
     )
 
 
-def test_worker_prompt_gate_command_follows_the_gate_default():
+def test_worker_prompt_gate_command_follows_the_gate_default(command_env):
     model = gate_default_model()
-    commands = [shlex.split(line, comments=True) for line in bash_commands(FRAGMENT, '## Codex gates')]
-    assert len(commands) == 1 and commands[0][1:2] == ['review'], (
+    commands = documented_argv(fence_text(FRAGMENT, '## Codex gates'), command_env)
+    assert len(commands) == 1 and commands[0][:1] == ['review'], (
         f'{FRAGMENT.name}: expected one review command under Codex gates'
     )
     assert_passes_model(commands[0], model, f'{FRAGMENT.name}: the review command must pass --model {model}')
+
+
+@pytest.mark.parametrize('tail', ['--model {model}#old', '# --model {model}'])
+def test_pin_reader_sees_what_bash_passes(command_env, tail):
+    model = gate_default_model()
+    command = 'codex-gate.sh exec "$PROMPT_FILE" ' + tail.format(model=model)
+    args, = documented_argv(command, command_env)
+    with pytest.raises(AssertionError, match='expected the exact model'):
+        assert_passes_model(args, model, 'expected the exact model')
 
 
 @pytest.fixture
