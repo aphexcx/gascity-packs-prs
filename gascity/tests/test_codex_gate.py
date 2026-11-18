@@ -164,14 +164,14 @@ def test_gate_probe_reports_the_model_each_caller_sends(command_env, run_probe):
         reports = [line for line in result.stdout.splitlines() if line.startswith('gate_probe: -m ')]
         expected = [f'gate_probe: -m {m}, review_model {m}: ' + ('OK' if m == model else 'STALE')
                     for m in (model, worker_model)]
-        assert reports == expected, f'expected reports for default and worker: {result.stderr}'
+        assert reports == expected, f'expected {expected[-1]} from the worker: {result.stderr}'
         assert result.returncode == (0 if worker_model == model else 1)
         default_args, worker_args = probe_records(result, command_env, [model, worker_model])
         assert Path(command_env['PROMPT_FILE']).read_text().strip() in default_args[-1]
-        assert 'Inspect git diff ' in worker_args[-1]
         fresh = set(scratch.iterdir()) - existing
         assert sum(p.read_text() == 'VERDICT: CLEAN\n' for p in fresh if p.suffix != '.log') == 2
         assert not Path(command_env['UNEXPECTED_CALLS']).exists()
+    assert 'Inspect git diff ' in worker_args[-1]
 
 
 @pytest.mark.usefixtures('gate')
