@@ -30,12 +30,12 @@ ____________ test_pr_body_lines_note_carries_every_fact_of_its_bead ____________
 >       note = pr_body_lines_note()
                ^^^^^^^^^^^^^^^^^^^^
 
-tests/test_gc_standing_notes_fragment.py:149: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_standing_notes_fragment.py:149:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/test_gc_standing_notes_fragment.py:61: in pr_body_lines_note
     return note("THE PR BODY LINES")
            ^^^^^^^^^^^^^^^^^^^^^^^^^
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 marker = 'THE PR BODY LINES'
 
@@ -113,7 +113,7 @@ gc_test_bin = PosixPath('<GC_TEST_BIN>')
             gc_test_bin, tmp_path / "both", gascity_pack=REPO_ROOT / "gascity",
             prompt=f"{ROLE_CALL}\n\n{STANDING_NOTES_CALL}\n",
         )
-    
+
         for result in (role_only, both):
             assert result.returncode == 0, result.stderr
             assert "gc: prompt template" not in result.stderr, result.stderr

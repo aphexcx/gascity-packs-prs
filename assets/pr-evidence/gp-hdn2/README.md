@@ -30,7 +30,8 @@ env -i PATH="$PATH" HOME="$HOME" TMPDIR="$TMPDIR" GC_TEST_BIN=<gc> \
 
 The six reds are the new tests, each failing for the missing note or README
 sentence (the `E` lines in `red.txt`). In `red.txt` two lines of pytest's
-locals dump are scrubbed to `<TMPDIR>` and `<GC_TEST_BIN>`.
+locals dump are scrubbed to `<TMPDIR>` and `<GC_TEST_BIN>`, and trailing
+spaces are stripped from four lines so `git diff --check` passes.
 
 A `make test` in the lane's own worktree also ran: 1 failed,
 `tests/test_default_branch_resolution.py::DefaultBranchResolutionTest::test_the_superseded_pipeline_is_gone_from_every_asset`.
