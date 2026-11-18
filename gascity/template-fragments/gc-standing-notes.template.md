@@ -50,12 +50,16 @@ How to revert: <the one command that undoes the change once merged>
 - On the testing line, write `none: <why>` when you ran none.
 - On the risk line, the tier comes from your city's written list of paths by
   risk tier: the highest tier of any path the diff touches, and that path;
-  without such a list, write `not tiered` and the highest-risk path the diff
-  touches.
-- On the revert line, name the commit the base branch will carry (the PR's
-  merge or squash commit), never a branch commit the merge may not keep; when
-  no command undoes all of the change, say what a revert would leave behind: a
+  without such a list, or when no path the diff touches is on it, write
+  `not tiered` and the highest-risk path the diff touches.
+- On the revert line, the command runs after the merge, so name the commit
+  through the PR (the revert of this PR's merge or squash commit, which has no
+  sha until the merge), never a branch commit the merge may not keep; when no
+  command undoes all of the change, say what a revert would leave behind: a
   migration that ran, a deploy, a message sent.
+- On every line, write a secret (a token, a key, a password) as a placeholder
+  such as `<token>`, never its value: the body is read by everyone who can see
+  the PR.
 
 A later round that updates the body rewrites the three lines for its own head
 and keeps them after every other section. Keep the labels exactly as written:
