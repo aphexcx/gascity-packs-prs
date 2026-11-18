@@ -125,7 +125,7 @@ For root tests, Gas City roles and worker scripts run the Gas City check (about 
 verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider'
 ```
 
-For handoff, run all fourteen Python directories selected by CI. Every Python test command disables pytest’s cache because cache files written inside a pack appear in its packaging inventory.
+For handoff, run all fourteen Python directories selected by CI (about nine minutes). Start with a clean checkout if a previous run left a pytest cache inside a packaged skill. Every Python test command disables pytest’s cache because those files appear in the pack’s inventory.
 
 ```sh
 verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q -p no:cacheprovider
