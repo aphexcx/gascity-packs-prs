@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import textwrap
 
@@ -30,8 +29,19 @@ def fence_text(path, heading):
 
 
 def documented_argv(text, env):
-    lines = text.replace('\\\n', '').splitlines()
-    return [shlex.split(line, comments=True)[1:] for line in lines if line.strip()]
+    scratch = Path(env['TMPDIR'])
+    capture = scratch / 'helper-args.jsonl'
+    recorder = Path(env['HOME']) / 'bin/codex-gate.sh'
+    recorder.write_text('''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['CAPTURE'], 'a') as stream:
+    print(json.dumps(sys.argv[1:]), file=stream)
+''')
+    recorder.chmod(0o755)
+    subprocess.run(['bash', '-ec', text], cwd=scratch, env={**env, 'CAPTURE': str(capture)},
+                   capture_output=True, text=True, timeout=10, check=True)
+    assert not Path(env['UNEXPECTED_CALLS']).exists()
+    return [json.loads(line) for line in capture.read_text().splitlines()]
 
 
 def assert_passes_model(args, model, message):
