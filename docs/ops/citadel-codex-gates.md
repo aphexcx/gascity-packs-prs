@@ -115,7 +115,14 @@ An installed helper whose `model=` line still names the previous model passes th
 2. Search the installed gate helper and every script that calls it for `model=`, `--model` and the previous ID. Update each pin.
 3. In `city.toml`, check the `codex-astra` provider's model default and any `-m` or `--model` flags in its `command` and `resume_command`.
 4. Run the installed helper with its callers' usual flags, adding `--dry-run` to print the Codex command without running it. Check for the new ID after `-m` and in `review_model=`.
-   For a helper without `--dry-run`, such as the repository copy, put a stub `codex` first on `PATH` to record the arguments, as in `gascity/tests/test_codex_gate.py`. Calling Codex through its home alone checks only the profile.
+   For a helper without `--dry-run`, such as the repository copy, put a stub `codex` that records its arguments in `STUB_DIR`, as in `gascity/tests/test_codex_gate.py`, and run the helper once on that `PATH` with a fresh output of its own.
+
+   ```bash
+   PATH="${STUB_DIR:?}:$PATH" codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$(mktemp "${TMPDIR:-/tmp}/gate-stub.XXXXXX")"
+   ```
+
+   Reserve the fresh path for the stub run. The helper empties `--output` and its `.log` before it calls Codex, so reusing a real record’s path could erase the verdict and its transcript or replace them with the stub’s output.
+   Calling Codex through its home alone checks only the profile.
 
 ## Local ego-browser override and provider handoff
 
