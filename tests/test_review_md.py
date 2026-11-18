@@ -214,6 +214,11 @@ FULL_TEXT = """\
 
 - MAJOR: a fault.
 
+A fault this file gives no other grade takes the grade of its effect. A
+finding the reviewer cannot place is marked UNKNOWN and keeps the grade
+beside it. It counts at that grade for the verdict, whatever label a brief
+adds, until the mayor settles it.
+
 ## What not to report
 
 - What a CI job itself prints.
@@ -260,29 +265,6 @@ def test_trailing_whitespace_and_crlf_are_not_problems() -> None:
     assert review_md_problems(text.replace("\n", "\r\n")) == []
 
 
-def test_a_heading_or_date_inside_an_html_comment_does_not_count() -> None:
-    text = FULL_TEXT.replace(
-        "## Pruning\n\nPrune by: 2027-02-17\n",
-        "<!--\n## Pruning\n\nPrune by: 2027-02-17\n-->\n",
-    )
-    assert review_md_problems(text) == [
-        "missing heading '## Pruning'",
-        "no 'Prune by: YYYY-MM-DD' line with a real date",
-    ]
-
-
-def test_a_heading_or_date_inside_a_code_fence_does_not_count() -> None:
-    for fence in ("```", "~~~"):
-        text = FULL_TEXT.replace(
-            "## Pruning\n\nPrune by: 2027-02-17\n",
-            f"{fence}\n## Pruning\n\nPrune by: 2027-02-17\n{fence}\n",
-        )
-        assert review_md_problems(text) == [
-            "missing heading '## Pruning'",
-            "no 'Prune by: YYYY-MM-DD' line with a real date",
-        ], fence
-
-
 def test_a_deeper_heading_does_not_stand_in_for_a_required_one() -> None:
     text = FULL_TEXT.replace("## What not to report", "### What not to report")
     assert review_md_problems(text) == ["missing heading '## What not to report'"]
@@ -296,6 +278,7 @@ def test_prune_by_line_needs_a_real_iso_date() -> None:
         "Prune by: soon",
         "Prune by:2027-02-17",
         "Prune by: 2027-02-17 [drafter's judgment]",
+        "Prune by: 2027-02-17.",
     )
     for bad_line in bad_lines:
         text = FULL_TEXT.replace("Prune by: 2027-02-17", bad_line)
@@ -338,10 +321,19 @@ NO_ALWAYS_REPORTED = (
     f"'## What not to report' has no item that begins {REPORTED_SENTENCE!r}"
 )
 NO_BY_HAND = f"'## What not to report' has no item that begins {BY_HAND_SENTENCE!r}"
-PRUNING_HIDDEN = [
-    "missing heading '## Pruning'",
-    "no 'Prune by: YYYY-MM-DD' line with a real date",
-]
+PAIR = (
+    "A finding the reviewer cannot place is marked UNKNOWN and keeps the grade "
+    "beside it. It counts at that grade for the verdict, whatever label a brief "
+    "adds, until the mayor settles it."
+)
+PAIR_LINES = (
+    "A fault this file gives no other grade takes the grade of its effect. A\n"
+    "finding the reviewer cannot place is marked UNKNOWN and keeps the grade\n"
+    "beside it. It counts at that grade for the verdict, whatever label a brief\n"
+    "adds, until the mayor settles it.\n"
+)
+NO_PAIR = f"'## What MAJOR means here' has no paragraph with {PAIR!r}"
+PRUNING = "## Pruning\n\nPrune by: 2027-02-17\n"
 
 
 def _replaced(text: str, old: str, new: str) -> str:
@@ -350,8 +342,23 @@ def _replaced(text: str, old: str, new: str) -> str:
 
 
 def _pruning_wrapped(before: str, after: str) -> str:
-    section = "## Pruning\n\nPrune by: 2027-02-17\n"
-    return _replaced(FULL_TEXT, section, before + section + after)
+    return _replaced(FULL_TEXT, PRUNING, before + PRUNING + after)
+
+
+def _line_number(text: str, line: str) -> int:
+    numbers = [n for n, found in enumerate(text.splitlines(), 1) if found == line]
+    assert numbers, line
+    return numbers[0]
+
+
+def _unread_problem(text: str, line: str, shown: str, what: str) -> str:
+    return f"line {_line_number(text, line)} has {shown!r}: {what}, and the checker reads none"
+
+
+HTML = "HTML or a comment can hide text on the page"
+FENCE_LINE = "a code fence keeps the lines in it from reading as rules"
+LINK_DEFINITION = "a link reference definition does not show on the page"
+TABLE = "front matter shows as a table, not as rules"
 
 
 def test_each_always_item_is_required() -> None:
@@ -423,21 +430,39 @@ def test_a_lazy_continuation_line_stays_in_its_item() -> None:
     assert review_md_problems(_replaced(FULL_TEXT, ALWAYS_REPORTED, unindented)) == []
 
 
-def test_hidden_always_items_do_not_count() -> None:
-    for before, after in (("<!--\n", "-->\n"), ("```\n", "```\n"), ("~~~\n", "~~~\n")):
-        text = _replaced(
-            FULL_TEXT, ALWAYS_REPORTED + BY_HAND, before + ALWAYS_REPORTED + BY_HAND + after
-        )
-        assert review_md_problems(text) == [NO_ALWAYS_REPORTED, NO_BY_HAND], before
+def test_an_item_in_another_list_marker_or_with_a_typographic_apostrophe_counts() -> None:
+    # "* " and "+ " open a list item as "- " does; the page shows a curly
+    # apostrophe where a straight one was typed.
+    for marker in ("* ", "+ "):
+        text = FULL_TEXT.replace("\n- ", f"\n{marker}")
+        assert review_md_problems(text) == [], marker
+    curly = _replaced(FULL_TEXT, "reviewer's replacement", "reviewer’s replacement")
+    assert review_md_problems(curly) == []
+
+
+def test_a_heading_with_a_closing_sequence_counts() -> None:
+    for heading in ("## Pruning ##", "## Pruning #####", "##\tPruning", " ## Pruning"):
+        text = _replaced(FULL_TEXT, "## Pruning\n", heading + "\n")
+        assert review_md_problems(text) == [], heading
 
 
 def test_a_heading_that_ends_the_section_ends_its_items() -> None:
-    for heading in ("# Appendix\n\n", " ## Appendix\n\n", "Appendix\n--------\n\n",
-                    "Appendix\n===\n\n"):
+    for heading in ("# Appendix\n\n", " ## Appendix\n\n", "\nAppendix\n--------\n\n",
+                    "\nAppendix\n===\n\n", "\nAppendix\n-\n\n"):
         text = _replaced(
             FULL_TEXT, ALWAYS_REPORTED + BY_HAND, heading + ALWAYS_REPORTED + BY_HAND
         )
         assert review_md_problems(text) == [NO_ALWAYS_REPORTED, NO_BY_HAND], heading
+
+
+def test_a_rule_line_between_items_does_not_end_the_section() -> None:
+    # A line of "-" after a blank line, or under an item's line, is a
+    # thematic break; a line of "=" under an item's line goes on with it.
+    for rule in ("\n---\n\n", "---\n", "\n***\n\n", "===\n", "\n- - -\n\n"):
+        text = _replaced(
+            FULL_TEXT, ALWAYS_REPORTED + BY_HAND, rule + ALWAYS_REPORTED + BY_HAND
+        )
+        assert review_md_problems(text) == [], rule
 
 
 def test_a_deeper_heading_inside_the_section_keeps_its_items() -> None:
@@ -447,90 +472,155 @@ def test_a_deeper_heading_inside_the_section_keeps_its_items() -> None:
     assert review_md_problems(text) == []
 
 
-def test_a_fence_line_ending_in_a_no_break_space_does_not_close_the_fence() -> None:
-    text = _replaced(
-        FULL_TEXT,
-        ALWAYS_REPORTED + BY_HAND,
-        "~~~\n" + ALWAYS_REPORTED + BY_HAND + "~~~\u00a0\n",
+def test_the_unknown_sentences_are_required_in_a_paragraph_of_their_section() -> None:
+    assert review_md_problems(_replaced(FULL_TEXT, PAIR_LINES, "")) == [NO_PAIR]
+    alone = PAIR.replace(" it. It", " it.\nIt") + "\n"
+    assert review_md_problems(_replaced(FULL_TEXT, PAIR_LINES, alone)) == []
+    elsewhere = _replaced(FULL_TEXT, PAIR_LINES, "")
+    elsewhere = _replaced(elsewhere, "- Nothing private.\n", "- Nothing private.\n\n" + alone)
+    assert review_md_problems(elsewhere) == [NO_PAIR]
+    for shape in ("- " + alone, "> " + alone, "    " + alone, "Heading\n" + alone + "---\n"):
+        text = _replaced(FULL_TEXT, PAIR_LINES, shape)
+        assert review_md_problems(text) == [NO_PAIR], shape
+
+
+def test_the_unknown_sentences_are_held_word_for_word_from_a_sentence_start() -> None:
+    changed = (
+        PAIR_LINES.replace("keeps the grade", "drops the grade"),
+        PAIR_LINES.replace("whatever label a brief\nadds", "unless a brief\nsays"),
+        PAIR_LINES.replace("It counts", "It never counts"),
+        PAIR_LINES.replace("effect. A\nfinding", "effect. Never: a\nfinding"),
+        PAIR_LINES.replace("effect. A\nfinding", "effect, unless a\nfinding"),
+        PAIR_LINES.replace("beside it. It", "beside it.\n\nIt"),
     )
+    for lines in changed:
+        assert lines != PAIR_LINES, lines
+        text = _replaced(FULL_TEXT, PAIR_LINES, lines)
+        assert review_md_problems(text) == [NO_PAIR], lines
+
+
+def test_comments_are_not_read() -> None:
+    cases = (
+        ("<!--\n", "-->\n", "<!--", "<!--"),
+        ("<!-- a note -->\n\n", "", "<!-- a note -->", "<!-- a note -->"),
+        ("A note <!-- open\n", "", "A note <!-- open", "<!-- open"),
+        # Two comments on one line: the second opens where the first closes.
+        ("<!-- note --> <!--\n", "-->\n", "<!-- note --> <!--", "<!-- note -->"),
+        ("<!--\nold\n--> <!--\n", "-->\n", "<!--", "<!--"),
+        ("Use the `<!--` marker.\n\n", "", "Use the `<!--` marker.", "<!--` marker."),
+    )
+    for before, after, line, shown in cases:
+        text = _pruning_wrapped(before, after)
+        problems = review_md_problems(text)
+        assert problems[0] == _unread_problem(text, line, shown, HTML), before
+        assert all(problem.startswith("line ") for problem in problems), before
+    text = _replaced(FULL_TEXT, "## Pruning\n", "## Pruning <!-- a note -->\n")
     assert review_md_problems(text) == [
-        "missing heading '## Triggers (rules a diff can show)'",
+        _unread_problem(text, "## Pruning <!-- a note -->", "<!-- a note -->", HTML),
         "missing heading '## Pruning'",
-        NO_ALWAYS_REPORTED,
-        NO_BY_HAND,
-        "no 'Prune by: YYYY-MM-DD' line with a real date",
     ]
 
 
-def test_a_shorter_fence_line_does_not_close_a_longer_fence() -> None:
-    text = _pruning_wrapped("````\n```\n", "````\n")
-    assert review_md_problems(text) == PRUNING_HIDDEN
+def test_hidden_always_items_are_red() -> None:
+    for before, after in (
+        ("<!--\n", "-->\n"),
+        ("<!-- note --> <!--\n", "-->\n"),
+        ("```\n", "```\n"),
+        ("~~~\n", "~~~\n"),
+        ("<?\n", "?>\n"),
+    ):
+        text = _replaced(
+            FULL_TEXT, ALWAYS_REPORTED + BY_HAND, before + ALWAYS_REPORTED + BY_HAND + after
+        )
+        problems = review_md_problems(text)
+        number = _line_number(text, before.rstrip("\n"))
+        assert problems[0].startswith(f"line {number} has "), before
 
 
-def test_a_fence_line_with_text_after_it_does_not_close_the_fence() -> None:
-    text = _pruning_wrapped("```\n```text\n", "```\n")
-    assert review_md_problems(text) == PRUNING_HIDDEN
-
-
-def test_an_unclosed_html_comment_hides_the_rest_of_the_file() -> None:
-    assert review_md_problems(_pruning_wrapped("<!--\n", "")) == PRUNING_HIDDEN
-
-
-def test_an_open_comment_inside_a_line_hides_the_rest_for_the_checker() -> None:
-    # Stricter than the page, which shows "A note <!-- open" as text: where
-    # the checker is unsure what renders, it hides more, so it fails red.
-    assert review_md_problems(_pruning_wrapped("A note <!-- open\n", "")) == (
-        PRUNING_HIDDEN
+def test_html_is_not_read() -> None:
+    cases = (
+        ("<?\n", "<?"),
+        ("<![CDATA[\n", "<![CDATA["),
+        ("<!X\n", "<!X"),
+        ("<div>\n", "<div>"),
+        ("  <DIV class=x>\n", "<DIV class=x>"),
+        ("</div>\n", "</div>"),
+        ("<script>\n", "<script>"),
+        ("<details>\n\n</details>\n\n", "<details>"),
+        ("<br>\n", "<br>"),
+        ("Write to <account> here.\n\n", "<account>"),
     )
+    for before, shown in cases:
+        text = _pruning_wrapped(before, "")
+        line = before.split("\n", 1)[0]
+        assert review_md_problems(text)[0] == _unread_problem(text, line, shown, HTML), before
+    # A tag that opens inside a line, above the two items it would fold away.
+    folded = "- What a CI job itself prints. <details><summary>old</summary>\n"
+    text = _replaced(FULL_TEXT, "- What a CI job itself prints.\n", folded)
+    assert review_md_problems(text) == [
+        _unread_problem(text, folded.rstrip("\n"), "<details>", HTML)
+    ]
 
 
-def test_raw_html_hides_the_rest_of_the_file() -> None:
-    openers = (
-        "<?\n",
-        "<?\n?>\n",
-        "<![CDATA[\n",
-        "<!X\n",
-        "<div>\n",
-        "  <DIV class=x>\n",
-        "</div>\n",
-        "<script>\n",
-        "<details>\n\n",
-        "<details>\n\n</details>\n\n",
-    )
-    for opener in openers:
-        assert review_md_problems(_pruning_wrapped(opener, "")) == PRUNING_HIDDEN, opener
-    for item in (ALWAYS_REPORTED, BY_HAND):
-        text = _replaced(FULL_TEXT, item, "<?\n" + item + "?>\n")
-        assert NO_ALWAYS_REPORTED in review_md_problems(text) or NO_BY_HAND in (
-            review_md_problems(text)
-        ), item
-
-
-def test_an_autolink_at_a_line_start_is_not_raw_html() -> None:
+def test_an_autolink_is_read() -> None:
     for link in ("<https://example.com/review>", "<owner@example.com>"):
-        text = _pruning_wrapped(f"{link} has the page.\n\n", "")
-        assert review_md_problems(text) == [], link
+        for before in (f"{link} has the page.\n\n", f"The page is at {link} now.\n\n"):
+            assert review_md_problems(_pruning_wrapped(before, "")) == [], before
+    for not_a_link in ("<!--x@y-->", "<owner@example.com-->"):
+        text = _pruning_wrapped(f"{not_a_link}\n\n", "")
+        number = _line_number(text, not_a_link)
+        assert review_md_problems(text)[0].startswith(f"line {number} has "), not_a_link
+
+
+def test_code_fences_are_not_read() -> None:
+    cases = (
+        ("```\n", "```\n"),
+        ("~~~\n", "~~~\n"),
+        ("````\n```\n", "````\n"),
+        ("```\n```text\n", "```\n"),
+        ("~~~\n", "~~~ \n"),
+        ("    ```\n", ""),
+    )
+    for before, after in cases:
+        text = _pruning_wrapped(before, after)
+        problems = review_md_problems(text)
+        first = before.split("\n", 1)[0]
+        assert problems[0] == _unread_problem(text, first, first.strip(), FENCE_LINE), before
+        assert len(problems) == (before + after).count("\n"), before
+        assert all(problem.startswith("line ") for problem in problems), before
+
+
+def test_a_link_reference_definition_is_not_read() -> None:
+    # Its title can run over lines, and the page shows none of it.
+    hidden = "[x]: /u '\nPrune by: 2027-02-17\n'\n"
+    text = _replaced(FULL_TEXT, "Prune by: 2027-02-17\n", hidden)
+    assert review_md_problems(text) == [
+        _unread_problem(text, "[x]: /u '", "[x]: /u '", LINK_DEFINITION)
+    ]
+    footnote = "[^1]: " + PAIR_LINES
+    text = _replaced(FULL_TEXT, PAIR_LINES, footnote)
+    first = footnote.splitlines()[0]
+    assert review_md_problems(text) == [
+        _unread_problem(text, first, first[:20], LINK_DEFINITION)
+    ]
+
+
+def test_front_matter_is_not_read() -> None:
+    # A first line of "---" opens front matter: the page shows it as a
+    # table, and a line in it that starts with "#" as nothing at all.
+    text = "---\n## Pruning\nPrune by: 2027-02-17\n---\n" + _replaced(FULL_TEXT, PRUNING, "")
+    assert review_md_problems(text) == [
+        f"line 1 has '---': {TABLE}, and the checker reads none"
+    ]
 
 
 def test_only_a_newline_or_a_carriage_return_ends_a_line() -> None:
-    for separator in ("\u2028", "\u2029", "\x0c", "\x0b", "\x1c", "\x85"):
+    for separator in (" ", " ", "\x0c", "\x0b", "\x1c", "\x85"):
         text = _replaced(FULL_TEXT, "\n## Pruning\n", f"{separator}## Pruning\n")
         assert review_md_problems(text) == ["missing heading '## Pruning'"], repr(
             separator
         )
     assert review_md_problems(FULL_TEXT.replace("\n", "\r")) == []
-
-
-def test_an_unclosed_fence_hides_the_rest_of_the_file() -> None:
-    for fence in ("```\n", "~~~\n", "````\n"):
-        assert review_md_problems(_pruning_wrapped(fence, "")) == PRUNING_HIDDEN, fence
-
-
-def test_a_closed_comment_hides_only_itself() -> None:
-    text = _pruning_wrapped("<!-- a note -->\n\n", "")
-    assert review_md_problems(text) == []
-    text = _replaced(FULL_TEXT, "## Pruning\n", "## Pruning <!-- a note -->\n")
-    assert review_md_problems(text) == []
 
 
 class _Disk:
