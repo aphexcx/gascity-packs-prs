@@ -1,0 +1,138 @@
+.F.F...FF..F...........F.......                                          [100%]
+=================================== FAILURES ===================================
+_____________________ test_notes_appear_once_each_in_order _____________________
+
+    def test_notes_appear_once_each_in_order() -> None:
+        text = fragment()
+        for heading, _ in NOTES:
+>           assert text.count(f"\n{heading}") == 1, heading
+E           AssertionError: ## PR body lines
+E           assert 0 == 1
+E            +  where 0 = <built-in method count of str object at 0x7af1d61800>('\n## PR body lines')
+E            +    where <built-in method count of str object at 0x7af1d61800> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...reason). Never run a\nrepository-wide pass from a lane, and never add a new seam with a single\nadapter.\n{{- end }}\n'.count
+
+tests/test_gc_standing_notes_fragment.py:81: AssertionError
+_ test_bead_of_record_is_cited_only_inside_a_template_comment[## PR body lines-gp-hdn2] _
+
+heading = '## PR body lines', bead = 'gp-hdn2'
+
+    @pytest.mark.parametrize(("heading", "bead"), NOTES)
+    def test_bead_of_record_is_cited_only_inside_a_template_comment(heading: str, bead: str) -> None:
+        """The real render without it is proven in the GC_TEST_BIN render test."""
+        text = fragment()
+>       assert f"{heading}{{{{/* Bead of record: {bead}." in text
+E       assert '## PR body lines{{/* Bead of record: gp-hdn2.' in '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...reason). Never run a\nrepository-wide pass from a lane, and never add a new seam with a single\nadapter.\n{{- end }}\n'
+
+tests/test_gc_standing_notes_fragment.py:90: AssertionError
+____________ test_pr_body_lines_note_carries_every_fact_of_its_bead ____________
+
+    def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
+>       note = pr_body_lines_note()
+               ^^^^^^^^^^^^^^^^^^^^
+
+tests/test_gc_standing_notes_fragment.py:149: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_standing_notes_fragment.py:61: in pr_body_lines_note
+    return note("THE PR BODY LINES")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+marker = 'THE PR BODY LINES'
+
+    def note(marker: str) -> str:
+        """One note's text, from its marker to the next heading, on one line."""
+        text = fragment()
+>       assert text.count(marker) == 1
+E       assert 0 == 1
+E        +  where 0 = <built-in method count of str object at 0x7af1d62800>('THE PR BODY LINES')
+E        +    where <built-in method count of str object at 0x7af1d62800> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...reason). Never run a\nrepository-wide pass from a lane, and never add a new seam with a single\nadapter.\n{{- end }}\n'.count
+
+tests/test_gc_standing_notes_fragment.py:52: AssertionError
+____ test_pr_body_lines_note_shows_each_label_once_at_a_line_start_in_order ____
+
+    def test_pr_body_lines_note_shows_each_label_once_at_a_line_start_in_order() -> None:
+        """The render test proves the same on real gc output; this one runs
+        everywhere."""
+        text = renderable(fragment()).split("THE PR BODY LINES", 1)[-1]
+        starts = []
+        for label in PR_BODY_LABELS:
+>           assert text.count(label) == 1, label
+E           AssertionError: Testing:
+E           assert 0 == 1
+E            +  where 0 = <built-in method count of str object at 0x7af28bb800>('Testing:')
+E            +    where <built-in method count of str object at 0x7af28bb800> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...reason). Never run a\nrepository-wide pass from a lane, and never add a new seam with a single\nadapter.\n{{- end }}\n'.count
+
+tests/test_gc_standing_notes_fragment.py:175: AssertionError
+__________ test_readme_documents_the_templatefirst_call_line_and_why ___________
+
+    def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
+        readme = README.read_text(encoding="utf-8")
+        assert readme.count("## Standing notes") == 1
+        section = readme.split("## Standing notes", 1)[1].split("\n## ", 1)[0]
+        # The order-proof form is the one call line; the plain form appears once,
+        # as the thing to avoid.
+        assert section.count(CALL_LINE) == 1
+        assert section.count(PLAIN_CALL) == 1
+        words = flat(section)
+        for clause in (
+            "`template-fragments/gc-standing-notes.template.md`",
+            'right after its `{{ template "gc-role-worker" . }}` line',
+            f"Write it with `templateFirst` (gc v1.2.0 and later), never as `{PLAIN_CALL}`",
+            "when the city's import of this pack is older than the commit that carries the fragment",
+            "`templateFirst` renders nothing and the lane keeps its role text",
+            "the plain call makes gc fall back to the lane's raw prompt source and the lane loses its role text",
+            "That fallback prints one stderr line and exits 0, `gc prime --strict` included through gc v1.5.1; "
+            "later builds fail `--strict`, but a plain render still returns the raw source",
+            "The price of `templateFirst` is silence: an old import or a misspelt name drops the note "
+            "without a word",
+            "run `gc prime <lane>` and check that the note appears exactly once, after the role text",
+            "A city that does not add the line renders exactly what it rendered before",
+            "A note that belongs to one city stays in that city's own prompt template",
+            "THE DEEPENING NOTE",
+            "Its second note is THE PR BODY LINES",
+            "`Testing:`, `Risk:` and `How to revert:`",
+        ):
+>           assert clause in words, f"README Standing notes lacks: {clause!r}"
+E           AssertionError: README Standing notes lacks: 'Its second note is THE PR BODY LINES'
+E           assert 'Its second note is THE PR BODY LINES' in "`template-fragments/gc-standing-notes.template.md` defines `gc-standing-notes`: notes for every worker that sit besid...ble (a fork rebased on an upstream, a customer's repository): a scope rule elsewhere in the prompt does not cancel it."
+
+tests/test_gc_standing_notes_fragment.py:246: AssertionError
+_________ test_city_lane_renders_the_pr_body_lines_once_each_in_order __________
+
+tmp_path = PosixPath('<TMPDIR>/pytest-of-<user>/pytest-661/test_city_lane_renders_the_pr_0')
+gc_test_bin = PosixPath('<GC_TEST_BIN>')
+
+    def test_city_lane_renders_the_pr_body_lines_once_each_in_order(
+        tmp_path: Path, gc_test_bin: Path,
+    ) -> None:
+        role_only = render_city_lane(
+            gc_test_bin, tmp_path / "role-only", gascity_pack=REPO_ROOT / "gascity",
+            prompt=f"{ROLE_CALL}\n",
+        )
+        both = render_city_lane(
+            gc_test_bin, tmp_path / "both", gascity_pack=REPO_ROOT / "gascity",
+            prompt=f"{ROLE_CALL}\n\n{STANDING_NOTES_CALL}\n",
+        )
+    
+        for result in (role_only, both):
+            assert result.returncode == 0, result.stderr
+            assert "gc: prompt template" not in result.stderr, result.stderr
+        assert_clean_worker_render(both.stdout, "# GC Role Worker")
+        assert both.stdout.startswith(role_only.stdout)
+        notes = both.stdout[len(role_only.stdout):]
+        # The second note follows the first, and its three labels each start one
+        # line of it, once, in the order a PR body carries them.
+>       assert notes.count("THE PR BODY LINES") == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = <built-in method count of str object at 0x7af28bb100>('THE PR BODY LINES')
+E        +    where <built-in method count of str object at 0x7af28bb100> = '\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. Each says when it\napplies.\n\n##...e the close reason). Never run a\nrepository-wide pass from a lane, and never add a new seam with a single\nadapter.\n'.count
+
+tests/test_gc_role_prompt_integration.py:779: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_notes_appear_once_each_in_order
+FAILED tests/test_gc_standing_notes_fragment.py::test_bead_of_record_is_cited_only_inside_a_template_comment[## PR body lines-gp-hdn2]
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_shows_each_label_once_at_a_line_start_in_order
+FAILED tests/test_gc_standing_notes_fragment.py::test_readme_documents_the_templatefirst_call_line_and_why
+FAILED tests/test_gc_role_prompt_integration.py::test_city_lane_renders_the_pr_body_lines_once_each_in_order
+6 failed, 25 passed, 76 deselected in 7.08s
