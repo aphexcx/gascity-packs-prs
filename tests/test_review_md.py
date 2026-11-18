@@ -628,6 +628,25 @@ def test_a_link_reference_definition_is_not_read() -> None:
     ]
 
 
+def test_a_fence_or_a_definition_after_a_list_or_quote_marker_is_not_read() -> None:
+    # A list item or a block quote can open a fence or a definition, which
+    # hides the lines after it that the item or the quote goes on with.
+    nested = "".join(f"  {line}\n" for line in (ALWAYS_REPORTED + BY_HAND).splitlines())
+    text = _replaced(FULL_TEXT, ALWAYS_REPORTED + BY_HAND, "- ```\n" + nested)
+    assert review_md_problems(text)[0] == _unread_problem(text, "- ```", "- ```", FENCE_LINE)
+    for marker in ("- ", "* ", "1. ", "2) ", "> ", ">", "> - "):
+        line = f"{marker}[x]: /u '"
+        hidden = f"{line}\nPrune by: 2027-02-17\n'\n"
+        text = _replaced(FULL_TEXT, "Prune by: 2027-02-17\n", hidden)
+        assert review_md_problems(text) == [
+            _unread_problem(text, line, line[:20], LINK_DEFINITION)
+        ], marker
+    for marker in ("> ", "1. ", "> - "):
+        text = _pruning_wrapped(f"{marker}~~~\n", "")
+        line = f"{marker}~~~"
+        assert review_md_problems(text)[0] == _unread_problem(text, line, line, FENCE_LINE), marker
+
+
 def test_front_matter_is_not_read() -> None:
     # A first line of "---" opens front matter: the page shows it as a
     # table, and a line in it that starts with "#" as nothing at all.
