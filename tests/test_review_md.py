@@ -93,6 +93,13 @@ def test_each_missing_heading_is_a_problem() -> None:
         assert problems == [f"missing heading {heading!r}"], heading
 
 
+def test_trailing_whitespace_and_crlf_are_not_problems() -> None:
+    text = FULL_TEXT.replace("## Pruning", "## Pruning   ").replace(
+        "Prune by: 2027-02-17", "Prune by: 2027-02-17\t"
+    )
+    assert review_md_problems(text.replace("\n", "\r\n")) == []
+
+
 def test_a_deeper_heading_does_not_stand_in_for_a_required_one() -> None:
     text = FULL_TEXT.replace("## What not to report", "### What not to report")
     assert review_md_problems(text) == ["missing heading '## What not to report'"]

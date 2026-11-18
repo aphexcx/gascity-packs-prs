@@ -29,43 +29,55 @@ what that city's agents are told.
   no city of ours runs is reported as PRECONDITION, with the precondition
   in one sentence, never as MAJOR.
 - Anything CI already enforces: the Check job of
-  .github/workflows/ci.yml (the registry validation, the Python pack tests
-  with the repository's own rule tests, the follow-through Node tests, the
-  role prompt composition lint, each maintained pack stood up against gc,
-  the pinned gastown lint findings, the gastown shell tests, the root
-  module embed tests, and the Go tests of the Slack full adapter and CLI,
-  the Slack channel and Slack mini adapters and runtime-cloudflare with its
-  go vet), CodeQL, and the Latest pack releases job on a pull request that
-  touches the paths it watches.
+  .github/workflows/ci.yml, over the packs and test directories it names
+  (the registry validation, the Python pack tests with the repository's
+  own rule tests, the follow-through Node tests, the role prompt
+  composition lint, each maintained pack stood up against gc, the pinned
+  gastown lint findings, the gastown shell tests, the root module embed
+  tests, and the Go tests of the Slack full adapter and CLI, the Slack
+  channel and Slack mini adapters and runtime-cloudflare with its go vet),
+  CodeQL's Python and Go analysis, and the Latest pack releases job on a
+  pull request that touches the paths it watches.
 - At most five MINOR or NOTE findings in one review: report the five that
-  matter most and count the rest in one line.
-- A claim without a file:line is not reported. Every finding names the
-  file and line it rests on.
+  matter most and count the rest in one line. A SAFETY review names every
+  finding, since it is clean only with none at any severity
+  (docs/ops/citadel-codex-gates.md).
+- A claim without a file:line (for a commit message, its sha) is not
+  reported. Every finding names the file and line, or the commit, it rests
+  on.
 
 ## Triggers (rules a diff can show)
 
+A diff that breaks one of these is reported at MAJOR at least.
+
 - Nothing private in any file, test fixture, comment or design document:
-  no customer, person, phone number, account or phone-number id, chat or
-  channel id, message timestamp, or home-directory path. This repository
-  is public and a pack's files reach every city that imports it. Packs
-  PR 90 (2026-11-12) carried a business number's phone-number id and
+  no customer's name, company, city or box, or person at a customer; no
+  real phone number, email address, account, phone-number, space, channel
+  or message id, message timestamp or host name; no real message text; no
+  key, token or the path of one; no home-directory path; nothing of our
+  plans about a vendor's terms, the prices we pay, or a founder's words
+  that are not about how the pack works. A founder's name with a one-line
+  quote that explains why the pack changed is fine. This repository is
+  public and a pack's files reach every city that imports it. Packs PR 90
+  (opened 2026-11-12) carried a business number's phone-number id and
   account id in a design document.
-- The same for commit messages, and for the squash note a merge writes:
-  a founder's approval is cited by its words and its date only. On
-  2026-11-12 each of the last eight squashes on main carried a channel id
-  or a message timestamp, and two of the last three a home-directory
-  path.
+- The same for commit messages, the pull request's title and body, and the
+  squash note a merge writes: a founder's approval is cited by its words
+  and its date, never by a channel id, a message timestamp or a local
+  path. On 2026-11-12 the eight squashes on main through PR 92 each
+  carried a channel id or a message timestamp, and two of the last three
+  a home-directory path.
 - A change of WHERE an instruction lives (out of a delivery, into a prompt
   fragment or another file) says what composes the new home in every city
-  that imports the pack, and the review checks it. Packs PR 102
-  (2026-11-12) moved the read and react rules out of a Slack delivery into
+  that imports the pack, and the review checks it. Packs PR 102 (opened
+  2026-11-12) moved the read and react rules out of a Slack delivery into
   a fragment that a city's configuration did not compose; its gate and its
   read were clean.
-- A path that deletes or overwrites files on a path built from inbound
+- Code that deletes or overwrites a file whose path is built from inbound
   data (an attachment, a message id, a chat name) is reviewed at the
-  SAFETY class, and its tests show the path cannot leave its own store, in
-  a temporary directory only. Packs PR 113 (2026-11-17) was built under
-  SAFETY because a wrong path there deletes a user's files.
+  SAFETY class, and its tests, run in a temporary directory only, show the
+  path cannot leave its own store. Packs PR 113 (opened 2026-11-17) was
+  built under SAFETY because a wrong path there deletes a user's files.
 
 ## Pruning
 
