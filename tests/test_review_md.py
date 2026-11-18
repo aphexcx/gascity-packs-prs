@@ -652,6 +652,46 @@ def test_a_fence_or_a_definition_after_a_list_or_quote_marker_is_not_read() -> N
         assert review_md_problems(text)[0] == _unread_problem(text, line, line, FENCE_LINE), marker
 
 
+def test_a_link_or_an_image_is_not_read() -> None:
+    # A label can hold an escaped bracket or wrap, and a title or an alt
+    # text can run over lines: the page shows none of them.
+    for hidden, first in (
+        ("[x\\]y]: /u '\nPrune by: 2027-02-17\n'\n", "[x\\]y]: /u '"),
+        ("[x\ny]: /u '\nPrune by: 2027-02-17\n'\n", "[x"),
+        ('[Guide](/guide "x\nPrune by: 2027-02-17\n")\n', '[Guide](/guide "x'),
+        ("![x\nPrune by: 2027-02-17\n](/i.png)\n", "![x"),
+    ):
+        text = _replaced(FULL_TEXT, "Prune by: 2027-02-17\n", hidden)
+        assert review_md_problems(text)[0].startswith(
+            f"line {_line_number(text, first)} has "
+        ), hidden
+    titled = '[Guide](/guide "Policy. ' + PAIR + '")\n'
+    text = _replaced(FULL_TEXT, PAIR_LINES, titled)
+    assert review_md_problems(text)[0].startswith(
+        f"line {_line_number(text, titled.rstrip())} has "
+    )
+
+
+def test_an_indented_code_block_ends_where_an_unindented_line_starts() -> None:
+    # "Appendix" ends the code block above it, and the line of "-" under it
+    # makes it a heading that ends the section before the two items.
+    text = _replaced(
+        FULL_TEXT,
+        "## What not to report\n\n",
+        "## What not to report\n\n    example\nAppendix\n---\n",
+    )
+    assert review_md_problems(text) == [NO_ALWAYS_REPORTED, NO_BY_HAND]
+
+
+def test_an_ordered_item_is_not_a_paragraph_and_a_sentence_may_follow_a_question() -> None:
+    assert review_md_problems(_replaced(FULL_TEXT, PAIR_LINES, "1. " + PAIR + "\n")) == [
+        NO_PAIR
+    ]
+    for before in ("How is uncertainty graded? ", "Mind this! ", "Step one, then step\n2. "):
+        text = _replaced(FULL_TEXT, PAIR_LINES, before + PAIR + "\n")
+        assert review_md_problems(text) == [], before
+
+
 def test_front_matter_is_not_read() -> None:
     # A first line of "---" opens front matter: the page shows it as a
     # table, and a line in it that starts with "#" as nothing at all.
