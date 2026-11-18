@@ -114,8 +114,9 @@ what breaks it, with examples from main.
   commit's author and its Co-Authored-By trailer are; or when it is a
   founder's name with a one-line quote that explains why the pack changed.
   A quote whose document does not say which change it explains is a MINOR
-  that asks for that sentence. Private, on main: the home-directory path
-  at whatsapp/gateway/README.md:46, and the message timestamp that cites a
+  that asks for that sentence, when its words are about how the pack
+  works. Private, on main: the home-directory path at
+  whatsapp/gateway/README.md:46, and the message timestamp that cites a
   founder's approval at docs/ops/citadel-codex-gates.md:4. Not private, on
   main: the ids and addresses at
   gchat/adapter/internal/principal/principal_test.go:16, the token at
@@ -170,17 +171,16 @@ what breaks it, with examples from main.
   raw file name to the store and deletes or overwrites there is CRITICAL.
   A diff that lets "../" or an absolute path take such a path out of its
   store is MAJOR. A diff that lets a link inside the store lead out is
-  MINOR, since only someone already working on the city's machine can make
-  one, and MAJOR when the diff itself lets a sender make one. A diff that
-  adds or changes a call that deletes or overwrites at such a path is
-  reviewed at the SAFETY class, and its tests, run in a temporary
-  directory only, show that no value a sender can send ("../", an absolute
-  path, and a link when the diff lets a sender make one) makes the call
-  change or remove a file outside its store. A review of that diff run
-  below SAFETY is a class breach: its first finding says so, at MAJOR,
-  with the file:line of the call, so the review is run again at SAFETY.
-  Packs PR 113 (opened 2026-11-17) was built under SAFETY because a wrong
-  path there deletes a user's files.
+  MINOR when only someone already working on the city's machine can make
+  one, and MAJOR when a sender can make one. A diff that adds or changes a
+  call that deletes or overwrites at such a path is reviewed at the SAFETY
+  class, and its tests, run in a temporary directory only, show that no
+  value a sender can send ("../", an absolute path, and a link when a
+  sender can make one) makes the call change or remove a file outside its
+  store. A review of that diff run below SAFETY is a class breach: its
+  first finding says so, at MAJOR, with the file:line of the call, so the
+  review is run again at SAFETY. Packs PR 113 (opened 2026-11-17) was
+  built under SAFETY because a wrong path there deletes a user's files.
 
 ## Pruning
 
