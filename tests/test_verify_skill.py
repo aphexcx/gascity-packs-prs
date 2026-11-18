@@ -66,10 +66,19 @@ def excluded(text, directory):
 
 def required_commands(text):
     commands = [["make", target] for target in MAKE]
+    ci = (ROOT / ".github/workflows/ci.yml").read_text()
+    python_suite = re.search(r"^\s*run: (python3 -m pytest .+)$", ci, re.M)[1]
+    python_args = shlex.split(python_suite)
+    exception = re.search(r"^- \*\*CI Python directories\*\* — (.+)$", text, re.M)
+    if exception:
+        for directory in python_args[3:-1]:
+            assert f"`{directory}`" in exception[1], f"Missing Python directory: {directory}"
+    else:
+        commands.append(python_args)
     commands += [["python3", "validate_registry.py", "--require-git"],
                  ["-C", "follow-through/test", "node", "--test"],
-                 ["-C", "reachable/test", "node", "--test", "--test-name-pattern", REPLAY,
-                  "review.test.cjs"], ["bash", "-ec", LOOP]]
+                 ["-C", "reachable/test", "node", "--test", "--test-skip-pattern", REPLAY],
+                 ["bash", "-ec", LOOP]]
     for directory in PYTHON_DIRS:
         if not excluded(text, directory):
             commands.append(["-C", directory, "python3", "-m", "pytest", "-q", "."])
@@ -148,13 +157,15 @@ def test_script_resolves_from_requested_directory():
 
 
 def javascript_runner_covers(path, blocks):
-    directory = str(path.parent)
+    recursive = {"whatsapp/gateway/test", "reachable/test", "follow-through/test"}
+    directory = next((str(p) for p in path.parents if str(p) in recursive), None)
     if directory == "whatsapp/gateway/test":
         return (path.suffix in {".js", ".ts", ".tsx", ".jsx", ".cjs", ".mjs"}
                 and "verify -C whatsapp/gateway node_modules/.bin/vitest run test" in blocks)
     if directory in {"reachable/test", "follow-through/test"}:
-        command = ("verify make test-reachable" if directory == "reachable/test"
-                   else "verify -C follow-through/test node --test")
+        command = f"verify -C {directory} node --test"
+        if directory == "reachable/test":
+            command += f" --test-skip-pattern '{REPLAY}'"
         return path.suffix in {".cjs", ".mjs", ".js"} and command in blocks
     for block in blocks:
         words = shlex.split(block)
@@ -172,6 +183,15 @@ def test_adapter_node_glob_excludes_uncollected_files(name):
     blocks = [f"verify -C whatsapp/adapter {script}"]
     assert javascript_runner_covers(Path("whatsapp/adapter/test/new.test.js"), blocks)
     assert not javascript_runner_covers(Path("whatsapp/adapter/test") / name, blocks)
+
+
+def test_recursive_suite_roots(monkeypatch):
+    nested = [Path(name) for name in ("tests/unit/test_example.py", "follow-through/test/nested/more.test.js",
+                                      "whatsapp/gateway/test/nested/more.test.ts")]
+    tracked = files
+    monkeypatch.setitem(globals(), "files", lambda *patterns: (
+        nested if ":(glob)**/*_test.go" in patterns else tracked(*patterns)))
+    test_suite_coverage()
 
 
 def test_suite_coverage():
@@ -196,9 +216,9 @@ def test_suite_coverage():
                 prefix = "verify " if module == Path(".") else f"verify -C {module} "
                 if any(b.startswith(prefix + "go test ") for b in blocks) or excluded(text, str(module)):
                     continue
-        if path.suffix == ".py" and (directory in ci_python or
-                ("verify make test" in blocks and directory in make_python) or
-                f"verify -C {directory} python3 -m pytest -q ." in blocks):
+        if path.suffix == ".py" and (not ci_python.isdisjoint(map(str, path.parents)) or
+                ("verify make test" in blocks and not make_python.isdisjoint(map(str, path.parents))) or
+                any(f"verify -C {p} python3 -m pytest -q ." in blocks for p in path.parents)):
             continue
         if path.suffix == ".sh" and directory == "gastown/tests" and any(LOOP in b for b in blocks):
             continue
@@ -244,7 +264,7 @@ def harness(tmp_path):
             'case "${0##*/}:$1" in\n'
             ' go:env) echo /fixture/cache; exit 0;;\n'
             ' python3:-c|jq:--version|rg:--version) exit 0;;\n'
-            ' node:-p) echo 24; exit 0;;\n'
+            ' node:-p) case "$2" in *process.execPath) echo "$0";; *) echo 24;; esac; exit 0;;\n'
             ' sed:--version) echo "GNU sed"; exit 0;;\n'
             ' mktemp:--version|date:--version) echo "GNU coreutils"; exit 0;;\n'
             ' mktemp:*) exec /usr/bin/mktemp "$@";;\n'
@@ -314,6 +334,64 @@ def test_adapter_dispatches_tracked_test_files_only(harness):
     invocation = [line for line in log.read_text().splitlines() if "/node --test " in line]
     assert len(invocation) == 1
     assert invocation[0].split(" --test ", 1)[1].split() == ["--test-concurrency=2", "test/tracked.test.js"]
+    assert result.stderr.splitlines() == ["not run: untracked test/extra.test.js"]
+
+
+@pytest.mark.parametrize("call", [
+    "verify touch started",
+    "if verify touch started; then exit 0; else exit $?; fi",
+    "verify touch started || exit $?",
+    "verify touch started && exit 0",
+    "set -o pipefail; verify touch started | cat",
+])
+def test_scan_failure_reaches_caller(harness, call):
+    repo, tools, _, _, run = harness
+    scan = tools / "find"
+    scan.write_text("#!/bin/sh\nexit 17\n")
+    scan.chmod(0o755)
+    assert run(call).returncode == 17
+    assert not (repo / "started").exists()
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_provisioned_go_caches(harness, explicit):
+    repo, tools, env, _, run = harness
+    module = repo / "go" / "pkg" / "mod"
+    build = repo / "cache" / "go-build"
+    for directory in (module, build):
+        directory.mkdir(parents=True)
+    go = tools / "go"
+    go.write_text('#!/bin/sh\ncase "$2" in\n'
+                  'GOMODCACHE) echo "${GOMODCACHE:-${GOPATH:-$HOME/go}/pkg/mod}";;\n'
+                  'GOCACHE) echo "${GOCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/go-build}";;\nesac\n')
+    if explicit:
+        env.update(GOMODCACHE=str(module), GOCACHE=str(build))
+    else:
+        env.update(GOPATH=str(repo / "go"), XDG_CACHE_HOME=str(build.parent))
+    result = run("unset HOME; verify env")
+    check_child_environment(result, env)
+    child = dict(line.split("=", 1) for line in result.stdout.splitlines())
+    assert (child["GOMODCACHE"], child["GOCACHE"]) == (str(module), str(build))
+
+
+def test_wecom_child_uses_installed_node(harness):
+    _, tools, _, log, run = harness
+    installed = tools / "installed-node"
+    installed.write_text("#!/bin/sh\nexit 0\n")
+    installed.chmod(0o755)
+    (tools / "node").write_text(
+        '#!/bin/sh\n[ "$GC_TOOLCHAIN_NODE_INSTALL" = off ] || { curl; exit 1; }\n'
+        f'case "$2" in *process.execPath) echo {shlex.quote(str(installed))};; *) echo 24;; esac\n'
+    )
+    # The doctor fixture in the pack passes only PATH and HOME to this real script.
+    doctor = ROOT / "wecom/doctor/check-runtime.sh"
+    (tools / "python3").write_text(
+        '#!/bin/sh\n[ "$1" != -c ] || exit 0\n'
+        f'exec env -i PATH="$PATH" HOME="$HOME" {shlex.quote(str(doctor))}\n'
+    )
+    result = run("verify -C wecom/tests python3 -m pytest -q .")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "/curl " not in log.read_text()
 
 
 @pytest.mark.parametrize("filename", SECRETS)
