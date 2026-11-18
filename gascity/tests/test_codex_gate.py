@@ -77,25 +77,30 @@ def test_doc_stub_run_writes_only_a_fresh_output(tmp_path):
     record.write_text('VERDICT: BLOCK\n')
     Path(f'{record}.log').write_text('the real transcript\n')
     initial_path = str(bindir) + os.pathsep + os.environ['PATH']
-    result = subprocess.run(
-        ['bash', '-c', commands[0] + '\nstatus=$?\nprintf %s "$PATH"\nexit "$status"'],
-        text=True, capture_output=True, timeout=10,
-        env={'PATH': initial_path, 'TMPDIR': str(scratch),
-             'STUB_DIR': str(tmp_path), 'PROMPT_FILE': str(tmp_path / 'prompt file.txt'),
-             'REPO': str(tmp_path / 'repo'), 'REVIEW_OUTPUT': str(record), 'CAPTURE': str(tmp_path / 'capture.json'),
-             'ANSWER': 'VERDICT: CLEAN\n'},
-    )
-    assert result.returncode == 0, f'{DOC.name}: the stub run exited {result.returncode}: {result.stderr}'
+    env = {
+        'PATH': initial_path,
+        'TMPDIR': str(scratch),
+        'STUB_DIR': str(tmp_path),
+        'PROMPT_FILE': str(tmp_path / 'prompt file.txt'),
+        'REPO': str(tmp_path / 'repo'),
+        'REVIEW_OUTPUT': str(record),
+        'CAPTURE': str(tmp_path / 'capture.json'),
+        'ANSWER': 'VERDICT: CLEAN\n',
+    }
     message = f'{DOC.name}: the stub run must leave a real record and its log alone'
-    assert record.read_text() == 'VERDICT: BLOCK\n', message
-    assert Path(f'{record}.log').read_text() == 'the real transcript\n', message
-    args = json.loads((tmp_path / 'capture.json').read_text())['args']
-    assert args[args.index('-m') + 1] == gate_default_model()
-    answers = [p.read_text() for p in scratch.iterdir() if p.suffix != '.log']
-    assert answers == ['VERDICT: CLEAN\n'], f'{DOC.name}: the stub run must write a fresh mktemp output'
-    assert result.stdout == initial_path, (
-        f'{DOC.name}: the stub PATH must apply to the stub run alone'
-    )
+    for run_number in (1, 2):
+        result = subprocess.run(
+            ['bash', '-c', commands[0] + '\nstatus=$?\nprintf %s "$PATH"\nexit "$status"'],
+            text=True, capture_output=True, timeout=10, env=env,
+        )
+        assert result.returncode == 0, f'{DOC.name}: the stub run exited {result.returncode}: {result.stderr}'
+        assert result.stdout == initial_path, f'{DOC.name}: the stub PATH must apply to the stub run alone'
+        assert record.read_text() == 'VERDICT: BLOCK\n', message
+        assert Path(f'{record}.log').read_text() == 'the real transcript\n', message
+        args = json.loads((tmp_path / 'capture.json').read_text())['args']
+        assert args[args.index('-m') + 1] == gate_default_model()
+        answers = [p.read_text() for p in scratch.iterdir() if p.suffix != '.log']
+        assert answers == [env['ANSWER']] * run_number, f'{DOC.name}: each stub run must write a fresh mktemp output'
 
 
 @pytest.fixture
