@@ -1,15 +1,19 @@
 """REVIEW.md at the repository root keeps the shape its readers rely on.
 
-Every reviewer of a pull request here reads REVIEW.md from the base branch.
-This test holds the file to four headings and a "Prune by: YYYY-MM-DD" line.
-It never compares that date with today, so a calendar date can never turn
-the suite red on an unrelated pull request. It reads only the repository's
-own file and writes nothing.
+Every reviewer of a pull request here reads REVIEW.md from the base branch
+(git show main:REVIEW.md). This test holds the root to a regular file named
+exactly REVIEW.md, and the file to four headings, the two items of "What not
+to report" that no skip overrides, and a "Prune by: YYYY-MM-DD" line, each
+counted only where the rendered file shows it. It never compares that date
+with today, so a calendar date can never turn the suite red on an unrelated
+pull request. It reads only the repository's own file and writes nothing.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import datetime
+import os
 from pathlib import Path
 import re
 import stat
@@ -17,7 +21,7 @@ from types import SimpleNamespace
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REVIEW_MD = REPO_ROOT / "REVIEW.md"
+NAME = "REVIEW.md"
 
 REQUIRED_HEADINGS = (
     "## What MAJOR means here",
@@ -26,42 +30,157 @@ REQUIRED_HEADINGS = (
     "## Pruning",
 )
 
+# The items of "## What not to report" that no skip overrides: a list item
+# there whose first line starts with the marker and whose text names every
+# word, in any case.
+ALWAYS_ITEMS = (
+    ("- Always reported:", ("secret", "key", "token", "injection", "security")),
+    ("- Always reviewed by hand:", ("REVIEW.md",)),
+)
+
 PRUNE_BY = re.compile(r"^Prune by: (\d{4}-\d{2}-\d{2})$")
-HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-FENCE = re.compile(r"^ {0,3}(```|~~~)")
+FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+COMMENT_OPEN = "<!--"
+COMMENT_CLOSE = "-->"
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def repository_problems(
+    root: Path,
+    *,
+    listdir: Callable[[Path], list[str]] = os.listdir,
+    lstat: Callable[[Path], os.stat_result] = os.lstat,
+    read: Callable[[Path], str] = _read,
+) -> list[str]:
+    """Return what is wrong with REVIEW.md at a repository root.
+
+    The gate reads git show main:REVIEW.md. A case-insensitive disk opens
+    review.md by either name where git and a Linux runner find no file, and
+    a symbolic link opens its target where git prints only the target's
+    path, so only a regular file named exactly REVIEW.md counts.
+    """
+    if NAME not in listdir(root):
+        return review_md_problems(None)
+    if not stat.S_ISREG(lstat(root / NAME).st_mode):
+        return ["REVIEW.md is not a regular file"]
+    return review_md_problems(read(root / NAME))
 
 
 def review_md_problems(text: str | None) -> list[str]:
     """Return what is wrong with a REVIEW.md text; None means the file is absent."""
     if text is None:
         return ["REVIEW.md is absent"]
-    lines = _rendered_lines(text)
+    lines = visible_lines(text)
     problems = [
         f"missing heading {heading!r}"
         for heading in REQUIRED_HEADINGS
         if heading not in lines
     ]
+    skips = REQUIRED_HEADINGS[1]
+    if skips in lines:
+        items = section_items(lines, skips)
+        for marker, words in ALWAYS_ITEMS:
+            if not any(_names(item, marker, words) for item in items):
+                problems.append(
+                    f"{skips!r} has no item {marker!r} naming {', '.join(words)}"
+                )
     if not any(_prune_date(line) for line in lines):
         problems.append("no 'Prune by: YYYY-MM-DD' line with a real date")
     return problems
 
 
-def _rendered_lines(text: str) -> list[str]:
-    """The lines a reader sees: no HTML comment, no fenced block, no trailing space."""
-    lines = []
-    open_fence = None
-    for line in HTML_COMMENT.sub("", text).splitlines():
+def visible_lines(text: str) -> list[str]:
+    """The file's lines as its rendered page shows them, without trailing space.
+
+    A line inside a fenced code block or an HTML comment, and the lines that
+    open and close one, come back blank. A fence closes only on a line of its
+    own character, at least as long, with nothing after it. A fence or a
+    comment never closed hides the rest of the file. A comment that opens and
+    closes inside one line is cut out of that line.
+    """
+    lines: list[str] = []
+    fence: tuple[str, int] | None = None
+    in_comment = False
+    for line in text.splitlines():
         line = line.rstrip()
-        fence = FENCE.match(line)
+        opened = None if fence or in_comment else _fence_opened(line)
         if fence is not None:
-            if open_fence is None:
-                open_fence = fence.group(1)
-            elif fence.group(1) == open_fence:
-                open_fence = None
-            continue
-        if open_fence is None:
+            if _closes(line, fence):
+                fence = None
+            lines.append("")
+        elif in_comment:
+            in_comment = COMMENT_CLOSE not in line
+            lines.append("")
+        elif opened is not None:
+            fence = opened
+            lines.append("")
+        elif line.lstrip(" ").startswith(COMMENT_OPEN):
+            after = line.split(COMMENT_OPEN, 1)[1]
+            in_comment = COMMENT_CLOSE not in after
+            lines.append("")
+        else:
+            line, in_comment = _cut_comments(line)
             lines.append(line)
     return lines
+
+
+def _fence_opened(line: str) -> tuple[str, int] | None:
+    match = FENCE_OPEN.match(line)
+    if match is None:
+        return None
+    run, info = match.groups()
+    if run[0] == "`" and "`" in info:
+        return None  # a code span on one line, not a fence
+    return run[0], len(run)
+
+
+def _closes(line: str, fence: tuple[str, int]) -> bool:
+    char, length = fence
+    bare = line.lstrip(" ")
+    indent = len(line) - len(bare)
+    return indent <= 3 and len(bare) >= length and bare == char * len(bare)
+
+
+def _cut_comments(line: str) -> tuple[str, bool]:
+    """The line without its comments, and whether a comment is left open."""
+    kept = ""
+    while COMMENT_OPEN in line:
+        before, after = line.split(COMMENT_OPEN, 1)
+        kept += before
+        if COMMENT_CLOSE not in after:
+            return kept.rstrip(), True
+        line = after.split(COMMENT_CLOSE, 1)[1]
+    return (kept + line).rstrip(), False
+
+
+def section_items(lines: list[str], heading: str) -> list[str]:
+    """The list items of a section, from its heading to the next "## " line.
+
+    An item is a line starting "- " with the lines indented under it; a
+    blank or unindented line ends it.
+    """
+    items: list[str] = []
+    open_item = False
+    for line in lines[lines.index(heading) + 1 :]:
+        if line.startswith("## "):
+            break
+        if line.startswith("- "):
+            items.append(line)
+            open_item = True
+        elif open_item and line.startswith("  "):
+            items[-1] += "\n" + line
+        else:
+            open_item = False
+    return items
+
+
+def _names(item: str, marker: str, words: tuple[str, ...]) -> bool:
+    return item.startswith(marker) and all(
+        word.lower() in item.lower() for word in words
+    )
 
 
 def _prune_date(line: str) -> datetime.date | None:
