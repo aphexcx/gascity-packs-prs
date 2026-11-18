@@ -8,13 +8,15 @@ sentence, and a paragraph of "What MAJOR means here" in which a sentence
 begins with the two pinned sentences on UNKNOWN. It pins where each pinned
 sentence begins and where it sits, not what follows it.
 
-It reads the file as plain lines and reads no Markdown that can hide a line
-from the page or keep it from reading as a heading, an item or a paragraph:
-HTML or a comment, a code fence, a link reference definition, front matter.
-Each line that holds one is a problem that names the line, so such a file
-is red. It never compares the date with today, so a calendar date can never
-turn the suite red on an unrelated pull request. It reads only the
-repository's own file and writes nothing.
+It reads the file as plain lines: a heading is a line of "#"s, a space and
+its text, and an item, a paragraph and a section end where section_blocks
+says. It reads no Markdown that can hide a line from the page or show it as
+code: HTML or a comment, a code fence or a link reference definition (after
+any list or quote markers too), front matter. Each line that holds one is a
+problem that names the line, so such a file is red whatever else it holds.
+It never compares the date with today, so a calendar date can never turn
+the suite red on an unrelated pull request. It reads only the repository's
+own file and writes nothing.
 """
 
 from __future__ import annotations
@@ -64,9 +66,12 @@ LINE_END = re.compile(r"\r\n|\r|\n")
 # What the checker does not read. HTML_START finds every "<" that can open
 # a tag, a comment, a declaration or an instruction; of those only an
 # autolink after "<" and a letter is read, since the page shows its text.
-FRONT_MATTER = re.compile(r"^﻿?-{3,}\s*$")
-FENCE = re.compile(r"^\s*(?:`{3,}|~{3,})")
-DEFINITION = re.compile(r"^\s*\[[^\]]*\]:")
+# A list item or a block quote can open a fence or a definition, so
+# CONTAINER takes any run of their markers before one.
+CONTAINER = r"^\s*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+|>[ \t]?)*"
+FRONT_MATTER = re.compile(r"^\ufeff?-{3,}\s*$")
+FENCE = re.compile(CONTAINER + r"(?:`{3,}|~{3,})")
+DEFINITION = re.compile(CONTAINER + r"\[[^\]]*\]:")
 HTML_START = re.compile(r"<[A-Za-z/!?]")
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 AUTOLINK = re.compile(
