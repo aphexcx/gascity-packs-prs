@@ -204,8 +204,10 @@ FULL_TEXT = """\
 
 - What a CI job itself prints.
 - Always reported: a secret, a key, a token, an injection or any other
-  security fault in the diff.
-- Always reviewed by hand: a change to REVIEW.md itself.
+  security fault in the diff, whatever CodeQL says; the scanner is a
+  floor, not the reviewer's replacement.
+- Always reviewed by hand: a change to REVIEW.md itself, whatever CI runs
+  on its pull request.
 
 ## Triggers (rules a diff can show)
 
@@ -300,19 +302,28 @@ def test_a_past_prune_date_is_not_a_problem() -> None:
     assert review_md_problems(text) == []
 
 
+REPORTED_SENTENCE = (
+    "- Always reported: a secret, a key, a token, an injection or any other "
+    "security fault in the diff, whatever CodeQL says; the scanner is a "
+    "floor, not the reviewer's replacement."
+)
+BY_HAND_SENTENCE = (
+    "- Always reviewed by hand: a change to REVIEW.md itself, whatever CI runs "
+    "on its pull request."
+)
 ALWAYS_REPORTED = (
     "- Always reported: a secret, a key, a token, an injection or any other\n"
-    "  security fault in the diff.\n"
+    "  security fault in the diff, whatever CodeQL says; the scanner is a\n"
+    "  floor, not the reviewer's replacement.\n"
 )
-BY_HAND = "- Always reviewed by hand: a change to REVIEW.md itself.\n"
+BY_HAND = (
+    "- Always reviewed by hand: a change to REVIEW.md itself, whatever CI runs\n"
+    "  on its pull request.\n"
+)
 NO_ALWAYS_REPORTED = (
-    "'## What not to report' has no item '- Always reported:' "
-    "naming secret, key, token, injection, security"
+    f"'## What not to report' has no item that begins {REPORTED_SENTENCE!r}"
 )
-NO_BY_HAND = (
-    "'## What not to report' has no item '- Always reviewed by hand:' "
-    "naming REVIEW.md"
-)
+NO_BY_HAND = f"'## What not to report' has no item that begins {BY_HAND_SENTENCE!r}"
 PRUNING_HIDDEN = [
     "missing heading '## Pruning'",
     "no 'Prune by: YYYY-MM-DD' line with a real date",
@@ -336,14 +347,33 @@ def test_each_always_item_is_required() -> None:
     assert review_md_problems(_replaced(FULL_TEXT, BY_HAND, "")) == [NO_BY_HAND]
 
 
-def test_an_always_item_names_every_word() -> None:
+def test_an_always_item_begins_with_its_whole_sentence() -> None:
     for word in ("secret", "key", "token", "injection", "security"):
         item = ALWAYS_REPORTED.replace(f" {word}", " thing")
         assert item != ALWAYS_REPORTED, word
         text = _replaced(FULL_TEXT, ALWAYS_REPORTED, item)
         assert review_md_problems(text) == [NO_ALWAYS_REPORTED], word
-    text = _replaced(FULL_TEXT, BY_HAND, "- Always reviewed by hand: this file.\n")
-    assert review_md_problems(text) == [NO_BY_HAND]
+    turned = (
+        ALWAYS_REPORTED.replace("reported: a secret", "reported: never a secret"),
+        "- Always reported: nothing; the monkey, the secretary, tokens,\n"
+        "  injections and insecurity are fine.\n",
+    )
+    for item in turned:
+        text = _replaced(FULL_TEXT, ALWAYS_REPORTED, item)
+        assert review_md_problems(text) == [NO_ALWAYS_REPORTED], item
+    for item in (
+        "- Always reviewed by hand: nothing, not even REVIEW.md.\n",
+        "- Always reviewed by hand: a change to REVIEW.md itself.\n",
+    ):
+        text = _replaced(FULL_TEXT, BY_HAND, item)
+        assert review_md_problems(text) == [NO_BY_HAND], item
+
+
+def test_an_always_item_may_wrap_anywhere_and_go_on_after_its_sentence() -> None:
+    rewrapped = REPORTED_SENTENCE.replace(", a token,", ",\n    a token,") + "\n"
+    longer = BY_HAND.replace("request.\n", "request. A removed rule is MAJOR.\n")
+    text = _replaced(FULL_TEXT, ALWAYS_REPORTED + BY_HAND, rewrapped + longer)
+    assert review_md_problems(text) == []
 
 
 def test_an_always_item_starts_with_its_marker() -> None:
@@ -371,10 +401,12 @@ def test_an_always_item_split_in_two_does_not_count() -> None:
     assert review_md_problems(_replaced(FULL_TEXT, ALWAYS_REPORTED, split)) == [
         NO_ALWAYS_REPORTED
     ]
+
+
+def test_a_lazy_continuation_line_stays_in_its_item() -> None:
+    # CommonMark joins an unindented line to the item's paragraph above it.
     unindented = ALWAYS_REPORTED.replace("\n  security", "\nsecurity")
-    assert review_md_problems(_replaced(FULL_TEXT, ALWAYS_REPORTED, unindented)) == [
-        NO_ALWAYS_REPORTED
-    ]
+    assert review_md_problems(_replaced(FULL_TEXT, ALWAYS_REPORTED, unindented)) == []
 
 
 def test_hidden_always_items_do_not_count() -> None:
@@ -397,9 +429,51 @@ def test_a_fence_line_with_text_after_it_does_not_close_the_fence() -> None:
 
 def test_an_unclosed_html_comment_hides_the_rest_of_the_file() -> None:
     assert review_md_problems(_pruning_wrapped("<!--\n", "")) == PRUNING_HIDDEN
+
+
+def test_an_open_comment_inside_a_line_hides_the_rest_for_the_checker() -> None:
+    # Stricter than the page, which shows "A note <!-- open" as text: where
+    # the checker is unsure what renders, it hides more, so it fails red.
     assert review_md_problems(_pruning_wrapped("A note <!-- open\n", "")) == (
         PRUNING_HIDDEN
     )
+
+
+def test_raw_html_hides_the_rest_of_the_file() -> None:
+    openers = (
+        "<?\n",
+        "<?\n?>\n",
+        "<![CDATA[\n",
+        "<!X\n",
+        "<div>\n",
+        "  <DIV class=x>\n",
+        "</div>\n",
+        "<script>\n",
+        "<details>\n\n",
+        "<details>\n\n</details>\n\n",
+    )
+    for opener in openers:
+        assert review_md_problems(_pruning_wrapped(opener, "")) == PRUNING_HIDDEN, opener
+    for item in (ALWAYS_REPORTED, BY_HAND):
+        text = _replaced(FULL_TEXT, item, "<?\n" + item + "?>\n")
+        assert NO_ALWAYS_REPORTED in review_md_problems(text) or NO_BY_HAND in (
+            review_md_problems(text)
+        ), item
+
+
+def test_an_autolink_at_a_line_start_is_not_raw_html() -> None:
+    for link in ("<https://example.com/review>", "<owner@example.com>"):
+        text = _pruning_wrapped(f"{link} has the page.\n\n", "")
+        assert review_md_problems(text) == [], link
+
+
+def test_only_a_newline_or_a_carriage_return_ends_a_line() -> None:
+    for separator in ("\u2028", "\u2029", "\x0c", "\x0b", "\x1c", "\x85"):
+        text = _replaced(FULL_TEXT, "\n## Pruning\n", f"{separator}## Pruning\n")
+        assert review_md_problems(text) == ["missing heading '## Pruning'"], repr(
+            separator
+        )
+    assert review_md_problems(FULL_TEXT.replace("\n", "\r")) == []
 
 
 def test_an_unclosed_fence_hides_the_rest_of_the_file() -> None:
