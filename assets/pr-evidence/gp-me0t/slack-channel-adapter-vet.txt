@@ -1,0 +1,3 @@
+$ verify -C slack-channel/adapter go vet ./...
+(no output)
+exit=0 elapsed_seconds=0.49

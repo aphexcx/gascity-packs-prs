@@ -1,0 +1,4 @@
+$ verify -C whatsapp/adapter node --test --test-concurrency=2
+tests 464, pass 464, fail 0, cancelled 0, skipped 0
+exit=0 elapsed_seconds=254.21 one_minute_load=7.92
+The runner received 30 individual tracked JavaScript filenames. It received no glob and did not receive the extra test file. The runner PID was absent at the cleanup check.

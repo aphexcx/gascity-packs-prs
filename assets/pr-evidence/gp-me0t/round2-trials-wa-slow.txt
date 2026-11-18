@@ -1,0 +1,6 @@
+$ verify -C whatsapp/adapter node --test --test-timeout=45000 --test-name-pattern '^a slowed flush never delays a delivery or a send \(ACK_REACTION=unset\)$' test/slow-flush.test.js
+Trial 1: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=3.81, one_minute_load=14.88
+Trial 2: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=3.7, one_minute_load=15.53
+Trial 3: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=4.2, one_minute_load=15.4
+Trial 4: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=3.47, one_minute_load=15.4
+Trial 5: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=4.03, one_minute_load=14.97

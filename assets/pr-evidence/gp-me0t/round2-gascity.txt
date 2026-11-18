@@ -1,0 +1,4 @@
+$ verify make test-gascity
+1 failed, 1006 passed, 127 skipped, 10518 subtests passed in 354.85s (0:05:54)
+exit=2 elapsed_seconds=358.04 one_minute_load=12.2
+The driver included Gastown's GNU coreutils directory on PATH during this first measurement. GNU chmod rejected the native macOS +a option in the lock-permission test. The corrected measurement limits the GNU directory to the Gastown shell suite.

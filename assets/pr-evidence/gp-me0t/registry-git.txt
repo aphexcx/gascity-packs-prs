@@ -1,0 +1,3 @@
+$ verify python3 validate_registry.py --require-git
+registry.toml: ok
+exit=0 elapsed_seconds=58.78

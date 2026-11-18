@@ -1,0 +1,4 @@
+Working directory: temporary fixture root
+$ verify python3 -m pytest tests -q -k verify_skill_make_targets_exist --tb=short
+1 passed, 551 deselected in 11.78s
+exit=0 elapsed_seconds=12.25

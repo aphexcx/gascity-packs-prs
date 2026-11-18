@@ -1,0 +1,8 @@
+Disposable fixtures, real Bash and Git, offline subprocesses, Python 3.12.13.
+Previous implementation with the final-step cases: 9 failed, 2 passed, 46 deselected; load 11.13; elapsed 14.14 s; exit 1.
+First revision: verify python3 -m pytest tests -q -k test_verify_skill
+57 passed, 551 deselected; load 12.81; elapsed 33.92 s; exit 0.
+Cache regression against the previous Make block: Checkout changed after verify make test-gascity.
+1 failed, 114 deselected; load 7.68; elapsed 3.97 s; exit 1.
+Final revision: verify python3 -m pytest tests -k test_verify_skill -q -p no:cacheprovider
+58 passed, 551 deselected; load 7.71; elapsed 31.76 s; exit 0.

@@ -1,0 +1,6 @@
+$ verify -C whatsapp/adapter node --test --test-timeout=45000 --test-name-pattern '^held:\ a\ safety\ read\ that\ finds\ an\ unannounced\ delivery\ reads\ at\ WHATSAPP_POLL_MS\ until\ a\ reconnect\ \(gp\-urx1\)$' test/link.test.js
+Trial 1: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=8.52, one_minute_load=17.9
+Trial 2: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=9.29, one_minute_load=16.97
+Trial 3: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=9.17, one_minute_load=16.7
+Trial 4: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=8.66, one_minute_load=15.41
+Trial 5: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=8.86, one_minute_load=15.01

@@ -1,0 +1,4 @@
+$ verify -C reachable/test node --test --test-name-pattern '^review 4: archive replay advances in bounded chunks without dropping rows$' review.test.cjs
+tests 1, pass 0, fail 1, cancelled 0, skipped 0
+exit=1 elapsed_seconds=25.64 one_minute_load=10.21
+The archive reader received ETIMEDOUT from the node subprocess.
