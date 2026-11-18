@@ -294,9 +294,16 @@ def test_gateway_offline_environment(harness):
     repo, _, env, _, run = harness
     program = repo / "whatsapp/gateway/node_modules/.bin/vitest"
     program.parent.mkdir(parents=True)
-    program.symlink_to("/usr/bin/env")
+    program.write_text("#!/bin/sh\nexec /usr/bin/env\n")
+    program.chmod(0o755)
+    # Measure what this host's shebang interpreter itself exports, e.g. PWD.
+    # Invoke env by its real name on hosts with a multicall coreutils binary.
+    probe = subprocess.run([str(program)], cwd=repo / "whatsapp/gateway", env={"PATH": env["PATH"]},
+                           text=True, capture_output=True, check=True)
+    defaults = dict(line.split("=", 1) for line in probe.stdout.splitlines())
+    del defaults["PATH"]
     result = run("verify -C whatsapp/gateway node_modules/.bin/vitest")
-    check_child_environment(result, env, {"WRANGLER_SEND_METRICS": "false",
+    check_child_environment(result, env, {**defaults, "WRANGLER_SEND_METRICS": "false",
                                           "CLOUDFLARE_CF_FETCH_ENABLED": "false", "NODE_ENV": "test"})
 
 
