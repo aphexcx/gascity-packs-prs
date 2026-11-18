@@ -750,6 +750,13 @@ def test_city_lane_renders_the_standing_notes_once_after_the_role_text(
 # rendered note may carry: a path (any slash, so a relative one too), a date,
 # a bead id.
 PR_BODY_LABELS = ("Testing:", "Risk:", "How to revert:")
+# The three lines as the note shows them, each label with its own
+# instruction: text swapped between two labels fails.
+PR_BODY_LINES = (
+    "Testing: <the exact commands you ran, each with its counts and exit code>",
+    "Risk: <the tier and the path that set it>",
+    "How to revert: <the one command that undoes the change once merged>",
+)
 RENDERED_PARTICULARS = (
     (re.compile(r"/"), "a path"),
     (re.compile(r"\b20\d\d-\d\d-\d\d\b|\b\d{1,2}/\d{1,2}\b"), "a date"),
@@ -776,14 +783,15 @@ def test_city_lane_renders_the_pr_body_lines_once_each_in_order(
     assert both.stdout.startswith(role_only.stdout)
     notes = both.stdout[len(role_only.stdout):]
     # The second note follows the first, and its three labels appear once
-    # each, starting three consecutive lines of it in the order a PR body
-    # carries them.
+    # each, each with its own instruction, as three consecutive whole lines
+    # of it in the order a PR body carries them.
     assert notes.count("THE PR BODY LINES") == 1
     assert notes.index("THE DEEPENING NOTE") < notes.index("THE PR BODY LINES")
     for label in PR_BODY_LABELS:
         assert notes.count(label) == 1, label
-    testing, risk, revert = (re.escape(label) for label in PR_BODY_LABELS)
-    block = re.findall(rf"(?m)^{testing} \S.*\n{risk} \S.*\n{revert} \S.*$", notes)
+    assert all(line.startswith(f"{label} ") for line, label in zip(PR_BODY_LINES, PR_BODY_LABELS))
+    lines = "\n".join(PR_BODY_LINES)
+    block = re.findall(rf"(?m)^{re.escape(lines)}$", notes)
     assert len(block) == 1, block
     assert notes.index(block[0]) > notes.index("THE PR BODY LINES")
     for pattern, what in RENDERED_PARTICULARS:

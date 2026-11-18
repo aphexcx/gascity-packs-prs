@@ -29,8 +29,15 @@ PLAIN_CALL = '{{ template "gc-standing-notes" . }}'
 TEMPLATE_COMMENT = re.compile(r"\{\{/\*.*?\*/\}\}", re.S)
 # Each note's heading, in the fragment's order, with its bead of record.
 NOTES = (("## Deepening note", "gp-gsww"), ("## PR body lines", "gp-hdn2"))
-# The PR body lines' labels, in the order the body carries them.
+# The PR body lines' labels, in the order the body carries them, and the
+# three lines as the note shows them, each label with its own instruction:
+# text swapped between two labels fails.
 PR_BODY_LABELS = ("Testing:", "Risk:", "How to revert:")
+PR_BODY_LINES = (
+    "Testing: <the exact commands you ran, each with its counts and exit code>",
+    "Risk: <the tier and the path that set it>",
+    "How to revert: <the one command that undoes the change once merged>",
+)
 
 
 def fragment() -> str:
@@ -161,13 +168,16 @@ def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
         "without such a list, or when no path the diff touches is on it, write `not tiered` "
         "and the highest-risk path the diff touches",
         "the one command that undoes the change once merged",
-        "the command runs after the merge, so name the commit through the PR (the revert of "
-        "this PR's merge or squash commit, which has no sha until the merge), never a branch "
-        "commit the merge may not keep",
+        # One instruction names every way a PR lands: a revert of the one sha
+        # a PR resolves to leaves a rebased PR's earlier commits in place.
+        "On the revert line, the command runs after the merge, so name what the PR landed as, "
+        "never a branch commit the merge may not keep: the squash commit when squashed; the "
+        "first-parent change of the merge commit when merged with two parents; the whole "
+        "landed range, oldest to newest, when rebased or fast-forwarded; or, when no command "
+        "undoes all of the change, what a revert would leave behind (a migration that ran, "
+        "a deploy, a message sent).",
         "On every line, write a secret (a token, a key, a password) as a placeholder such as "
         "`<token>`, never its value",
-        "when no command undoes all of the change, say what a revert would leave behind: "
-        "a migration that ran, a deploy, a message sent",
         "A later round that updates the body rewrites the three lines for its own head "
         "and keeps them after every other section",
         "Keep the labels exactly as written",
@@ -187,15 +197,15 @@ def test_pr_body_lines_placement_leaves_room_for_the_closing_trailers() -> None:
     assert re.search(r"(?i)\blast\b", sentence) is None
 
 
-def test_pr_body_lines_note_shows_the_three_labels_once_as_one_block_in_order() -> None:
+def test_pr_body_lines_note_shows_each_label_with_its_instruction_once_as_one_block() -> None:
     """The render test proves the same on real gc output; this one runs
     everywhere."""
     text = renderable(fragment()).split("THE PR BODY LINES", 1)[-1]
     for label in PR_BODY_LABELS:
         assert text.count(label) == 1, label
-    block = rf"(?m)^{re.escape(PR_BODY_LABELS[0])} \S.*\n" \
-            rf"{re.escape(PR_BODY_LABELS[1])} \S.*\n{re.escape(PR_BODY_LABELS[2])} \S.*$"
-    assert len(re.findall(block, text)) == 1
+    assert all(line.startswith(f"{label} ") for line, label in zip(PR_BODY_LINES, PR_BODY_LABELS))
+    lines = "\n".join(PR_BODY_LINES)
+    assert len(re.findall(rf"(?m)^{re.escape(lines)}$", text)) == 1
 
 
 # One city's particulars: a machine path, a home path, a date, a Slack
