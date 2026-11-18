@@ -42,9 +42,10 @@ what that city's agents are told.
   matter most and count the rest in one line. A SAFETY review names every
   finding, since it is clean only with none at any severity
   (docs/ops/citadel-codex-gates.md).
-- A claim without a file:line (for a commit message, its sha) is not
-  reported. Every finding names the file and line, or the commit, it rests
-  on.
+- A claim without a file:line is not reported. Every finding names the
+  file and line it rests on; one in a commit message names the commit's
+  sha, and one in the pull request's title or body names that field. A
+  finding about something private says where it is and never repeats it.
 
 ## Triggers (rules a diff can show)
 

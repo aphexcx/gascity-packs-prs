@@ -25,13 +25,15 @@ REQUIRED_HEADINGS = (
 )
 
 PRUNE_BY = re.compile(r"^Prune by: (\d{4}-\d{2}-\d{2})$")
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+FENCE = re.compile(r"^ {0,3}(```|~~~)")
 
 
 def review_md_problems(text: str | None) -> list[str]:
     """Return what is wrong with a REVIEW.md text; None means the file is absent."""
     if text is None:
         return ["REVIEW.md is absent"]
-    lines = [line.rstrip() for line in text.splitlines()]
+    lines = _rendered_lines(text)
     problems = [
         f"missing heading {heading!r}"
         for heading in REQUIRED_HEADINGS
@@ -40,6 +42,24 @@ def review_md_problems(text: str | None) -> list[str]:
     if not any(_prune_date(line) for line in lines):
         problems.append("no 'Prune by: YYYY-MM-DD' line with a real date")
     return problems
+
+
+def _rendered_lines(text: str) -> list[str]:
+    """The lines a reader sees: no HTML comment, no fenced block, no trailing space."""
+    lines = []
+    open_fence = None
+    for line in HTML_COMMENT.sub("", text).splitlines():
+        line = line.rstrip()
+        fence = FENCE.match(line)
+        if fence is not None:
+            if open_fence is None:
+                open_fence = fence.group(1)
+            elif fence.group(1) == open_fence:
+                open_fence = None
+            continue
+        if open_fence is None:
+            lines.append(line)
+    return lines
 
 
 def _prune_date(line: str) -> datetime.date | None:
@@ -98,6 +118,29 @@ def test_trailing_whitespace_and_crlf_are_not_problems() -> None:
         "Prune by: 2027-02-17", "Prune by: 2027-02-17\t"
     )
     assert review_md_problems(text.replace("\n", "\r\n")) == []
+
+
+def test_a_heading_or_date_inside_an_html_comment_does_not_count() -> None:
+    text = FULL_TEXT.replace(
+        "## Pruning\n\nPrune by: 2027-02-17\n",
+        "<!--\n## Pruning\n\nPrune by: 2027-02-17\n-->\n",
+    )
+    assert review_md_problems(text) == [
+        "missing heading '## Pruning'",
+        "no 'Prune by: YYYY-MM-DD' line with a real date",
+    ]
+
+
+def test_a_heading_or_date_inside_a_code_fence_does_not_count() -> None:
+    for fence in ("```", "~~~"):
+        text = FULL_TEXT.replace(
+            "## Pruning\n\nPrune by: 2027-02-17\n",
+            f"{fence}\n## Pruning\n\nPrune by: 2027-02-17\n{fence}\n",
+        )
+        assert review_md_problems(text) == [
+            "missing heading '## Pruning'",
+            "no 'Prune by: YYYY-MM-DD' line with a real date",
+        ], fence
 
 
 def test_a_deeper_heading_does_not_stand_in_for_a_required_one() -> None:
