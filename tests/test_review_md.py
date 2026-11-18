@@ -10,11 +10,12 @@ sentence begins and where it sits, not what follows it.
 
 It reads the file as plain lines: a heading is a line of "#"s, a space and
 its text, and an item, a paragraph and a section end where section_blocks
-says. It reads no Markdown that can hide a line from the page or show it as
-code: HTML or a comment, a code fence or a link reference definition (after
-any list or quote markers too), a link or an image, front matter. Each line
-that holds one is a problem that names the line, so such a file is red
-whatever else it holds.
+says. It refuses the constructs its tests name, each as a problem that
+names its line: HTML or a comment, a code fence or a link reference
+definition (also after the list and quote markers the tests use), a link
+or an image, and front matter. It is not a Markdown parser: a construct in
+a shape no test names can still hide a line from the page while the
+checker counts that line.
 It never compares the date with today, so a calendar date can never turn
 the suite red on an unrelated pull request. It reads only the repository's
 own file and writes nothing.
