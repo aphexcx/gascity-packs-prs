@@ -1,5 +1,7 @@
 # Verification measurements
 
+These are the round-one measurements. The current skill uses the [round-two results and isolated controls](round2-measured.md).
+
 Commands ran serially on macOS arm64 with a provisioned Python 3.12 environment, the no-install toolchain, and local Go dependencies. The runner cleared worker and integration overrides. Git history was available. Durations are elapsed seconds.
 
 Each link gives the exact command, exit code and elapsed time. Commands beginning with verify use the Bash function in the skill. The first Make run and the Google Chat timeout predate that function. Test streams are reduced to runner summaries or package completion events. Go counts include named subtests, so a failing child and its parent both count. The red and mutation controls deliberately introduce a defect; their nonzero exits demonstrate detection.

@@ -23,4 +23,8 @@ The Makefile, package scripts, shell and interpreter entry points, scheduled scr
 - Cloudflare uses `runtime-cloudflare/{install.sh,runtime,conformance.sh}`. Brainstorming uses `superpowers/{skills,vendor/superpowers/skills}/brainstorming/scripts/{start-server.sh,server.cjs,stop-server.sh}`.
 - Release operations use `scripts/{release-pack-binaries.sh,install_bd_matching_gc.sh,pack_release_compat.py,gascity_pack_inference_gate.py,registry_release.py}` and the two modifying Makefile targets above. The Python validator's hash and entry modes print output.
 
+Archived measurements are executable. Under `assets/pr-evidence/`, the live-read paths include `gp-74i1/read_facts.py`, `gp-74i1/read_threads.py`, `gp-zbq3/measure.py` and `gp-pnfn/city-helper-wrapper.py`. The `gp-g9nc/gc-linux-city.service` unit starts a supervisor. Its sibling `measure.py` and `record.py` inspect a city. The `mutate.py` scripts under gp-lv49, gp-w376, gp-0g2s and gp-ac0u rewrite gateway source. Leave those entry points outside verification.
+
+The Codex provider hook file under `gastown/overlay/per-provider/codex/.codex/hooks.json` primes, hands off and injects mail or nudges into an agent. The four scripts under `gascity/assets/scripts/checks/*.sh` inspect the live work store. Formula and order instructions can push, comment or dispatch work. The `registry-validate-all` Make target can fetch remote releases. Reachable's optional `test-reachable-perf` target allocates a 256 MiB fixture.
+
 Fixture tests exercise these code paths with temporary directories, stubs and loopback services. Byte formatting, frontmatter validation, emoji generation from supplied files and a dry-run build do not themselves send messages or deploy anything.
