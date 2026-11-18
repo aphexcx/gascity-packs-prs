@@ -1,0 +1,31 @@
+Probe commit 24ad1cfc73c3f341f2edba82341c00222338e869
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_reports_the_model_each_caller_sends gascity/tests/test_codex_gate.py::test_gate_probe_refuses_an_unusable_stub gascity/tests/test_codex_gate.py::test_gate_probe_names_its_own_record -q
+5 passed in 7.77s
+exit 0
+
+Bash reader commit 854402dbfa6eed924cda239dd2d32bdb7c35026d
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_reports_the_model_each_caller_sends gascity/tests/test_codex_gate.py::test_gate_probe_refuses_an_unusable_stub gascity/tests/test_codex_gate.py::test_gate_probe_names_its_own_record gascity/tests/test_codex_gate.py::test_pin_reader_sees_what_bash_passes gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+9 passed in 1.78s
+exit 0
+
+Verified implementation 475c6a10f389f83362a381fd7a2eba56bc714529
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_reports_the_model_each_caller_sends gascity/tests/test_codex_gate.py::test_gate_probe_refuses_an_unusable_stub gascity/tests/test_codex_gate.py::test_gate_probe_names_its_own_record gascity/tests/test_codex_gate.py::test_pin_reader_sees_what_bash_passes gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+9 passed in 1.69s
+exit 0
+
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py gascity/tests/test_codex_infisical_shim.py -q
+75 passed in 11.61s
+exit 0
+
+$ make -C <clone> test-gascity
+1079 passed, 11 skipped, 10518 subtests passed in 951.02s (0:15:51)
+exit 0
+
+Observed worker reports in scratch (each followed the default exec probe):
+gate_probe: -m gpt-6.2-astra, review_model gpt-6.2-astra: OK
+probe exit 0
+gate_probe: -m previous-gate-model, review_model previous-gate-model: STALE
+probe exit 1
+gate_probe: -m none, review_model none: NO CALL RECORDED
+probe exit 1
+The last invocation supplied an absent review base. The helper refused before reaching the stub.

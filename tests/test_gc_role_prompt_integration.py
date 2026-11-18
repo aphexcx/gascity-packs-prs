@@ -258,7 +258,9 @@ def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
     assert "`gc.failure_class=pr_handoff_failed`" in prompt
     assert "gc mail send mayor" not in prompt
     assert '"$GC_CITY_PATH/assets/ops/mayor-tools/codex-gate.sh" review' in prompt
-    assert "codex -p city -m gpt-6-astra exec --skip-git-repo-check" in prompt
+    assert "--model gpt-6.2-astra" in prompt
+    assert "codex -p city -m gpt-6.2-astra exec --skip-git-repo-check" in prompt
+    assert not re.search(r"gpt-6(?:\.0)?-astra", prompt)
 
 
 def test_city_scoped_gascity_registers_claim_command_from_rig(

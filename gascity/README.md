@@ -939,7 +939,7 @@ install -m 0755 path/to/gascity/assets/scripts/codex-infisical-shim.sh \
   "$CITY/.gc/shims/codex-astra/codex"
 cat > "$CITY/.gc/shims/codex-astra/codex.env" <<'EOT'
 CODEX_SHIM_PATH_PREPEND=/abs/path/to/city/.gc/shims/toolchain
-CODEX_SHIM_EXEC=npx -y @openai/codex@0.153.3
+CODEX_SHIM_EXEC=npx -y @openai/codex@0.167.0
 EOT
 ```
 

@@ -1,0 +1,92 @@
+Implementation head a24a5ed170b6c995bd5f9f8dae535e1a0515f929
+Round-two test file from 4bec6afe538518d6a5eb521c89a31bb1eb7327eb
+Each case changes one input in the same restored scratch archive.
+
+1. Existing review output
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output -q
+Exit 1
+E           AssertionError: citadel-codex-gates.md: the stub run must leave a real record and its log alone
+FAILED gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output
+1 failed in 0.33s
+
+2. Exported PATH
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output -q
+Exit 1
+E           AssertionError: citadel-codex-gates.md: the stub PATH must apply to the stub run alone
+FAILED gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output
+1 failed in 0.25s
+
+3. Missing stub PATH
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output -q
+Exit 1
+E           AssertionError: citadel-codex-gates.md: the stub run exited 97:
+FAILED gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output
+1 failed in 0.25s
+
+4. Template model changed
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+Exit 1
+E       AssertionError: gc-role-worker.template.md: the review command must pass --model gpt-6.2-astra
+FAILED gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default
+1 failed in 0.02s
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_4bec6afe.py -q
+Exit 0
+21 passed in 3.93s
+
+5. Gate default changed
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+Exit 1
+E       AssertionError: gc-role-worker.template.md: the review command must pass --model gpt-7-astra
+FAILED gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default
+1 failed in 0.02s
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_4bec6afe.py -q
+Exit 1
+E           AssertionError: citadel-codex-gates.md: the review example must pass --model gpt-7-astra
+E       AssertionError: assert 'gpt-7-astra' == 'gpt-6.2-astra'
+E       AssertionError: assert 'gpt-7-astra' == 'gpt-6.2-astra'
+FAILED gascity/tests/test_codex_gate_at_4bec6afe.py::test_doc_examples_and_cli_pins_follow_the_gate_default
+FAILED gascity/tests/test_codex_gate_at_4bec6afe.py::test_city_astra_invocation_and_stdin[exec]
+FAILED gascity/tests/test_codex_gate_at_4bec6afe.py::test_city_astra_invocation_and_stdin[review]
+3 failed, 18 passed in 3.83s
+
+6. Commented-out exec model
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+Exit 1
+E       AssertionError: citadel-codex-gates.md: the exec example must pass --model gpt-6.2-astra
+FAILED gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default
+1 failed in 0.02s
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_4bec6afe.py -q
+Exit 0
+21 passed in 3.86s
+
+7. Shim prerelease
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+Exit 1
+E       AssertionError: codex-infisical-shim.sh: both example pins must match Codex 0.167.0
+FAILED gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default
+1 failed in 0.02s
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_4bec6afe.py -q
+Exit 0
+21 passed in 4.01s
+
+8. README prerelease
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+Exit 1
+E       AssertionError: codex-gate.sh: usage must name Codex 0.167.0-alpha.1
+FAILED gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default
+1 failed in 0.02s
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_4bec6afe.py -q
+Exit 0
+21 passed in 3.99s
+
+Self-review regression: use a fixed filename in the scratch directory.
+Before the repeat-invocation assertion
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output -q
+Exit 0
+1 passed in 0.32s
+After the repeat-invocation assertion
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output -q
+Exit 1
+E           AssertionError: citadel-codex-gates.md: each stub run must write a fresh mktemp output
+FAILED gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output
+1 failed in 0.40s

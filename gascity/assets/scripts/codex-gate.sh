@@ -10,7 +10,8 @@ Usage:
   codex-gate.sh review --base REF -C REPO --output FILE [--model MODEL]
   codex-gate.sh exec PROMPT_FILE -C REPO --output FILE [--model MODEL]
 
-Requires the city Codex profile (city.config.toml on Codex 0.153.3).
+Requires the city Codex profile (city.config.toml on Codex 0.167.0).
+The default model requires Codex CLI 0.166.0 or later.
 Writes the final answer to FILE and the execution transcript to FILE.log.
 Exit: 0 = CLEAN, 1 = BLOCK, 2 = missing/invalid verdict or usage error;
 other Codex failures retain their exit status. Commit before review.
@@ -24,7 +25,7 @@ case "$mode" in
   review|exec) ;;
   *) fail "unknown mode: $mode" ;;
 esac
-model=gpt-6-astra
+model=gpt-6.2-astra
 repo= output= base= prompt_file=
 if [[ "$mode" == exec ]]; then
   [[ $# -gt 0 && "$1" != -* ]] || fail 'exec requires PROMPT_FILE'

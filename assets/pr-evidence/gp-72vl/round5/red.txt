@@ -1,0 +1,12 @@
+C4: Failed: DID NOT RAISE AssertionError
+C3: AssertionError: post-commit (two hook entries)
+
+Commit f1953d483c366351b9f59822a954ff98a9753bba
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest 'gascity/tests/test_codex_gate.py::test_pin_reader_sees_what_bash_passes' 'gascity/tests/test_codex_gate.py::test_gate_fixture_runs_no_caller_git_hook' 'gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default' 'gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default' -q
+E       Failed: DID NOT RAISE AssertionError
+E       AssertionError: post-commit
+E         post-commit
+FAILED gascity/tests/test_codex_gate.py::test_pin_reader_sees_what_bash_passes[--model "$NEW_MODEL"]
+FAILED gascity/tests/test_codex_gate.py::test_gate_fixture_runs_no_caller_git_hook
+2 failed, 4 passed in 6.03s
+Exit 1

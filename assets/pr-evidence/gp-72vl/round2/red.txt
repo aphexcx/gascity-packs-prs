@@ -1,0 +1,32 @@
+The review example omitted --model at the test commit (e965b1cf), so assertion b failed (exit 1).
+
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____________ test_doc_examples_and_cli_pins_follow_the_gate_default ____________
+
+    def test_doc_examples_and_cli_pins_follow_the_gate_default():
+        script = SCRIPT.read_text(encoding='utf-8')
+        models = re.findall(r'^model=(\S+)$', script, re.M)
+        assert len(models) == 1, f'{SCRIPT.name}: expected one model= default'
+        model = models[0]
+
+        doc = DOC.read_text(encoding='utf-8')
+        section = doc.partition('\n## Gate helper\n')[2].partition('\n## ')[0]
+        block = re.search(r'^```bash\n(.*?)^```$', section, re.M | re.S)
+        assert block, f'{DOC.name}: expected a bash example block under Gate helper'
+        examples = [shlex.split(line) for line in block[1].splitlines() if line.strip()]
+        assert [args[:2] for args in examples] == [
+            ['codex-gate.sh', 'review'], ['codex-gate.sh', 'exec'],
+        ], f'{DOC.name}: expected the review and exec examples under Gate helper'
+        for args in examples:
+            message = f'{DOC.name}: the {args[1]} example must pass --model {model}'
+>           assert args.count('--model') == 1, message
+E           AssertionError: citadel-codex-gates.md: the review example must pass --model gpt-6.2-astra
+E           assert 0 == 1
+E            +  where 0 = <built-in method count of list object at 0x10b63adc0>('--model')
+E            +    where <built-in method count of list object at 0x10b63adc0> = ['codex-gate.sh', 'review', '--base', 'origin/main', '-C', '$REPO', ...].count
+
+gascity/tests/test_codex_gate.py:33: AssertionError
+=========================== short test summary info ============================
+FAILED gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default
+1 failed in 0.04s

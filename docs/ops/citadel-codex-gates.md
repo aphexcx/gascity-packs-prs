@@ -2,19 +2,20 @@
 
 Afik approved the isolated profile and gate rollout on 2026-09-06
 (message 1788737744.207359): “we should always use codex with astra”.
-Use the city profile with `gpt-6-astra` and `xhigh` reasoning. Existing default
-profile settings are preserved; the default model remains `gpt-5.6-sol`.
+Use the city profile with `gpt-6.2-astra` and `xhigh` reasoning.
+Existing default profile settings are preserved.
 
 ## Profile compatibility and measurements
 
-Codex CLI 0.153.3 requires `~/.codex/city.config.toml` for `-p city`.
+GPT-6.2 Astra requires Codex CLI 0.166.0 or later. The profile was tested
+with Codex CLI 0.167.0, which reads `city.config.toml` in the Codex home for `-p city`.
 It rejects a same-name legacy `[profiles.city]` table in `config.toml`.
 The requested legacy table was tested and removed; the base file is
 byte-identical to its backup, `~/.codex/config.toml.bak-20260906-185000`.
 See [OpenAI profile documentation](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles)
 and the installed CLI's `codex --help`.
 
-The city overlay sets `model = "gpt-6-astra"` and
+The city overlay sets `model = "gpt-6.2-astra"` and
 `model_reasoning_effort = "xhigh"`. It disables `features.plugins`,
 `features.apps`, `features.recommended_plugins`, and `features.remote_plugin`,
 and sets `enabled = false` for all eleven configured plugins and both configured
@@ -44,6 +45,17 @@ Raw local evidence is in `~/city/assets/ops/gp-mj2q/`. `codex -p city mcp list`
 confirmed both servers disabled. The rendered city prompt has no recommended
 plugin catalogue or plugin skill entries.
 
+## GPT-6.2 Astra until a Codex release bundles it
+
+Set `model_catalog_json` to a local copy of OpenAI's `codex-rs/models-manager/models.json` from `openai/codex` commit `6c0cee502` or later.
+Place it at the top level, above the file's first TOML table, because Codex silently ignores it under a table.
+Use the city's `city.config.toml` for this top-level key so it applies only to `-p city`, or use `config.toml` in a Codex home dedicated to the city.
+Keep the key out of a base `config.toml` shared with ordinary sessions.
+Every session sharing that file would use the replacement catalog, changing instructions and metadata for existing models, and a missing catalog file would stop every command in that home.
+Without the entry, the CLI warns ``Model metadata for `gpt-6.2-astra` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.`` and uses generic metadata.
+Add `gpt-6.2-astra` to the CLIProxyAPI hub's model catalog so it can route the ID. Otherwise it returns HTTP 400, “unknown provider for model gpt-6.2-astra”.
+Remove these overrides once the Codex release bundles the metadata and the hub's upstream catalog lists the ID.
+
 ## Gate helper
 
 Use the updated city helper (ci-cmju0n, 2026-10-23) at
@@ -52,8 +64,8 @@ Use the updated city helper (ci-cmju0n, 2026-10-23) at
 it over the city helper. Provision the city profile first.
 
 ```bash
-codex-gate.sh review --base origin/main -C "$REPO" --output "$REVIEW_OUTPUT" --class "$REVIEW_CLASS"
-codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$REVIEW_OUTPUT"
+codex-gate.sh review --base origin/main -C "$REPO" --output "$REVIEW_OUTPUT" --class "$REVIEW_CLASS" --model gpt-6.2-astra
+codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$REVIEW_OUTPUT" --model gpt-6.2-astra
 ```
 
 Set `REVIEW_CLASS` to the bead's recorded class: QUICK, STANDARD, DEEP or SAFETY.
@@ -66,8 +78,8 @@ beads keep it under `/Users/tailor512/city/assets/ops/pr-evidence/<bead>/`.
 `--raw` keeps Codex's bytes; the default strips trailing whitespace so a
 committed `.out` passes `git diff --check`.
 
-Both modes use `-p city -m gpt-6-astra`, read-only execution, `-C`,
-and `--skip-git-repo-check`; the prompt and the contract reach Codex on stdin.
+Both modes use `-p city -m MODEL`, read-only execution, `-C`, and `--skip-git-repo-check`. The prompt and the contract reach Codex on stdin.
+`MODEL` comes from `--model` when supplied. Otherwise the helper passes its own `model=` value, so an older installation keeps its previous ID until updated to `gpt-6.2-astra` (see “Moving a city to a new gate model”).
 `--model MODEL` explicitly overrides both the normal model and the optional
 review model. Review mode
 resolves REF and HEAD to commit IDs, computes their merge base, and asks
@@ -95,6 +107,20 @@ prompt/output files outside the reviewed worktree.
 Codex QUICK reviews supplement the required Fable adversarial review for
 Codex-built changes. Publishing a PR does not authorize merging it.
 
+## Moving a city to a new gate model
+
+An older model pin in any other layer the run uses can override a new default. Check the gate helper, its callers, the worker prompt and the provider command.
+For example, an installed helper whose `model=` line still names the previous model passes that ID in both `-m` and `review_model`, overriding the city profile's new default.
+
+1. Set `model` in `city.config.toml`. If the CLI does not yet bundle the model, set the catalog key as described above.
+2. Search the installed gate helper, every script that calls it and the worker prompt template `gascity/template-fragments/gc-role-worker.template.md` for `model=`, `--model` and the previous ID. The template's review command passes `--model` explicitly.
+   Update each pin, then check the review command in a freshly rendered worker prompt (`gc prime <lane>`).
+3. In `city.toml`, check the `codex-astra` provider's model default and any `-m` or `--model` flags in its `command` and `resume_command`.
+4. Run the installed helper with its callers' usual flags, adding `--dry-run` to print the Codex command without running it. Check for the new ID after `-m` and in `review_model=`.
+   For a helper without `--dry-run`, such as the repository copy, read its `model=` line. The helper passes that value in both `-m` and `review_model` unless the caller supplies `--model`, which overrides both. Check each caller and the freshly rendered worker command as described in step 2.
+   Running the repository helper to check the model would truncate its `--output` file and `.log` and invoke whichever `codex` its own `PATH` resolves.
+   Calling Codex through its home alone checks only the profile.
+
 ## Local ego-browser override and provider handoff
 
 The ego-browser description is now `Use when a task needs a real browser session
@@ -104,7 +130,7 @@ The body and ego app's source file are unchanged. The original directory symlink
 was saved at `~/.agents/ego-browser.bak-20260906-185347`, outside skill discovery.
 Claude-side skills, including superpowers, were not modified.
 
-The mayor owns `city.toml`. Its `codex-astra` provider already pins the model;
-its command and resume command still need `-p city` to select the new profile.
-The plain `codex` provider also needs the explicit Astra model and city profile
+The mayor owns `city.toml` and sets the `codex-astra` provider's model default there when the city switches to GPT-6.2 Astra.
+Its command and resume command still need `-p city` to select the new profile.
+The plain `codex` provider also needs the explicit GPT-6.2 Astra model and city profile
 if it is used for city work. No city.toml change is included in this task.
