@@ -151,31 +151,45 @@ def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
         "Whenever you open a PR or update its body",
         "end the body with three lines, each on its own line and starting with its label",
         "after every other section (a Deepening note included)",
+        "only the body's closing trailer or sign-off lines may follow them",
         "the exact commands you ran, each with its counts and exit code",
         "write `none: <why>` when you ran none",
-        "On the risk line, the tier comes from your city's written list of paths by risk tier, "
-        "with the path that set it",
+        "On the risk line, the tier comes from your city's written list of paths by risk tier: "
+        "the highest tier of any path the diff touches, and that path",
         "without such a list, write `not tiered` and the highest-risk path the diff touches",
-        "the one command that undoes the change",
+        "the one command that undoes the change once merged",
+        "name the commit the base branch will carry (the PR's merge or squash commit), "
+        "never a branch commit the merge may not keep",
         "when no command undoes all of the change, say what a revert would leave behind: "
         "a migration that ran, a deploy, a message sent",
         "A later round that updates the body rewrites the three lines for its own head "
-        "and keeps them last",
+        "and keeps them after every other section",
         "Keep the labels exactly as written",
     ):
         assert clause in note, f"THE PR BODY LINES lacks: {clause!r}"
 
 
-def test_pr_body_lines_note_shows_each_label_once_at_a_line_start_in_order() -> None:
+def test_pr_body_lines_placement_leaves_room_for_the_closing_trailers() -> None:
+    """Every place that says where the three lines go says it one way: after
+    every other section, with the body's closing trailer or sign-off lines
+    still below them. "Last" would put them under the trailers."""
+    note = pr_body_lines_note()
+    assert re.search(r"(?i)\blast\b", note) is None, "the note says the lines go last"
+    readme = flat(README.read_text(encoding="utf-8").split("## Standing notes", 1)[1].split("\n## ", 1)[0])
+    sentence = readme.split("Its second note is THE PR BODY LINES", 1)[1].split(".", 1)[0]
+    assert "after every other section, with only trailer or sign-off lines below them" in sentence
+    assert re.search(r"(?i)\blast\b", sentence) is None
+
+
+def test_pr_body_lines_note_shows_the_three_labels_once_as_one_block_in_order() -> None:
     """The render test proves the same on real gc output; this one runs
     everywhere."""
     text = renderable(fragment()).split("THE PR BODY LINES", 1)[-1]
-    starts = []
     for label in PR_BODY_LABELS:
         assert text.count(label) == 1, label
-        assert len(re.findall(rf"(?m)^{re.escape(label)} \S", text)) == 1, label
-        starts.append(text.index(label))
-    assert starts == sorted(starts)
+    block = rf"(?m)^{re.escape(PR_BODY_LABELS[0])} \S.*\n" \
+            rf"{re.escape(PR_BODY_LABELS[1])} \S.*\n{re.escape(PR_BODY_LABELS[2])} \S.*$"
+    assert len(re.findall(block, text)) == 1
 
 
 # One city's particulars: a machine path, a home path, a date, a Slack
@@ -187,6 +201,7 @@ BEAD_ID = r"\b(?:ci|cp|cs|dy|gf|gp|hw)-[a-z0-9]{3,}"
 CITY_PARTICULARS = (
     (BEAD_ID, "a bead id"),
     (r"(?<![\w.])/(?:Users|home|private|tmp|opt|var|etc)/", "an absolute machine path"),
+    (r"/", "a path (a relative one too)"),
     (r"~/", "a home-relative path"),
     (r"\$(?:GC_CITY_PATH|GC_CITY|HOME)\b", "a city or home variable"),
     (r"\b20\d\d-\d\d-\d\d\b", "a date"),
@@ -241,7 +256,8 @@ def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
         "A note that belongs to one city stays in that city's own prompt template",
         "THE DEEPENING NOTE",
         "Its second note is THE PR BODY LINES",
-        "`Testing:`, `Risk:` and `How to revert:`",
+        "`Testing:`, `Risk:` and `How to revert:`, after every other section, "
+        "with only trailer or sign-off lines below them",
     ):
         assert clause in words, f"README Standing notes lacks: {clause!r}"
     assert words.index(CALL_LINE) < words.index(f"never as `{PLAIN_CALL}`")

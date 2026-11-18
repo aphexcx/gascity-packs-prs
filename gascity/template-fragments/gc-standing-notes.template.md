@@ -44,17 +44,21 @@ trailer or sign-off lines may follow them:
 ```text
 Testing: <the exact commands you ran, each with its counts and exit code>
 Risk: <the tier and the path that set it>
-How to revert: <the one command that undoes the change>
+How to revert: <the one command that undoes the change once merged>
 ```
 
 - On the testing line, write `none: <why>` when you ran none.
 - On the risk line, the tier comes from your city's written list of paths by
-  risk tier, with the path that set it; without such a list, write
-  `not tiered` and the highest-risk path the diff touches.
-- On the revert line, when no command undoes all of the change, say what a
-  revert would leave behind: a migration that ran, a deploy, a message sent.
+  risk tier: the highest tier of any path the diff touches, and that path;
+  without such a list, write `not tiered` and the highest-risk path the diff
+  touches.
+- On the revert line, name the commit the base branch will carry (the PR's
+  merge or squash commit), never a branch commit the merge may not keep; when
+  no command undoes all of the change, say what a revert would leave behind: a
+  migration that ran, a deploy, a message sent.
 
 A later round that updates the body rewrites the three lines for its own head
-and keeps them last. Keep the labels exactly as written: a reviewer reads these
-lines first, and a city's tools may read them by their labels.
+and keeps them after every other section. Keep the labels exactly as written:
+a reviewer reads these lines first, and a city's tools may read them by their
+labels.
 {{- end }}

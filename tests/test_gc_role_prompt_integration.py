@@ -747,10 +747,11 @@ def test_city_lane_renders_the_standing_notes_once_after_the_role_text(
 
 # gp-hdn2: the standing notes' second note, THE PR BODY LINES. Its labels in
 # the order a PR body carries them, and the particulars of one city that no
-# rendered note may carry: a machine path, a date, a bead id.
+# rendered note may carry: a path (any slash, so a relative one too), a date,
+# a bead id.
 PR_BODY_LABELS = ("Testing:", "Risk:", "How to revert:")
 RENDERED_PARTICULARS = (
-    (re.compile(r"(?<![\w.])/(?:Users|home|private|tmp|opt|var|etc)/|~/"), "a machine path"),
+    (re.compile(r"/"), "a path"),
     (re.compile(r"\b20\d\d-\d\d-\d\d\b|\b\d{1,2}/\d{1,2}\b"), "a date"),
     (BEAD_ID, "a bead id"),
 )
@@ -774,17 +775,17 @@ def test_city_lane_renders_the_pr_body_lines_once_each_in_order(
     assert_clean_worker_render(both.stdout, "# GC Role Worker")
     assert both.stdout.startswith(role_only.stdout)
     notes = both.stdout[len(role_only.stdout):]
-    # The second note follows the first, and its three labels each start one
-    # line of it, once, in the order a PR body carries them.
+    # The second note follows the first, and its three labels appear once
+    # each, starting three consecutive lines of it in the order a PR body
+    # carries them.
     assert notes.count("THE PR BODY LINES") == 1
     assert notes.index("THE DEEPENING NOTE") < notes.index("THE PR BODY LINES")
-    lines = notes.split("THE PR BODY LINES", 1)[1]
-    starts = []
     for label in PR_BODY_LABELS:
         assert notes.count(label) == 1, label
-        assert len(re.findall(rf"(?m)^{re.escape(label)} \S", lines)) == 1, label
-        starts.append(lines.index(label))
-    assert starts == sorted(starts)
+    testing, risk, revert = (re.escape(label) for label in PR_BODY_LABELS)
+    block = re.findall(rf"(?m)^{testing} \S.*\n{risk} \S.*\n{revert} \S.*$", notes)
+    assert len(block) == 1, block
+    assert notes.index(block[0]) > notes.index("THE PR BODY LINES")
     for pattern, what in RENDERED_PARTICULARS:
         match = pattern.search(notes)
         assert match is None, f"the rendered notes name {what}: {match.group(0)!r}"
