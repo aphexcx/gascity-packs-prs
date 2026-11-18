@@ -79,7 +79,7 @@ def test_worker_prompt_gate_command_follows_the_gate_default(command_env):
     assert_passes_model(commands[0], model, f'{FRAGMENT.name}: the review command must pass --model {model}')
 
 
-@pytest.mark.parametrize('tail', ['--model {model}#old', '# --model {model}'])
+@pytest.mark.parametrize('tail', ['--model {model}#old', '# --model {model}', '--model "$NEW_MODEL"'])
 def test_pin_reader_sees_what_bash_passes(command_env, tail):
     model = gate_default_model()
     command = 'codex-gate.sh exec "$PROMPT_FILE" ' + tail.format(model=model)
@@ -160,6 +160,24 @@ sys.exit(int(os.environ.get('CODEX_EXIT', '0')))
         )
         return result, json.loads(capture.read_text()) if capture.exists() else None, output
     return run
+
+
+def test_gate_fixture_runs_no_caller_git_hook(tmp_path, monkeypatch, request):
+    home = tmp_path / 'caller-home'
+    hooks = home / 'hooks'
+    hooks.mkdir(parents=True)
+    marker = hooks / 'marker'
+    hook = hooks / 'post-commit'
+    hook.write_text('#!/bin/sh\necho post-commit >> "$(dirname "$0")/marker"\n')
+    hook.chmod(0o755)
+    (home / '.gitconfig').write_text('[core]\n\thooksPath = ~/hooks\n')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.delenv('GIT_CONFIG_GLOBAL', raising=False)
+
+    gate = request.getfixturevalue('gate')
+    result, _, _ = gate('review')
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists(), marker.read_text()
 
 
 @pytest.mark.parametrize('mode', ['exec', 'review'])
