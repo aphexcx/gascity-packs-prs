@@ -27,6 +27,10 @@ what that city's agents are told.
   does.
 - NOTE: naming, wording, a test's shape, a cheaper way.
 
+A fault this file gives no other grade takes the grade of its effect
+under these four. A failing test, check or build with no other effect
+shown is MINOR, and a security fault is MAJOR at least.
+
 Two terms this file uses:
 
 - A shape our cities run: a pack of this repository as a city of ours
@@ -60,7 +64,7 @@ is graded as if a city ran the shape.
 - Always reviewed by hand: a change to REVIEW.md itself, whatever CI runs
   on its pull request. A heading, a rule or the Prune line it removes or
   breaks is MAJOR unless the pull request's body names the change and
-  says why.
+  says why; then it is a NOTE that quotes that reason.
 - A fault that needs a chat platform, a provider, a runtime or a setting
   no city of ours runs is reported as PRECONDITION, with the precondition
   in one sentence, never as MAJOR. UNKNOWN is not PRECONDITION.
@@ -103,15 +107,19 @@ what breaks it, with examples from main.
   docs/ops/citadel-codex-gates.md:4. Not private, on main: the ids and
   addresses at gchat/adapter/internal/principal/principal_test.go:16, and
   the secrets file every city keeps under $GC_CITY_PATH at
-  whatsapp/README.md:108. A value the diff does not add, or adds in the
-  same form as main already has it (a file moved, a line copied), is not
-  a finding of the diff. A value that does not look invented and that
-  nothing in the diff, the pull request or the repository places is not
-  shown to break this rule: it is a MINOR asking for an invented one. It
-  is MAJOR when the diff, the pull request or a commit says or shows that
-  it is real. This repository is public and a pack's files reach every
-  city that imports it. Packs PR 90 (opened 2026-11-12) carried a
-  business number's phone-number id and account id in a design document.
+  whatsapp/README.md:108. A line the diff does not add or change is not a
+  finding of the diff. A line the diff adds or changes is judged by what
+  it shows and to whom, even when the same value already appears
+  somewhere on the base branch. A private value the diff adds is MAJOR,
+  and CRITICAL when it is text a person sent or a key's or a token's
+  value. A key or a token in the shape the code would use is graded as
+  real. Any other value that does not look invented, and that nothing in
+  the diff, the pull request or the repository places, is a MINOR asking
+  for an invented one, until the diff, the pull request or a commit says
+  or shows that it is real. This repository is public and a pack's files
+  reach every city that imports it. Packs PR 90 (opened 2026-11-12)
+  carried a business number's phone-number id and account id in a design
+  document.
 - The same test holds for commit messages, the pull request's title and
   body, and the squash note a merge writes: a founder's approval is cited
   by its words and its date, never by a channel id, a message timestamp
