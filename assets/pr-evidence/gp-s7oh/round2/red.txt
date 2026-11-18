@@ -1,0 +1,32 @@
+$ env -u GC_BIN -u NEVER_SILENT go vet -overlay "<tmp>"/wrong-struct.json ./internal/ledger
+# gchat-adapter/internal/ledger [gchat-adapter/internal/ledger.test]
+<tmp>/wrong-struct.go:535:6: out.JoinRequests undefined (type Ledger has no field or method JoinRequests)
+<tmp>/wrong-struct.go:535:35: l.JoinRequests undefined (type *Ledger has no field or method JoinRequests)
+<tmp>/wrong-struct.go:536:6: out.JoinAttempts undefined (type Ledger has no field or method JoinAttempts)
+<tmp>/wrong-struct.go:536:36: l.JoinAttempts undefined (type *Ledger has no field or method JoinAttempts)
+internal/ledger/join_test.go:75:4: l.JoinRequests undefined (type *Ledger has no field or method JoinRequests)
+internal/ledger/join_test.go:78:4: l.JoinAttempts undefined (type *Ledger has no field or method JoinAttempts)
+internal/ledger/join_test.go:97:8: clone.JoinRequests undefined (type *Ledger has no field or method JoinRequests)
+internal/ledger/join_test.go:98:8: clone.JoinAttempts undefined (type *Ledger has no field or method JoinAttempts)
+internal/ledger/media_join_test.go:30:7: want.JoinRequests undefined (type *Ledger has no field or method JoinRequests)
+internal/ledger/media_join_test.go:33:7: want.JoinAttempts undefined (type *Ledger has no field or method JoinAttempts)
+internal/ledger/media_join_test.go:33:7: too many errors
+exit 1
+
+$ env -u GC_BIN -u NEVER_SILENT go test -overlay "<tmp>"/join_requests.json -p 1 -count=1 ./internal/ledger -run '^TestMediaAndJoinRecordsShareOneLedger$' -v
+=== RUN   TestMediaAndJoinRecordsShareOneLedger
+    media_join_test.go:56: saved ledger missing key "join_requests"
+--- FAIL: TestMediaAndJoinRecordsShareOneLedger (0.01s)
+FAIL
+FAIL	gchat-adapter/internal/ledger	0.120s
+FAIL
+exit 1
+
+$ env -u GC_BIN -u NEVER_SILENT go test -overlay "<tmp>"/media_roots.json -p 1 -count=1 ./internal/ledger -run '^TestMediaAndJoinRecordsShareOneLedger$' -v
+=== RUN   TestMediaAndJoinRecordsShareOneLedger
+    media_join_test.go:56: saved ledger missing key "media_roots"
+--- FAIL: TestMediaAndJoinRecordsShareOneLedger (0.02s)
+FAIL
+FAIL	gchat-adapter/internal/ledger	0.125s
+FAIL
+exit 1
