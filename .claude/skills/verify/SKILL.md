@@ -5,7 +5,7 @@ description: "Run before every commit: the exact test, validate and Go module co
 
 # Verify a pack change
 
-Start in the repository root. Before each commit run the checks for the files you touched. Before handoff run the Reachable and Gas City Make checks below. The Gas City Python suite can invoke the real gc on PATH for the Gastown lint baseline. Its findings depend on whether the checkout sits inside a city. The checks that require an installed gc for integration run in hosted CI.
+Start in the repository root. Before each commit run the checks for the files you touched. Before handoff run the Reachable and full Python checks below. Both the full Python suite and the narrower Gas City Make check can invoke the real gc on PATH for the Gastown lint baseline. Its findings depend on whether the checkout sits inside a city. The checks that require an installed gc for integration run in hosted CI.
 
 Use provisioned Python 3.12, Node 24 and the Go toolchain and module cache for the modules you touch. Select their executable directories on PATH. The Makefile falls back to downloading Python packages when its imports fail. The function checks the imports inside the test environment before starting Make. It sets the Node shim to offline mode, disables Go downloads, and restricts Git transport to local fixture repositories.
 
@@ -122,7 +122,13 @@ verify -C reachable/test node --test --test-skip-pattern '^review 4: archive rep
 For root tests, Gas City roles and worker scripts run the Gas City check (about six minutes).
 
 ```sh
-verify make test-gascity
+verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider'
+```
+
+For handoff, run all fourteen Python directories selected by CI. Every Python test command disables pytest’s cache because cache files written inside a pack appear in its packaging inventory.
+
+```sh
+verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q -p no:cacheprovider
 ```
 
 Follow-through's Linux CI Node suite takes about one minute.
@@ -154,19 +160,19 @@ verify python3 validate_registry.py --require-git
 Run the matching command when changing a suite or the code it tests. Each Python block and the gateway's local Vitest block took under one minute. Use the function even for local adapter fixtures so the process receives only fixture credentials and endpoints. The WeCom doctor retains PATH and HOME alone, so the function puts the installed Node executable first on its child PATH.
 
 ```sh
-verify -C board-watcher/tests python3 -m pytest -q .
+verify -C board-watcher/tests python3 -m pytest -q . -p no:cacheprovider
 ```
 
 ```sh
-verify -C wecom/tests python3 -m pytest -q .
+verify -C wecom/tests python3 -m pytest -q . -p no:cacheprovider
 ```
 
 ```sh
-verify -C oversight-rig/assets/scripts python3 -m pytest -q .
+verify -C oversight-rig/assets/scripts python3 -m pytest -q . -p no:cacheprovider
 ```
 
 ```sh
-verify -C oversight-rig/skills/city-executive-status/tests python3 -m pytest -q .
+verify -C oversight-rig/skills/city-executive-status/tests python3 -m pytest -q . -p no:cacheprovider
 ```
 
 For the WhatsApp adapter, the function passes each tracked test file by name and reports every omitted untracked test on stderr. The 30 tracked files took about four minutes. The reconnect and slow-flush timing cases both passed five times alone after failing under load.
@@ -261,9 +267,7 @@ verify -C gchat/adapter go test -count=1 -json -timeout=30m ./...
 
 ## Not run here, because
 
-The `test-reachable` and combined `test` Make targets include the excluded archive replay test. Use the separate Reachable and Gas City checks above for local handoff.
-
-- **CI Python directories** — the full fourteen-directory pytest command failed the unchanged checkout’s oversight skill packaging test because an earlier isolated pytest left cache files inside the packaged directory. The local Gas City target still runs `tests` and `gascity/tests`. CI runs those two and `contributing-to-gascity/tests`, `discord/tests`, `github/tests`, `oversight-rig/tests`, `slack-full/tests`, `slack-channel/tests`, `pr-pipeline/tests`, `profiler/tests`, `whatsapp/tests`, `gchat/tests`, `scripts/tests` and `follow-through/tests`. [Base measurement](../../../assets/pr-evidence/gp-me0t/round3-measured.md)
+The `test-reachable` and combined `test` Make targets include the excluded archive replay test. Use the separate Reachable and full Python checks above for local handoff. [Base measurements](../../../assets/pr-evidence/gp-me0t/round3-measured.md)
 
 - `slack-full/adapter` — a registration test starts the adapter's main in a new environment. That child defaults to the real Slack address and the local function cannot require a fake inside it. CI runs the complete module. The earlier local result of 13,537 passes and three skips is carried from the [original run](../../../assets/pr-evidence/gp-me0t/slack-full-adapter-test.txt).
 - `wecom/adapter/test` — the SDK dependency must already be provisioned. This checkout has no installed adapter SDK. Its local WebSocket tests start a fixture process.

@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / ".claude/skills/verify/SKILL.md"
 LOOP = 'for script in gastown/tests/test_*.sh; do bash "$script"; done'
 REPLAY = "^review 4: archive replay advances in bounded chunks without dropping rows$"
-MAKE = ["test-gascity", "registry-format-validate"]
 PYTHON_DIRS = ["board-watcher/tests", "wecom/tests", "oversight-rig/assets/scripts",
                "oversight-rig/skills/city-executive-status/tests"]
 SECRETS = [
@@ -65,23 +64,17 @@ def excluded(text, directory):
 
 
 def required_commands(text):
-    commands = [["make", target] for target in MAKE]
+    commands = [["make", "test-gascity", "PYTEST_ARGS=-q -p no:cacheprovider"], ["make", "registry-format-validate"]]
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
     python_suite = re.search(r"^\s*run: (python3 -m pytest .+)$", ci, re.M)[1]
-    python_args = shlex.split(python_suite)
-    exception = re.search(r"^- \*\*CI Python directories\*\* — (.+)$", text, re.M)
-    if exception:
-        for directory in python_args[3:-1]:
-            assert f"`{directory}`" in exception[1], f"Missing Python directory: {directory}"
-    else:
-        commands.append(python_args)
+    commands.append([*shlex.split(python_suite), "-p", "no:cacheprovider"])
     commands += [["python3", "validate_registry.py", "--require-git"],
                  ["-C", "follow-through/test", "node", "--test"],
                  ["-C", "reachable/test", "node", "--test", "--test-skip-pattern", REPLAY],
                  ["bash", "-ec", LOOP]]
     for directory in PYTHON_DIRS:
         if not excluded(text, directory):
-            commands.append(["-C", directory, "python3", "-m", "pytest", "-q", "."])
+            commands.append(["-C", directory, "python3", "-m", "pytest", "-q", ".", "-p", "no:cacheprovider"])
     for mod in files("go.mod", "*/go.mod"):
         if mod.parts[0] == "assets":
             continue
@@ -124,7 +117,7 @@ def check_inventory(text, makefile):
         assert "\n" not in block and block.startswith("verify "), f"Expected one guarded check: {block}"
         words = shlex.split(block, comments=False)[1:]
         if words[:1] == ["make"]:
-            assert len(words) == 2 and words[1] in recipes, f"Undefined Makefile target: {block}"
+            assert words[1] in recipes, f"Undefined Makefile target: {block}"
         directory = ROOT / words[1] if words[:1] == ["-C"] else ROOT
         assert directory.is_dir(), f"Missing working directory: {block}"
         for word in words[2:] if words[:1] == ["-C"] else words:
@@ -144,7 +137,7 @@ def check_inventory(text, makefile):
 
 @pytest.mark.parametrize("target", ["absent-verify-target", "test#typo"])
 def test_unknown_make_target_names_the_target(target):
-    text = SKILL.read_text().replace("verify make test-gascity\n", f"verify make {target}\n")
+    text = SKILL.read_text().replace("verify make test-gascity ", f"verify make {target} ")
     with pytest.raises(AssertionError, match=re.escape(target)):
         check_inventory(text, (ROOT / "Makefile").read_text())
 
@@ -218,7 +211,7 @@ def test_suite_coverage():
                     continue
         if path.suffix == ".py" and (not ci_python.isdisjoint(map(str, path.parents)) or
                 ("verify make test" in blocks and not make_python.isdisjoint(map(str, path.parents))) or
-                any(f"verify -C {p} python3 -m pytest -q ." in blocks for p in path.parents)):
+                any(f"verify -C {p} python3 -m pytest -q . -p no:cacheprovider" in blocks for p in path.parents)):
             continue
         if path.suffix == ".sh" and directory == "gastown/tests" and any(LOOP in b for b in blocks):
             continue
@@ -392,6 +385,29 @@ def test_wecom_child_uses_installed_node(harness):
     result = run("verify -C wecom/tests python3 -m pytest -q .")
     assert result.returncode == 0, result.stderr + result.stdout
     assert "/curl " not in log.read_text()
+
+
+def test_pytest_commands_leave_clean_tree(harness):
+    repo, tools, _, _, run = harness
+    _, blocks, _ = split_document(SKILL.read_text())
+    pytest_blocks = [b for b in blocks if "python3 -m pytest " in b or b.startswith("verify make test-gascity")]
+    for directory in re.search(r"^PYTEST_DIRS \?= (.+)$", (ROOT / "Makefile").read_text(), re.M)[1].split():
+        (repo / directory).mkdir(parents=True, exist_ok=True)
+    # Each invocation collects a real test, including every pack run from its own directory.
+    for i, directory in enumerate([repo / "tests", *(repo / d for d in PYTHON_DIRS)]):
+        (directory / f"test_fixture_{i}.py").write_text("def test_example():\n    assert True\n")
+    (repo / "Makefile").write_bytes((ROOT / "Makefile").read_bytes())
+    (repo / ".gitignore").write_text("__pycache__/\n")
+    (tools / "python3").write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+    (tools / "make").write_text('#!/bin/sh\nexec /usr/bin/make "$@"\n')
+    git = ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"]
+    subprocess.run([*git, "add", "."], cwd=repo, env=BOOT, check=True)
+    subprocess.run([*git, "commit", "-qm", "fixture"], cwd=repo, env=BOOT, check=True)
+    for block in pytest_blocks:
+        result = run(block)
+        assert result.returncode == 0 and "passed" in result.stdout, (block, result.stderr, result.stdout)
+        status = subprocess.check_output([*git, "status", "--porcelain", "--untracked-files=all"], cwd=repo, env=BOOT)
+        assert not status and not list(repo.rglob(".pytest_cache")), f"Checkout changed after {block}"
 
 
 @pytest.mark.parametrize("filename", SECRETS)
