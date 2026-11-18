@@ -117,14 +117,29 @@ For example, an installed helper whose `model=` line still names the previous mo
    Update each pin, then check the review command in a freshly rendered worker prompt (`gc prime <lane>`).
 3. In `city.toml`, check the `codex-astra` provider's model default and any `-m` or `--model` flags in its `command` and `resume_command`.
 4. Run the installed helper with its callers' usual flags, adding `--dry-run` to print the Codex command without running it. Check for the new ID after `-m` and in `review_model=`.
-   For a helper without `--dry-run`, such as the repository copy, put a stub `codex` that records its arguments in `STUB_DIR`, as in `gascity/tests/test_codex_gate.py`, and run the helper once on that `PATH` with a fresh output of its own.
+   For a helper without `--dry-run`, use the executable `codex` written by the `gate` fixture in `gascity/tests/test_codex_gate.py`. Set `STUB_DIR` to its directory and `NEW_MODEL` to the intended ID. Run the following in Bash.
 
    ```bash
-   PATH="${STUB_DIR:?}:$PATH" codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$(mktemp "${TMPDIR:-/tmp}/gate-stub.XXXXXX")"
+   gate_probe() (
+     : "${STUB_DIR:?}" "${NEW_MODEL:?}"; PATH="$STUB_DIR:$PATH"
+     if [[ ! -f $STUB_DIR/codex || ! -x $STUB_DIR/codex || $(type -t codex) != file || ! $(command -v codex) -ef $STUB_DIR/codex ]]; then
+       printf "gate_probe: codex resolves to '%s', expected executable stub %s/codex\n" "$(command -v codex)" "$STUB_DIR" >&2; exit 2
+     fi
+     CAPTURE=$(mktemp "${TMPDIR:-/tmp}/gate-probe.XXXXXX") && out=$(mktemp "${TMPDIR:-/tmp}/gate-stub.XXXXXX") || exit 2
+     export CAPTURE; args=("$@")
+     for ((i=1; i+1<${#args[@]}; i++)); do if [[ ${args[i]} == --output ]]; then args[++i]=$out; fi; done
+     rc=0; "${args[@]}" || rc=$?; printf "gate_probe: helper exit %s; the stub's record is %s\n" "$rc" "$CAPTURE"
+     python3 -I -c 'import json, pathlib, sys
+   record = pathlib.Path(sys.argv[1]).read_text()
+   args = json.loads(record)["args"] if record else []
+   models = [value for flag, value in zip(args, args[1:]) if flag == "-m"]
+   reviews = [json.loads(arg.split("=", 1)[1]) for arg in args if arg.startswith("review_model=")]
+   status = "NO CALL RECORDED" if not args else "OK" if models == reviews == [sys.argv[2]] else "STALE"
+   print("gate_probe: -m %s, review_model %s: %s" % (",".join(models) or "none", ",".join(reviews) or "none", status)); sys.exit(status != "OK")' "$CAPTURE" "$NEW_MODEL"
+   )
+   gate_probe codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$REVIEW_OUTPUT"
    ```
-
-   Reserve the fresh path for the stub run. The helper empties `--output` and its `.log` before it calls Codex, so reusing a real record’s path could erase the verdict and its transcript or replace them with the stub’s output.
-   Calling Codex through its home alone checks only the profile.
+   The last line probes the helper default. Prefix each caller’s own command with `gate_probe`, including the freshly rendered worker command and each calling script’s helper line. Review needs a clean `REPO_DIR` with a commit after `REVIEW_BASE`. The lookup check prevents a fallback to the real CLI. Only the output destination changes in the caller’s arguments because the helper empties `--output` and its `.log` before calling Codex. A model mismatch reports `STALE`. If the helper refuses a review without `--class` or `--bead`, the probe reports `NO CALL RECORDED` and fails. Calling Codex through its home alone checks only the profile.
 
 ## Local ego-browser override and provider handoff
 
