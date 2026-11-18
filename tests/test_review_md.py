@@ -2,11 +2,19 @@
 
 Every reviewer of a pull request here reads REVIEW.md from the base branch
 (git show main:REVIEW.md). This test holds the root to a regular file named
-exactly REVIEW.md, and the file to four headings, the two sentences of "What
-not to report" that no skip overrides, and a "Prune by: YYYY-MM-DD" line,
-each counted only where the rendered file shows it. It never compares that date
-with today, so a calendar date can never turn the suite red on an unrelated
-pull request. It reads only the repository's own file and writes nothing.
+exactly REVIEW.md, and the file to four headings, a "Prune by: YYYY-MM-DD"
+line, two items of "What not to report" that each begin with its pinned
+sentence, and a paragraph of "What MAJOR means here" in which a sentence
+begins with the two pinned sentences on UNKNOWN. It pins where each pinned
+sentence begins and where it sits, not what follows it.
+
+It reads the file as plain lines and reads no Markdown that can hide a line
+from the page or keep it from reading as a heading, an item or a paragraph:
+HTML or a comment, a code fence, a link reference definition, front matter.
+Each line that holds one is a problem that names the line, so such a file
+is red. It never compares the date with today, so a calendar date can never
+turn the suite red on an unrelated pull request. It reads only the
+repository's own file and writes nothing.
 """
 
 from __future__ import annotations
@@ -30,9 +38,9 @@ REQUIRED_HEADINGS = (
     "## Pruning",
 )
 
-# The two sentences of "## What not to report" that no skip overrides. A
-# list item there must begin with each, whitespace aside, so a change to
-# either is made here as well as in REVIEW.md.
+# The two sentences of "## What not to report" that no skip overrides. An
+# item there must begin with each, whitespace aside, so a change to either
+# is made here as well as in REVIEW.md.
 ALWAYS_SENTENCES = (
     "- Always reported: a secret, a key, a token, an injection or any other "
     "security fault in the diff, whatever CodeQL says; the scanner is a "
@@ -41,19 +49,41 @@ ALWAYS_SENTENCES = (
     "on its pull request.",
 )
 
-PRUNE_BY = re.compile(r"^Prune by: (\d{4}-\d{2}-\d{2})$")
-FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-COMMENT_OPEN = "<!--"
-COMMENT_CLOSE = "-->"
-LINE_END = re.compile(r"\r\n|\r|\n")
-RAW_HTML_OPEN = re.compile(r"^ {0,3}<[A-Za-z/?!]")
-# A line that ends a level-two section on the page: an ATX heading of level
-# one or two (up to three spaces before it), or a setext underline. A bare
-# "-" or "---" line is read as one too, so a doubtful line ends the items.
-SECTION_END = re.compile(r"^ {0,3}(?:#{1,2}(?:[ \t]|$)|=+[ \t]*$|-+[ \t]*$)")
-AUTOLINK = re.compile(
-    r"^ {0,3}<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>]+)>"
+# The two sentences of "## What MAJOR means here" that keep a finding the
+# reviewer cannot place at its grade. A sentence of a paragraph there must
+# begin with them, whitespace aside.
+UNKNOWN_SENTENCES = (
+    "A finding the reviewer cannot place is marked UNKNOWN and keeps the "
+    "grade beside it. It counts at that grade for the verdict, whatever "
+    "label a brief adds, until the mayor settles it."
 )
+
+PRUNE_BY = re.compile(r"^Prune by: (\d{4}-\d{2}-\d{2})$")
+LINE_END = re.compile(r"\r\n|\r|\n")
+
+# What the checker does not read. HTML_START finds every "<" that can open
+# a tag, a comment, a declaration or an instruction; of those only an
+# autolink after "<" and a letter is read, since the page shows its text.
+FRONT_MATTER = re.compile(r"^﻿?-{3,}\s*$")
+FENCE = re.compile(r"^\s*(?:`{3,}|~{3,})")
+DEFINITION = re.compile(r"^\s*\[[^\]]*\]:")
+HTML_START = re.compile(r"<[A-Za-z/!?]")
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+AUTOLINK = re.compile(
+    r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*"
+    r"|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@" + _LABEL + r"(?:\." + _LABEL + r")*)>"
+)
+FRONT_MATTER_WHAT = "front matter shows as a table, not as rules"
+FENCE_WHAT = "a code fence keeps the lines in it from reading as rules"
+DEFINITION_WHAT = "a link reference definition does not show on the page"
+HTML_WHAT = "HTML or a comment can hide text on the page"
+
+ATX = re.compile(r"^ {0,3}(#{1,6})(?=[ \t]|$)(.*)$")
+CLOSING_HASHES = re.compile(r"(?:^|[ \t]+)#+$")
+UNDERLINE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
+ITEM = re.compile(r"^ {0,3}[-*+](?:[ \t]+|$)")
+PARAGRAPH = re.compile(r"^ {0,3}[^ \t>|]")
+QUOTES = str.maketrans({"‘": "'", "’": "'"})
 
 
 def _read(path: Path) -> str:
@@ -85,116 +115,109 @@ def review_md_problems(text: str | None) -> list[str]:
     """Return what is wrong with a REVIEW.md text; None means the file is absent."""
     if text is None:
         return ["REVIEW.md is absent"]
-    lines = visible_lines(text)
-    problems = [
+    lines = [line.rstrip(" \t") for line in LINE_END.split(text)]
+    problems = unread_lines(lines)
+    headings = [heading_of(line) for line in lines]
+    problems += [
         f"missing heading {heading!r}"
         for heading in REQUIRED_HEADINGS
-        if heading not in lines
+        if heading not in headings
     ]
-    skips = REQUIRED_HEADINGS[1]
-    if skips in lines:
-        items = section_items(lines, skips)
-        begins = [" ".join(item.split()) for item in items]
+    rules, skips = REQUIRED_HEADINGS[:2]
+    if rules in headings:
+        paragraphs = section_blocks(lines, rules, "paragraph")
+        if not any(_begins_a_sentence(p, UNKNOWN_SENTENCES) for p in paragraphs):
+            problems.append(f"{rules!r} has no paragraph with {UNKNOWN_SENTENCES!r}")
+    if skips in headings:
+        items = section_blocks(lines, skips, "item")
         for sentence in ALWAYS_SENTENCES:
-            if not any(item.startswith(sentence) for item in begins):
+            if not any(item.startswith(sentence) for item in items):
                 problems.append(f"{skips!r} has no item that begins {sentence!r}")
     if not any(_prune_date(line) for line in lines):
         problems.append("no 'Prune by: YYYY-MM-DD' line with a real date")
     return problems
 
 
-def visible_lines(text: str) -> list[str]:
-    """The lines, trailing spaces and tabs cut, blank where the page hides them.
-
-    Only a newline or a carriage return ends a line, as in CommonMark. A line
-    inside a fenced code block or an HTML comment, and the lines that open
-    and close one, come back blank. A fence closes only on a line of its own
-    character, at least as long, with nothing after it. A fence or a comment
-    never closed hides the rest of the file, and so does any other raw HTML
-    block. A comment that opens and closes inside one line is cut out of that
-    line. Where the page's rendering is in doubt the checker hides more than
-    the page does, never less, so a doubtful file fails red, never green.
-    """
-    lines: list[str] = []
-    fence: tuple[str, int] | None = None
-    in_comment = False
-    raw_html = False
-    for line in LINE_END.split(text):
-        line = line.rstrip(" \t")
-        opened = None if fence or in_comment or raw_html else _fence_opened(line)
-        if raw_html:
-            lines.append("")
-        elif fence is not None:
-            if _closes(line, fence):
-                fence = None
-            lines.append("")
-        elif in_comment:
-            in_comment = COMMENT_CLOSE not in line
-            lines.append("")
-        elif opened is not None:
-            fence = opened
-            lines.append("")
-        elif line.lstrip(" ").startswith(COMMENT_OPEN):
-            after = line.split(COMMENT_OPEN, 1)[1]
-            in_comment = COMMENT_CLOSE not in after
-            lines.append("")
-        elif RAW_HTML_OPEN.match(line) and not AUTOLINK.match(line):
-            raw_html = True
-            lines.append("")
-        else:
-            line, in_comment = _cut_comments(line)
-            lines.append(line)
-    return lines
+def unread_lines(lines: list[str]) -> list[str]:
+    """One problem for each line that holds Markdown the checker does not read."""
+    problems = []
+    for number, line in enumerate(lines, 1):
+        found = _unread(line, number == 1)
+        if found is not None:
+            shown, what = found
+            problems.append(f"line {number} has {shown!r}: {what}, and the checker reads none")
+    return problems
 
 
-def _fence_opened(line: str) -> tuple[str, int] | None:
-    match = FENCE_OPEN.match(line)
+def _unread(line: str, first: bool) -> tuple[str, str] | None:
+    if first and FRONT_MATTER.match(line):
+        return line.strip(), FRONT_MATTER_WHAT
+    if FENCE.match(line):
+        return line.strip()[:20], FENCE_WHAT
+    if DEFINITION.match(line):
+        return line.strip()[:20], DEFINITION_WHAT
+    for start in HTML_START.finditer(line):
+        if line[start.end() - 1].isalpha() and AUTOLINK.match(line, start.start()):
+            continue
+        rest = line[start.start() :]
+        end = rest.find(">")
+        return (rest[: end + 1] if 0 <= end < 20 else rest[:20]), HTML_WHAT
+    return None
+
+
+def heading_of(line: str) -> str | None:
+    """An ATX heading as its hashes, a space and its text, or None."""
+    match = ATX.match(line)
     if match is None:
         return None
-    run, info = match.groups()
-    if run[0] == "`" and "`" in info:
-        return None  # a code span on one line, not a fence
-    return run[0], len(run)
+    hashes, rest = match.groups()
+    text = CLOSING_HASHES.sub("", rest.strip(" \t"))
+    return f"{hashes} {' '.join(text.split())}".rstrip()
 
 
-def _closes(line: str, fence: tuple[str, int]) -> bool:
-    char, length = fence
-    bare = line.lstrip(" ")
-    indent = len(line) - len(bare)
-    return indent <= 3 and len(bare) >= length and bare == char * len(bare)
+def section_blocks(lines: list[str], heading: str, kind: str) -> list[str]:
+    """The items or the paragraphs of a section, each as one line of text.
 
-
-def _cut_comments(line: str) -> tuple[str, bool]:
-    """The line without its comments, and whether a comment is left open."""
-    kept = ""
-    while COMMENT_OPEN in line:
-        before, after = line.split(COMMENT_OPEN, 1)
-        kept += before
-        if COMMENT_CLOSE not in after:
-            return kept.rstrip(), True
-        line = after.split(COMMENT_CLOSE, 1)[1]
-    return (kept + line).rstrip(), False
-
-
-def section_items(lines: list[str], heading: str) -> list[str]:
-    """The list items of a section, from its heading to the line that ends it.
-
-    An item is a line starting "- " with the lines that continue it; a blank
-    line, a heading or the next item ends it.
+    The section runs from its heading to a heading of level one or two, or to
+    a line of "=" or "-" right under a paragraph's line, which makes that
+    paragraph a heading. A line that starts with "-", "*" or "+" and a space
+    opens an item, read as "- " and its text. After a blank line or a heading,
+    a line with at most three spaces before it that does not start with ">"
+    or "|" opens a paragraph. Any other line goes on with the item or the
+    paragraph above it, as CommonMark joins a lazy line to the paragraph
+    above; after a blank line it opens a block that is neither.
     """
-    items: list[str] = []
-    open_item = False
-    for line in lines[lines.index(heading) + 1 :]:
-        if SECTION_END.match(line):
+    start = [heading_of(line) for line in lines].index(heading) + 1
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in lines[start:]:
+        found = heading_of(line)
+        if found is not None and len(found.split(" ", 1)[0]) <= 2:
             break
-        if line.startswith("- "):
-            items.append(line)
-            open_item = True
-        elif open_item and line.strip() and not line.startswith("#"):
-            items[-1] += "\n" + line
+        if UNDERLINE.match(line) and current is not None:
+            if current[0] == "paragraph":
+                blocks.pop()
+                break
+            current = None
+        elif not line.strip() or found is not None or UNDERLINE.match(line):
+            current = None
+        elif ITEM.match(line):
+            current = ["item", "- " + ITEM.sub("", line, count=1)]
+            blocks.append(current)
+        elif current is not None:
+            current[1] += "\n" + line
         else:
-            open_item = False
-    return items
+            current = ["paragraph" if PARAGRAPH.match(line) else "other", line]
+            blocks.append(current)
+    return [_plain(text) for found_kind, text in blocks if found_kind == kind]
+
+
+def _plain(text: str) -> str:
+    return " ".join(text.split()).translate(QUOTES)
+
+
+def _begins_a_sentence(paragraph: str, sentences: str) -> bool:
+    return paragraph.startswith(sentences) or f". {sentences}" in paragraph
 
 
 def _prune_date(line: str) -> datetime.date | None:
