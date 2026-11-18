@@ -1,0 +1,126 @@
+PR 104 round 3, self-review MAJOR 1: the reproduction (not part of the PR's tests).
+
+Copy the Go source below into slack-full/adapter/ of the tip as zz_review_collision_test.go and run
+  env -u GC_BIN go test . -run TestReview -count=1 -v
+The control (TestReviewControlAckOff, not shown) is the same script with the acknowledgement off.
+
+== the run on a copy of the tip, Slack code as at 16815df7 and unchanged after it (with the control):
+=== RUN   TestReviewAckHidesSessionReaction
+    zz_review_collision_test.go:89: react receipt={"delivered":true}
+    zz_review_collision_test.go:96: never-silent recorded no session act for the session's eyes reaction
+    zz_review_collision_test.go:104: owner lines posted after the session reacted: 1
+--- FAIL: TestReviewAckHidesSessionReaction (1.02s)
+=== RUN   TestReviewControlAckOff
+    zz_review_control_test.go:89: react receipt={"delivered":true}
+    zz_review_control_test.go:104: owner lines posted after the session reacted: 0
+--- PASS: TestReviewControlAckOff (1.18s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	2.746s
+FAIL
+
+== the source:
+package main
+
+// Reviewer's scratch repro (not part of the PR): with ACK_REACTION on, the
+// session's own /react with the same emoji the acknowledgement placed is an
+// already_reacted no-op on Slack, so never-silent records no session act.
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/sjarmak/gc-slack-adapter/internal/ack"
+	"github.com/sjarmak/gc-slack-adapter/internal/neversilent"
+	"github.com/sjarmak/gc-slack-adapter/internal/stopwatch"
+)
+
+func TestReviewAckHidesSessionReaction(t *testing.T) {
+	var mu sync.Mutex
+	placed := map[string]bool{}
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/reactions.add") {
+			var req slackReactionsAddReq
+			_ = json.Unmarshal(body, &req)
+			key := req.Channel + "/" + req.Timestamp + ":" + req.Name
+			mu.Lock()
+			dup := placed[key]
+			placed[key] = true
+			mu.Unlock()
+			if dup {
+				_, _ = io.WriteString(w, `{"ok":false,"error":"already_reacted"}`)
+				return
+			}
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer stub.Close()
+	withSlackAPIStub(t, stub)
+
+	now := time.Now()
+	posts := 0
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "never-silent.json")
+	e, err := neversilent.New(neversilent.Options{Enabled: true, Path: statePath, HealthFile: filepath.Join(dir, "health.json"), Now: func() time.Time { return now },
+		Post: func(context.Context, neversilent.Message, string) error { posts++; return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	choice, err := ack.New(ack.Options{Mode: "eyes", Catalog: ack.Catalog})
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchDir := filepath.Join(dir, "state")
+	watch := stopwatch.New(watchDir, "slack", "release-example", nil)
+	t.Cleanup(watch.Close)
+	gc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"delivery":{"status":"delivered","members":[{"session_id":"example-session","status":"delivered"}]}}`)
+	}))
+	defer gc.Close()
+	cfg := busyTestConfig(gc.URL)
+	cfg.busyReaction = ""
+	cfg.neverSilent = e
+	cfg.inboundJournal = &inboundJournal{dir: filepath.Join(dir, "journal"), watch: watch}
+	cfg.arrivalStarted = time.Now().UTC()
+	service := &ack.Service{Choice: choice, Dir: watchDir, Send: slackArrivalSender(cfg.slackBotToken)}
+	cfg.arrival = service
+	aliases := newTestHandleAliasRegistry(t)
+	human := slackTimestamp(now)
+	raw, _ := json.Marshal(slackMessageEvent{Type: "message", ChannelType: "im", Channel: "DEXAMPLE", User: "U0AAAAAA1", TS: human, Text: "thanks"})
+	processSlackEvent(cfg, aliases, nil, nil, nil, nil, slackEventEnvelope{Type: "event_callback", EventID: "event-human", Event: raw, receivedAt: time.Now(),
+		Authorizations: []slackEventAuthorization{{UserID: "U0BOTSELF", IsBot: true}}}, func() {})
+	time.Sleep(300 * time.Millisecond)
+	service.Wait()
+
+	// The session answers with the reaction its rules ask for: eyes.
+	w := httptest.NewRecorder()
+	handleReact(cfg)(w, httptest.NewRequest(http.MethodPost, "/react", strings.NewReader(`{"conversation":{"conversation_id":"DEXAMPLE"},"message_id":"`+human+`","emoji":"eyes","session_id":"example-session"}`)))
+	t.Logf("react receipt=%s", strings.TrimSpace(w.Body.String()))
+	data, _ := os.ReadFile(statePath)
+	var state struct {
+		Acts []json.RawMessage `json:"acts"`
+	}
+	_ = json.Unmarshal(data, &state)
+	if len(state.Acts) == 0 {
+		t.Errorf("never-silent recorded no session act for the session's eyes reaction")
+	}
+	now = now.Add(3 * time.Minute)
+	stamp := now.Format(time.RFC3339)
+	_ = os.WriteFile(filepath.Join(dir, "health.json"), []byte(`{"state":"session_down","since":"`+stamp+`","checked_at":"`+stamp+`"}`), 0o600)
+	if err := e.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("owner lines posted after the session reacted: %d", posts)
+}

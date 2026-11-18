@@ -1,0 +1,74 @@
+# THE SELF-REVIEW'S FIXES, each shown failing first
+## MAJOR 1: the pool-holding slow-flush test against the source of a377a6cb
+$ node --test --test-timeout=180000 test/slow-flush.test.js   (env -i, scratch HOME; load averages: 4.53 5.86 9.61)
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=unset) (10070.608958ms)
+ℹ delivery: 18 ms, 17 ms, 18 ms; send: 4 ms, 1 ms, 2 ms; longest gap between chunks: 226 ms, 201 ms, 1394 ms; slowed flushes: 120
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) (6803.6795ms)
+ℹ delivery: 19 ms, 20 ms, 18 ms; send: 14 ms, 104 ms, 105 ms; longest gap between chunks: 203 ms, 196 ms, 172 ms; slowed flushes: 128
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16923.818125
+✖ failing tests:
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=unset) (10070.608958ms)
+  AssertionError [ERR_ASSERTION]: a later chunk's send waited on flushes in the pool: 226 ms, 201 ms, 1394 ms
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) (6803.6795ms)
+  AssertionError [ERR_ASSERTION]: a send waited on a flush: 14 ms, 104 ms, 105 ms
+exit=
+
+## the same test after the fix (one serial chain for the stopwatch's and the markers' flushes)
+$ node --test --test-timeout=180000 test/slow-flush.test.js   (load averages: 5.10 5.90 9.54)
+ℹ delivery: 17 ms, 19 ms, 18 ms; send: 4 ms, 1 ms, 1 ms; longest gap between chunks: 32 ms, 32 ms, 31 ms; slowed flushes: 7
+ℹ delivery: 17 ms, 16 ms, 18 ms; send: 3 ms, 1 ms, 1 ms; longest gap between chunks: 33 ms, 37 ms, 31 ms; slowed flushes: 8
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3691.054583
+exit=
+
+## MINOR 2: TestLateRedriveTimesButDoesNotReact against the source of a377a6cb
+$ env -u GC_BIN go test . -run TestLateRedriveTimesButDoesNotReact -count=1 -v
+=== RUN   TestLateRedriveTimesButDoesNotReact
+    round2_redrive_test.go:75: a redrive past the reaction budget placed 1 reaction(s), 2.57s after first sight
+--- FAIL: TestLateRedriveTimesButDoesNotReact (2.99s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	3.226s
+FAIL
+
+## the same test at 4fe0a56d
+$ env -u GC_BIN go test . -run TestLateRedriveTimesButDoesNotReact -count=1 -v
+=== RUN   TestLateRedriveTimesButDoesNotReact
+--- PASS: TestLateRedriveTimesButDoesNotReact (2.98s)
+ok  	github.com/sjarmak/gc-slack-adapter	3.171s
+
+## The mayor's ruling 3: the chunk check made structural. The held-flush test against the source of a377a6cb
+$ node --test --test-timeout=120000 --test-name-pattern=held test/slow-flush.test.js   (load averages: 13.77 18.78 24.16)
+✖ every chunk of a publish is sent while the flushes are held (ACK_REACTION=unset) (20223.5365ms)
+ℹ chunks sent: 3; flushes held: 4; released: false
+✖ every chunk of a publish is sent while the flushes are held (ACK_REACTION=eyes) (20217.901625ms)
+ℹ chunks sent: 2; flushes held: 4; released: false
+ℹ tests 2
+ℹ pass 0
+ℹ fail 2
+✖ every chunk of a publish is sent while the flushes are held (ACK_REACTION=unset) (20223.5365ms)
+  AssertionError [ERR_ASSERTION]: every chunk sent while the flushes were held (3 sent)
+✖ every chunk of a publish is sent while the flushes are held (ACK_REACTION=eyes) (20217.901625ms)
+  AssertionError [ERR_ASSERTION]: every chunk sent while the flushes were held (2 sent)
+
+## the whole slow-flush file at the tip
+$ node --test --test-timeout=120000 test/slow-flush.test.js   (load averages: 15.02 18.47 23.80)
+ℹ delivery: 19 ms, 17 ms, 17 ms; send: 5 ms, 1 ms, 8 ms; slowed flushes: 2
+ℹ delivery: 17 ms, 19 ms, 23 ms; send: 17 ms, 8 ms, 7 ms; slowed flushes: 2
+ℹ chunks sent: 14; flushes held: 1; released: false
+ℹ chunks sent: 14; flushes held: 1; released: false
+ℹ tests 4
+ℹ pass 4
+ℹ fail 0

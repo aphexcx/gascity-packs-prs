@@ -1,5 +1,63 @@
 # gchat
 
+## Arrival reactions and stopwatch
+
+`ACK_REACTION` is empty (off) by default. Set it to `jev` to send only the
+message's text to TypeSafe, cut to 1,000 Unicode characters after the same
+secret redaction as Slack's,
+using `JEV_API_KEY`; no sender, room, IDs or attachment bytes are sent. Jev
+chooses from the arrival rows of `reactions.json`; absent credentials, unusable
+catalogs, timeouts and unusable answers use the fixed eyes reaction.
+
+A fixed arrival row's `slack_name` also works in every adapter. Claim rows,
+`auto`, `model`, and unknown names are rejected at startup. With an unusable
+catalog, only `jev` and `eyes` are available. `ACK_SCOPE=addressed` is the
+default; `all` includes delivered room messages. Own messages, bots, mutations,
+reactions, keeper events, replays, duplicates, and messages over 60 seconds old
+are excluded. A durable attempt marker prevents a second acknowledgement after
+a restart, even if a channel response was lost; markers older than a day are
+removed at start and once a day. Acknowledgements are never removed.
+`ACK_SCOPE` is read only when `ACK_REACTION` is set; unset, any value starts as
+before this feature.
+
+The adapter env file overrides inherited values; otherwise `JEV_API_KEY` comes
+from the process environment. Key changes require an adapter restart. Status
+reveals only whether a key is set. `JEV_API_BASE_URL` defaults to
+`https://api.typesafe.ai` and requires HTTPS (local HTTP is allowed for tests);
+`JEV_MODEL` defaults to `jev-latest`. There are at most four concurrent choices,
+each with a budget of 1,500 milliseconds from first sight. Delivery to gc runs
+independently of choices and channel requests. The reaction request target is
+two seconds from first sight; channel confirmation can take longer.
+
+Google Chat keeps one shared reaction pace of five requests per second, without bursts; with `ACK_REACTION` unset the mayor's own reactions keep the earlier gate at the same rate. At twelve simultaneous messages, that pace cannot fit every request inside two seconds; overflow uses eyes, stays queued, and records the actual confirmation time.
+
+While choices are pending, the scheduler counts backward from each message's two-second deadline. It abandons a choice only at the latest safe slot; a lone message retains its full 1,500 milliseconds. Ready choices use available slots immediately.
+
+Google words times use the message's create time. With `ACK_REACTION` unset the stopwatch makes no Google call of its own, so a message in a space whose kind is not yet known gets no inbound line. State defaults to the directory containing the effective `GCHAT_STATE_FILE`; supply `--state-dir` when the adapter env file overrides that path.
+
+The stopwatch runs even with acknowledgement off. It writes monthly UTC
+`stopwatch-YYYY-MM.jsonl` files with mode 0600, containing coordinates and
+timestamps only. Inbound lines include the first 12 SHA-256 hex characters of
+the running binary, or `unknown` with one warning when it cannot be read; the
+adapter starts either way.
+Reaction lines record the first confirmation, actor and adapter choice method;
+words lines record posts. An unwritable journal warns once and delivery continues.
+Lines are written by one background writer with a queue of 1,024 lines, so no
+delivery or post waits on a disk flush; a full queue drops the line with that
+one warning, never a message.
+The adapter never deletes these files. `GC_SERVICE_STATE_ROOT` overrides the
+timing directory for every adapter.
+
+Run `gc gchat stopwatch` with the pack's installed alias. It requires Python 3.11+
+and needs no running adapter.
+With city context it discovers the service's state directory when present.
+`--state-dir DIRECTORY` selects a custom directory; `--since TIME` and
+`--until TIME` filter inbound channel timestamps inclusively; `--json` prints
+the same numbers as JSON. Each release reports count, nearest-rank median and
+p90 seconds to the first reaction and first words, plus messages older than an
+hour without words. A reply answers all waiting messages in its conversation
+and thread; torn journal lines are skipped.
+
 ## What it is
 
 A reusable Google Chat provider pack for Gas City. One Workspace user identity
@@ -74,12 +132,56 @@ with one `chat-access` notice and keeps retrying. The Pub/Sub topic,
 subscription and grants in the checklist above are still needed; boxboxbox's
 key holder creates them.
 
+To enable accepting room invitations, add one permission only when this
+feature is needed. This box cannot accept invitations yet. A Workspace super administrator must open Google Admin console > Security > Access and data control > API controls > Manage Domain Wide Delegation, edit this client's entry, add https://www.googleapis.com/auth/chat.memberships beside the existing permissions, and click Authorize; changes can take up to 24 hours.
+Google describes this permission as "View, add, update, and remove members
+from conversations in Chat." The adapter uses it only to join one invited
+room after the owner's yes. The box's key holder must also hand out that
+permission. If it refuses the scope: "This box is not set up to hand out
+that permission yet. Whoever runs the box updates it or turns the permission
+on; the admin's step alone will not help." Only `delegation_not_authorized`
+means the admin's step above. Other permanent refusals name their code in
+`permission_error` and say: "The permission could not be given for another
+reason. The admin's permission step will not fix it; nothing changed."
+The key holder and the customer's own setup instructions live
+outside this repository. Desktop consent stays unchanged and cannot use join.
+
+`gc gchat join --check` checks only that permission. To accept one invitation,
+use `gc gchat join --space spaces/ID --request`, ask the owner in a direct
+message naming the room and its exact id as Google gives it. Ask the owner
+to reply with the returned code alone, nothing else, and pass that reply as
+`gc gchat join --space spaces/ID --yes spaces/DM/messages/ID`. The code is
+random, belongs to that room, and expires after 24 hours. The approval record
+stores only its hash, and the join audit contains no code. Ordinary outgoing
+and incoming message text retains its existing storage and may contain the
+code. A new request replaces it. The adapter checks the sender, the direct
+message's room and creation time, and that the whole reply is the code (letter
+case and surrounding whitespace ignored), then saves its use before
+one write naming the identity herself. An already joined room needs no yes
+and no write permission. A lost write answer is reported as an unknown outcome;
+the next run reads membership before any new write.
+The skill gives the owner's ask and the rule after no or silence.
+A token with too little time left is refused before approval is used; nothing
+changes, and the same owner's yes can be retried with a usable token.
+A create answered HTTP 403 PERMISSION_DENIED or HTTP 400 FAILED_PRECONDITION
+reports Google's answer and says the cause is not known yet; it does not
+promise that an organization setting will fix it.
+
+UNPROVEN: Google's pages do not say that creating one's own membership
+accepts an invitation. This command has only fake coverage and awaits a real
+proof call. Updating the pack alone preserves the permissions requested at
+start, all existing commands, inbound delivery, health, and existing ledger
+fields. The only new command is `join`; until both the admin and key holder
+allow the permission, it explains what is missing and joins nothing. Its
+optional approval and attempt records are dropped by the released adapter
+on rollback, leaving its existing records intact. The pack version is unchanged.
+
 ## Install
 
 Requirements: gc with schema-2 packs, `proxy_process` services and the extmsg
 API; a Unix platform with advisory file locks; Go 1.27.2 or newer for builds;
 POSIX sh, curl, jq, and the standard `od`
-and `tr` utilities. Python 3 is needed only for the wrapper tests. The source
+and `tr` utilities. Python 3.11+ runs the stopwatch command and wrapper tests. The source
 module is independent; no global Go install step is required.
 
 1. Place the pack at `packs/gchat`. Import it under the binding `gchat` in the
@@ -270,7 +372,7 @@ Set `NEVER_SILENT=on` to enable notices for newly admitted human messages addres
 
 The adapter knows `not_delivered` when it stops trying, or observes three continuous minutes of definite delivery failures or connection/dial errors, city-not-found responses or server errors. A successful HTTP response saying pending resets the failure wait. An uncertain stopped delivery raises operator mail immediately but waits three minutes without a session reply or reaction before telling the owner.
 
-The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
+The other causes are `no_seat`, `seat_at_cap` and `session_down`. They require delivery (including a concluded pending receipt with every member's whole message pasted), three minutes without words or a reaction from the addressed session, and fresh health evidence. A reaction from the session counts even when the adapter's acknowledgement placed the same one first; the acknowledgement alone never does. Set `MAYOR_HEALTH_FILE` to override `<city>/.gc/mayor-health.json`. The JSON contains `state` (ok, no_seat, seat_at_cap or session_down), RFC 3339 `since` and `checked_at`, and optional RFC 3339 `resets_at`. Missing, malformed, unrecognized or more than five-minute-old health reads unknown.
 
 Nothing in these packs writes that file yet. Its writer must run independently of gc's supervisor so evidence remains fresh when the supervisor fails. It must never call an asleep, drained or suspended session down: gc wakes those sessions for incoming messages. Until a writer exists, only not_delivered can fire.
 
@@ -647,7 +749,7 @@ Use unquoted fenced blocks and simple emphasis when exact presentation matters.
 | `delivery failed` | Inspect the JSON reason and retry hint; retry the same send with the printed key. |
 | `Delivered, but not recorded in gc` | Inspect binding/session and gc health; retry recording with the same key. |
 
-Validate source changes with `gc lint packs/gchat`, shellcheck and `bash -n`
+From the repository root, validate source changes with `gc lint gchat`, shellcheck and `bash -n`
 on every shell script, and the Python wrapper tests in `tests/`. From `adapter/`,
 run `gofmt -l .`, `go vet ./...`, and `staticcheck ./...`.
 Use `go test ./... -count=1 -timeout=30m` for the full suite and

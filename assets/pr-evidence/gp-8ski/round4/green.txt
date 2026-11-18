@@ -1,0 +1,30 @@
+TestJoinRechecksIdentityBeforeConsumingAndWriting, GREEN with the fix.
+
+Commit b10092eff709248fcb5c67f825d4008ad5d64a83 (the fix f6d53f84 plus the
+tightened prepare row). Run from gchat/adapter, load averages 5.60 7.22 9.83:
+
+env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run '^TestJoinRechecksIdentityBeforeConsumingAndWriting$' -count=1 -v
+
+Every row: no membership write, result no_owner_yes. owner_yes_check, mint
+and prepare: the yes is unspent (Used=false) and the answer is the existing
+unknown-identity refusal. consumption_save: Used=true and the answer says
+nothing was sent and to request approval again. The WARN line is the
+client logging the injected conflict.
+
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/owner_yes_check
+2026/11/16 23:58:25 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/mint
+2026/11/16 23:58:25 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/prepare
+2026/11/16 23:58:25 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+=== RUN   TestJoinRechecksIdentityBeforeConsumingAndWriting/consumption_save
+2026/11/16 23:58:25 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/123456789 observed_user_id=users/999
+--- PASS: TestJoinRechecksIdentityBeforeConsumingAndWriting (0.30s)
+    --- PASS: TestJoinRechecksIdentityBeforeConsumingAndWriting/owner_yes_check (0.06s)
+    --- PASS: TestJoinRechecksIdentityBeforeConsumingAndWriting/mint (0.08s)
+    --- PASS: TestJoinRechecksIdentityBeforeConsumingAndWriting/prepare (0.08s)
+    --- PASS: TestJoinRechecksIdentityBeforeConsumingAndWriting/consumption_save (0.07s)
+PASS
+ok  	gchat-adapter/internal/server	0.508s
+exit=0

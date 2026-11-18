@@ -1,0 +1,1043 @@
+[
+  {
+    "label": "backpressure-base",
+    "uptime": "0:17  up 7 days, 11:40, 5 users, load averages: 7.03 10.77 10.27",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=^archive backpressure:' review.test.cjs",
+    "cwd": "<tmp>/backpressure-base/reachable/test",
+    "exit": 1,
+    "elapsed": 0.26,
+    "summary": [
+      "# tests 2",
+      "# pass 0",
+      "# fail 2",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - archive backpressure: a full pipe retries without losing partial writes",
+      "not ok 2 - archive backpressure: the parent deadline preserves fail-open and the cursor"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "backpressure-head24",
+    "uptime": "0:17  up 7 days, 11:40, 5 users, load averages: 7.03 10.77 10.27",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=^archive backpressure:' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 2.23,
+    "summary": [
+      "# tests 2",
+      "# pass 2",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "backpressure-head26",
+    "uptime": "0:17  up 7 days, 11:40, 5 users, load averages: 7.03 10.77 10.27",
+    "command": "node --test --test-reporter=tap '--test-name-pattern=^archive backpressure:' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 2.41,
+    "summary": [
+      "# tests 2",
+      "# pass 2",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-01",
+    "uptime": "0:17  up 7 days, 11:41, 5 users, load averages: 7.11 10.72 10.25",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 0,
+    "elapsed": 5.78,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-02",
+    "uptime": "0:17  up 7 days, 11:41, 5 users, load averages: 6.86 10.61 10.22",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 0,
+    "elapsed": 5.82,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-03",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 6.71 10.52 10.19",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 0.81,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-04",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 6.71 10.52 10.19",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 0,
+    "elapsed": 7.09,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-05",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 7.53 10.57 10.21",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 3.24,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-06",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 9.73 10.97 10.35",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 0,
+    "elapsed": 5.77,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-07",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 9.59 10.92 10.34",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 0,
+    "elapsed": 6.13,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-08",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 9.47 10.87 10.32",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 2.93,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-09",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 9.47 10.87 10.32",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 0,
+    "elapsed": 5.83,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-10",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 9.49 10.83 10.31",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 0,
+    "elapsed": 6.01,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-11",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 9.21 10.75 10.29",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 2.36,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-12",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 9.21 10.75 10.29",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 0.94,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-13",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 8.80 10.64 10.25",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 0,
+    "elapsed": 6.13,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-14",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 8.65 10.57 10.23",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 0.84,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-15",
+    "uptime": "0:18  up 7 days, 11:41, 5 users, load averages: 8.65 10.57 10.23",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 0.85,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-16",
+    "uptime": "0:18  up 7 days, 11:42, 5 users, load averages: 8.65 10.57 10.23",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 0.87,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-17",
+    "uptime": "0:18  up 7 days, 11:42, 5 users, load averages: 8.65 10.57 10.23",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 0.84,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-18",
+    "uptime": "0:18  up 7 days, 11:42, 5 users, load averages: 8.65 10.57 10.23",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 9.11,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-19",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 8.03 10.38 10.16",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 0.93,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-base-20",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 8.03 10.38 10.16",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<tmp>/base/reachable/test",
+    "exit": 1,
+    "elapsed": 1.02,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "p95": [],
+    "eagain": true,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-01",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 8.27 10.39 10.17",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.11,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-02",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 8.01 10.30 10.14",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.68,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-03",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 7.92 10.24 10.12",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.75,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-04",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 7.54 10.08 10.06",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 10.06,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-05",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 7.00 9.88 9.99",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 7.38,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-06",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 7.40 9.92 10.00",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 7.69,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-07",
+    "uptime": "0:19  up 7 days, 11:42, 5 users, load averages: 7.92 9.94 10.01",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.7,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-08",
+    "uptime": "0:19  up 7 days, 11:43, 5 users, load averages: 7.52 9.82 9.97",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 5.8,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-09",
+    "uptime": "0:20  up 7 days, 11:43, 5 users, load averages: 7.32 9.74 9.94",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.16,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-10",
+    "uptime": "0:20  up 7 days, 11:43, 5 users, load averages: 7.45 9.73 9.93",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.02,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-11",
+    "uptime": "0:20  up 7 days, 11:43, 5 users, load averages: 7.46 9.66 9.90",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.64,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-12",
+    "uptime": "0:20  up 7 days, 11:43, 5 users, load averages: 7.59 9.65 9.90",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.36,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-13",
+    "uptime": "0:20  up 7 days, 11:43, 5 users, load averages: 7.62 9.62 9.89",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.69,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-14",
+    "uptime": "0:20  up 7 days, 11:43, 5 users, load averages: 7.49 9.56 9.87",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.62,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-15",
+    "uptime": "0:20  up 7 days, 11:43, 5 users, load averages: 7.49 9.49 9.84",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.48,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-16",
+    "uptime": "0:20  up 7 days, 11:43, 5 users, load averages: 7.13 9.38 9.80",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.58,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-17",
+    "uptime": "0:20  up 7 days, 11:44, 5 users, load averages: 7.36 9.39 9.80",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 7.28,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-18",
+    "uptime": "0:21  up 7 days, 11:44, 5 users, load averages: 6.77 9.20 9.72",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.82,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-19",
+    "uptime": "0:21  up 7 days, 11:44, 5 users, load averages: 6.71 9.14 9.70",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 6.26,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "replay-head-20",
+    "uptime": "0:21  up 7 days, 11:44, 5 users, load averages: 6.41 9.04 9.66",
+    "command": "pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 5.74,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "pair-1-base",
+    "uptime": "0:21  up 7 days, 11:44, 5 users, load averages: 5.81 8.83 9.58",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "cwd": "<tmp>/base",
+    "exit": 2,
+    "elapsed": 17.87,
+    "summary": [
+      "# tests 91",
+      "# pass 90",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "p95": [
+      "# 256 MiB, 100 warm decisions: p95=1.681ms",
+      "# 256 MiB, 20 complete hook processes: p95=112.772ms"
+    ],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "pair-1-head",
+    "uptime": "0:21  up 7 days, 11:44, 5 users, load averages: 5.80 8.67 9.51",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "cwd": "<clone>",
+    "exit": 0,
+    "elapsed": 647.04,
+    "summary": [
+      "# tests 93",
+      "# pass 92",
+      "# fail 0",
+      "# skipped 1",
+      "2978 passed, 131 skipped, 2 warnings, 10734 subtests passed in 620.84s (0:10:20)"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": [
+      "Test summary: reachable=0; Python=0 (0=pass, nonzero=fail)"
+    ]
+  },
+  {
+    "label": "pair-2-base",
+    "uptime": "0:32  up 7 days, 11:55, 5 users, load averages: 5.32 6.34 7.84",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "cwd": "<tmp>/base",
+    "exit": 2,
+    "elapsed": 37.92,
+    "summary": [
+      "# tests 91",
+      "# pass 90",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "p95": [
+      "# 256 MiB, 100 warm decisions: p95=1.849ms",
+      "# 256 MiB, 20 complete hook processes: p95=132.466ms"
+    ],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "pair-2-head",
+    "uptime": "0:33  up 7 days, 11:56, 5 users, load averages: 6.17 6.44 7.80",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "cwd": "<clone>",
+    "exit": 0,
+    "elapsed": 673.17,
+    "summary": [
+      "# tests 93",
+      "# pass 92",
+      "# fail 0",
+      "# skipped 1",
+      "2978 passed, 131 skipped, 2 warnings, 10734 subtests passed in 631.35s (0:10:31)"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": [
+      "Test summary: reachable=0; Python=0 (0=pass, nonzero=fail)"
+    ]
+  },
+  {
+    "label": "pair-3-base",
+    "uptime": "0:44  up 7 days, 12:07, 5 users, load averages: 8.03 7.37 7.61",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "cwd": "<tmp>/base",
+    "exit": 2,
+    "elapsed": 18.08,
+    "summary": [
+      "# tests 91",
+      "# pass 90",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "p95": [
+      "# 256 MiB, 100 warm decisions: p95=2.105ms",
+      "# 256 MiB, 20 complete hook processes: p95=117.269ms"
+    ],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "pair-3-head",
+    "uptime": "0:44  up 7 days, 12:07, 5 users, load averages: 7.48 7.28 7.58",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test",
+    "cwd": "<clone>",
+    "exit": 0,
+    "elapsed": 587.16,
+    "summary": [
+      "# tests 93",
+      "# pass 92",
+      "# fail 0",
+      "# skipped 1",
+      "2978 passed, 131 skipped, 2 warnings, 10734 subtests passed in 559.40s (0:09:19)"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": [
+      "Test summary: reachable=0; Python=0 (0=pass, nonzero=fail)"
+    ]
+  },
+  {
+    "label": "negative-python",
+    "uptime": "0:54  up 7 days, 12:17, 5 users, load averages: 6.21 6.57 7.13",
+    "command": "env -u GC_BIN -u GC_TEMPLATE make test PYTEST_DIRS=negative-tests 'PYTEST_ARGS=-q -k intentional_failure'",
+    "cwd": "<tmp>/negative",
+    "exit": 2,
+    "elapsed": 22.35,
+    "summary": [
+      "# tests 94",
+      "# pass 93",
+      "# fail 0",
+      "# skipped 1",
+      "1 failed, 1 deselected in 0.02s"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": [
+      "Test summary: reachable=0; Python=1 (0=pass, nonzero=fail)"
+    ]
+  },
+  {
+    "label": "negative-reachable",
+    "uptime": "0:54  up 7 days, 12:17, 5 users, load averages: 7.58 6.89 7.23",
+    "command": "env -u GC_BIN -u GC_TEMPLATE REACHABLE_FORCE_FAILURE=1 make test PYTEST_DIRS=negative-tests 'PYTEST_ARGS=-q -k success_marker'",
+    "cwd": "<tmp>/negative",
+    "exit": 2,
+    "elapsed": 20.45,
+    "summary": [
+      "# tests 94",
+      "# pass 92",
+      "# fail 1",
+      "# skipped 1",
+      "1 passed, 1 deselected in 0.00s"
+    ],
+    "failures": [
+      "not ok 40 - intentional reachable failure for Makefile status verification"
+    ],
+    "p95": [],
+    "eagain": false,
+    "make_summary": [
+      "Test summary: reachable=1; Python=0 (0=pass, nonzero=fail)"
+    ]
+  },
+  {
+    "label": "opt-in-loaded",
+    "uptime": "0:55  up 7 days, 12:18, 5 users, load averages: 8.62 7.17 7.32",
+    "command": "make test-reachable-perf",
+    "cwd": "<clone>",
+    "exit": 2,
+    "elapsed": 3.62,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "p95": [
+      "# 256 MiB, 100 warm decisions: p95=1.726ms",
+      "# 256 MiB, 20 complete hook processes: p95=127.631ms"
+    ],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "switch-zero",
+    "uptime": "0:55  up 7 days, 12:18, 5 users, load averages: 8.89 7.25 7.35",
+    "command": "env REACHABLE_PERF=0 node --test --test-reporter=tap bounds.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 0,
+    "elapsed": 0.39,
+    "summary": [
+      "# tests 10",
+      "# pass 9",
+      "# fail 0",
+      "# skipped 1"
+    ],
+    "failures": [],
+    "p95": [],
+    "eagain": false,
+    "make_summary": []
+  },
+  {
+    "label": "switch-one",
+    "uptime": "0:55  up 7 days, 12:18, 5 users, load averages: 8.89 7.25 7.35",
+    "command": "env REACHABLE_PERF=1 node --test --test-reporter=tap bounds.test.cjs",
+    "cwd": "<clone>/reachable/test",
+    "exit": 1,
+    "elapsed": 3.61,
+    "summary": [
+      "# tests 10",
+      "# pass 9",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "p95": [
+      "# 256 MiB, 100 warm decisions: p95=1.458ms",
+      "# 256 MiB, 20 complete hook processes: p95=120.245ms"
+    ],
+    "eagain": false,
+    "make_summary": []
+  }
+]

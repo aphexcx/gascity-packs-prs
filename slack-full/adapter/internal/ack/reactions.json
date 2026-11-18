@@ -1,0 +1,23 @@
+{
+  "about": "Reactions with fixed meanings, the same on Slack, Google Chat and WhatsApp. The source is gchat/reactions.json; slack-full/reactions.json and whatsapp/reactions.json are byte-for-byte copies, and the tables in the three channel texts show the same rows word for word (tests/test_reaction_catalog.py, tests/test_texting_rules.py). meaning is what the owner reads the reaction as. adapter_may_place is true for a row that can be true the moment a message arrives, and false for a row that claims a finished fact: only the mayor places one of those, once the fact is true.",
+  "reactions": [
+    {"emoji": "👀", "slack_name": "eyes", "meaning": "I have your message and I am on it.", "adapter_may_place": true},
+    {"emoji": "🔍", "slack_name": "mag", "meaning": "I am looking this up.", "adapter_may_place": true},
+    {"emoji": "👍", "slack_name": "+1", "meaning": "Understood. Nothing more needs saying.", "adapter_may_place": true},
+    {"emoji": "🤔", "slack_name": "thinking_face", "meaning": "I am thinking this over before I give you my view.", "adapter_may_place": true},
+    {"emoji": "❤️", "slack_name": "heart", "meaning": "You are welcome; I am glad it helped.", "adapter_may_place": true},
+    {"emoji": "👋", "slack_name": "wave", "meaning": "Hello to you too, or goodbye for now.", "adapter_may_place": true},
+    {"emoji": "🎉", "slack_name": "tada", "meaning": "That is great news.", "adapter_may_place": true},
+    {"emoji": "😢", "slack_name": "cry", "meaning": "I am sorry; that is sad news.", "adapter_may_place": true},
+    {"emoji": "😂", "slack_name": "joy", "meaning": "That made me laugh.", "adapter_may_place": true},
+    {"emoji": "🤞", "slack_name": "crossed_fingers", "meaning": "Good luck; I hope it goes well.", "adapter_may_place": true},
+    {"emoji": "✅", "slack_name": "white_check_mark", "meaning": "Done, and checked.", "adapter_may_place": false},
+    {"emoji": "⏰", "slack_name": "alarm_clock", "meaning": "The reminder is set.", "adapter_may_place": false},
+    {"emoji": "📥", "slack_name": "inbox_tray", "meaning": "I have the attachment you sent, and it opens.", "adapter_may_place": false},
+    {"emoji": "📤", "slack_name": "outbox_tray", "meaning": "It is sent.", "adapter_may_place": false},
+    {"emoji": "📅", "slack_name": "date", "meaning": "It is booked.", "adapter_may_place": false},
+    {"emoji": "💳", "slack_name": "credit_card", "meaning": "It is paid.", "adapter_may_place": false},
+    {"emoji": "📝", "slack_name": "memo", "meaning": "Noted, and saved where I will find it again.", "adapter_may_place": false},
+    {"emoji": "⚠️", "slack_name": "warning", "meaning": "It did not work; my reply says why.", "adapter_may_place": false}
+  ]
+}

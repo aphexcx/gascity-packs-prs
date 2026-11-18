@@ -56,6 +56,8 @@ type Ledger struct {
 	Unresolved       map[string]*ChangeState  `json:"unresolved"`
 	Quarantine       []QuarantinedEvent       `json:"quarantine"`
 	Counters         map[string]int64         `json:"counters"`
+	JoinRequests     map[string]*JoinRequest  `json:"join_requests,omitempty"`
+	JoinAttempts     []JoinAttempt            `json:"join_attempts,omitempty"`
 	// Media holds attachment links and cleanup obligations introduced after
 	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
 	Media map[string]*MediaState `json:"media,omitempty"`
@@ -530,6 +532,8 @@ func (l *Ledger) Clone() *Ledger {
 	out.Transport.seen = maps.Clone(l.Transport.seen)
 	out.Quarantine = slices.Clone(l.Quarantine)
 	out.Counters = maps.Clone(l.Counters)
+	out.JoinRequests = copyRecords(l.JoinRequests)
+	out.JoinAttempts = slices.Clone(l.JoinAttempts)
 	return &out
 }
 

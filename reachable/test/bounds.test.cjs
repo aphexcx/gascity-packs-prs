@@ -107,7 +107,7 @@ test('9: aliases come from all four pack rows, including a locally renamed direc
   assert.deepEqual(aliasesFromImports(text, f.city), ['s', 'g', 'w', 'r']);
 });
 
-test('13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up', t => {
+test('13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up', { skip: process.env.REACHABLE_PERF === '1' ? false : 'performance check: run make test-reachable-perf (REACHABLE_PERF=1)' }, t => {
   const f = fixture(t);
   const fd = fs.openSync(f.log, 'w');
   const total = 256 * 1024 * 1024; let written = 0, seq = 0;

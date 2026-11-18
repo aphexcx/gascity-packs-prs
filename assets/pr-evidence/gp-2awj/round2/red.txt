@@ -1,0 +1,552 @@
+# RED: this round's new tests at the PR head 2ce179bd6a1cece2f4adb0d47f90d2183f106b99 (head source + commits 69ad607c and 61c43e53, the head hooks)
+## gchat/adapter at 2ce179bd + this round's tests (head hooks)
+$ env -u GC_BIN go test ./internal/inbound ./internal/config ./internal/chat -run 'TestOwnReactionOnOwnMessageIsATurn|TestOffParity|TestScopeUncheckedWhileOff|TestJevStateIsRedactedLikeSlack|TestReactVerbUsesBaseGateWhileOff' -count=1 -v
+=== RUN   TestOffParityWithTheBase
+    offparity_test.go:237: turns=[]string{"spaces/dm | dm | spaces/dm/messages/one | [from: Reader <users/456> | external | item gchat:spaces/dm/messages/one]\na direct message", "spaces/room | room | spaces/room/messages/mention | [from: Reader <users/456> | external | item gchat:spaces/room/messages/mention]\nhello Example", "spaces/dm | dm | spaces/dm/messages/bot | [from: Helper <users/789> | external, bot | item gchat:spaces/dm/messages/bot]\na bot speaks", "spaces/dm | dm | spaces/dm/messages/one#updated#<edited-at> | [from: Reader <users/456> | external | item gchat:spaces/dm/messages/one]\nedited: a direct message, edited", "spaces/room | room | spaces/room/messages/mention#deleted | [from: Reader <users/456> | external | item gchat:spaces/room/messages/mention]\ndeleted", "spaces/room | room | spaces/room/messages/mine/reactions/human#created | [from: <users/456> | external]\nreaction created: 👍 on spaces/room/messages/mine"}
+    offparity_test.go:238: calls=[]string{"GET /v1/spaces x2", "GET /v1/spaces/room/messages/mine x1", "POST /v1/spaces/dm/messages x1", "POST /v1/spaces/dm/messages/one/reactions x3"}
+    offparity_test.go:239: counters=[]string{"turns:spaces/dm=3", "turns:spaces/room=3", "unavailable:spaces/mystery=1", "unresolved=0"}
+    offparity_test.go:240: logs=[]string{"level=WARN msg=\"inbound change retained\" space=spaces/mystery change=spaces/mystery/messages/one message=spaces/mystery/messages/one cause=\"space unavailable\""}
+    offparity_test.go:241: listing=[]string{"state.json"}
+    offparity_test.go:242: OFF-PARITY turns raised differs from the base:
+         got: ["spaces/dm | dm | spaces/dm/messages/one | [from: Reader <users/456> | external | item gchat:spaces/dm/messages/one]\na direct message" "spaces/room | room | spaces/room/messages/mention | [from: Reader <users/456> | external | item gchat:spaces/room/messages/mention]\nhello Example" "spaces/dm | dm | spaces/dm/messages/bot | [from: Helper <users/789> | external, bot | item gchat:spaces/dm/messages/bot]\na bot speaks" "spaces/dm | dm | spaces/dm/messages/one#updated#<edited-at> | [from: Reader <users/456> | external | item gchat:spaces/dm/messages/one]\nedited: a direct message, edited" "spaces/room | room | spaces/room/messages/mention#deleted | [from: Reader <users/456> | external | item gchat:spaces/room/messages/mention]\ndeleted" "spaces/room | room | spaces/room/messages/mine/reactions/human#created | [from: <users/456> | external]\nreaction created: 👍 on spaces/room/messages/mine"]
+        want: ["spaces/dm | dm | spaces/dm/messages/one | [from: Reader <users/456> | external | item gchat:spaces/dm/messages/one]\na direct message" "spaces/room | room | spaces/room/messages/mention | [from: Reader <users/456> | external | item gchat:spaces/room/messages/mention]\nhello Example" "spaces/dm | dm | spaces/dm/messages/bot | [from: Helper <users/789> | external, bot | item gchat:spaces/dm/messages/bot]\na bot speaks" "spaces/dm | dm | spaces/dm/messages/one#updated#<edited-at> | [from: Reader <users/456> | external | item gchat:spaces/dm/messages/one]\nedited: a direct message, edited" "spaces/room | room | spaces/room/messages/mention#deleted | [from: Reader <users/456> | external | item gchat:spaces/room/messages/mention]\ndeleted" "spaces/room | room | spaces/room/messages/mine/reactions/human#created | [from: <users/456> | external]\nreaction created: 👍 on spaces/room/messages/mine" "spaces/room | room | spaces/room/messages/mine/reactions/own#created | [from: <users/123> | external]\nreaction created: 👍 on spaces/room/messages/mine"]
+    offparity_test.go:243: OFF-PARITY vendor calls differs from the base:
+         got: ["GET /v1/spaces x2" "GET /v1/spaces/room/messages/mine x1" "POST /v1/spaces/dm/messages x1" "POST /v1/spaces/dm/messages/one/reactions x3"]
+        want: ["GET /v1/spaces x1" "GET /v1/spaces/room/messages/mine x1" "POST /v1/spaces/dm/messages x1" "POST /v1/spaces/dm/messages/one/reactions x3"]
+    offparity_test.go:244: OFF-PARITY counters differs from the base:
+         got: ["turns:spaces/dm=3" "turns:spaces/room=3" "unavailable:spaces/mystery=1" "unresolved=0"]
+        want: ["turns:spaces/dm=3" "turns:spaces/room=4" "unavailable:spaces/mystery=1" "unresolved=0"]
+--- FAIL: TestOffParityWithTheBase (1.70s)
+=== RUN   TestOffParityStartsAsTheBase
+=== RUN   TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c)
+    offparity_test.go:278: OFF-PARITY start refused where the base starts: ACK_SCOPE must be addressed or all
+=== RUN   TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d)
+    offparity_test.go:278: OFF-PARITY start refused where the base starts: stopwatch: executable digest unavailable
+--- FAIL: TestOffParityStartsAsTheBase (1.88s)
+    --- FAIL: TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c) (0.46s)
+    --- FAIL: TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d) (1.42s)
+=== RUN   TestOwnReactionOnOwnMessageIsATurn
+=== RUN   TestOwnReactionOnOwnMessageIsATurn/identity_reacts_on_its_own_message
+    own_reaction_test.go:31: turns POSTed = 0, want 1
+=== RUN   TestOwnReactionOnOwnMessageIsATurn/a_human_reacts_on_the_identity's_message
+=== RUN   TestOwnReactionOnOwnMessageIsATurn/the_identity_reacts_on_a_human's_message
+--- FAIL: TestOwnReactionOnOwnMessageIsATurn (1.12s)
+    --- FAIL: TestOwnReactionOnOwnMessageIsATurn/identity_reacts_on_its_own_message (0.95s)
+    --- PASS: TestOwnReactionOnOwnMessageIsATurn/a_human_reacts_on_the_identity's_message (0.11s)
+    --- PASS: TestOwnReactionOnOwnMessageIsATurn/the_identity_reacts_on_a_human's_message (0.06s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	4.937s
+=== RUN   TestScopeUncheckedWhileOff
+    round2_test.go:38: switch off, ACK_SCOPE=everyone: start refused: ACK_SCOPE must be addressed or all
+--- FAIL: TestScopeUncheckedWhileOff (0.00s)
+=== RUN   TestJevStateIsRedactedLikeSlack
+    round2_test.go:124: openai-0: how=jev requests=1 state is not the redacted want (state 84 chars, want 53)
+    round2_test.go:124: anthropic-1: how=jev requests=1 state is not the redacted want (state 108 chars, want 56)
+    round2_test.go:124: slack-2: how=jev requests=1 state is not the redacted want (state 67 chars, want 52)
+    round2_test.go:124: slack-3: how=jev requests=1 state is not the redacted want (state 57 chars, want 52)
+    round2_test.go:124: slack-4: how=jev requests=1 state is not the redacted want (state 57 chars, want 52)
+    round2_test.go:124: github-5: how=jev requests=1 state is not the redacted want (state 68 chars, want 53)
+    round2_test.go:124: github-6: how=jev requests=1 state is not the redacted want (state 68 chars, want 53)
+    round2_test.go:124: github-7: how=jev requests=1 state is not the redacted want (state 83 chars, want 53)
+    round2_test.go:124: aws-8: how=jev requests=1 state is not the redacted want (state 48 chars, want 50)
+    round2_test.go:124: google-9: how=jev requests=1 state is not the redacted want (state 67 chars, want 53)
+    round2_test.go:124: bearer-10: how=jev requests=1 state is not the redacted want (state 81 chars, want 53)
+    round2_test.go:124: bearer-11: how=jev requests=1 state is not the redacted want (state 49 chars, want 53)
+    round2_test.go:124: jwt-12: how=jev requests=1 state is not the redacted want (state 116 chars, want 50)
+    round2_test.go:124: hex-13: how=jev requests=1 state is not the redacted want (state 60 chars, want 50)
+    round2_test.go:124: hex-14: how=jev requests=1 state is not the redacted want (state 92 chars, want 50)
+    round2_test.go:124: base64-15: how=jev requests=1 state is not the redacted want (state 68 chars, want 53)
+    round2_test.go:124: base64-16: how=jev requests=1 state is not the redacted want (state 70 chars, want 53)
+    round2_test.go:124: adjacent: how=jev requests=1 state is not the redacted want (state 28 chars, want 54)
+    round2_test.go:124: hex-prefix-base64: how=jev requests=1 state is not the redacted want (state 48 chars, want 25)
+    round2_test.go:124: jwt-in-url: how=jev requests=1 state is not the redacted want (state 124 chars, want 41)
+    round2_test.go:124: unicode-bearer: how=jev requests=1 state is not the redacted want (state 23 chars, want 27)
+    round2_test.go:124: latin-unicode-bearer: how=jev requests=1 state is not the redacted want (state 22 chars, want 26)
+    round2_test.go:124: jwt-overlapping-prefix: how=jev requests=1 state is not the redacted want (state 101 chars, want 35)
+    round2_test.go:124: jwt-overlapping-chain: how=jev requests=1 state is not the redacted want (state 106 chars, want 40)
+    round2_test.go:124: aws-overlapping-prefix: how=jev requests=1 state is not the redacted want (state 28 chars, want 22)
+    round2_test.go:124: bearer-overlapping-prefix: how=jev requests=1 state is not the redacted want (state 28 chars, want 25)
+    round2_test.go:124: bearer-overlapping-chain: how=jev requests=1 state is not the redacted want (state 36 chars, want 26)
+    round2_test.go:124: slack-webhook: how=jev requests=1 state is not the redacted want (state 77 chars, want 45)
+    round2_test.go:124: aws-secret-with-slash: how=jev requests=1 state is not the redacted want (state 52 chars, want 37)
+    round2_test.go:124: slack-permalink-adjacent-key: how=jev requests=1 state is not the redacted want (state 81 chars, want 90)
+    round2_test.go:124: slack-permalink-query-key: how=jev requests=1 state is not the redacted want (state 109 chars, want 94)
+    round2_test.go:124: slack-permalink-appended-token: how=jev requests=1 state is not the redacted want (state 104 chars, want 47)
+    round2_test.go:124: slack-permalink-lookalike-host: how=jev requests=1 state is not the redacted want (state 74 chars, want 56)
+    round2_test.go:124: slack-permalink-bearer: how=jev requests=1 state is not the redacted want (state 71 chars, want 67)
+    round2_test.go:124: slack-permalink-secret-host: how=jev requests=1 state is not the redacted want (state 68 chars, want 65)
+    round2_test.go:124: slack-permalink-prepended-base64: how=jev requests=1 state is not the redacted want (state 104 chars, want 67)
+    round2_test.go:124: slack-permalink-base64-host: how=jev requests=1 state is not the redacted want (state 95 chars, want 63)
+    round2_test.go:124: x-live-1792810032-shape: how=jev requests=1 state is not the redacted want (state 105 chars, want 89)
+    round2_test.go:124: x-live-1793017482-shape: how=jev requests=1 state is not the redacted want (state 121 chars, want 102)
+    round2_test.go:124: x-markdown-pair: how=jev requests=1 state is not the redacted want (state 130 chars, want 95)
+    round2_test.go:124: x-jwt-query: how=jev requests=1 state is not the redacted want (state 110 chars, want 44)
+    round2_test.go:124: x-jwt-overlapping-path: how=jev requests=1 state is not the redacted want (state 118 chars, want 35)
+    round2_test.go:124: x-jwt-blocks-whole-exception: how=jev requests=1 state is not the redacted want (state 146 chars, want 64)
+    round2_test.go:124: x-bearer-blocks-exception: how=jev requests=1 state is not the redacted want (state 58 chars, want 55)
+    round2_test.go:124: x-slack-token-query: how=jev requests=1 state is not the redacted want (state 61 chars, want 46)
+    round2_test.go:124: x-client-secret-query: how=jev requests=1 state is not the redacted want (state 86 chars, want 55)
+    round2_test.go:124: x-lookalike-host: how=jev requests=1 state is not the redacted want (state 61 chars, want 44)
+    round2_test.go:124: x-userinfo-host: how=jev requests=1 state is not the redacted want (state 61 chars, want 44)
+    round2_test.go:124: x-in-untrusted-path: how=jev requests=1 state is not the redacted want (state 78 chars, want 62)
+    round2_test.go:124: x-in-untrusted-query: how=jev requests=1 state is not the redacted want (state 75 chars, want 59)
+    round2_test.go:124: base64-five-distinct: how=jev requests=1 state is not the redacted want (state 60 chars, want 25)
+    round2_test.go:124: numeric-hex-stays-red: how=jev requests=1 state is not the redacted want (state 50 chars, want 22)
+    round2_test.go:124: low-diversity-slack-stays-red: how=jev requests=1 state is not the redacted want (state 55 chars, want 24)
+    round2_test.go:124: pem-base64-stays-red: how=jev requests=1 state is not the redacted want (state 118 chars, want 79)
+    round2_test.go:124: r2-long-s-scheme: how=jev requests=1 state is not the redacted want (state 58 chars, want 43)
+    round2_test.go:124: r2-unicode-host: how=jev requests=1 state is not the redacted want (state 58 chars, want 43)
+    round2_test.go:124: r2-unicode-host-suffix: how=jev requests=1 state is not the redacted want (state 59 chars, want 44)
+    round2_test.go:124: r2-nbsp: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-ideographic-space: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-line-separator: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-paragraph-separator: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-control-soh: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-control-nul: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-control-del: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-unicode-path: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-caret: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-backtick: how=jev requests=1 state is not the redacted want (state 56 chars, want 41)
+    round2_test.go:124: r2-nested-parentheses: how=jev requests=1 state is not the redacted want (state 84 chars, want 69)
+    round2_test.go:124: r2-standalone-parentheses: how=jev requests=1 state is not the redacted want (state 60 chars, want 45)
+    round2_test.go:124: r2-nested-brackets: how=jev requests=1 state is not the redacted want (state 84 chars, want 69)
+    round2_test.go:124: r2-standalone-brackets: how=jev requests=1 state is not the redacted want (state 60 chars, want 45)
+    round2_test.go:124: r2-nested-apostrophe: how=jev requests=1 state is not the redacted want (state 84 chars, want 69)
+    round2_test.go:124: r2-standalone-apostrophe: how=jev requests=1 state is not the redacted want (state 60 chars, want 45)
+    round2_test.go:124: r2-nested-quote: how=jev requests=1 state is not the redacted want (state 84 chars, want 69)
+    round2_test.go:124: r2-standalone-quote: how=jev requests=1 state is not the redacted want (state 60 chars, want 45)
+    round2_test.go:124: r2-nested-pipe: how=jev requests=1 state is not the redacted want (state 83 chars, want 68)
+    round2_test.go:124: r2-slack-label-key: how=jev requests=1 state is not the redacted want (state 58 chars, want 43)
+    round2_test.go:124: r2-slack-label-url: how=jev requests=1 state is not the redacted want (state 76 chars, want 61)
+    round2_test.go:124: r2-ascii-whitespace-key: how=jev requests=1 state is not the redacted want (state 100 chars, want 85)
+    round2_test.go:129: redacted like Slack: 21 of 100 shared cases
+--- FAIL: TestJevStateIsRedactedLikeSlack (0.02s)
+FAIL
+FAIL	gchat-adapter/internal/config	0.176s
+=== RUN   TestReactVerbUsesBaseGateWhileOff
+    react_gate_test.go:44: the arrival queue was created while the acknowledgement is off
+--- FAIL: TestReactVerbUsesBaseGateWhileOff (0.00s)
+FAIL
+FAIL	gchat-adapter/internal/chat	0.222s
+FAIL
+exit=1
+$ env -u GC_BIN go test ./internal/ack ./internal/stopwatch ./internal/redact -count=1
+# gchat-adapter/internal/redact [gchat-adapter/internal/redact.test]
+internal/redact/redact_test.go:30:14: undefined: Text
+internal/redact/redact_test.go:33:14: undefined: Text
+internal/redact/redact_test.go:42:12: undefined: Text
+# gchat-adapter/internal/stopwatch [gchat-adapter/internal/stopwatch.test]
+internal/stopwatch/round2_test.go:18:10: w.Close undefined (type *Writer has no field or method Close)
+internal/stopwatch/round2_test.go:20:4: w.beforeWrite undefined (type *Writer has no field or method beforeWrite)
+internal/stopwatch/round2_test.go:31:4: w.Flush undefined (type *Writer has no field or method Flush)
+internal/stopwatch/round2_test.go:49:12: undefined: ReleaseOf
+internal/stopwatch/round2_test.go:52:12: undefined: ReleaseOf
+internal/stopwatch/round2_test.go:59:12: undefined: ReleaseOf
+internal/stopwatch/round2_test.go:68:25: undefined: ReleaseOf
+internal/stopwatch/round2_test.go:71:4: w.Close undefined (type *Writer has no field or method Close)
+# gchat-adapter/internal/ack [gchat-adapter/internal/ack.test]
+internal/ack/prune_test.go:44:2: undefined: PruneAttempts
+internal/ack/prune_test.go:64:2: undefined: PruneAttempts
+FAIL	gchat-adapter/internal/ack [build failed]
+FAIL	gchat-adapter/internal/stopwatch [build failed]
+FAIL	gchat-adapter/internal/redact [build failed]
+FAIL
+exit=1
+
+## slack-full/adapter at 2ce179bd + this round's tests (head hooks)
+$ env -u GC_BIN go test . -run 'TestOffParity|TestArrivalNeverCountsRosterDrift|TestScopeUncheckedWhileOff|TestJevStateIsRedactedLikeSlack' -count=1 -v
+=== RUN   TestOffParityWithTheBase
+    offparity_test.go:362: turns=[]string{"POST /v0/city/test-city/extmsg/inbound | CEXAMPLE | room | <now>.000103 |  | <@U0BOTSELF> please look", "POST /v0/city/test-city/extmsg/inbound | CEXAMPLE | room | <now>.000104 |  | no mention here", "POST /v0/city/test-city/extmsg/inbound | DEXAMPLE | dm | <now>.000101 |  | a direct message", "POST /v0/city/test-city/extmsg/inbound | GEXAMPLE | room | <now>.000102 |  | <@U0BOTSELF> in a group"}
+    offparity_test.go:363: calls=[]string{"chat.postMessage thread_ts=<now>.000300 x1", "chat.postMessage x1", "conversations.history x1", "conversations.replies ts=<now>.000200 x1", "files.completeUploadExternal x1", "files.getUploadURLExternal x1", "files.info x1", "reactions.add x3", "reactions.remove x1", "upload x1"}
+    offparity_test.go:364: company=[]string{"membership_probes=1", "session_calls=1", "company_barrier_ready=true", "company_store_ready=true", "company_store_error=\"\"", "company_write_failures=0", "company_delivery_failures=0", "company_target_reresolved=0", "company_materialize_requests=0", "company_boot_requests=0", "company_delivered_asleep=0", "company_roster_drift_wakes=2", "company_stale_posting_intents=0", "company_correlation_parked=0", "company_directory_loaded=true", "company_bindings_loaded=true", "company_dm_bindings_loaded=false", "registered_agent_apps=0", "registered_agent_apps_join_warnings=0", "company_dm_sig_reject=0", "company_dm_token_missing=0", "company_dm_receipts_received=0", "company_dm_receipts_routing=0", "company_dm_receipts_delivered=0", "company_dm_receipts_no_delivery=0", "company_dm_receipts_failed=0", "company_mpim_receipts_received=0", "company_mpim_receipts_routing=0", "company_mpim_receipts_delivered=0", "company_mpim_receipts_no_delivery=0", "company_mpim_receipts_failed=0", "company_body_missing=0", "company_bodies_redacted=0", "company_body_digest_mismatch=0"}
+    offparity_test.go:365: healthz=[]string{"dispatch_dropped_total=+0", "ok="}
+    offparity_test.go:366: logs=[]string{"company: roster-drift eligibility overlay admitted agent=riley bot_user_id=U0AAAAAA2 room=orchestrator-team channel=C0AAAAAAA (live channel member, directory roster stale — recapture declaratively)", "company: roster-drift eligibility overlay admitted agent=riley bot_user_id=U0AAAAAA2 room=orchestrator-team channel=C0AAAAAAA (live channel member, directory roster stale — recapture declaratively)", "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000103 thread= target=\"\" bot_mention=true files=0 spooled=0 text=24ch posted=24ch receipt=unsupported", "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000104 thread= target=\"\" bot_mention=false files=0 spooled=0 text=15ch posted=15ch receipt=unsupported", "inbound: chan=DEXAMPLE user=U0AAAAAA1 ts=<now>.000101 thread= target=\"\" bot_mention=false files=0 spooled=0 text=16ch posted=16ch receipt=unsupported", "inbound: chan=GEXAMPLE user=U0AAAAAA1 ts=<now>.000102 thread= target=\"\" bot_mention=true files=0 spooled=0 text=23ch posted=23ch receipt=unsupported", "publish-file: conv=CEXAMPLE file=answer.txt size=9 reply_to= session= as=\"\"", "publish: conv=CEXAMPLE text=32ch posted=32ch reply_to= idem=offparity-root session=gc-offparity as=\"\" mentions_rewritten=false", "publish: conv=CEXAMPLE text=33ch posted=33ch reply_to=<now>.000300 idem=offparity-child session=gc-offparity as=\"\" mentions_rewritten=false", "react: op=reactions.add conv=CEXAMPLE ts=<now>.000103 emoji=thumbsup"}
+    offparity_test.go:367: state=[]string{".gc/", ".gc/slack/", ".gc/slack/inbound-journal/", ".gc/slack/inbound-journal/<date>.jsonl rows=accepted@CEXAMPLE/<now>.000103/thread=,accepted@CEXAMPLE/<now>.000104/thread=,accepted@DEXAMPLE/<now>.000101/thread=,accepted@GEXAMPLE/<now>.000102/thread=,reaction@CEXAMPLE/<now>.000103/thread=,reply@CEXAMPLE/<now>.000501/thread=,reply@CEXAMPLE/<now>.000502/thread=<now>.000300", ".gc/slack/publish-receipts/", ".gc/slack/publish-receipts/11f3a8939e248e75a8027adc52c8b4f2f94cab4b721b1f5a176f82cd0e923876.json message=<now>.000502 thread=<now>.000300 reply_to=<now>.000300 delivered=true readback=confirmed", ".gc/slack/publish-receipts/ed059699115662aeca1fcd2785a50a6348f8f6877ae71e9b6bb765319f9f2a51.json message=<now>.000501 thread= reply_to= delivered=true readback=confirmed", "uploads/", "uploads/answer.txt"}
+    offparity_test.go:369: OFF-PARITY vendor calls differs from the base:
+         got: ["chat.postMessage thread_ts=<now>.000300 x1" "chat.postMessage x1" "conversations.history x1" "conversations.replies ts=<now>.000200 x1" "files.completeUploadExternal x1" "files.getUploadURLExternal x1" "files.info x1" "reactions.add x3" "reactions.remove x1" "upload x1"]
+        want: ["chat.postMessage thread_ts=<now>.000300 x1" "chat.postMessage x1" "conversations.history x1" "conversations.replies ts=<now>.000300 x1" "files.completeUploadExternal x1" "files.getUploadURLExternal x1" "reactions.add x3" "reactions.remove x1" "upload x1"]
+    offparity_test.go:370: OFF-PARITY company counters differs from the base:
+         got: ["membership_probes=1" "session_calls=1" "company_barrier_ready=true" "company_store_ready=true" "company_store_error=\"\"" "company_write_failures=0" "company_delivery_failures=0" "company_target_reresolved=0" "company_materialize_requests=0" "company_boot_requests=0" "company_delivered_asleep=0" "company_roster_drift_wakes=2" "company_stale_posting_intents=0" "company_correlation_parked=0" "company_directory_loaded=true" "company_bindings_loaded=true" "company_dm_bindings_loaded=false" "registered_agent_apps=0" "registered_agent_apps_join_warnings=0" "company_dm_sig_reject=0" "company_dm_token_missing=0" "company_dm_receipts_received=0" "company_dm_receipts_routing=0" "company_dm_receipts_delivered=0" "company_dm_receipts_no_delivery=0" "company_dm_receipts_failed=0" "company_mpim_receipts_received=0" "company_mpim_receipts_routing=0" "company_mpim_receipts_delivered=0" "company_mpim_receipts_no_delivery=0" "company_mpim_receipts_failed=0" "company_body_missing=0" "company_bodies_redacted=0" "company_body_digest_mismatch=0"]
+        want: ["membership_probes=1" "session_calls=1" "company_barrier_ready=true" "company_store_ready=true" "company_store_error=\"\"" "company_write_failures=0" "company_delivery_failures=0" "company_target_reresolved=0" "company_materialize_requests=0" "company_boot_requests=0" "company_delivered_asleep=0" "company_roster_drift_wakes=1" "company_stale_posting_intents=0" "company_correlation_parked=0" "company_directory_loaded=true" "company_bindings_loaded=true" "company_dm_bindings_loaded=false" "registered_agent_apps=0" "registered_agent_apps_join_warnings=0" "company_dm_sig_reject=0" "company_dm_token_missing=0" "company_dm_receipts_received=0" "company_dm_receipts_routing=0" "company_dm_receipts_delivered=0" "company_dm_receipts_no_delivery=0" "company_dm_receipts_failed=0" "company_mpim_receipts_received=0" "company_mpim_receipts_routing=0" "company_mpim_receipts_delivered=0" "company_mpim_receipts_no_delivery=0" "company_mpim_receipts_failed=0" "company_body_missing=0" "company_bodies_redacted=0" "company_body_digest_mismatch=0"]
+    offparity_test.go:372: OFF-PARITY log lines differs from the base:
+         got: ["company: roster-drift eligibility overlay admitted agent=riley bot_user_id=U0AAAAAA2 room=orchestrator-team channel=C0AAAAAAA (live channel member, directory roster stale — recapture declaratively)" "company: roster-drift eligibility overlay admitted agent=riley bot_user_id=U0AAAAAA2 room=orchestrator-team channel=C0AAAAAAA (live channel member, directory roster stale — recapture declaratively)" "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000103 thread= target=\"\" bot_mention=true files=0 spooled=0 text=24ch posted=24ch receipt=unsupported" "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000104 thread= target=\"\" bot_mention=false files=0 spooled=0 text=15ch posted=15ch receipt=unsupported" "inbound: chan=DEXAMPLE user=U0AAAAAA1 ts=<now>.000101 thread= target=\"\" bot_mention=false files=0 spooled=0 text=16ch posted=16ch receipt=unsupported" "inbound: chan=GEXAMPLE user=U0AAAAAA1 ts=<now>.000102 thread= target=\"\" bot_mention=true files=0 spooled=0 text=23ch posted=23ch receipt=unsupported" "publish-file: conv=CEXAMPLE file=answer.txt size=9 reply_to= session= as=\"\"" "publish: conv=CEXAMPLE text=32ch posted=32ch reply_to= idem=offparity-root session=gc-offparity as=\"\" mentions_rewritten=false" "publish: conv=CEXAMPLE text=33ch posted=33ch reply_to=<now>.000300 idem=offparity-child session=gc-offparity as=\"\" mentions_rewritten=false" "react: op=reactions.add conv=CEXAMPLE ts=<now>.000103 emoji=thumbsup"]
+        want: ["company: roster-drift eligibility overlay admitted agent=riley bot_user_id=U0AAAAAA2 room=orchestrator-team channel=C0AAAAAAA (live channel member, directory roster stale — recapture declaratively)" "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000103 thread= target=\"\" bot_mention=true files=0 spooled=0 text=24ch posted=24ch receipt=unsupported" "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000104 thread= target=\"\" bot_mention=false files=0 spooled=0 text=15ch posted=15ch receipt=unsupported" "inbound: chan=DEXAMPLE user=U0AAAAAA1 ts=<now>.000101 thread= target=\"\" bot_mention=false files=0 spooled=0 text=16ch posted=16ch receipt=unsupported" "inbound: chan=GEXAMPLE user=U0AAAAAA1 ts=<now>.000102 thread= target=\"\" bot_mention=true files=0 spooled=0 text=23ch posted=23ch receipt=unsupported" "publish-file: conv=CEXAMPLE file=answer.txt size=9 reply_to= session= as=\"\"" "publish: conv=CEXAMPLE text=32ch posted=32ch reply_to= idem=offparity-root session=gc-offparity as=\"\" mentions_rewritten=false" "publish: conv=CEXAMPLE text=33ch posted=33ch reply_to=<now>.000300 idem=offparity-child session=gc-offparity as=\"\" mentions_rewritten=false" "react: op=reactions.add conv=CEXAMPLE ts=<now>.000103 emoji=thumbsup"]
+    offparity_test.go:373: OFF-PARITY state directory differs from the base:
+         got: [".gc/" ".gc/slack/" ".gc/slack/inbound-journal/" ".gc/slack/inbound-journal/<date>.jsonl rows=accepted@CEXAMPLE/<now>.000103/thread=,accepted@CEXAMPLE/<now>.000104/thread=,accepted@DEXAMPLE/<now>.000101/thread=,accepted@GEXAMPLE/<now>.000102/thread=,reaction@CEXAMPLE/<now>.000103/thread=,reply@CEXAMPLE/<now>.000501/thread=,reply@CEXAMPLE/<now>.000502/thread=<now>.000300" ".gc/slack/publish-receipts/" ".gc/slack/publish-receipts/11f3a8939e248e75a8027adc52c8b4f2f94cab4b721b1f5a176f82cd0e923876.json message=<now>.000502 thread=<now>.000300 reply_to=<now>.000300 delivered=true readback=confirmed" ".gc/slack/publish-receipts/ed059699115662aeca1fcd2785a50a6348f8f6877ae71e9b6bb765319f9f2a51.json message=<now>.000501 thread= reply_to= delivered=true readback=confirmed" "uploads/" "uploads/answer.txt"]
+        want: [".gc/" ".gc/slack/" ".gc/slack/inbound-journal/" ".gc/slack/inbound-journal/<date>.jsonl rows=accepted@CEXAMPLE/<now>.000103/thread=,accepted@CEXAMPLE/<now>.000104/thread=,accepted@DEXAMPLE/<now>.000101/thread=,accepted@GEXAMPLE/<now>.000102/thread=,reaction@CEXAMPLE/<now>.000103/thread=,reply@CEXAMPLE/<now>.000502/thread=<now>.000300" ".gc/slack/publish-receipts/" ".gc/slack/publish-receipts/11f3a8939e248e75a8027adc52c8b4f2f94cab4b721b1f5a176f82cd0e923876.json message=<now>.000502 thread=<now>.000300 reply_to=<now>.000300 delivered=true readback=confirmed" ".gc/slack/publish-receipts/ed059699115662aeca1fcd2785a50a6348f8f6877ae71e9b6bb765319f9f2a51.json message=<now>.000501 thread= reply_to= delivered=true readback=confirmed" "uploads/" "uploads/answer.txt"]
+--- FAIL: TestOffParityWithTheBase (2.34s)
+=== RUN   TestOffParityStartsAsTheBase
+=== RUN   TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c)
+    offparity_test.go:393: OFF-PARITY config refused where the base starts: ACK_SCOPE must be addressed or all
+=== RUN   TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d)
+    offparity_test.go:400: OFF-PARITY start refused where the base starts: open <tmp>: no such file or directory
+--- FAIL: TestOffParityStartsAsTheBase (0.00s)
+    --- FAIL: TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c) (0.00s)
+    --- FAIL: TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d) (0.00s)
+=== RUN   TestArrivalNeverCountsRosterDrift
+=== RUN   TestArrivalNeverCountsRosterDrift/off_cold
+    round2_arrival_test.go:101: company_roster_drift_wakes = 2, want 1 as at the base
+    round2_arrival_test.go:104: roster-drift log lines = 2, want 1 as at the base
+=== RUN   TestArrivalNeverCountsRosterDrift/off_warm
+    round2_arrival_test.go:101: company_roster_drift_wakes = 2, want 1 as at the base
+    round2_arrival_test.go:104: roster-drift log lines = 2, want 1 as at the base
+=== RUN   TestArrivalNeverCountsRosterDrift/eyes_cold
+    round2_arrival_test.go:101: company_roster_drift_wakes = 2, want 1 as at the base
+    round2_arrival_test.go:104: roster-drift log lines = 2, want 1 as at the base
+=== RUN   TestArrivalNeverCountsRosterDrift/eyes_warm
+    round2_arrival_test.go:101: company_roster_drift_wakes = 2, want 1 as at the base
+    round2_arrival_test.go:104: roster-drift log lines = 2, want 1 as at the base
+--- FAIL: TestArrivalNeverCountsRosterDrift (1.64s)
+    --- FAIL: TestArrivalNeverCountsRosterDrift/off_cold (0.43s)
+    --- FAIL: TestArrivalNeverCountsRosterDrift/off_warm (0.47s)
+    --- FAIL: TestArrivalNeverCountsRosterDrift/eyes_cold (0.39s)
+    --- FAIL: TestArrivalNeverCountsRosterDrift/eyes_warm (0.35s)
+=== RUN   TestScopeUncheckedWhileOff
+    round2_arrival_test.go:135: switch off, ACK_SCOPE=everyone: start refused: ACK_SCOPE must be addressed or all
+--- FAIL: TestScopeUncheckedWhileOff (0.00s)
+=== RUN   TestJevStateIsRedactedLikeSlack
+    round2_arrival_test.go:211: redacted like Slack: 100 of 100 shared cases
+--- PASS: TestJevStateIsRedactedLikeSlack (0.03s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	4.244s
+FAIL
+exit=1
+$ env -u GC_BIN go test ./internal/ack ./internal/stopwatch -count=1
+# github.com/sjarmak/gc-slack-adapter/internal/stopwatch [github.com/sjarmak/gc-slack-adapter/internal/stopwatch.test]
+internal/stopwatch/round2_test.go:18:10: w.Close undefined (type *Writer has no field or method Close)
+internal/stopwatch/round2_test.go:20:4: w.beforeWrite undefined (type *Writer has no field or method beforeWrite)
+internal/stopwatch/round2_test.go:31:4: w.Flush undefined (type *Writer has no field or method Flush)
+internal/stopwatch/round2_test.go:49:12: undefined: ReleaseOf
+internal/stopwatch/round2_test.go:52:12: undefined: ReleaseOf
+internal/stopwatch/round2_test.go:59:12: undefined: ReleaseOf
+internal/stopwatch/round2_test.go:68:25: undefined: ReleaseOf
+internal/stopwatch/round2_test.go:71:4: w.Close undefined (type *Writer has no field or method Close)
+# github.com/sjarmak/gc-slack-adapter/internal/ack [github.com/sjarmak/gc-slack-adapter/internal/ack.test]
+internal/ack/prune_test.go:44:2: undefined: PruneAttempts
+internal/ack/prune_test.go:64:2: undefined: PruneAttempts
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack [build failed]
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/stopwatch [build failed]
+FAIL
+exit=1
+
+## whatsapp/adapter
+# RED: the round's new WhatsApp tests (phase A files) on the PR head 2ce179bd's source (git archive)
+# node: v24.21.0
+# from <tmp>/whatsapp/adapter: env -i HOME=<tmp> PATH=/usr/bin:/bin  node --test --test-concurrency=2 test/arrival.test.js test/stopwatch.test.js test/redact.test.js test/slow-flush.test.js test/offparity.test.js
+# uptime: load averages: 11.93 9.55 8.62
+✔ nine live deliveries reach gc while Jev holds, with four choices and one reaction each (6459.318333ms)
+✔ both tie-break pairs preserve the text, criteria and chosen arrival row (3.90925ms)
+✔ Jev offers catalog rows under neutral keys, preserves Unicode and sends only text (14.515125ms)
+✔ every unavailable answer uses one default with no retry; catalog failure allows eyes only (0.755042ms)
+✔ four Jev slots and injected deadline let nine messages finish without holding delivery (0.502583ms)
+✔ WhatsApp reactions are once across restart, do not change read marks and exclude nonmessages (91.56025ms)
+✔ canary key is absent from errors and log output; empty text and missing key never call (0.412167ms)
+✖ ACK_SCOPE is checked only when ACK_REACTION is set (0.415333ms)
+✖ the Jev state is redacted like Slack (0.316ms)
+✖ ack markers older than one day are pruned at start; nothing else is touched (56.955333ms)
+✔ with ACK_REACTION unset the script observes as at the base (head or tip) (1849.972625ms)
+✖ an ACK_SCOPE that is neither addressed nor all starts as at the base (1c, head or tip) (350.0545ms)
+node:internal/modules/esm/resolve:272
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '<tmp>' imported from <tmp>
+    at finalizeResolution (node:internal/modules/esm/resolve:272:11)
+    at moduleResolve (node:internal/modules/esm/resolve:879:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+    at #resolve (node:internal/modules/esm/loader:687:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:276:33)
+    at ModuleJob.link (node:internal/modules/esm/module_job:381:17) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file://<tmp>'
+}
+
+Node.js v24.21.0
+✖ test/redact.test.js (44.980875ms)
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=unset) (8662.12775ms)
+ℹ delivery: 351 ms, 278 ms, 331 ms; send: 521 ms, 683 ms, 526 ms
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) (8076.677334ms)
+ℹ delivery: 844 ms, 855 ms, 926 ms; send: 475 ms, 630 ms, 642 ms
+✔ monthly journal is private, deduplicates after restart and keeps first reaction (57.558542ms)
+✔ release follows source bytes in fixed order and a failed journal warns once (30.665375ms)
+✔ confirmed words once: lost=false restart=false (120.031625ms)
+✔ confirmed words once: lost=false restart=true (121.60625ms)
+✔ confirmed words once: lost=true restart=false (112.39825ms)
+✔ confirmed words once: lost=true restart=true (175.991041ms)
+✖ release unknown when the source cannot be read; one warning; the adapter starts (545.37375ms)
+✖ words markers older than 31 days are pruned at start; nothing else is touched (10.582041ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 14
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19111.134208
+
+✖ failing tests:
+
+test at test/arrival.test.js:130:1
+✖ ACK_SCOPE is checked only when ACK_REACTION is set (0.415333ms)
+  AssertionError [ERR_ASSERTION]: Got unwanted exception.
+  Actual message: "ACK_SCOPE must be addressed or all"
+      at TestContext.<anonymous> (file://<tmp>:135:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: ACK_SCOPE must be addressed or all
+        at createChoice (file://<tmp>:20:52)
+        at file://<tmp>:135:42
+        at getActual (node:assert:611:5)
+        at strict.doesNotThrow (node:assert:779:32)
+        at TestContext.<anonymous> (file://<tmp>:135:12)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1402:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+        at Test.postRun (node:internal/test_runner/test:1542:19)
+        at Test.run (node:internal/test_runner/test:1467:12),
+    expected: undefined,
+    operator: 'doesNotThrow',
+    diff: 'simple'
+  }
+
+test at test/arrival.test.js:143:1
+✖ the Jev state is redacted like Slack (0.316ms)
+  AssertionError [ERR_ASSERTION]: openai-0: state is not the redacted want (state 84 chars, want 53)
+      at TestContext.<anonymous> (file://<tmp>:155:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/arrival.test.js:166:1
+✖ ack markers older than one day are pruned at start; nothing else is touched (56.955333ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    [
+  +   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      'stopwatch-2020-01.jsonl',
+      'stray-file'
+    ]
+
+      at TestContext.<anonymous> (file://<tmp>:178:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'stopwatch-2020-01.jsonl', 'stray-file' ],
+    expected: [ 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'stopwatch-2020-01.jsonl', 'stray-file' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/offparity.test.js:281:1
+✖ an ACK_SCOPE that is neither addressed nor all starts as at the base (1c, head or tip) (350.0545ms)
+  AssertionError [ERR_ASSERTION]: the adapter refused to start: fatal: ACK_SCOPE must be addressed or all
+  + actual - expected
+
+  + {
+  +   code: 1,
+  +   signal: null
+  + }
+  - null
+
+      at TestContext.<anonymous> (file://<tmp>:289:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { code: 1, signal: null },
+    expected: null,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/redact.test.js:1:1
+✖ test/redact.test.js (44.980875ms)
+  'test failed'
+
+test at test/slow-flush.test.js:46:3
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=unset) (8662.12775ms)
+  AssertionError [ERR_ASSERTION]: a delivery waited on a flush: 351 ms, 278 ms, 331 ms
+      at TestContext.<anonymous> (file://<tmp>:71:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/slow-flush.test.js:46:3
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) (8076.677334ms)
+  AssertionError [ERR_ASSERTION]: a delivery waited on a flush: 844 ms, 855 ms, 926 ms
+      at TestContext.<anonymous> (file://<tmp>:71:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/stopwatch.test.js:50:1
+✖ release unknown when the source cannot be read; one warning; the adapter starts (545.37375ms)
+  AssertionError [ERR_ASSERTION]: the adapter exited at start (exit code 1)
+  + actual - expected
+
+  + {
+  +   code: 1,
+  +   signal: null
+  + }
+  - null
+
+      at TestContext.<anonymous> (file://<tmp>:72:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { code: 1, signal: null },
+    expected: null,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/stopwatch.test.js:88:1
+✖ words markers older than 31 days are pruned at start; nothing else is touched (10.582041ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    [
+  +   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      'stray-file'
+    ]
+
+      at TestContext.<anonymous> (file://<tmp>:99:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'stray-file' ],
+    expected: [ 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'stray-file' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+# exit=1
+
+# RED: slow-flush.test.js (with its control) on the PR head 2ce179bd's source
+# node: v24.21.0
+# from <tmp>/whatsapp/adapter: env -i HOME=<tmp> PATH=/usr/bin:/bin  node --test --test-concurrency=2 test/slow-flush.test.js
+# uptime: load averages: 8.82 6.80 6.84
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=unset) (3903.553208ms)
+ℹ delivery: 345 ms, 269 ms, 304 ms; send: 558 ms, 431 ms, 458 ms; slowed flushes: 13
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) (7798.466875ms)
+ℹ delivery: 876 ms, 949 ms, 825 ms; send: 691 ms, 512 ms, 475 ms; slowed flushes: 25
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11758.751958
+
+✖ failing tests:
+
+test at test/slow-flush.test.js:48:3
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=unset) (3903.553208ms)
+  AssertionError [ERR_ASSERTION]: a delivery waited on a flush: 345 ms, 269 ms, 304 ms
+      at TestContext.<anonymous> (file://<tmp>:77:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/slow-flush.test.js:48:3
+✖ a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) (7798.466875ms)
+  AssertionError [ERR_ASSERTION]: a delivery waited on a flush: 876 ms, 949 ms, 825 ms
+      at TestContext.<anonymous> (file://<tmp>:77:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+# exit=1
+
+## whatsapp/adapter: the off-parity test at the head
+# PARITY at the PR head 2ce179bd6a1cece2f4adb0d47f90d2183f106b99 (git archive), with the tip's offparity-hook.js
+# node: v24.21.0
+# from <tmp>/whatsapp/adapter: env -i HOME=<tmp> PATH=/usr/bin:/bin  node --test --test-concurrency=2 test/offparity.test.js
+# uptime: load averages: 6.57 8.03 8.14
+✔ with ACK_REACTION unset the script observes as at the base (head or tip) (1850.927833ms)
+✖ an ACK_SCOPE that is neither addressed nor all starts as at the base (1c, head or tip) (68.913333ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 1
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1984.0545
+
+✖ failing tests:
+
+test at test/offparity.test.js:281:1
+✖ an ACK_SCOPE that is neither addressed nor all starts as at the base (1c, head or tip) (68.913333ms)
+  AssertionError [ERR_ASSERTION]: the adapter refused to start: fatal: ACK_SCOPE must be addressed or all
+  + actual - expected
+
+  + {
+  +   code: 1,
+  +   signal: null
+  + }
+  - null
+
+      at TestContext.<anonymous> (file://<tmp>:289:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { code: 1, signal: null },
+    expected: null,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+# exit=1

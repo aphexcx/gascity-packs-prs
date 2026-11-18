@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"gchat-adapter/internal/ack"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/gcclient"
@@ -34,6 +35,7 @@ import (
 )
 
 type Options struct {
+	Ack         *ack.Service
 	NeverSilent *neversilent.Engine
 	Config      *config.Config
 	Ledger      *ledger.Ledger
@@ -192,7 +194,64 @@ func New(opts Options) (*Processor, error) {
 // Network requests never hold LedgerMu. Handle and Poll serialize their work,
 // including live and catch-up callers, and waiting callers honor cancellation.
 func (p *Processor) Handle(ctx context.Context, ev *puller.Event) (puller.Outcome, error) {
+	p.observeArrivals(ev)
 	return p.handle(ctx, ev, false)
+}
+
+// Observe before the serialized delivery gate, principal lookup and attachment
+// downloads. Only this live entry point participates; catch-up never does.
+func (p *Processor) observeArrivals(ev *puller.Event) {
+	if p.opts.Ack == nil || ev == nil {
+		return
+	}
+	seen := p.opts.Now()
+	for _, c := range ev.Changes {
+		if validate(c) != nil {
+			return
+		}
+	}
+	id := p.identity()
+	if id == "" {
+		return
+	}
+	for _, c := range ev.Changes {
+		m := c.Message
+		if c.Kind != "message.created" || m == nil || m.Sender == nil || m.Sender.Type == "BOT" || m.Sender.Name == id {
+			continue
+		}
+		p.opts.LedgerMu.Lock()
+		known := p.opts.Ledger.Changes[m.Name] != nil
+		p.opts.LedgerMu.Unlock()
+		if known {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, m.CreateTime)
+		if err != nil || seen.Sub(at) > ack.MaxAge {
+			continue
+		}
+		in := ack.Input{Conversation: c.Space, Message: m.Name, Text: m.Text, Time: at, Seen: seen, Human: true}
+		if m.Thread != nil {
+			in.Thread = m.Thread.Name
+		}
+		// Space lookup may need HTTP; it belongs to the independent arrival path.
+		// With the acknowledgement off it makes no call the base does not make:
+		// the kind comes from the ledger or the event, or the message gets no
+		// stopwatch inbound line.
+		lookup := p.opts.Ack.Choice.Enabled()
+		go func(c puller.Change, in ack.Input) {
+			ctx, cancel := context.WithTimeout(context.Background(), ack.ReactionBudget)
+			defer cancel()
+			s, err := p.resolveSpace(ctx, c.Space, c.Message.Space, lookup)
+			if err != nil {
+				return
+			}
+			in.Addressed = s.Kind == "dm" || mentions(c.Message, id)
+			if !in.Addressed && s.Wake == "mentions" {
+				return
+			}
+			p.opts.Ack.Observe(in)
+		}(c, in)
+	}
 }
 
 // HandleChange feeds one catch-up change through the same validation, wake
@@ -733,6 +792,11 @@ func retainedReason(reason string, err error) string {
 }
 
 func (p *Processor) space(ctx context.Context, name string, supplied *api.Space) (*ledger.SpaceState, error) {
+	return p.resolveSpace(ctx, name, supplied, true)
+}
+
+// resolveSpace is space with the ListSpaces fallback optional.
+func (p *Processor) resolveSpace(ctx context.Context, name string, supplied *api.Space, lookup bool) (*ledger.SpaceState, error) {
 	l, err := p.snapshot()
 	if err != nil {
 		return nil, err
@@ -751,7 +815,7 @@ func (p *Processor) space(ctx context.Context, name string, supplied *api.Space)
 	if supplied != nil {
 		kind = spaceKind(supplied)
 	}
-	if kind == "" {
+	if kind == "" && lookup {
 		spaces, err := p.opts.Chat.ListSpaces(ctx)
 		if err != nil {
 			return nil, err // callers classify it and return only a safe summary

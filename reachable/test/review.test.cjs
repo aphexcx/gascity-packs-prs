@@ -6,7 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { performance } = require('node:perf_hooks');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
+const { once } = require('node:events');
 const { readEvents, command, runHook, install, doctor, hash, aliasesFromImports } = require('../reachable.cjs');
 const NOW = Date.parse('2026-01-02T12:00:00Z');
 const row = (seq, type = 'extmsg.inbound', extra = {}) => ({ seq, type, ts: new Date(NOW - 60000).toISOString(), payload: { provider: 'example', conversation_id: 'room-example', target_agent: 'mayor', ...extra } });
@@ -120,6 +121,72 @@ test('review 4: archive transport handles partial pipe writes', t => {
   const before = process.env.NODE_OPTIONS; process.env.NODE_OPTIONS = '--require ' + shim;
   try { assert.deepEqual(readEvents(f.city, first.cursor).rows.map(r => r.seq), [2, 3]); }
   finally { if (before === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = before; }
+});
+test('archive backpressure: a full pipe retries without losing partial writes', { timeout: 30000 }, async t => {
+  const f = fixture(t);
+  const bytes = Buffer.alloc(8 * 1024 * 1024);
+  for (let n = 0; n < bytes.length; n++) bytes[n] = n % 251;
+  const archive = path.join(f.city, 'transport.gz');
+  fs.writeFileSync(archive, zlib.gzipSync(bytes));
+  const source = fs.readFileSync(require.resolve('../reachable.cjs'), 'utf8');
+  const begin = source.indexOf('function archiveWorker() {');
+  const end = source.indexOf('\nfunction archiveSlice(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const worker = source.slice(begin, end);
+  const probe = `const fs = require('node:fs'); const write = fs.writeSync;
+process.stdout._handle.setBlocking(false);
+let observed = false, shortWrites = 0;
+fs.writeSync = (fd, ...args) => {
+  try {
+    if (fd !== 1) return write(fd, ...args);
+    const count = write(fd, args[0].subarray(0, Math.max(1, Math.floor(args[0].length / 2))));
+    if (count < args[0].length) shortWrites++;
+    return count;
+  }
+  catch (error) {
+    if (fd === 1 && error.code === 'EAGAIN' && !observed) { observed = true; write(3, String(shortWrites) + '\\n'); }
+    throw error;
+  }
+};`;
+  const child = spawn(process.execPath, ['-e', probe + `(${worker})()`, archive, '0', String(bytes.length)], {
+    stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+  });
+  t.after(() => child.kill());
+  const closed = once(child, 'close');
+  const chunks = []; let stderr = '', marker = '';
+  child.stdout.on('data', chunk => chunks.push(chunk));
+  child.stdout.pause();
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  child.stdio[3].on('data', chunk => { marker += chunk; child.stdout.resume(); });
+  const [code, signal] = await closed;
+  assert.ok(Number(marker.trim()) > 0, 'the pipe must produce short writes and a real EAGAIN before draining');
+  assert.equal(signal, null);
+  assert.equal(code, 0, stderr);
+  assert.deepEqual(Buffer.concat(chunks), bytes);
+});
+test('archive backpressure: the parent deadline preserves fail-open and the cursor', t => {
+  const f = fixture(t); command('mode', ['enforce'], f.o);
+  runHook(input('before-backpressure'), f.o);
+  const stateFile = path.join(f.stateDir, 'state.json');
+  const cursor = JSON.parse(fs.readFileSync(stateFile)).cursor;
+  fs.appendFileSync(f.log, line(row(2)));
+  fs.writeFileSync(f.log + '.archive-20260102T120000Z-seq-1-2.gz', zlib.gzipSync(fs.readFileSync(f.log)));
+  fs.unlinkSync(f.log); fs.writeFileSync(f.log, line(row(3)));
+  const attempts = path.join(f.city, 'write-attempts');
+  const shim = path.join(f.city, 'backpressure.cjs');
+  fs.writeFileSync(shim, `const fs = require('node:fs'); const write = fs.writeSync; let attempts = 0;
+fs.writeSync = (fd, ...args) => {
+  if (fd !== 1) return write(fd, ...args);
+  if (++attempts <= 2) fs.appendFileSync(${JSON.stringify(attempts)}, 'write\\n');
+  const error = new Error('forced persistent backpressure'); error.code = 'EAGAIN'; throw error;
+};`);
+  const before = process.env.NODE_OPTIONS; process.env.NODE_OPTIONS = '--require ' + shim;
+  try { assert.deepEqual(runHook(input('persistent-backpressure'), f.o), {}); }
+  finally { if (before === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = before; }
+  assert.equal(fs.readFileSync(attempts, 'utf8').trim().split('\n').length, 2, 'the child must retry before its parent deadline');
+  assert.deepEqual(JSON.parse(fs.readFileSync(stateFile)).cursor, cursor);
+  const errors = fs.readdirSync(f.stateDir).filter(n => /^error-.*jsonl$/.test(n)).map(n => JSON.parse(fs.readFileSync(path.join(f.stateDir, n), 'utf8')));
+  assert.ok(errors.some(error => error.code === 'measurement_failed'));
 });
 test('review 5: retained historical pack caches do not mask a new pack roll', t => {
   const f = fixture(t); const old = path.join(f.city, 'old.cjs'); const current = path.join(f.city, 'current.cjs');

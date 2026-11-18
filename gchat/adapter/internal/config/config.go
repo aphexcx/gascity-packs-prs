@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"gchat-adapter/internal/ack"
+	"gchat-adapter/internal/redact"
 	"github.com/BurntSushi/toml"
 )
 
@@ -106,11 +108,12 @@ type Settings struct {
 }
 
 type Config struct {
-	Secrets     Secrets
-	Settings    Settings
-	Endpoints   Endpoints
-	SecretsDir  string
-	NeverSilent struct {
+	Acknowledgement ack.Options `json:"-"`
+	Secrets         Secrets
+	Settings        Settings
+	Endpoints       Endpoints
+	SecretsDir      string
+	NeverSilent     struct {
 		Enabled                                    bool
 		HealthFile, OperatorContext, OperatorAgent string
 	}
@@ -151,6 +154,15 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 		return nil, fmt.Errorf("secrets %s: missing required keys: %s", envFile, strings.Join(missing, ", "))
 	}
 	c := &Config{SecretsDir: secretsDir}
+	arrivalValue := func(key string) string {
+		if value, ok := values[key]; ok {
+			return value
+		}
+		return os.Getenv(key)
+	}
+	c.Acknowledgement = ack.Options{Mode: arrivalValue("ACK_REACTION"), Scope: arrivalValue("ACK_SCOPE"), Base: arrivalValue("JEV_API_BASE_URL"), Model: arrivalValue("JEV_MODEL"), Key: arrivalValue("JEV_API_KEY"), Catalog: ack.Catalog,
+		// The Jev state passes Slack's secret redaction first, as on Slack.
+		Redact: redact.Text}
 	c.Secrets = Secrets{
 		ProjectID: values["GCHAT_PROJECT_ID"], Topic: values["GCHAT_PUBSUB_TOPIC"],
 		Subscription: values["GCHAT_PUBSUB_SUBSCRIPTION"], TokenSource: source,

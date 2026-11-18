@@ -22,6 +22,8 @@ SOURCE = REPO / "gchat" / "reactions.json"
 # Every other copy of the catalog. A copy added later (an adapter that
 # embeds the file, say) is listed here and held to the same bytes.
 COPIES = (
+    REPO / "gchat" / "adapter" / "internal" / "ack" / "reactions.json",
+    REPO / "slack-full" / "adapter" / "internal" / "ack" / "reactions.json",
     REPO / "slack-full" / "reactions.json",
     REPO / "whatsapp" / "reactions.json",
 )

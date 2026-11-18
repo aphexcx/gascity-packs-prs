@@ -11,6 +11,18 @@ import (
 	"gchat-adapter/internal/wire"
 )
 
+func TestStatusJevKeyIsOnlyPresence(t *testing.T) {
+	f := setup(t)
+	f.s.mu.Lock()
+	f.s.cfg.Acknowledgement.Key = "canary-do-not-print"
+	f.s.mu.Unlock()
+	code, raw, _ := f.call(t, "/status", nil)
+	var result map[string]any
+	if code != 200 || json.Unmarshal(raw, &result) != nil || result["jev_api_key"] != "set" || bytes.Contains(raw, []byte("canary-do-not-print")) {
+		t.Fatal("status did not protect key")
+	}
+}
+
 func TestStatusDeliveryDetailsUseStatusNotReason(t *testing.T) {
 	f := setup(t)
 	f.mu.Lock()

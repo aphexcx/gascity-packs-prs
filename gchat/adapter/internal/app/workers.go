@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gchat-adapter/internal/arrival"
 	"gchat-adapter/internal/catchup"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
@@ -45,6 +46,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	if err != nil {
 		return err
 	}
+	arrival.Wire(c, a.arrival, a.watch)
 	if err = a.seedIdentity(source.IdentityUserID()); err != nil {
 		return err
 	}
@@ -81,7 +83,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		lookup = principal.DirectoryLookup(hc, a.cfg.Endpoints.PeopleAPIBase)
 	}
 	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup})
-	proc, err := inbound.New(inbound.Options{NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
+	proc, err := inbound.New(inbound.Options{Ack: a.arrival, NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
 	if err != nil {
 		return err
 	}

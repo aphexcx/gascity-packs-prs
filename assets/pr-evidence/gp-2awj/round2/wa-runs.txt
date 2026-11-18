@@ -1,0 +1,80 @@
+# Item 6: the whole WhatsApp adapter suite, interleaved base, head, tip, mix
+# trees: git archive of base c9969436, head 2ce179bd, tip 4fe0a56d (src and tests), mix = the tip's src with the base's test/ directory
+# run: from whatsapp/adapter, env -i HOME=<tmp> PATH=<node dir>:/usr/bin:/bin <node> --test --test-concurrency=2 'test/*.test.js', bounded at 600 s
+# node: v24.21.0 (resolved once with pnpm exec node -p process.execPath through the toolchain wrapper)
+# load: uptime's three load averages just before each run; the box was shared with other sessions
+
+tree | round | start (UTC) | load averages | exit | pass | fail | cancelled | failing tests
+base | 1 | 2026-11-13T16:16:40Z | 22.41 12.65 10.23 | 0 | 252 | 0 | 0 |
+head | 1 | 2026-11-13T16:19:56Z | 28.39 20.48 14.05 | 1 | 263 | 2 | 0 | (11j) the scheduled read finds a restore with no in-doubt entry anywhere and shows the gap; video survives SIGKILL at before-media-upload with one upload and one send
+tip | 1 | 2026-11-13T16:23:20Z | 31.36 27.06 18.34 | 1 | 275 | 2 | 0 | document survives SIGKILL at after-media-send with one upload and one send; nine live deliveries reach gc while Jev holds, with four choices and one reaction each
+mix | 1 | 2026-11-13T16:25:33Z | 40.80 31.53 21.31 | 1 | 251 | 1 | 0 | (11c) the store re-issued sequence N to another id: the watermark reads behind, the same outcome as
+base | 2 | 2026-11-13T16:27:51Z | 43.47 36.55 24.90 | 0 | 252 | 0 | 0 |
+head | 2 | 2026-11-13T16:30:06Z | 27.27 33.35 25.36 | 1 | 264 | 1 | 0 | a failed receipt reposts three times, then dead-letters and acks: four POSTs in all
+tip | 2 | 2026-11-13T16:32:19Z | 7.39 23.48 22.55 | 0 | 277 | 0 | 0 |
+mix | 2 | 2026-11-13T16:34:23Z | 5.53 17.15 20.13 | 0 | 252 | 0 | 0 |
+base | 3 | 2026-11-13T16:37:36Z | 27.00 22.52 21.75 | 0 | 252 | 0 | 0 |
+head | 3 | 2026-11-13T16:39:45Z | 31.51 27.30 23.87 | 0 | 265 | 0 | 0 |
+tip | 3 | 2026-11-13T16:42:06Z | 35.58 30.39 25.64 | 1 | 274 | 3 | 0 | (9) the pending deadline: pending 24 h across a kill and restart; dead-lettered pending_deadline with the read count; held until that ack; one POST; a slowed flush never delays a delivery or a send (ACK_REACTION=eyes); a slowed flush never delays a delivery or a send (ACK_REACTION=unset)
+mix | 3 | 2026-11-13T16:45:03Z | 33.92 31.01 26.72 | 1 | 251 | 1 | 0 | (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt
+base | 4 | 2026-11-13T16:47:52Z | 33.28 32.61 28.17 | 1 | 250 | 2 | 0 | (12b) the same across every dead reason; repost_bound
+head | 4 | 2026-11-13T16:50:24Z | 33.70 32.58 28.84 | 0 | 265 | 0 | 0 |
+tip | 4 | 2026-11-13T16:52:49Z | 35.00 33.63 29.84 | 1 | 276 | 1 | 0 | on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status
+mix | 4 | 2026-11-13T16:55:12Z | 30.96 32.68 30.07 | 0 | 252 | 0 | 0 |
+base | 5 | 2026-11-13T16:57:14Z | 24.49 28.21 28.55 | 1 | 251 | 1 | 0 | a partial receipt reposts three times, then dead-letters and acks: four POSTs in all
+head | 5 | 2026-11-13T16:59:24Z | 28.91 29.27 28.95 | 0 | 265 | 0 | 0 |
+tip | 5 | 2026-11-13T17:01:20Z | 16.65 25.01 27.33 | 0 | 277 | 0 | 0 |
+mix | 5 | 2026-11-13T17:03:12Z | 9.61 20.15 25.15 | 1 | 251 | 1 | 0 | (7b) the same with two later messages accepted at N+1 and N+2 before the receipt was lost
+base | 6 | 2026-11-13T17:05:18Z | 15.18 18.45 23.76 | 0 | 252 | 0 | 0 |
+head | 6 | 2026-11-13T17:07:16Z | 13.42 16.51 22.28 | 0 | 265 | 0 | 0 |
+tip | 6 | 2026-11-13T17:09:25Z | 8.54 14.53 20.74 | 0 | 277 | 0 | 0 |
+mix | 6 | 2026-11-13T17:11:21Z | 5.41 11.57 18.78 | 1 | 251 | 1 | 0 | video survives SIGKILL at after-media-send with one upload and one send
+base | 7 | 2026-11-13T17:13:17Z | 16.88 15.94 19.73 | 1 | 251 | 1 | 0 | (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt
+head | 7 | 2026-11-13T17:15:17Z | 12.08 15.31 19.03 | 0 | 265 | 0 | 0 |
+tip | 7 | 2026-11-13T17:17:29Z | 4.76 11.52 16.99 | 0 | 277 | 0 | 0 |
+mix | 7 | 2026-11-13T17:19:42Z | 7.56 10.32 15.71 | 0 | 252 | 0 | 0 |
+base | 8 | 2026-11-13T17:21:52Z | 5.43 8.65 14.28 | 1 | 250 | 2 | 0 | (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt; (7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST
+head | 8 | 2026-11-13T17:24:19Z | 3.30 6.55 12.53 | 1 | 264 | 1 | 0 | video survives SIGKILL at after-media-receipt with one upload and one send
+tip | 8 | 2026-11-13T17:26:41Z | 8.62 6.89 11.72 | 0 | 277 | 0 | 0 |
+mix | 8 | 2026-11-13T17:28:55Z | 17.59 10.34 12.35 | 0 | 252 | 0 | 0 |
+base | 9 | 2026-11-13T17:30:49Z | 6.35 8.86 11.54 | 0 | 252 | 0 | 0 |
+head | 9 | 2026-11-13T17:32:38Z | 3.85 7.26 10.59 | 0 | 265 | 0 | 0 |
+tip | 9 | 2026-11-13T17:34:44Z | 4.41 6.26 9.72 | 0 | 277 | 0 | 0 |
+mix | 9 | 2026-11-13T17:36:48Z | 6.44 6.27 9.24 | 0 | 252 | 0 | 0 |
+base | 10 | 2026-11-13T17:38:42Z | 8.67 7.43 9.34 | 0 | 252 | 0 | 0 |
+head | 10 | 2026-11-13T17:40:34Z | 8.88 7.98 9.32 | 0 | 265 | 0 | 0 |
+tip | 10 | 2026-11-13T17:42:32Z | 5.41 6.92 8.72 | 0 | 277 | 0 | 0 |
+mix | 10 | 2026-11-13T17:44:35Z | 6.11 6.49 8.29 | 0 | 252 | 0 | 0 |
+
+## The table (interleaved runs)
+
+| tree | runs | runs with a failure or cancel | load (1-minute) | failing tests (times) |
+| --- | --- | --- | --- | --- |
+| base | 10 | 4 | 5.4 to 43.5 | (12b) the same across every dead reason (1); (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt (2); (7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST (1); a partial receipt reposts three times, then dead-letters and acks: four POSTs in all (1); repost_bound (1) |
+| head | 10 | 3 | 3.3 to 33.7 | (11j) the scheduled read finds a restore with no in-doubt entry anywhere and shows the gap (1); a failed receipt reposts three times, then dead-letters and acks: four POSTs in all (1); video survives SIGKILL at after-media-receipt with one upload and one send (1); video survives SIGKILL at before-media-upload with one upload and one send (1) |
+| tip | 10 | 3 | 4.4 to 35.6 | (9) the pending deadline: pending 24 h across a kill and restart; dead-lettered pending_deadline with the read count; held until that ack; one POST (1); a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) (1); a slowed flush never delays a delivery or a send (ACK_REACTION=unset) (1); document survives SIGKILL at after-media-send with one upload and one send (1); nine live deliveries reach gc while Jev holds, with four choices and one reaction each (1); on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status (1) |
+| mix | 10 | 4 | 5.4 to 40.8 | (11c) the store re-issued sequence N to another id: the watermark reads behind, the same outcome as (1); (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt (1); (7b) the same with two later messages accepted at N+1 and N+2 before the receipt was lost (1); video survives SIGKILL at after-media-send with one upload and one send (1) |
+
+## Quiet runs (load under 10)
+
+tree | round | start (UTC) | load averages | exit | pass | fail | cancelled | failing tests
+base | 1 quiet | 2026-11-13T17:47:15Z | 7.80 6.95 8.17 | 0 | 252 | 0 | 0 |
+tip | 1 quiet | 2026-11-13T17:49:16Z | 6.35 7.21 8.15 | 0 | 279 | 0 | 0 |
+base | 2 quiet | 2026-11-13T17:51:24Z | 7.05 7.03 7.93 | 1 | 251 | 1 | 0 | a failed receipt reposts three times, then dead-letters and acks: four POSTs in all
+tip | 2 quiet | 2026-11-13T17:53:45Z | 12.52 8.16 8.18 | 0 | 279 | 0 | 0 |
+base | 3 quiet | 2026-11-13T17:56:11Z | 12.03 9.59 8.75 | 0 | 252 | 0 | 0 |
+tip | 3 quiet | 2026-11-13T17:58:14Z | 14.48 10.83 9.32 | 0 | 279 | 0 | 0 |
+
+### Quiet table
+
+| tree | runs | runs with a failure or cancel | load (1-minute) | failing tests (times) |
+| --- | --- | --- | --- | --- |
+| base | 3 | 1 | 7.0 to 12.0 | a failed receipt reposts three times, then dead-letters and acks: four POSTs in all (1) |
+| tip | 3 | 0 | 6.3 to 14.5 | none |
+
+## The comparison
+
+- Base against tip, interleaved at the same loads: the base had a failing run in 4 of 10, the tip in 3 of 10 (the tip tree of these runs is 4fe0a56d; 0652a7a7 changes only the slow-flush test and its preload). Base against mix (the base's own tests on the tip's source): 4 of 10 against 4 of 10. The head: 3 of 10.
+- Quiet (load 6.3 to 14.5; it rose past 10 during the last two pairs): base 1 of 3, tip at 0652a7a7 0 of 3.
+- The base fails 4 of 10 interleaved runs and 1 of 3 quiet ones: the suite's waits are load-sensitive on the PR's base already. The base's failing tests here: (6b) the receipt read back as unknown; (7a) the lookup boundary; (12b) the same across every dead reason; repost_bound; a partial receipt reposts three times, then dead-letters and acks; a failed receipt reposts three times, then dead-letters and acks. They are not changed in this round.
+- On the read's question (were round 1's timeouts this PR's?): in these runs the head fails no more often than the base (3 of 10 against 4 of 10), and the tip is at the base's rate. One tip run (round 3, load 35.6) failed the slow-flush test's chunk-gap wall-clock check, since replaced by the structural check (0652a7a7).
