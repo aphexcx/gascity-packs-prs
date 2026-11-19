@@ -106,7 +106,7 @@ for still give each review its own number.
    finding shown any other way (an earlier head's fault that a failing test
    proves, say) buys none by itself: once it no longer happens at the
    reviewed head (its proof no longer fails there) it is FIXED, with the head
-   that fixed it, and while it still happens there it takes the outcome or
+   that fixed it, and otherwise it takes the outcome or
    PRECONDITION it can have without a fix, or else is listed as OPEN with what
    shows it and its grade, for the mayor; list the rest, which nobody showed,
    as NOT SHOWN with their file and line.
