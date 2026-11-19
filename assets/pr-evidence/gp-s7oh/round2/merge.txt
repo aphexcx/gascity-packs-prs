@@ -1,0 +1,65 @@
+Auto-merging gchat/CHANGELOG.md
+CONFLICT (content): Merge conflict in gchat/CHANGELOG.md
+Auto-merging gchat/README.md
+Auto-merging gchat/adapter/internal/app/app.go
+Auto-merging gchat/adapter/internal/inbound/inbound.go
+Auto-merging gchat/adapter/internal/ledger/ledger.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/ledger/ledger.go
+Auto-merging gchat/adapter/internal/server/server.go
+Auto-merging gchat/skills/google-chat/SKILL.md
+Recorded preimage for 'gchat/CHANGELOG.md'
+Recorded preimage for 'gchat/adapter/internal/ledger/ledger.go'
+Automatic merge failed; fix conflicts and then commit the result.
+
+Diff3 from the three unmerged index stages. Strip the leading colon from each hunk line. One existing changelog reference is abbreviated.
+
+gchat/CHANGELOG.md
+:<<<<<<< ours
+:- Remove saved attachments when a message deletion is learned, and files of
+:  attachments an accepted edit took away. Cleanup retries survive restart;
+:  past deletions are left alone at an update. Nothing expires by age or is
+:  removed to make room. Ledger text, delivered turns and other copies stay;
+:  commands, settings, subscriptions and deletion turns are unchanged. Deletions
+:  outside membership or event retention cannot be learned. A merge changes
+:  no box (gp-s7oh).
+:
+:||||||| base
+:=======
+:- Add `gc gchat join` for one invited room, with a one-time code checked in
+:  the owner's direct-message reply. The membership write permission is asked
+:  for only by join, separately from standing credentials. Until the admin adds
+:  it and the box's key holder serves it, the command explains what is missing
+:  and joins nothing. Updating alone preserves startup scopes, every existing
+:  command, inbound delivery, health, and existing ledger fields; optional join
+:  records are discarded on rollback. No version change. Google acceptance is
+:  UNPROVEN: fake coverage awaits a real proof call.
+:- The join rechecks its identity before it spends the owner's yes and again
+:  before it writes. If the identity turned conflicted meanwhile, the yes stays
+:  unspent and nothing is written; past the spend, nothing is sent and the
+:  answer says to request approval again (<existing reference>).
+:>>>>>>> theirs
+
+gchat/adapter/internal/ledger/ledger.go
+:<<<<<<< ours
+:	// Media holds attachment links and cleanup obligations introduced after
+:	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
+:	Media map[string]*MediaState `json:"media,omitempty"`
+:	// MediaRoots remembers configured inbound stores across reloads/restarts,
+:	// including stores containing legacy files without attachment links.
+:	MediaRoots []string `json:"media_roots,omitempty"`
+:}
+:
+:// MediaState stores resource IDs and file-name digests, never file names,
+:// local paths, sizes, senders or content. Files are reserved before download.
+:type MediaState struct {
+:	Files         map[string]string    `json:"files,omitempty"`
+:	Sources       map[string]time.Time `json:"sources,omitempty"` // absent revisions are older than any edit
+:	Remove        map[string]bool      `json:"remove,omitempty"`
+:	DeletePending bool                 `json:"delete_pending,omitempty"`
+:	Revision      time.Time            `json:"revision,omitzero"`
+:	Retained      []string             `json:"retained,omitempty"`
+:||||||| base
+:=======
+:	JoinRequests     map[string]*JoinRequest  `json:"join_requests,omitempty"`
+:	JoinAttempts     []JoinAttempt            `json:"join_attempts,omitempty"`
+:>>>>>>> theirs

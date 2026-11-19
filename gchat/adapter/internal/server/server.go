@@ -1469,7 +1469,13 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		if saved, ok := historyContent(l, m); ok {
 			v.Text, v.Attachments = saved.Text, saved.Attachments
 		} else {
-			v.Text, v.Attachments = inbound.NormalizeContent(r.Context(), c, cfg.Endpoints, m)
+			store := &inbound.MediaStore{
+				Snapshot: func() (*ledger.Ledger, error) { return s.snapshot(r.Context()) },
+				Update: func(fn func(*ledger.Ledger)) error {
+					return s.update(r.Context(), func(l *ledger.Ledger) error { fn(l); return nil })
+				},
+			}
+			v.Text, v.Attachments = inbound.NormalizeContent(r.Context(), c, cfg.Endpoints, m, store)
 		}
 		result = append(result, v)
 	}

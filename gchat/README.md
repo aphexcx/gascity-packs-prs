@@ -306,9 +306,49 @@ attachments remain links. One message carries at most `max_attachments` (20)
 downloaded files, and the store under `inbound_dir` is capped at
 `max_total_bytes` (2 GiB); past either bound the attachment is reported
 unavailable instead of stored. Nothing is deleted to make room, and nothing
-expires: a path the agent was handed keeps working until someone removes it,
-so a full store needs a decision, not a background sweep. The root-level `catchup_budget` setting defaults to
+expires by age, so a full store needs a decision, not a background sweep.
+The root-level `catchup_budget` setting defaults to
 50 records per space per pass; it is a budget, not a truncation limit.
+
+When the adapter learns that a message was deleted, it removes the attachment
+files it saved for that message, including copies saved by history reads and
+edits. An accepted edit removes only the saved files of attachments it no
+longer carries. Files saved before this change have no attachment link: an
+edit leaves them, and a message deletion removes them. Attachment resource
+names are assumed to stay the same across edits (UNPROVEN). If Google changes
+a kept attachment's name, its earlier paths stop working and the edit saves
+a fresh copy. Text edits and history reads still save additional copies.
+
+Failed removals remain in the ledger and are retried at startup and every
+five seconds, independently of credentials, registration, subscriptions and
+history recovery, without holding later messages. Configured media roots are
+remembered across settings reloads and restarts, so a deletion also reaches
+copies in earlier stores. Attachment links use a digest scoped to their store;
+while a filename has pending removal debt, new downloads choose another name.
+Each copy's link records the snapshot revision it came from; a delayed edit
+cannot remove a copy from a newer snapshot. Links from an older ledger without
+that source revision are treated as older than any edit. Catch-up snapshots
+reconcile saved copies before delivery deduplication.
+An edit checkpoint keeps its revision across a crash, preventing older edits
+from restoring removed attachments. Directory removals are synchronized before
+their ledger obligation is cleared; synchronization failures remain retryable.
+Cleanup does not hold the health lock while waiting for downloads, so a
+credential or settings reload can cancel a stalled download. The adapter log
+reports the message id, removed count, and, on failure, a remaining count and
+one cause word; `remaining=-1` means the directory could not be inspected.
+Links and nested folders are left in place and reported for operator attention.
+The first start after an update leaves files of past deletions alone: only
+cleanup obligations recorded by the new code are retried. A rollback to the
+released adapter drops these obligations, attachment links and remembered
+media roots. Fields understood by that adapter remain, and it does not remove
+saved attachments.
+
+Only the adapter's saved files are removed. Ledger text, turns already sent
+to the mayor's session, and copies made elsewhere remain. Deletions in rooms
+the mayor has left, or during outages longer than Google's event retention,
+cannot be learned; files of a room the mayor leaves stay. Commands, settings,
+Google subscriptions and deletion turns are unchanged. A merge changes no
+box; adoption needs a separate adapter release and image or pack update.
 
 Optional endpoint/path overrides for tests and private deployments:
 `GCHAT_CHAT_API_BASE`, `GCHAT_EVENTS_API_BASE`, `GCHAT_PUBSUB_ENDPOINT`,

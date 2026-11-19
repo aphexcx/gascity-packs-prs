@@ -55,6 +55,7 @@ type application struct {
 	l                     *ledger.Ledger
 	mu                    sync.Mutex
 	stateMu               sync.Mutex // excludes app health transitions during POST /state
+	mediaResetMu          sync.Mutex // excludes local cleanup during POST /state
 	s                     *server.Server
 	manager               atomic.Pointer[events.Manager]
 	chatClient            atomic.Pointer[chat.Client]
@@ -151,6 +152,10 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	defer s.Close()
 	h := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/state" {
+			// Acquire the cleanup exclusion first: waiting for a download must
+			// never hold the health lock needed by a reload that cancels it.
+			a.mediaResetMu.Lock()
+			defer a.mediaResetMu.Unlock()
 			a.stateMu.Lock()
 			defer a.stateMu.Unlock()
 			if err := a.checkStateLock(); err != nil {
@@ -309,6 +314,12 @@ func (a *application) run(ctx context.Context) error {
 	if err = canonicalize(a.cfg); err != nil {
 		return err
 	}
+	initialMediaRoot, statePath := a.cfg.Endpoints.MediaDir, a.cfg.Endpoints.StateFile
+	if !recovery {
+		if err = a.rememberMediaRoots(initialMediaRoot); err != nil {
+			return err
+		}
+	}
 	a.s.SetConfig(*a.cfg)
 	source, err := NewSource(a.cfg)
 	if err != nil {
@@ -324,6 +335,7 @@ func (a *application) run(ctx context.Context) error {
 	}
 	a.s.SetNeverSilent(a.neverSilent)
 	var auxiliaries sync.WaitGroup
+	auxiliaries.Go(func() { a.pollMediaCleanup(ctx, initialMediaRoot, statePath) })
 	auxiliaries.Go(func() { a.notifyLoop(ctx) })
 	auxiliaries.Go(func() { a.pollNeverSilent(ctx) })
 	// Sweeps belong to the service, not a credential generation. A reload does
@@ -403,6 +415,9 @@ func (a *application) run(ctx context.Context) error {
 			}
 			// /state is only admitted while recovery-required, when no generation
 			// owns the ledger. It has already replaced and saved the shared value.
+			if err = a.rememberMediaRoots(initialMediaRoot, a.cfg.Endpoints.MediaDir); err != nil {
+				return err
+			}
 			recovery = false
 			a.loaded.Store(true)
 			a.credentialHold.Store(false)
@@ -503,6 +518,11 @@ func (a *application) run(ctx context.Context) error {
 							a.health("initializing", "settings changed; rebuilding clients")
 						}
 						stopGeneration()
+						if !recovery {
+							if err = a.rememberMediaRoots(a.cfg.Endpoints.MediaDir, next.Endpoints.MediaDir); err != nil {
+								return err
+							}
+						}
 						if next.Identity().TokenFile != a.cfg.Identity().TokenFile {
 							fresh, tokenErr := NewSource(next)
 							if tokenErr != nil {
