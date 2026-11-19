@@ -44,6 +44,17 @@ test('review: a replacement active file with an identical byte prefix keeps cons
   assert.equal(f.cmd('status').skipped_rows.count, 1);
   assert.deepEqual(f.state().waiting.map(w => w.released), [true, false, false]);
 });
+test('rotation: a reused inode and matching trailing bytes cannot conceal a new sequence', t => {
+  const f = fixture(t);
+  f.append(inbound(1)); f.cmd('status');
+  f.append(inbound(2));
+  const archive = f.events + '.archive-20260102T120000Z-seq-1-2.gz';
+  fs.writeFileSync(archive, zlib.gzipSync(fs.readFileSync(f.events)));
+  // Rewriting in place deterministically presents the same dev and inode.
+  fs.writeFileSync(f.events, JSON.stringify(inbound(3)) + '\n');
+  f.cmd('status');
+  assert.deepEqual(f.state().waiting.map(w => w.seq), [1, 2, 3]);
+});
 test('review: usable routing on damaged rows still excludes another agent', t => {
   const f = fixture(t);
   f.append(inbound(1), { ...inbound(2), type: 'extmsg.outbound', subject: 'worker-example', ts: 'invalid' },

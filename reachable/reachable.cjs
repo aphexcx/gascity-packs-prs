@@ -105,6 +105,16 @@ function lastSequence(bytes, truncated) {
   }
   return 0;
 }
+function sequenceAtOffset(fd, offset) {
+  const limit = Math.min(CHUNK, offset);
+  for (let size = Math.min(512, limit);;) {
+    const bytes = Buffer.alloc(size);
+    fs.readSync(fd, bytes, 0, size, offset - size);
+    const seq = lastSequence(bytes, offset > size);
+    if (seq || size === limit) return seq;
+    size = Math.min(size * 4, limit);
+  }
+}
 function eventFence(city) {
   const dir = path.join(city, '.gc');
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -172,8 +182,15 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
       const boundary = Buffer.alloc(Math.min(128, cursor.offset));
       fs.readSync(fd, boundary, 0, boundary.length, cursor.offset - boundary.length);
       matchingPrefix = hash(boundary) === cursor.boundary;
+      if (matchingPrefix) {
+        // A recycled inode or an in-place rewrite can preserve the trailing
+        // payload while changing the sequence at the beginning of that row.
+        const seq = sequenceAtOffset(fd, cursor.offset);
+        matchingPrefix = seq ? seq === cursor.seq : !cursor.seq || cursor.unsequenced > 0;
+      }
     }
-    const same = cursor && !cursor.archive && cursor.dev === stat.dev && cursor.ino === stat.ino && (matchingPrefix || cursor.offset === 0);
+    const sameEmpty = cursor?.offset === 0 && !stat.size && cursor.emptyChanged === stat.ctimeMs;
+    const same = cursor && !cursor.archive && cursor.dev === stat.dev && cursor.ino === stat.ino && (matchingPrefix || sameEmpty);
     if (same) offset = cursor.offset;
     else {
       const names = fs.readdirSync(dir);
@@ -229,12 +246,7 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
       }
       // Still discover missing archives when an inode changes. Bytes known
       // to match the old active prefix need no second reduction.
-      if (matchingPrefix) {
-        const tail = Buffer.alloc(Math.min(CHUNK, cursor.offset));
-        fs.readSync(fd, tail, 0, tail.length, cursor.offset - tail.length);
-        matchingPrefix = lastSequence(tail, cursor.offset > CHUNK) === cursor.seq;
-        if (matchingPrefix) offset = cursor.offset;
-      }
+      if (matchingPrefix) offset = cursor.offset;
     }
     checkDeadline(start);
     // Initial catch-up is bounded and continues on later calls. No refusal is
@@ -261,7 +273,8 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
     const boundary = Buffer.alloc(Math.min(128, offset));
     fs.readSync(fd, boundary, 0, boundary.length, offset - boundary.length);
     checkDeadline(start);
-    return { rows, caughtUp: offset === stat.size, cursor: { dev: stat.dev, ino: stat.ino, offset, ...progress, boundary: hash(boundary) } };
+    return { rows, caughtUp: offset === stat.size, cursor: { dev: stat.dev, ino: stat.ino, offset, ...progress, boundary: hash(boundary),
+      ...(stat.size ? {} : { emptyChanged: stat.ctimeMs }) } };
   } finally { fs.closeSync(fd); }
 }
 
