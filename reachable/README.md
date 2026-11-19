@@ -114,8 +114,10 @@ or Claude's own read-only tools. Run install again after renaming an import.
 A pipeline, command substitution, redirect or additional work command counts
 as work even if the first command talks to a person.
 
-Each waiting message can cause at most three refusals. After the third the
-hook lets it go and records `let_go`. Observe mode applies the same accounting
+Each waiting message can cause at most three counted work refusals. A refused
+attempt beginning with a talk alias or handoff leaves that count intact.
+After the third counted refusal the hook lets the message go and records
+`let_go`. Observe mode applies the same accounting
 with `would_refuse` records. The hook fails open on measurement errors, corrupt
 state, a backwards clock, state contention, or a measurement over two seconds.
 It suppresses refusals until initial event-log catch-up completes. The cursor
@@ -145,9 +147,8 @@ interrupt a tool that is already running.
 A quoted reply can contain punctuation, multiple lines and ordinary dollar
 amounts or variables. One `cd DIR &&` may precede a talk command. A Write can
 prepare a reply body of up to 64 KiB under the system temporary directory or
-`/tmp`. The refusal ends with “Refused because” and a short explanation. A
-refused attempt beginning with a talk alias or handoff leaves the message's
-refusal count intact. The suggested pass command uses this pack's import alias.
+`/tmp`. The refusal ends with “Refused because” and a short explanation.
+The suggested pass command uses this pack's import alias.
 
 `gc reachable status --json` reports mode, registered/current hook state,
 catch-up progress, waiting provider/conversation IDs and seconds, and the last

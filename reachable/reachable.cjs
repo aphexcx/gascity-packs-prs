@@ -28,15 +28,20 @@ function checkDeadline(start) {
 }
 function identifier(s) { return typeof s === 'string' && s.length > 0 && s.length <= 4096 && !/[\x00-\x20\x7f]/.test(s); }
 const SKIP = Symbol('unusable event');
+function eventTime(ts) {
+  return typeof ts === 'string' || typeof ts === 'number' ? Date.parse(ts) : NaN;
+}
 function parseRows(bytes, progress, start) {
   const rows = [];
   const minimum = progress.seq;
-  for (const line of bytes.toString('utf8').split('\n')) {
-    if (!line) continue;
+  const lines = bytes.toString('utf8').split('\n');
+  lines.pop(); // The caller supplies only complete newline-terminated bytes.
+  for (const line of lines) {
     checkDeadline(start);
     let row, reason;
     try { row = JSON.parse(line); } catch { reason = 'invalid_event_json'; }
     if (!Number.isSafeInteger(row?.seq) || row.seq <= 0) {
+      progress.hadUnsequenced = true;
       progress.unsequenced++;
       rows.push({ ...row, seq: progress.seq, [SKIP]: reason || 'invalid_event_row' });
       continue;
@@ -49,7 +54,7 @@ function parseRows(bytes, progress, start) {
       progress.unsequenced = 0;
     } else if (progress.seq && row.seq !== progress.seq + 1) throw new Error('event_sequence_gap');
     progress.seq = row.seq;
-    if (typeof row.type !== 'string' || !Number.isFinite(Date.parse(row.ts))) {
+    if (typeof row.type !== 'string' || !Number.isFinite(eventTime(row.ts))) {
       rows.push({ ...row, [SKIP]: 'invalid_event_row' });
     } else rows.push(row);
   }
@@ -89,6 +94,17 @@ function archiveSlice(file, offset, start) {
     maxBuffer: CHUNK + 65536, stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
+function lastSequence(bytes, truncated) {
+  for (let stop = bytes.lastIndexOf(10); stop > 0;) {
+    const begin = bytes.lastIndexOf(10, stop - 1) + 1;
+    if (!begin && truncated) break;
+    let row;
+    try { row = JSON.parse(bytes.subarray(begin, stop).toString()); } catch { /* skip an unreadable line */ }
+    if (Number.isSafeInteger(row?.seq) && row.seq > 0) return row.seq;
+    stop = begin - 1;
+  }
+  return 0;
+}
 function eventFence(city) {
   const dir = path.join(city, '.gc');
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -107,18 +123,9 @@ function eventFence(city) {
         const size = fs.fstatSync(fd).size;
         const bytes = Buffer.alloc(Math.min(size, CHUNK));
         fs.readSync(fd, bytes, 0, bytes.length, size - bytes.length);
-        const end = bytes.lastIndexOf(10);
-        if (end < 0) continue;
         // A damaged tail has no usable fence of its own. The reader counts
         // it and releases ambiguous waits when it consumes those bytes.
-        for (let stop = end; stop > 0;) {
-          const begin = bytes.lastIndexOf(10, stop - 1) + 1;
-          if (!begin && size > CHUNK) break;
-          let row;
-          try { row = JSON.parse(bytes.subarray(begin, stop).toString()); } catch { /* scan the previous line */ }
-          if (Number.isSafeInteger(row?.seq) && row.seq > 0) { seq = Math.max(seq, row.seq); break; }
-          stop = begin - 1;
-        }
+        seq = Math.max(seq, lastSequence(bytes, size > CHUNK));
       } catch (e) { if (e.code !== 'ENOENT') throw e; }
       finally { if (fd !== undefined) fs.closeSync(fd); }
     }
@@ -158,14 +165,15 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
     if (!stat.isFile()) throw new Error('event_log_not_regular');
     let offset = 0;
     let rows = [];
-    const progress = { seq: cursor?.seq || 0, unsequenced: cursor?.unsequenced || 0 };
+    const progress = { seq: cursor?.seq || 0, unsequenced: cursor?.unsequenced || 0, hadUnsequenced: Boolean(cursor?.hadUnsequenced || cursor?.unsequenced) };
     let archivedThrough = 0;
-    let same = cursor && !cursor.archive && cursor.dev === stat.dev && cursor.ino === stat.ino && cursor.offset <= stat.size;
-    if (same && cursor.offset) {
+    let matchingPrefix = false;
+    if (cursor && !cursor.archive && cursor.offset && cursor.offset <= stat.size) {
       const boundary = Buffer.alloc(Math.min(128, cursor.offset));
       fs.readSync(fd, boundary, 0, boundary.length, cursor.offset - boundary.length);
-      same = hash(boundary) === cursor.boundary;
+      matchingPrefix = hash(boundary) === cursor.boundary;
     }
+    const same = cursor && !cursor.archive && cursor.dev === stat.dev && cursor.ino === stat.ino && (matchingPrefix || cursor.offset === 0);
     if (same) offset = cursor.offset;
     else {
       const names = fs.readdirSync(dir);
@@ -192,22 +200,17 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
         checkDeadline(start);
         const file = path.join(dir, archive.name);
         let decodedOffset = cursor?.archive?.name === archive.name ? cursor.archive.offset : 0;
-        let contents;
         // A rotated archive contains the old active file verbatim. Its byte
         // fence also identifies damaged lines that have no sequence number.
-        if (!cursor?.archive && cursor?.offset && archive.first <= cursor.seq + (cursor.unsequenced || 0)) {
+        if (progress.hadUnsequenced && !cursor?.archive && cursor?.offset && archive.first <= cursor.seq + (cursor.unsequenced || 0)) {
           const boundarySize = Math.min(128, cursor.offset);
           const slice = archiveSlice(file, cursor.offset - boundarySize, start);
           if (slice.length >= boundarySize && hash(slice.subarray(0, boundarySize)) === cursor.boundary) {
-            contents = slice;
-            decodedOffset = cursor.offset - boundarySize;
+            decodedOffset = cursor.offset;
           }
         }
-        const prefix = contents ? cursor.offset - decodedOffset : 0;
-        contents ??= archiveSlice(file, decodedOffset, start);
+        const contents = archiveSlice(file, decodedOffset, start);
         const fullSlice = contents.length === CHUNK;
-        contents = contents.subarray(prefix);
-        decodedOffset += prefix;
         const end = contents.lastIndexOf(10) + 1;
         if (!fullSlice && end !== contents.length) throw new Error('incomplete_archive');
         if (!end && fullSlice) throw new Error('event_row_too_large');
@@ -223,6 +226,14 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
         // Persist progress between small archives too; their aggregate can
         // exceed the deadline even when each one fits in a single slice.
         if (index + 1 < archives.length) return { rows, caughtUp: false, cursor: { dev: cursor?.dev || 0, ino: cursor?.ino || 0, offset: cursor?.offset || 0, boundary: cursor?.boundary || '', ...progress } };
+      }
+      // Still discover missing archives when an inode changes. Bytes known
+      // to match the old active prefix need no second reduction.
+      if (matchingPrefix) {
+        const tail = Buffer.alloc(Math.min(CHUNK, cursor.offset));
+        fs.readSync(fd, tail, 0, tail.length, cursor.offset - tail.length);
+        matchingPrefix = lastSequence(tail, cursor.offset > CHUNK) === cursor.seq;
+        if (matchingPrefix) offset = cursor.offset;
       }
     }
     checkDeadline(start);
@@ -244,7 +255,7 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
         // adopting an identity that would bypass discovery on the next call.
         if (eventFence(city) > archivedThrough) return { rows, caughtUp: false, cursor: { ...(cursor || { dev: 0, ino: 0, offset: 0, boundary: '' }), ...progress, archive: undefined } };
         if (archivedThrough !== progress.seq) throw new Error('event_sequence_gap');
-      } else if (cursor) return { rows, caughtUp: false, cursor: { ...cursor, ...progress, archive: undefined } };
+      } else if (cursor && !matchingPrefix) return { rows, caughtUp: false, cursor: { ...cursor, ...progress, archive: undefined } };
     }
     offset += end;
     const boundary = Buffer.alloc(Math.min(128, offset));
@@ -279,7 +290,7 @@ function skipEvent(state, row, reason, now) {
   if (typeof row.type === 'string' && row.type !== 'extmsg.outbound') return;
   const p = row.payload;
   const conv = row.type === 'extmsg.outbound' && identifier(p?.provider) && identifier(p?.conversation_id) ? key(p) : null;
-  const at = Date.parse(row.ts);
+  const at = eventTime(row.ts);
   for (const w of state.waiting) {
     if ((!conv || conv === key(w)) && (!Number.isFinite(at) || w.at <= at)) w.released = true;
   }
@@ -294,7 +305,7 @@ function reduceEvents(state, rows, { now, agent, session, sessionName }) {
   for (const row of rows) {
     if (row[SKIP]) continue;
     const p = row.payload;
-    const at = Date.parse(row.ts);
+    const at = eventTime(row.ts);
     if (at > now || now - at >= LIMITS.history) continue;
     if (row.type === 'session.woke' && (row.subject === agent || row.subject === sessionName) && identifier(row.session_id)) {
       own[hash(row.session_id)] = now;
@@ -303,10 +314,17 @@ function reduceEvents(state, rows, { now, agent, session, sessionName }) {
     if (row.type === 'extmsg.inbound' && p?.target_agent === agent && identifier(p.target_session) && identifier(p.provider) && identifier(p.conversation_id)) own[hash(p.target_session)] = now;
   }
   for (const row of rows) {
-    if (row[SKIP]) { skipEvent(state, row, row[SKIP], now); continue; }
+    if (row[SKIP]) {
+      const target = row.payload?.target_agent;
+      if (row.type === 'extmsg.inbound' && identifier(target) && target !== agent) continue;
+      const publisher = identifier(row.subject) ? row.subject : row.payload?.session;
+      if (row.type === 'extmsg.outbound' && identifier(publisher) && !Object.hasOwn(own, hash(publisher))) continue;
+      skipEvent(state, row, row[SKIP], now);
+      continue;
+    }
     if (!['extmsg.inbound', 'extmsg.outbound'].includes(row.type)) continue;
     const p = row.payload || {};
-    const at = Date.parse(row.ts);
+    const at = eventTime(row.ts);
     const publishingSession = identifier(row.subject) ? row.subject : p.session;
     if (row.type === 'extmsg.inbound') {
       if (typeof p.target_agent !== 'string' && p.target_agent !== undefined) { skipEvent(state, row, 'invalid_target_agent', now); continue; }
@@ -375,16 +393,22 @@ const clauses = {
   cd_form: 'only one cd DIR && may stand before the talk command',
   write_place: 'a Write runs here only for a reply body of at most 64 KiB under the temp directory',
 };
-function shellWords(command) {
+function shellWords(command, prefixOnly = false) {
   if (typeof command !== 'string' || command.includes('\0')) return { reason: 'not_talk' };
   const args = [];
   let word = '', quote = '', started = false;
   const finish = () => { if (started) args.push(word); word = ''; started = false; };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
+    if (prefixOnly && !quote && /[ \t\r\n;&|<>()]/.test(c)) {
+      finish();
+      const start = args[0] === 'cd' ? 3 : 0;
+      if (args.length >= start + 2) return { args };
+      if (c === ';' && start && args.length === 2) { args.push(AND); continue; }
+    }
     if (quote === "'") { if (c === "'") quote = ''; else word += c; continue; }
     if (c === '`') return { reason: 'expansion' };
-    if (c === '$' && (!quote || /^[$](?:[({\[]|[A-Za-z_]\w*\[)/.test(command.slice(i)))) return { reason: 'expansion' };
+    if (c === '$' && (!quote || /^[$](?:[({\[]|[A-Za-z_]\w*\[)/.test(command.slice(i).replace(/\\\n/g, '')))) return { reason: 'expansion' };
     if (c === '\\') {
       if (++i === command.length) return { reason: 'unclosed' };
       const next = command[i];
@@ -452,9 +476,11 @@ function allowed(input, aliases) {
   return !refusalCode(input, aliases);
 }
 function replyShaped(input, aliases) {
-  if (input.tool_name !== 'Bash' || typeof input.tool_input?.command !== 'string') return false;
-  const match = /^[ \t]*(?:cd[ \t]+(?:[^ \t\r\n;&"'\\]|\\[^\r\n]|'[^']*'|"(?:(?:\\.)|[^"\\])*")+[ \t]*(?:&&|;)[ \t]*)?gc[ \t]+([^ \t\r\n;&|<>()]+)(?=$|[ \t\r\n;&|<>()])/.exec(input.tool_input.command);
-  return Boolean(match && (aliases.includes(match[1]) || POLICY.control.includes(match[1])));
+  if (input.tool_name !== 'Bash') return false;
+  let { args } = shellWords(input.tool_input?.command, true);
+  if (!args) return false;
+  if (args[0] === 'cd' && typeof args[1] === 'string' && args[2] === AND) args = args.slice(3);
+  return args[0] === 'gc' && (aliases.includes(args[1]) || POLICY.control.includes(args[1]));
 }
 function refusal(waiting, now, ownAlias = 'reachable', code) {
   const lines = waiting.map(w => `A person has waited ${Math.floor((now - w.at) / 1000)} seconds for an answer in ${key(w)}. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc ${ownAlias} pass ${key(w)}. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.`);
@@ -615,13 +641,15 @@ function normalized(options) {
   const city = options.city || env.GC_CITY_PATH || env.GC_CITY;
   if (!city || !path.isAbsolute(city)) throw new Error('absolute_city_required');
   const agent = env.REACHABLE_AGENT || 'mayor';
-  return { ...options, env, city, now: options.now ?? Date.now(), agent, session: env.GC_AGENT === agent ? env.GC_SESSION_ID || '' : '', sessionName: env.GC_AGENT === agent ? env.GC_SESSION_NAME || '' : '', start: options.start ?? performance.now() };
+  return { ...options, env, city, now: options.now ?? Date.now(), liveClock: options.now === undefined, agent, session: env.GC_AGENT === agent ? env.GC_SESSION_ID || '' : '', sessionName: env.GC_AGENT === agent ? env.GC_SESSION_NAME || '' : '', start: options.start ?? performance.now() };
 }
 function syncEvents(state, options) {
   const result = readEvents(options.city, state.cursor, options);
+  if (options.liveClock) options.now = Date.now();
   reduceEvents(state, result.rows, options);
   state.cursor = result.cursor;
   finishCalls(state);
+  trimLog(state, options.now);
   return result.caughtUp;
 }
 const errorCodes = new Set(['measurement_timeout', 'clock_moved_backwards', 'state_busy', 'invalid_state_json', 'invalid_event_json', 'invalid_event_row', 'event_sequence_gap', 'event_in_future', 'invalid_mode', 'mayor_session_unknown', 'incomplete_archive', 'measurement_failed']);
@@ -673,9 +701,10 @@ function runHook(input, options = {}) {
   let o;
   try {
     o = normalized(options);
-    const mode = readMode(o.city);
-    if (mode === 'off') return {};
+    if (readMode(o.city) === 'off') return {};
     return withLock(o.city, () => {
+      const mode = readMode(o.city);
+      if (mode === 'off') return {};
       // Compare transaction times in lock order, including duplicate hook
       // processes that reached the queue in the opposite order to startup.
       if (options.now === undefined) o.now = Date.now();
@@ -692,10 +721,10 @@ function runHook(input, options = {}) {
       catch (error) {
         // A save can itself cross the deadline. Persist the actual fail-open
         // outcome before releasing the lock, including duplicate accounting.
-        if (result.hookSpecificOutput) {
-          decide(beforeDecision, input, { ...o, mode: 'observe', aliases: manifest.aliases, caughtUp: false, fence });
-          saveState(o.city, beforeDecision);
-        }
+        if (result.hookSpecificOutput) decide(beforeDecision, input, { ...o, mode: 'observe', aliases: manifest.aliases, caughtUp: false, fence });
+        const rollback = result.hookSpecificOutput ? beforeDecision : state;
+        rollback.hook_ok_at = beforeDecision.hook_ok_at;
+        saveState(o.city, rollback);
         throw error;
       }
       return result;
@@ -863,7 +892,11 @@ function uninstall(options = {}) {
       restored = isDeepStrictEqual(value, bytes ? JSON.parse(bytes) : {});
       if (restored) {
         backupSettings(o, file);
-        if (bytes) { atomic(file, bytes, snapshot.mode); if (!fs.readFileSync(file).equals(bytes)) throw new Error('settings_readback_failed'); }
+        if (bytes) {
+          directory(path.dirname(file));
+          atomic(file, bytes, snapshot.mode);
+          if (!fs.readFileSync(file).equals(bytes)) throw new Error('settings_readback_failed');
+        }
         else {
           unlinkIfPresent(file);
           const dir = path.dirname(file);
@@ -908,7 +941,8 @@ function doctor(options = {}) {
   let state;
   try { state = loadState(o.city, o.now); } catch { /* The error trail survives a damaged state. */ }
   const latest = Object.entries(summary).sort((a, b) => b[1].newest - a[1].newest)[0];
-  if (latest && (state?.hook_ok_at == null || latest[1].newest > state.hook_ok_at)) errors.push('hook_failing_open ' + latest[0]);
+  if (state && state.now > o.now && summary.clock_moved_backwards) errors.push('hook_failing_open clock_moved_backwards');
+  else if (latest && (state?.hook_ok_at == null || latest[1].newest > state.hook_ok_at)) errors.push('hook_failing_open ' + latest[0]);
   if (state?.skipped.count && o.now - state.skipped.last_at <= LIMITS.history) errors.push(`rows_skipped ${state.skipped.count} last_seq ${state.skipped.last_seq}`);
   return errors;
 }
@@ -940,7 +974,7 @@ function command(verb, args, options = {}) {
     else if (verb === 'pass' || verb === 'exempt') {
       if (verb === 'pass' ? args.length !== 1 : args.length !== 2 || !['--on', '--off'].includes(args[1])) throw new Error(`usage: ${verb} PROVIDER/CONVERSATION${verb === 'exempt' ? ' --on|--off' : ''}`);
       if (!caughtUp) throw new Error('event_catchup_incomplete');
-      if (!Object.hasOwn(state.known, args[0])) throw new Error('unknown_conversation');
+      if (!Object.hasOwn(state.known, args[0]) && !state.waiting.some(w => key(w) === args[0])) throw new Error('unknown_conversation');
       if (verb === 'pass' || args[1] === '--on') state.waiting = state.waiting.filter(w => key(w) !== args[0]);
       if (verb === 'exempt') state.exemptions = args[1] === '--on' ? [...new Set([...state.exemptions, args[0]])] : state.exemptions.filter(c => c !== args[0]);
       result = { conversation: args[0], [verb === 'pass' ? 'seen' : 'exempt']: verb === 'pass' || args[1] === '--on' };
