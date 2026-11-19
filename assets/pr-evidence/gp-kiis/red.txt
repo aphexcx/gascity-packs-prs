@@ -1,0 +1,38 @@
+.F..F....FFFF....F                                                       [100%]
+=================================== FAILURES ===================================
+E   AssertionError: ## Review rules
+    assert 0 == 1
+     +  where 0 = <built-in method count of str object at 0x<addr>>('\n## Review rules')
+     +    where <built-in method count of str object at 0x<addr>> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'.count
+<clone>/tests/test_gc_standing_notes_fragment.py:103: AssertionError: ## Review rules
+E   assert '## Review rules{{/* Bead of record: gp-kiis.' in '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'
+<clone>/tests/test_gc_standing_notes_fragment.py:112: assert '## Review rules{{/* Bead of record: gp-kiis.' in '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'
+E   assert 0 == 1
+     +  where 0 = <built-in method count of str object at 0x<addr>>('THE REVIEW RULES')
+     +    where <built-in method count of str object at 0x<addr>> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'.count
+<clone>/tests/test_gc_standing_notes_fragment.py:81: assert 0 == 1
+E   assert 0 == 1
+     +  where 0 = <built-in method count of str object at 0x<addr>>('THE REVIEW RULES')
+     +    where <built-in method count of str object at 0x<addr>> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'.count
+<clone>/tests/test_gc_standing_notes_fragment.py:81: assert 0 == 1
+E   assert 0 == 1
+     +  where 0 = <built-in method count of str object at 0x<addr>>('THE REVIEW RULES')
+     +    where <built-in method count of str object at 0x<addr>> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'.count
+<clone>/tests/test_gc_standing_notes_fragment.py:81: assert 0 == 1
+E   assert 0 == 1
+     +  where 0 = <built-in method count of str object at 0x<addr>>('THE REVIEW RULES')
+     +    where <built-in method count of str object at 0x<addr>> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'.count
+<clone>/tests/test_gc_standing_notes_fragment.py:81: assert 0 == 1
+E   AssertionError: README Standing notes lacks: 'Its third note is THE REVIEW RULES'
+    assert 'Its third note is THE REVIEW RULES' in "`template-fragments/gc-standing-notes.template.md` defines `gc-standing-notes`: notes for every worker that sit besid...ble (a fork rebased on an upstream, a customer's repository): a scope rule elsewhere in the prompt does not cancel it."
+<clone>/tests/test_gc_standing_notes_fragment.py:410: AssertionError: README Standing notes lacks: 'Its third note is THE REVIEW RULES'
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_notes_appear_once_each_in_order
+FAILED tests/test_gc_standing_notes_fragment.py::test_bead_of_record_is_cited_only_inside_a_template_comment[## Review rules-gp-kiis]
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_note_is_exactly_the_six_rules_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_give_every_finding_a_word_for_the_handoff
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_judge_reach_where_the_changed_code_runs
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_carry_no_number_but_the_rule_numbers
+FAILED tests/test_gc_standing_notes_fragment.py::test_readme_documents_the_templatefirst_call_line_and_why
+7 failed, 11 passed in 0.03s
+exit 1

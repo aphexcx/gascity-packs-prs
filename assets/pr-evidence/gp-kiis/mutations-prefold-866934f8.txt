@@ -1,0 +1,5 @@
+SURVIVED m01 rule 5's depth sentence replaced (self-review survivor) (exit 0; red: none)
+SURVIVED m02 rule 5's depth sentence deleted (self-review survivor) (exit 0; red: none)
+SURVIVED m03 an added sentence lets a second model buy a round at any round (self-review survivor) [pre-fold wrapping] (exit 0; red: none)
+SURVIVED m04 an added sentence makes every minor block (self-review survivor) (exit 0; red: none)
+4 mutations, 0 killed, 4 survived

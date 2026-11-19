@@ -1,0 +1,95 @@
+.F..F....F....F                                                          [100%]
+=================================== FAILURES ===================================
+_____________________ test_notes_appear_once_each_in_order _____________________
+
+    def test_notes_appear_once_each_in_order() -> None:
+        text = fragment()
+        for heading, _ in NOTES:
+>           assert text.count(f"\n{heading}") == 1, heading
+E           AssertionError: ## Review rules
+E           assert 0 == 1
+E            +  where 0 = <built-in method count of str object at 0x<addr>>('\n## Review rules')
+E            +    where <built-in method count of str object at 0x<addr>> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'.count
+
+tests/test_gc_standing_notes_fragment.py:98: AssertionError
+_ test_bead_of_record_is_cited_only_inside_a_template_comment[## Review rules-gp-kiis] _
+
+heading = '## Review rules', bead = 'gp-kiis'
+
+    @pytest.mark.parametrize(("heading", "bead"), NOTES)
+    def test_bead_of_record_is_cited_only_inside_a_template_comment(heading: str, bead: str) -> None:
+        """The real render without it is proven in the GC_TEST_BIN render test."""
+        text = fragment()
+>       assert f"{heading}{{{{/* Bead of record: {bead}." in text
+E       assert '## Review rules{{/* Bead of record: gp-kiis.' in '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'
+
+tests/test_gc_standing_notes_fragment.py:107: AssertionError
+____________ test_review_rules_note_carries_every_rule_of_its_bead _____________
+
+    def test_review_rules_note_carries_every_rule_of_its_bead() -> None:
+>       note = review_rules_note()
+               ^^^^^^^^^^^^^^^^^^^
+
+tests/test_gc_standing_notes_fragment.py:218:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests/test_gc_standing_notes_fragment.py:78: in review_rules_note
+    return note("THE REVIEW RULES")
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+marker = 'THE REVIEW RULES'
+
+    def note(marker: str) -> str:
+        """One note's renderable text, from its marker to the next heading, on one
+        line: a clause hidden in a template comment never reaches a worker, so it
+        never counts."""
+        text = renderable(fragment())
+>       assert text.count(marker) == 1
+E       assert 0 == 1
+E        +  where 0 = <built-in method count of str object at 0x<addr>>('THE REVIEW RULES')
+E        +    where <built-in method count of str object at 0x<addr>> = '{{ define "gc-standing-notes" -}}\n# Standing Notes\n\nNotes this pack keeps for every worker, beside the role text. ...tly as written:\na reviewer reads these lines first, and a city\'s tools may read them by their\nlabels.\n{{- end }}\n'.count
+
+tests/test_gc_standing_notes_fragment.py:65: AssertionError
+__________ test_readme_documents_the_templatefirst_call_line_and_why ___________
+
+    def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
+        readme = README.read_text(encoding="utf-8")
+        assert readme.count("## Standing notes") == 1
+        section = readme.split("## Standing notes", 1)[1].split("\n## ", 1)[0]
+        # The order-proof form is the one call line; the plain form appears once,
+        # as the thing to avoid.
+        assert section.count(CALL_LINE) == 1
+        assert section.count(PLAIN_CALL) == 1
+        words = flat(section)
+        for clause in (
+            "`template-fragments/gc-standing-notes.template.md`",
+            'right after its `{{ template "gc-role-worker" . }}` line',
+            f"Write it with `templateFirst` (gc v1.2.0 and later), never as `{PLAIN_CALL}`",
+            "when the city's import of this pack is older than the commit that carries the fragment",
+            "`templateFirst` renders nothing and the lane keeps its role text",
+            "the plain call makes gc fall back to the lane's raw prompt source and the lane loses its role text",
+            "That fallback prints one stderr line and exits 0, `gc prime --strict` included through gc v1.5.1; "
+            "later builds fail `--strict`, but a plain render still returns the raw source",
+            "The price of `templateFirst` is silence: an old import or a misspelt name drops the note "
+            "without a word",
+            "run `gc prime <lane>` and check that the note appears exactly once, after the role text",
+            "A city that does not add the line renders exactly what it rendered before",
+            "A note that belongs to one city stays in that city's own prompt template",
+            "THE DEEPENING NOTE",
+            "Its second note is THE PR BODY LINES",
+            "`Testing:`, `Risk:` and `How to revert:`, after every other section, "
+            "with only trailer or sign-off lines below them",
+            "Its third note is THE REVIEW RULES",
+        ):
+>           assert clause in words, f"README Standing notes lacks: {clause!r}"
+E           AssertionError: README Standing notes lacks: 'Its third note is THE REVIEW RULES'
+E           assert 'Its third note is THE REVIEW RULES' in "`template-fragments/gc-standing-notes.template.md` defines `gc-standing-notes`: notes for every worker that sit besid...ble (a fork rebased on an upstream, a customer's repository): a scope rule elsewhere in the prompt does not cancel it."
+
+tests/test_gc_standing_notes_fragment.py:367: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_notes_appear_once_each_in_order
+FAILED tests/test_gc_standing_notes_fragment.py::test_bead_of_record_is_cited_only_inside_a_template_comment[## Review rules-gp-kiis]
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_note_carries_every_rule_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_readme_documents_the_templatefirst_call_line_and_why
+4 failed, 11 passed in 0.05s
+exit 1
