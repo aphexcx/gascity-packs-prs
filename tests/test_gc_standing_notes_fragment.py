@@ -246,8 +246,11 @@ REVIEW_RULES = (
     # it, a minor's follow-up counting; what THE SAME FAMILY is; past round
     # three, in a round that does not stop the PR, only a reproduction in the
     # round's own changes buys a round, and a second model's answer is not
-    # one; a finding shown any other way is OPEN with its proof and grade,
-    # never NOT SHOWN, which is for what nobody showed.
+    # one; a finding shown any other way is FIXED, with the head that fixed
+    # it, once its proof no longer fails at the reviewed head, and while it
+    # still happens takes the outcome or PRECONDITION it can have without a
+    # fix, or else is OPEN with its proof and grade; never NOT SHOWN, which
+    # is for what nobody showed.
     "2. Stop at round three.",
     "From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding "
     "of an earlier round of this PR, shown or not, stops the PR: fix nothing more in that "
@@ -267,9 +270,11 @@ REVIEW_RULES = (
     "that round's own changes (a failing test, or shown reachable where the changed code "
     "runs; a second model's answer alone is not enough) buys another round; a finding shown "
     "any other way "
-    "(an earlier head's fault that a failing test proves, say) buys none by itself and is "
-    "listed as OPEN with what shows it and its grade, for the mayor; list the rest, which "
-    "nobody showed, as NOT SHOWN with their file and line.",
+    "(an earlier head's fault that a failing test proves, say) buys none by itself: once its "
+    "proof no longer fails at the reviewed head it is FIXED, with the head that fixed it, and "
+    "while it still happens it takes the outcome or PRECONDITION it can have without a fix, "
+    "or else is listed as OPEN with what shows it and its grade, for the mayor; list the "
+    "rest, which nobody showed, as NOT SHOWN with their file and line.",
     # 3. No lone reviewer forces a round: a failing test, or a second model's
     # check of that one finding with the line; else NOT SHOWN, never a blind fix.
     "3. Let no lone reviewer force a round.",
@@ -323,9 +328,16 @@ def test_review_rules_give_every_finding_a_word_for_the_handoff() -> None:
     given = set(re.findall(r"\bas ((?:[A-Z]+ )*[A-Z]{2,})\b", note))
     named = note.split("or else the listing these rules give it (", 1)[1].split(")", 1)[0]
     assert set(re.split(r", | or ", named)) == given
-    # The four outcomes, each once, so one list carries them.
+    # The four outcomes, each once in one list that carries them; a FIXED
+    # given anywhere else names the head that fixed it, as the list's FIXED
+    # names the commit.
+    outcomes = note.split("with its outcome: ", 1)[1].split(", or else the listing", 1)[0]
     for outcome in ("FIXED", "WRONG", "INTENDED", "DOES NOT MATTER"):
+        assert outcomes.count(outcome) == 1, outcome
+    for outcome in ("WRONG", "INTENDED", "DOES NOT MATTER"):
         assert note.count(outcome) == 1, outcome
+    assert note.count("FIXED") == (note.count("FIXED (with the commit)")
+                                   + note.count("FIXED, with the head that fixed it"))
 
 
 def test_review_rules_list_as_not_shown_only_what_nobody_showed() -> None:
@@ -372,6 +384,44 @@ def test_review_rules_give_each_finding_of_a_stopped_round_one_word() -> None:
         if "as NOT SHOWN" in sentence:
             assert ("shown by neither" in sentence
                     or sentence.startswith("Past round three, in a round that does not stop the PR,")), sentence
+
+
+def test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_shows() -> None:
+    """Walk the sequence on the note's own words. Head one brings a fault in
+    and head two fixes it; in round four, which no repeated family stops, a
+    reviewer sends head one's failing test, and it passes at head four. The
+    finding is FIXED, with the head that fixed it, and OPEN, which asks the
+    mayor for an outcome before any merge, is only for what still happens.
+    The same clause gives a fault that still fails only under a provider
+    found nowhere the changed code runs its PRECONDITION before any OPEN.
+    The stop's sentence gives the same order (the stopped-round test), and
+    rule 4's OPEN is for a minor left unfixed, which still happens."""
+    sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+    # Round four, and no finding repeats an earlier round's family: the stop
+    # is not this round's sentence; the one for a round past three that does
+    # not stop the PR is.
+    governing = [sentence for sentence in sentences
+                 if sentence.startswith("Past round three, in a round that does not stop the PR,")]
+    assert len(governing) == 1
+    # Head one's test reproduces nothing in round four's own changes, so the
+    # finding is one shown any other way: the clause from there to the NOT
+    # SHOWN list gives its word, and the earlier head's test is its example.
+    clause = governing[0].split("a finding shown any other way", 1)[1]
+    clause = clause.split("; list the rest, which nobody showed", 1)[0]
+    assert clause.startswith(" (an earlier head's fault that a failing test proves, say) buys none by itself")
+    assert clause.count("as OPEN") == 1
+    opened = clause.index("as OPEN")
+    # The test passes at head four: FIXED, with the head that fixed it,
+    # before the clause ever reaches OPEN.
+    fixed = clause.find("once its proof no longer fails at the reviewed head it is FIXED, "
+                        "with the head that fixed it")
+    assert 0 <= fixed < opened, clause
+    # Still failing, but only where the changed code never runs: rule 4's
+    # PRECONDITION, or any outcome it can have without a fix, comes first;
+    # OPEN is what is left of what still happens.
+    still = clause.find("while it still happens it takes the outcome or PRECONDITION it can have "
+                        "without a fix, or else")
+    assert fixed < still < opened, clause
 
 
 def test_review_rules_judge_reach_where_the_changed_code_runs() -> None:
