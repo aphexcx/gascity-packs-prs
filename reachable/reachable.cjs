@@ -20,7 +20,7 @@ const CHUNK = 8 * 1024 * 1024;
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const key = row => `${row.provider}/${row.conversation_id}`;
 function initialState() {
-  return { version: 2, cursor: null, waiting: [], exemptions: [], known: {}, sessions: {}, calls: {}, receipts: {}, log: [], now: 0, turn: '',
+  return { version: 2, generation: 0, cursor: null, waiting: [], exemptions: [], known: {}, sessions: {}, calls: {}, receipts: {}, log: [], now: 0, turn: '',
     skipped: { count: 0, last_seq: null, last_reason: null, last_at: null }, history_dropped: 0, hook_ok_at: null };
 }
 function checkDeadline(start) {
@@ -106,7 +106,7 @@ function lastSequence(bytes, truncated) {
   return 0;
 }
 function sequenceAtOffset(fd, offset) {
-  const limit = Math.min(CHUNK, offset);
+  const limit = Math.min(CHUNK + 1, offset);
   for (let size = Math.min(512, limit);;) {
     const bytes = Buffer.alloc(size);
     fs.readSync(fd, bytes, 0, size, offset - size);
@@ -131,11 +131,11 @@ function eventFence(city) {
       try {
         fd = fs.openSync(path.join(dir, name), 'r');
         const size = fs.fstatSync(fd).size;
-        const bytes = Buffer.alloc(Math.min(size, CHUNK));
+        const bytes = Buffer.alloc(Math.min(size, CHUNK + 1));
         fs.readSync(fd, bytes, 0, bytes.length, size - bytes.length);
         // A damaged tail has no usable fence of its own. The reader counts
         // it and releases ambiguous waits when it consumes those bytes.
-        seq = Math.max(seq, lastSequence(bytes, size > CHUNK));
+        seq = Math.max(seq, lastSequence(bytes, size > bytes.length));
       } catch (e) { if (e.code !== 'ENOENT') throw e; }
       finally { if (fd !== undefined) fs.closeSync(fd); }
     }
@@ -297,9 +297,15 @@ function trimLog(state, now) {
     state.log = state.log.slice(-LIMITS.log);
   }
 }
-function skipEvent(state, row, reason, now) {
-  if (reason === 'gap') { state.skipped.count += row.extra; return; }
-  state.skipped = { count: state.skipped.count + 1, last_seq: row.seq, last_reason: reason, last_at: now };
+// Rows arrive in sequence order. Reinsert equal timestamps so the stable
+// time sort in trimMap also preserves sequence order across saves.
+function remember(map, id, at) {
+  if (at < (map[id] ?? -Infinity)) return;
+  if (at === map[id]) delete map[id];
+  map[id] = at;
+}
+function skipEvent(state, row, reason, now, lastSeq = row.seq) {
+  state.skipped = { count: state.skipped.count + (reason === 'gap' ? row.extra : 1), last_seq: lastSeq, last_reason: reason, last_at: now };
   if (typeof row.type === 'string' && row.type !== 'extmsg.outbound') return;
   const p = row.payload;
   const conv = row.type === 'extmsg.outbound' && identifier(p?.provider) && identifier(p?.conversation_id) ? key(p) : null;
@@ -314,45 +320,53 @@ function reduceEvents(state, rows, { now, agent, session, sessionName }) {
   trimMap(own, now - LIMITS.history, LIMITS.sessions, Number);
   if (session) own[hash(session)] = now;
   if (sessionName) own[hash(sessionName)] = now;
-  // Learn named-session replacements before examining delivered words.
+  // A later wake can identify an earlier reply in this batch. Discover
+  // identities first, then apply their timestamps in event sequence order.
+  const recognized = new Set(Object.keys(own));
+  const learned = new Map();
   for (const row of rows) {
     if (row[SKIP]) continue;
     const p = row.payload;
     const at = eventTime(row.ts);
     if (at > now || now - at >= LIMITS.history) continue;
     if (row.type === 'session.woke' && (row.subject === agent || row.subject === sessionName) && identifier(row.session_id)) {
-      own[hash(row.session_id)] = now;
-      if (identifier(row.subject)) own[hash(row.subject)] = now;
+      const ids = [hash(row.session_id)];
+      if (identifier(row.subject)) ids.push(hash(row.subject));
+      learned.set(row, ids);
     }
-    if (row.type === 'extmsg.inbound' && p?.target_agent === agent && identifier(p.target_session) && identifier(p.provider) && identifier(p.conversation_id)) own[hash(p.target_session)] = now;
+    if (row.type === 'extmsg.inbound' && p?.target_agent === agent && identifier(p.target_session) && identifier(p.provider) && identifier(p.conversation_id)) learned.set(row, [hash(p.target_session)]);
+    for (const id of learned.get(row) || []) recognized.add(id);
   }
+  let lastSeq = state.cursor?.seq || 0;
   for (const row of rows) {
+    lastSeq = row.seq ?? lastSeq;
     if (row[SKIP]) {
       const target = row.payload?.target_agent;
       if (row.type === 'extmsg.inbound' && identifier(target) && target !== agent) continue;
       const publisher = identifier(row.subject) ? row.subject : row.payload?.session;
-      if (row.type === 'extmsg.outbound' && identifier(publisher) && !Object.hasOwn(own, hash(publisher))) continue;
-      skipEvent(state, row, row[SKIP], now);
+      if (row.type === 'extmsg.outbound' && identifier(publisher) && !recognized.has(hash(publisher))) continue;
+      skipEvent(state, row, row[SKIP], now, lastSeq);
       continue;
     }
+    const at = eventTime(row.ts);
+    for (const id of learned.get(row) || []) remember(own, id, at);
     if (!['extmsg.inbound', 'extmsg.outbound'].includes(row.type)) continue;
     const p = row.payload || {};
-    const at = eventTime(row.ts);
     const publishingSession = identifier(row.subject) ? row.subject : p.session;
     if (row.type === 'extmsg.inbound') {
       if (typeof p.target_agent !== 'string' && p.target_agent !== undefined) { skipEvent(state, row, 'invalid_target_agent', now); continue; }
       if (p.target_agent && p.target_agent !== agent) continue;
       if (!p.target_agent && identifier(p.target_session)) {
-        if (!Object.keys(own).length && now - at < LIMITS.age) throw new Error('mayor_session_unknown');
-        if (!Object.hasOwn(own, hash(p.target_session))) continue;
-        own[hash(p.target_session)] = now;
+        if (!recognized.size && now - at < LIMITS.age) throw new Error('mayor_session_unknown');
+        if (!recognized.has(hash(p.target_session))) continue;
+        if (at <= now) remember(own, hash(p.target_session), at);
       } else if (!p.target_agent && row.payload) continue;
-    } else if (identifier(publishingSession) && !Object.hasOwn(own, hash(publishingSession))) continue;
+    } else if (identifier(publishingSession) && !recognized.has(hash(publishingSession))) continue;
     if (!identifier(p.provider) || !identifier(p.conversation_id)) { skipEvent(state, row, 'invalid_message_event', now); continue; }
     if (at > now) { skipEvent(state, row, 'event_in_future', now); continue; }
     if (row.type === 'extmsg.inbound') {
       const conv = key(p);
-      state.known[conv] = Math.max(state.known[conv] || 0, at);
+      remember(state.known, conv, at);
       if (now - at >= LIMITS.age || state.exemptions.includes(conv)) continue;
       for (const call of Object.values(state.calls)) {
         if (call.priorWaiting && row.seq > (call.seenThrough || 0) && row.seq <= call.startThrough && !call.priorWaiting.includes(conv)) call.priorWaiting.push(conv);
@@ -364,8 +378,8 @@ function reduceEvents(state, rows, { now, agent, session, sessionName }) {
       // GC credits the resolved publishing session in subject. The payload
       // retains the caller's selector, which can be an alias or empty.
       if (!identifier(publishingSession)) { skipEvent(state, row, 'invalid_outbound_session', now); continue; }
-      if (Object.hasOwn(own, hash(publishingSession))) {
-        own[hash(publishingSession)] = now;
+      if (recognized.has(hash(publishingSession))) {
+        remember(own, hash(publishingSession), at);
         state.waiting = state.waiting.filter(w => key(w) !== key(p) || w.at > at);
         for (const call of Object.values(state.calls)) if (call.priorWaiting && row.seq <= call.startThrough) call.priorWaiting = call.priorWaiting.filter(c => c !== key(p));
       }
@@ -574,13 +588,19 @@ function prepare(city) {
   directory(stateDir(city));
   fs.chmodSync(stateDir(city), 0o700);
 }
-function atomic(file, bytes, mode = 0o600) {
+function atomic(file, bytes, mode = 0o600, lock) {
   regular(file, true);
-  const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+  const tmp = lock ? path.join(path.dirname(file), '.publish-' + lock.name)
+    : `${file}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
   try {
     fs.writeFileSync(tmp, bytes, { mode: 0o600, flag: 'wx' });
     if (mode !== 0o600) fs.chmodSync(tmp, mode);
+    lock?.check();
     fs.renameSync(tmp, file);
+  } catch (error) {
+    // A successor can withdraw this staged file even after our last check.
+    if (lock && error.code === 'ENOENT') lock.check();
+    throw error;
   } finally { try { fs.unlinkSync(tmp); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
 }
 function json(file, fallback) {
@@ -588,7 +608,7 @@ function json(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch (e) { if (e.code === 'ENOENT') return fallback; throw new Error('invalid_state_json'); }
 }
-function writeJSON(file, value) { atomic(file, JSON.stringify(value, null, 2) + '\n'); }
+function writeJSON(file, value, lock) { atomic(file, JSON.stringify(value, null, 2) + '\n', 0o600, lock); }
 function unlinkIfPresent(file) {
   try { fs.unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
@@ -599,17 +619,37 @@ function withLock(city, action, options = {}) {
   const name = `lock-${process.pid}-${crypto.randomBytes(12).toString('hex')}.json`;
   const file = path.join(dir, name);
   // Nonblocking bakery tickets: each invocation owns a unique filename.
-  // Recovery only unlinks dead owners' unique names, never a shared guard.
+  // Withdraw a displaced writer's staged rename in both possible destination
+  // directories. Names are ticket-specific and cannot belong to a successor.
+  const revoke = n => {
+    const peerFile = path.join(dir, n);
+    let fd;
+    try {
+      fd = fs.openSync(peerFile, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW);
+      // An empty ticket is revoked. Keep it visible until its staged bytes
+      // are gone, including if another contender finishes this recovery.
+      fs.ftruncateSync(fd, 0);
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    } finally { if (fd !== undefined) fs.closeSync(fd); }
+    unlinkIfPresent(path.join(dir, '.publish-' + n));
+    const settingsDir = path.join(city, '.claude');
+    if (fs.lstatSync(settingsDir, { throwIfNoEntry: false })?.isDirectory()) {
+      unlinkIfPresent(path.join(settingsDir, '.publish-' + n));
+    }
+    unlinkIfPresent(peerFile);
+  };
   const peers = names => names.filter(n => /^lock-\d+-[\w-]+\.json$/.test(n) && n !== name).flatMap(n => {
     const p = path.join(dir, n);
     const stat = fs.lstatSync(p, { throwIfNoEntry: false });
     if (!stat) return [];
-    if (Math.abs(Date.now() - stat.mtimeMs) > LIMITS.lockAge) { unlinkIfPresent(p); return []; }
+    if (stat.size === 0 || Math.abs(Date.now() - stat.mtimeMs) > LIMITS.lockAge) { revoke(n); return []; }
     const owner = json(p, null);
     if (!owner) return [];
     if (!Number.isInteger(owner.pid) || owner.pid <= 0 || !Number.isSafeInteger(owner.ticket)) throw new Error('invalid_lock');
     try { process.kill(owner.pid, 0); }
-    catch (e) { if (e.code === 'ESRCH') { try { fs.unlinkSync(p); } catch (e) { if (e.code !== 'ENOENT') throw e; } return []; } }
+    catch (e) { if (e.code === 'ESRCH') { revoke(n); return []; } }
     return [{ ...owner, name: n }];
   });
   writeJSON(file, { pid: process.pid, ticket: 0 });
@@ -624,16 +664,27 @@ function withLock(city, action, options = {}) {
       if (remaining <= 0) throw new Error('state_busy');
       Atomics.wait(timer, 0, 0, Math.min(10, remaining));
     }
-    return action();
+    const lock = { name, check() {
+      let owner;
+      try { owner = json(file, null); } catch { throw new Error('state_busy'); }
+      if (owner?.pid !== process.pid || owner.ticket !== ticket) throw new Error('state_busy');
+      if (lock.generation !== undefined) {
+        const current = json(path.join(dir, 'state.json'), null);
+        if ((current?.generation ?? 0) !== lock.generation) throw new Error('state_busy');
+      }
+    } };
+    return action(lock);
   } finally { unlinkIfPresent(file); }
 }
-function saveState(city, state) {
-  writeJSON(path.join(stateDir(city), 'state.json'), state);
+function saveState(city, state, lock) {
+  state.generation = lock.generation + 1;
+  writeJSON(path.join(stateDir(city), 'state.json'), state, lock);
+  lock.generation = state.generation;
   // state.json is the atomic transaction; this human-readable mirror can
   // always be regenerated from it after a crash between the two renames.
-  atomic(path.join(stateDir(city), 'log.jsonl'), state.log.map(r => JSON.stringify(r)).join('\n') + (state.log.length ? '\n' : ''));
+  atomic(path.join(stateDir(city), 'log.jsonl'), state.log.map(r => JSON.stringify(r)).join('\n') + (state.log.length ? '\n' : ''), 0o600, lock);
 }
-function loadState(city, now) {
+function loadState(city, now, lock) {
   const state = json(path.join(stateDir(city), 'state.json'), initialState());
   if (state?.version === 1 && Array.isArray(state.known) && Array.isArray(state.sessions)) {
     for (const field of ['known', 'sessions']) state[field] = Object.fromEntries(state[field].map(k => [k, now]));
@@ -642,6 +693,8 @@ function loadState(city, now) {
   if (state?.version !== 2 || !Number.isFinite(state.now) || !['waiting', 'exemptions', 'log'].every(k => Array.isArray(state[k])) || !['known', 'sessions', 'calls', 'receipts', 'skipped'].every(k => state[k] && typeof state[k] === 'object' && !Array.isArray(state[k]))) throw new Error('invalid_state_shape');
   if (!state.waiting.every(w => identifier(w.provider) && identifier(w.conversation_id) && Number.isFinite(w.at) && Number.isSafeInteger(w.seq) && Number.isInteger(w.refusals) && typeof w.released === 'boolean')) throw new Error('invalid_waiting_state');
   if (state.cursor && !['dev', 'ino', 'offset', 'seq'].every(k => Number.isSafeInteger(state.cursor[k]) && state.cursor[k] >= 0)) throw new Error('invalid_cursor');
+  if (state.generation !== undefined && (!Number.isSafeInteger(state.generation) || state.generation < 0)) throw new Error('invalid_state_shape');
+  if (lock) lock.generation = state.generation ?? 0;
   return state;
 }
 function readMode(city) {
@@ -685,9 +738,12 @@ function errorSummary(city, now) {
   try { names = fs.readdirSync(dir); } catch (e) { if (e.code === 'ENOENT') return summary; throw e; }
   for (const { name, at } of errorFiles(names).slice(0, LIMITS.errors)) {
     if (now - at > LIMITS.history) continue;
-    const record = json(path.join(dir, name), null);
-    if (!record) continue;
-    const code = errorCodes.has(record.code) ? record.code : 'measurement_failed';
+    let code;
+    try {
+      const record = json(path.join(dir, name), null);
+      if (!record) continue;
+      code = errorCodes.has(record.code) ? record.code : 'measurement_failed';
+    } catch { code = 'unreadable_error_record'; }
     const group = summary[code] ||= { count: 0, newest: at };
     group.count++;
   }
@@ -715,13 +771,13 @@ function runHook(input, options = {}) {
   try {
     o = normalized(options);
     if (readMode(o.city) === 'off') return {};
-    return withLock(o.city, () => {
+    return withLock(o.city, lock => {
       const mode = readMode(o.city);
       if (mode === 'off') return {};
       // Compare transaction times in lock order, including duplicate hook
       // processes that reached the queue in the opposite order to startup.
       if (options.now === undefined) o.now = Date.now();
-      const state = loadState(o.city, o.now);
+      const state = loadState(o.city, o.now, lock);
       const turnId = input.hook_event_name === 'Stop' ? stopIdentity(input) : undefined;
       let fence = ['Stop', 'PostToolUse'].includes(input.hook_event_name) ? Math.max(state.cursor?.seq || 0, eventFence(o.city)) : undefined;
       const caughtUp = syncEvents(state, o);
@@ -730,14 +786,15 @@ function runHook(input, options = {}) {
       const beforeDecision = structuredClone(state);
       const result = decide(state, input, { ...o, mode, aliases: manifest.aliases, ownAlias: manifest.own_alias, caughtUp, fence, turnId });
       checkDeadline(o.start);
-      try { state.hook_ok_at = o.now; saveState(o.city, state); checkDeadline(o.start); }
+      try { state.hook_ok_at = o.now; saveState(o.city, state, lock); checkDeadline(o.start); }
       catch (error) {
+        if (error.message === 'state_busy') throw error;
         // A save can itself cross the deadline. Persist the actual fail-open
         // outcome before releasing the lock, including duplicate accounting.
         if (result.hookSpecificOutput) decide(beforeDecision, input, { ...o, mode: 'observe', aliases: manifest.aliases, caughtUp: false, fence });
         const rollback = result.hookSpecificOutput ? beforeDecision : state;
         rollback.hook_ok_at = beforeDecision.hook_ok_at;
-        saveState(o.city, rollback);
+        saveState(o.city, rollback, lock);
         throw error;
       }
       return result;
@@ -817,23 +874,31 @@ function backupSettings(o, file) {
   const dir = stateDir(o.city);
   const backup = `settings-backup-${new Date(o.now).toISOString().replace(/[:.]/g, '-')}-${crypto.randomBytes(4).toString('hex')}.json`;
   if (fs.existsSync(file)) {
-    atomic(path.join(dir, backup), fs.readFileSync(file));
+    atomic(path.join(dir, backup), fs.readFileSync(file), 0o600, o.lock);
     const older = fs.readdirSync(dir).filter(n => /^settings-backup-.*\.json$/.test(n) && n !== backup)
       .map(name => ({ name, time: fs.statSync(path.join(dir, name), { bigint: true }).mtimeNs }))
       .sort((a, b) => a.time === b.time ? b.name.localeCompare(a.name) : a.time < b.time ? 1 : -1);
-    for (const entry of older.slice(LIMITS.backups - 1)) unlinkIfPresent(path.join(dir, entry.name));
+    for (const entry of older.slice(LIMITS.backups - 1)) {
+      o.lock.check();
+      unlinkIfPresent(path.join(dir, entry.name));
+    }
   }
 }
 function saveSettings(o, file, before, after, mode = 0o600) {
   if (isDeepStrictEqual(before, after)) return;
   backupSettings(o, file);
   directory(path.dirname(file));
-  atomic(file, JSON.stringify(after, null, 2) + '\n', mode);
+  atomic(file, JSON.stringify(after, null, 2) + '\n', mode, o.lock);
   if (JSON.stringify(json(file)) !== JSON.stringify(after)) throw new Error('settings_readback_failed');
+}
+function ownedRegistration(manifest, event, entry) {
+  return [manifest?.entries[event], manifest?.pending?.previous[event]].find(owned =>
+    owned && entry.matcher === owned.matcher && entry.hooks?.some(h => h.command === owned.command));
 }
 function install(options = {}) {
   const o = normalized(options);
-  return withLock(o.city, () => {
+  return withLock(o.city, lock => {
+    o.lock = lock;
     const { file, value } = settings(o.city);
     const original = structuredClone(value);
     const manifestFile = path.join(stateDir(o.city), 'install.json');
@@ -848,35 +913,41 @@ function install(options = {}) {
       const stat = fs.lstatSync(file, { throwIfNoEntry: false });
       const bytes = stat ? fs.readFileSync(file) : null;
       snapshot = { existed: Boolean(stat), dir_existed: fs.existsSync(path.dirname(file)), mode: stat ? stat.mode & 0o7777 : null, sha256: bytes ? hash(bytes) : null };
-      if (bytes) atomic(path.join(stateDir(o.city), 'settings-before-install'), bytes);
+      if (bytes) atomic(path.join(stateDir(o.city), 'settings-before-install'), bytes, 0o600, lock);
     }
     const entries = {};
+    const previous = {};
     const existed = old?.existed || Object.fromEntries(EVENTS.map(e => [e, Object.hasOwn(value.hooks || {}, e)]));
     value.hooks ||= {};
     for (const event of EVENTS) {
       value.hooks[event] ||= [];
-      const owned = old?.entries?.[event];
-      const existing = owned && value.hooks[event].find(e => e.matcher === owned.matcher && e.hooks?.some(h => h.command === owned.command));
+      const existing = value.hooks[event].find(entry => ownedRegistration(old, event, entry));
       let matcher = existing?.matcher || '^(?:.*)$';
       if (!existing) {
         while (value.hooks[event].some(e => e.matcher === matcher)) matcher = `(?:${matcher})`;
         value.hooks[event].push({ matcher, hooks: [{ type: 'command', command, timeout: 5 }] });
       } else {
+        const owned = ownedRegistration(old, event, existing);
+        previous[event] = owned;
         existing.hooks = existing.hooks.map(h => h.command === owned.command ? { ...h, command, timeout: 5 } : h);
       }
       entries[event] = { matcher, command };
     }
-    if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(code)) atomic(copy, code);
     const manifest = { source, sha: hash(code), ...imports, entries, existed, hooksExisted: old?.hooksExisted ?? Object.hasOwn(original, 'hooks'), ...(snapshot ? { settings_before: snapshot } : {}) };
-    if (JSON.stringify(old) !== JSON.stringify(manifest)) writeJSON(manifestFile, manifest);
+    const firstInstall = !old || old.pending?.first_install === true;
+    const changing = !isDeepStrictEqual(old, manifest) || !isDeepStrictEqual(original, value);
+    if (changing) writeJSON(manifestFile, { ...manifest, pending: { previous, first_install: firstInstall } }, lock);
+    if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(code)) atomic(copy, code, 0o600, lock);
     saveSettings(o, file, original, value);
-    if (!old || !fs.existsSync(path.join(stateDir(o.city), 'mode.json'))) writeJSON(path.join(stateDir(o.city), 'mode.json'), { mode: 'observe' });
+    if (firstInstall || !fs.existsSync(path.join(stateDir(o.city), 'mode.json'))) writeJSON(path.join(stateDir(o.city), 'mode.json'), { mode: 'observe' }, lock);
+    if (changing) writeJSON(manifestFile, manifest, lock);
     return { installed: true, mode: readMode(o.city) };
   });
 }
 function uninstall(options = {}) {
   const o = normalized(options);
-  return withLock(o.city, () => {
+  return withLock(o.city, lock => {
+    o.lock = lock;
     const manifestFile = path.join(stateDir(o.city), 'install.json');
     const old = json(manifestFile, null);
     if (!old) return { installed: false };
@@ -884,9 +955,9 @@ function uninstall(options = {}) {
     const before = structuredClone(value);
     for (const event of EVENTS) {
       if (!value.hooks?.[event]) continue;
-      const owned = old.entries[event];
       value.hooks[event] = value.hooks[event].flatMap(entry => {
-        if (entry.matcher !== owned.matcher) return [entry];
+        const owned = ownedRegistration(old, event, entry);
+        if (!owned) return [entry];
         const hooks = entry.hooks.filter(h => h.command !== owned.command);
         return hooks.length ? [{ ...entry, hooks }] : [];
       });
@@ -899,18 +970,22 @@ function uninstall(options = {}) {
     if (snapshot) {
       let bytes = null;
       if (snapshot.existed) {
-        regular(beforeFile); bytes = fs.readFileSync(beforeFile);
-        if (hash(bytes) !== snapshot.sha256) throw new Error('settings_snapshot_changed');
+        try {
+          regular(beforeFile);
+          const saved = fs.readFileSync(beforeFile);
+          if (hash(saved) === snapshot.sha256) bytes = saved;
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
-      restored = isDeepStrictEqual(value, bytes ? JSON.parse(bytes) : {});
+      restored = (!snapshot.existed || bytes !== null) && isDeepStrictEqual(value, bytes ? JSON.parse(bytes) : {});
       if (restored) {
         backupSettings(o, file);
         if (bytes) {
           directory(path.dirname(file));
-          atomic(file, bytes, snapshot.mode);
+          atomic(file, bytes, snapshot.mode, lock);
           if (!fs.readFileSync(file).equals(bytes)) throw new Error('settings_readback_failed');
         }
         else {
+          lock.check();
           unlinkIfPresent(file);
           const dir = path.dirname(file);
           if (!snapshot.dir_existed && fs.existsSync(dir) && !fs.readdirSync(dir).length) fs.rmdirSync(dir);
@@ -918,10 +993,13 @@ function uninstall(options = {}) {
       }
     }
     if (!restored) saveSettings(o, file, before, value, fs.existsSync(file) ? fs.statSync(file).mode & 0o7777 : 0o600);
-    writeJSON(path.join(stateDir(o.city), 'mode.json'), { mode: 'off' });
+    writeJSON(path.join(stateDir(o.city), 'mode.json'), { mode: 'off' }, lock);
+    lock.check();
     unlinkIfPresent(path.join(stateDir(o.city), 'hook.cjs'));
-    fs.unlinkSync(manifestFile);
+    lock.check();
     unlinkIfPresent(beforeFile);
+    lock.check();
+    fs.unlinkSync(manifestFile);
     return { installed: false, ...(snapshot ? { layout_restored: restored } : {}) };
   });
 }
@@ -967,32 +1045,37 @@ function command(verb, args, options = {}) {
   if (verb === 'doctor') return doctor(options);
   const o = normalized(options);
   const errors = verb === 'status' ? options.errorSummary ?? errorSummary(o.city, o.now) : undefined;
-  return withLock(o.city, () => {
+  return withLock(o.city, lock => {
     if (options.now === undefined) o.now = Date.now();
     const dir = stateDir(o.city);
     if (verb === 'mode') {
       if (args.length !== 1 || !['off', 'observe', 'enforce'].includes(args[0])) throw new Error('usage: mode off|observe|enforce');
-      writeJSON(path.join(dir, 'mode.json'), { mode: args[0] });
+      writeJSON(path.join(dir, 'mode.json'), { mode: args[0] }, lock);
       return { mode: args[0] };
     }
-    const state = loadState(o.city, o.now);
+    const registered = registration(o);
+    const outdated = !registered.current && fs.existsSync(path.join(dir, 'install.json'));
+    const listing = verb === 'exempt' && args.length === 1 && args[0] === '--list';
+    if (outdated && (verb === 'pass' || (verb === 'exempt' && !listing))) throw new Error('hook_copy_outdated_run_install');
+    const state = loadState(o.city, o.now, lock);
     const caughtUp = syncEvents(state, o);
     let result;
     if (verb === 'status') {
       if (args.length && (args.length !== 1 || args[0] !== '--json')) throw new Error('usage: status [--json]');
       const waiting = [...new Map(state.waiting.slice().reverse().map(w => [key(w), w])).values()].sort((a, b) => a.at - b.at).map(w => ({ provider: w.provider, conversation_id: w.conversation_id, seconds: Math.floor((o.now - w.at) / 1000) }));
-      result = { mode: readMode(o.city), ...registration(o), caught_up: caughtUp, waiting, history: state.log,
+      result = { mode: readMode(o.city), ...registered, caught_up: caughtUp, waiting, history: state.log,
         skipped_rows: state.skipped, errors, hook_ok_at: state.hook_ok_at, history_dropped: state.history_dropped };
-    } else if (verb === 'exempt' && args.length === 1 && args[0] === '--list') result = state.exemptions;
+    } else if (listing) result = state.exemptions;
     else if (verb === 'pass' || verb === 'exempt') {
       if (verb === 'pass' ? args.length !== 1 : args.length !== 2 || !['--on', '--off'].includes(args[1])) throw new Error(`usage: ${verb} PROVIDER/CONVERSATION${verb === 'exempt' ? ' --on|--off' : ''}`);
       if (!caughtUp) throw new Error('event_catchup_incomplete');
-      if (!Object.hasOwn(state.known, args[0]) && !state.waiting.some(w => key(w) === args[0])) throw new Error('unknown_conversation');
+      const removingListed = verb === 'exempt' && args[1] === '--off' && state.exemptions.includes(args[0]);
+      if (!removingListed && !Object.hasOwn(state.known, args[0]) && !state.waiting.some(w => key(w) === args[0])) throw new Error('unknown_conversation');
       if (verb === 'pass' || args[1] === '--on') state.waiting = state.waiting.filter(w => key(w) !== args[0]);
       if (verb === 'exempt') state.exemptions = args[1] === '--on' ? [...new Set([...state.exemptions, args[0]])] : state.exemptions.filter(c => c !== args[0]);
       result = { conversation: args[0], [verb === 'pass' ? 'seen' : 'exempt']: verb === 'pass' || args[1] === '--on' };
     } else throw new Error('unknown_verb');
-    saveState(o.city, state);
+    if (!outdated) saveState(o.city, state, lock);
     return result;
   });
 }

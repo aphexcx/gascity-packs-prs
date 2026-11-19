@@ -98,8 +98,12 @@ gc reachable exempt --list
 gc reachable pass example/room-example
 ```
 
-Pass and exemption changes reject conversations never observed as routed to
-the mayor. A Slack reply in a mention-only room can bypass GC's outbound route;
+Pass and new exemptions require a conversation recently routed to the mayor.
+You can always remove a listed exemption, including after its routing record
+expires. After a pack update, run install if status shows an outdated hook
+copy. Until then, status and the exemption list can be read, and changes to
+waits and exemptions return `hook_copy_outdated_run_install`.
+A Slack reply in a mention-only room can bypass GC's outbound route;
 a reaction also leaves no outbound row. After those, pass the conversation by
 hand when no further words are needed. An adapter's acknowledgement reaction
 does not clear a wait. Direct sends outside GC have the same limitation.
@@ -174,9 +178,14 @@ Error records retain the newest 100 within 14 days. Duplicate receipts expire
 after 10 minutes and retain at most 1,000 entries. Pending tool calls expire
 after 24 hours and retain at most 1,000. The 14-day log retains up to 2,000
 entries. Session identities and known conversations each retain the newest
-1,024 within 14 days. Hand-set exemptions persist. Duplicate hook processes
+1,024 within 14 days. Replay uses the newest event time for each identity and
+breaks ties in sequence order. A running hook timestamps its own session with
+the current time. Hand-set exemptions persist. Duplicate hook processes
 wait for the earlier ticket until 250 ms before the deadline. Lock files more
-than ten seconds from the current clock expire.
+than ten seconds from the current clock expire. A writer checks its ticket
+and the generation of the state it loaded before publishing. The check and
+filesystem rename are separate operations, so a successor also withdraws the
+expired writer's staged file to cover a pause between them.
 
 From `reachable/test`, run `node --test --test-reporter=tap`. The fixtures use
 invented IDs and temporary cities, never a live city's event log. The suite
