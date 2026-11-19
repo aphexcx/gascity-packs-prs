@@ -75,7 +75,12 @@ def pr_body_lines_note() -> str:
 
 
 def review_rules_note() -> str:
-    return note("THE REVIEW RULES")
+    """THE REVIEW RULES whole, its marker included, up to the next note or the
+    end of the define, on one line; template comments never count."""
+    text = renderable(fragment())
+    assert text.count("THE REVIEW RULES") == 1
+    body = text[text.index("THE REVIEW RULES"):].split("\n## ", 1)[0]
+    return flat(body.split("{{- end }}", 1)[0])
 
 
 def test_fragment_defines_exactly_one_template() -> None:
@@ -202,109 +207,112 @@ def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
     assert note.count("On the revert line") == 1
 
 
-# The six review rules, each by the words that open it, in the order the note
-# gives them.
-REVIEW_RULE_HEADS = (
+# THE REVIEW RULES as the note says them, whole and in order, one part per
+# sentence, under the fact of its bead each part carries. The note must be
+# exactly these parts: a sentence added anywhere fails, even one that names
+# no rule's subject, and so does a clause hidden in a template comment.
+REVIEW_RULES = (
+    # When the rules apply (on sending a PR to review as well as on its
+    # findings), why, and what a round is for them, apart from the numbers
+    # the role text's review records give each review.
+    "THE REVIEW RULES.",
+    "Whenever you send your PR to review or a review returns findings on it, act by these "
+    "rules: each review round costs a full read of the PR, so spend one only where it buys "
+    "a fix.",
+    "For these rules a round is one head of your PR sent to review, however many reviewers "
+    "read it, counted from the round number the bead names, if any; the review records the "
+    "role text asks for still give each review its own number.",
+    # 1. The class fix and its one test.
     "1. Fix the whole class.",
+    "When a review finds a blocking fault, name its class (the general fault, not the one "
+    "case), fix every case of that class in your diff, and add one test at the class level; "
+    "your handoff names the class, its cases and the test.",
+    "A case fixed alone can bring the same finding back on another line in the next round.",
+    # 2. A repeated family stops the PR from round three, shown or not, with
+    # the round's other findings left OPEN for the mayor's one decision; what
+    # THE SAME FAMILY is; past round three only a reproduction buys a round,
+    # and a second model's answer is not one.
     "2. Stop at round three.",
+    "From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding "
+    "of an earlier round of this PR, shown or not, stops the PR: fix nothing more in that "
+    "round, list it in your handoff as SAME FAMILY with the round and the earlier finding it "
+    "repeats, list every other finding of that round as OPEN beside it, and hand the PR to "
+    "the mayor as stopped, not done, for one decision: a check for the class built under its "
+    "own tests, or a merge with the class filed as a bead.",
+    "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
+    "earlier one's class-level fix, written in one sentence, would close it too; when you "
+    "cannot tell, it is the same family and you stop.",
+    "Past round three, only a finding reproduced in that round's own changes (a failing "
+    "test, or shown reachable where the changed code runs; a second model's answer alone is "
+    "not enough) buys another round; list the rest as NOT SHOWN with their file and line.",
+    # 3. No lone reviewer forces a round: a failing test, or a second model's
+    # check of that one finding with the line; else NOT SHOWN, never a blind fix.
     "3. Let no lone reviewer force a round.",
+    "Before one reviewer's finding costs a round, have it shown: write a failing test that "
+    "shows it, or have a second model check that one finding and answer real or not with the "
+    "line that shows it.",
+    "A finding shown by neither after an honest try is listed as NOT SHOWN with what you "
+    "tried, and is not fixed blind: one model's reading is a suspicion, not a fault.",
+    # 4. Minors never block; every finding gets one of the four outcomes or
+    # the listing a rule gave it; PRECONDITION only for what no place running
+    # the changed code has.
     "4. Never let a minor finding block, and give every finding an outcome.",
+    "Fix a minor in the same head when it is cheap, and list it otherwise.",
+    "Your handoff carries one line per finding of every round with its outcome: FIXED (with "
+    "the commit), WRONG (with the line that shows the reviewer was mistaken), INTENDED, or "
+    "DOES NOT MATTER, or else the listing these rules give it (SAME FAMILY, OPEN, NOT SHOWN "
+    "or PRECONDITION).",
+    "A finding that needs a runtime, a provider or a right found nowhere the changed code "
+    "runs is listed as PRECONDITION with the precondition in one sentence; it does not "
+    "block, and you do not build for it.",
+    "When you cannot tell where the changed code runs, the finding is not a PRECONDITION.",
+    # 5. Depth follows risk; the city sets it by the review class the bead
+    # names, which wins wherever it asks more than a rule here.
     "5. Let review depth follow risk.",
+    "Docs, tests and small internal changes get your own checks and one gate; a second model "
+    "reads a PR's whole first head, and later heads only on a risky path.",
+    "Your city or its mayor sets the depth by the review class the bead names: follow it, "
+    "and where it asks more of you than any rule here (every finding fixed, say), the class "
+    "wins.",
+    # 6. The city's written path list, by the name the PR body lines give
+    # it: read for the risk line, never invented.
     "6. Take the merge list from its owner.",
-)
-# Each rule's subject and how many times the note names it. Each outcome word
-# once, so one list carries all four.
-REVIEW_RULE_SUBJECTS = (
-    ("round three", 3),
-    ("buys another round", 1),
-    ("SAME FAMILY", 4),
-    ("NOT SHOWN", 3),
-    ("PRECONDITION", 2),
-    ("second model", 3),
-    ("minor", 2),
-    ("review class", 1),
-    ("risk tier", 1),
-    ("the class wins", 1),
-    ("FIXED", 1),
-    ("WRONG", 1),
-    ("INTENDED", 1),
-    ("DOES NOT MATTER", 1),
+    "Your city's written list of paths by risk tier, kept by its founder or owner, says "
+    "which paths need a person's word before a merge: read it for the risk line of the PR "
+    "body lines above, and never invent one.",
+    "Until that list exists, your city's merge rule stands.",
 )
 
 
-def test_review_rules_note_carries_every_rule_of_its_bead() -> None:
+def test_review_rules_note_is_exactly_the_six_rules_of_its_bead() -> None:
+    assert review_rules_note() == " ".join(REVIEW_RULES)
+
+
+def test_review_rules_give_every_finding_a_word_for_the_handoff() -> None:
+    """Every listing a rule gives a finding (`as SAME FAMILY`, `as OPEN`, ...)
+    is one that the outcome rule names beside the four outcomes, and it names
+    no other: no finding the rules produce is left without a word."""
     note = review_rules_note()
-    for clause in (
-        "Whenever a review returns findings on your PR, act on them by these rules",
-        # What a round is, so every count below counts the same thing.
-        "A round is one head of your PR sent to review, however many reviewers read it; "
-        "when the bead names a round number, count from it.",
-        # The class fix and its one test.
-        "1. Fix the whole class. When a review finds a blocking fault, name its class "
-        "(the general fault, not the one case), fix every case of that class in your diff, "
-        "and add one test at the class level; your handoff names the class, its cases and "
-        "the test.",
-        # The family stop at round three, what THE SAME FAMILY is, and what
-        # alone buys a round past it.
-        # A repeated family stops the PR, shown or not; what THE SAME FAMILY
-        # is; past round three only a reproduction buys a round, and a second
-        # model's answer is not one.
-        "2. Stop at round three. From review round three on, a blocking finding of THE SAME "
-        "FAMILY as a blocking finding of an earlier round of this PR, shown or not, stops the "
-        "PR: fix nothing more in that round, list it in your handoff as SAME FAMILY with the "
-        "round and the earlier finding it repeats, and hand the PR to the mayor as stopped, "
-        "not done, for one decision: a check for the class built under its own tests, or a "
-        "merge with the class filed as a bead.",
-        "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
-        "earlier one's class-level fix, written in one sentence, would close it too; when you "
-        "cannot tell, it is the same family and you stop.",
-        "Past round three, only a finding reproduced in that round's own changes (a failing "
-        "test, or shown reachable in what your city runs; a second model's answer alone is "
-        "not enough) buys another round; list the rest as NOT SHOWN with their file and line.",
-        # The reproduction or the second model's check.
-        "3. Let no lone reviewer force a round. Before one reviewer's finding costs a round, "
-        "have it shown: write a failing test that shows it, or have a second model check that "
-        "one finding and answer real or not with the line that shows it.",
-        "A finding shown by neither after an honest try is listed as NOT SHOWN with what you "
-        "tried, and is not fixed blind",
-        # Minors never block; every finding gets one of the four outcomes or
-        # the listing a rule gave it; a finding outside what the city has is
-        # listed, not built for.
-        "4. Never let a minor finding block, and give every finding an outcome. Fix a minor "
-        "in the same head when it is cheap, and list it otherwise.",
-        "Your handoff carries one line per finding of every round with its outcome: FIXED "
-        "(with the commit), WRONG (with the line that shows the reviewer was mistaken), "
-        "INTENDED, or DOES NOT MATTER, or else the listing these rules give it (SAME FAMILY, "
-        "NOT SHOWN or PRECONDITION).",
-        "A finding that needs a runtime, a provider or a right your city does not have is "
-        "listed as PRECONDITION with the precondition in one sentence; it does not block, and "
-        "you do not build for it.",
-        # Depth follows risk, and the city sets it: the worker follows the
-        # review class the bead names, which wins wherever it asks more.
-        "5. Let review depth follow risk. Docs, tests and small internal changes get your own "
-        "checks and one gate; a second model reads a PR's whole first head, and later heads "
-        "only on a risky path.",
-        "Your city or its mayor sets the depth by the review class the bead names: follow it, "
-        "and where it asks more of you than any rule here (every finding fixed, say), the "
-        "class wins.",
-        # The path list is the city's, by the name the PR body lines give it:
-        # the worker reads it, never invents it.
-        "6. Take the merge list from its owner. Your city's written list of paths by risk "
-        "tier, kept by its founder or owner, says which paths need a person's word before a "
-        "merge: read it for the risk line of the PR body lines above, and never invent one.",
-        "Until that list exists, your city's merge rule stands.",
-    ):
-        assert clause in note, f"THE REVIEW RULES lacks: {clause!r}"
-    positions = [note.index(head) for head in REVIEW_RULE_HEADS]
-    assert positions == sorted(positions)
-    # Each rule's subject is named only where the rules above name it: a
-    # sentence added anywhere else in the note that contradicts a rule has
-    # to name that rule's subject, and so changes its count.
-    for phrase, count in REVIEW_RULE_SUBJECTS:
-        assert note.count(phrase) == count, (phrase, note.count(phrase))
-    # The only digits are the six rule numbers: a count measured in one city
-    # is that city's evidence, not a rule.
-    assert re.findall(r"\d+", note) == ["1", "2", "3", "4", "5", "6"]
+    given = set(re.findall(r"\bas ((?:[A-Z]+ )*[A-Z]{2,})\b", note))
+    named = note.split("or else the listing these rules give it (", 1)[1].split(")", 1)[0]
+    assert set(re.split(r", | or ", named)) == given
+    # The four outcomes, each once, so one list carries them.
+    for outcome in ("FIXED", "WRONG", "INTENDED", "DOES NOT MATTER"):
+        assert note.count(outcome) == 1, outcome
+
+
+def test_review_rules_judge_reach_where_the_changed_code_runs() -> None:
+    """A pack's change runs in every city that imports it: whether a finding
+    is reachable, or needs what no deployment has, is judged where the changed
+    code runs, never by the worker's own city alone."""
+    note = review_rules_note()
+    assert re.search(r"\byour city (?:runs|has|does not have)\b", note) is None
+    assert note.count("the changed code runs") == 3
+
+
+def test_review_rules_carry_no_number_but_the_rule_numbers() -> None:
+    """A count measured in one city is that city's evidence, not a rule."""
+    assert re.findall(r"\d+", review_rules_note()) == ["1", "2", "3", "4", "5", "6"]
 
 
 def test_pr_body_lines_placement_leaves_room_for_the_closing_trailers() -> None:
