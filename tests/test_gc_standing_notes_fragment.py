@@ -236,36 +236,37 @@ REVIEW_RULES = (
     "case), fix every case of that class in your diff, and add one test at the class level; "
     "your handoff names the class, its cases and the test.",
     "A case fixed alone can bring the same finding back on another line in the next round.",
-    # 2. A repeated family stops the PR from round three, shown or not, with
-    # the round's other findings beside it, OPEN or NOT SHOWN, for the
-    # mayor's one decision; that decision rules on the family alone, and
-    # every OPEN finding anywhere keeps its own grade and needs its own
-    # outcome before any merge, from a later head or the mayor's ruling on
-    # it, a minor's follow-up counting; what THE SAME FAMILY is; past round
-    # three only a reproduction in the round's own changes buys a round, and
-    # a second model's answer is not one; a finding shown any other way is
-    # OPEN with its proof and grade, never NOT SHOWN, which is for what
+    # 2. A repeated family stops the PR from round three, shown or not: each
+    # repeated family listed, every other finding of the round OPEN beside
+    # them with what shows it or would settle it, one decision per family;
+    # each decision rules on its own family alone, and every OPEN finding
+    # anywhere keeps its own grade and needs its own outcome before any
+    # merge, from a later head or the mayor's ruling on it, a minor's
+    # follow-up counting; what THE SAME FAMILY is; past round three, short
+    # of a stop, only a reproduction in the round's own changes buys a round,
+    # and a second model's answer is not one; a finding shown any other way
+    # is OPEN with its proof and grade, never NOT SHOWN, which is for what
     # nobody showed.
     "2. Stop at round three.",
     "From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding "
     "of an earlier round of this PR, shown or not, stops the PR: fix nothing more in that "
-    "round, list it in your handoff as SAME FAMILY with the round and the earlier finding it "
-    "repeats, list every other finding of that round beside it as OPEN (as NOT SHOWN when "
-    "nobody showed it), and hand the PR to the mayor as stopped, not done, for one decision: "
-    "a check for the class built under its own tests, or a merge with the class filed as a "
-    "bead.",
-    "That decision rules on the repeated family alone: every finding you list as OPEN keeps "
-    "its own grade and needs its own outcome before any merge, from a later head or the "
-    "mayor's ruling on that one finding, a minor's follow-up counting as its outcome.",
+    "round, list each such finding in your handoff as SAME FAMILY with the round and the "
+    "earlier finding it repeats, list every other finding of that round beside them as OPEN "
+    "with what shows it or what would settle it, and hand the PR to the mayor as stopped, "
+    "not done, for one decision on each repeated family: a check for the class built under "
+    "its own tests, or a merge with the class filed as a bead.",
+    "Each decision rules on its own family alone: every finding you list as OPEN keeps its "
+    "own grade and needs its own outcome before any merge, from a later head or the mayor's "
+    "ruling on that one finding, a minor's follow-up counting as its outcome.",
     "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
     "earlier one's class-level fix, written in one sentence, would close it too; when you "
     "cannot tell, it is the same family and you stop.",
-    "Past round three, only a finding reproduced in that round's own changes (a failing "
-    "test, or shown reachable where the changed code runs; a second model's answer alone is "
-    "not enough) buys another round; a finding shown any other way (an earlier head's fault "
-    "that a failing test proves, say) buys none by itself and is listed as OPEN with what "
-    "shows it and its grade, for the mayor; list the rest, which nobody showed, as NOT SHOWN "
-    "with their file and line.",
+    "Past round three, short of a stop, only a finding reproduced in that round's own "
+    "changes (a failing test, or shown reachable where the changed code runs; a second "
+    "model's answer alone is not enough) buys another round; a finding shown any other way "
+    "(an earlier head's fault that a failing test proves, say) buys none by itself and is "
+    "listed as OPEN with what shows it and its grade, for the mayor; list the rest, which "
+    "nobody showed, as NOT SHOWN with their file and line.",
     # 3. No lone reviewer forces a round: a failing test, or a second model's
     # check of that one finding with the line; else NOT SHOWN, never a blind fix.
     "3. Let no lone reviewer force a round.",
