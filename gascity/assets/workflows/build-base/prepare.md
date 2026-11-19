@@ -71,9 +71,9 @@ matching launch input was blank.
 
 When updating metadata, store plain scalar strings without embedded quote
 characters. Prefer a single JSON-object update with `gc bd update <root> --metadata
-'{"gc.var.push":"false","gc.var.open_pr":"false","gc.var.max_iterations":"10"}'`
+'{"gc.var.push":"false","gc.var.open_pr":"false","gc.var.max_iterations":"3"}'`
 or individually quoted `--set-metadata 'key=value'` arguments. Do not write
-values like `"false"` or `"10"` that include literal double quotes.
+values like `"false"` or `"3"` that include literal double quotes.
 
 Close commands do not accept metadata flags. Before closing this step, set the
 step outcome with `gc bd update <claimed-step-id> --set-metadata 'gc.outcome=pass'`

@@ -225,7 +225,7 @@ Launch variables you are most likely to set (all passed as `--var k=v`):
 | `implementation_target` | `bmad.story-implementer` | Role agent that implements stories and applies review fixes. |
 | `push` | `false` | Set `true` to allow the final publish stage to push after all checks pass. |
 | `open_pr` | `false` | Set `true` to allow the final publish stage to open a PR after all checks pass. |
-| `max_iterations` | `10` | Maximum implementation/review fix attempts before the loop gives up. |
+| `max_iterations` | `3` | Maximum implementation/review fix attempts before the loop gives up. |
 | `planning_formula`, `decomposition_formula`, `implementation_formula`, `implementation_item_formula`, `code_review_formula`, `review_fix_formula` | `bmad-planning`, `bmad-decomposition`, `bmad-implementation`, `bmad-story-development-item`, `bmad-review`, `bmad-fix-loop` | Selector surface: swap any stage methodology for another formula that satisfies the matching base contract. |
 
 To change what a stage tells its agent without touching the graph, shadow the

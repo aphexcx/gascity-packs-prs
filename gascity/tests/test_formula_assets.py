@@ -1690,7 +1690,8 @@ class FormulaAssetTests(unittest.TestCase):
             "--metadata",
             "--set-metadata 'key=value'",
             "Do not write",
-            'values like `"false"` or `"10"`',
+            '"gc.var.max_iterations":"3"',
+            'values like `"false"` or `"3"`',
         ):
             with self.subTest(step="prepare", fragment=fragment):
                 self.assertIn(fragment, prepare_description)
@@ -1730,7 +1731,7 @@ class FormulaAssetTests(unittest.TestCase):
             "implementation_item_formula": "do-work-item",
             "code_review_formula": "review",
             "review_fix_formula": "fix-loop-base",
-            "max_iterations": "10",
+            "max_iterations": "3",
             "push": "false",
             "open_pr": "false",
         }
@@ -1864,6 +1865,14 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertEqual(steps["finalize"]["needs"], ["repair-review"])
         self.assertEqual(steps["publish"]["needs"], ["finalize"])
 
+    def test_declared_review_iteration_limits_default_to_three(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        for path in sorted((root / "formulas").glob("*.formula.toml")):
+            variables = tomllib.loads(path.read_text(encoding="utf-8")).get("vars", {})
+            if "max_iterations" in variables:
+                with self.subTest(formula=path.name):
+                    self.assertEqual(variables["max_iterations"]["default"], "3")
+
     def test_build_from_review_blocked_results_are_healable_not_passed(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         resolved = resolve_formula(root, "build-from-review-base")
@@ -1884,6 +1893,30 @@ class FormulaAssetTests(unittest.TestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)
+
+        repair = " ".join(node_description(root, steps["repair-review"]).split())
+        for fragment in (
+            "round 3 onward",
+            "class-level fix",
+            "round, report path and finding",
+            "gc.build.repair_status=family_stop",
+            "gc.outcome=fail",
+            "gc.failure_class=review_family_stop",
+            "gc.restart.entrypoint=build-from-review",
+            "gc.restart.reason=review_family_stop",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, repair)
+
+    def test_fix_loop_re_review_checks_for_family_stop(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        steps = resolve_formula(root, "fix-loop-base")["steps"]
+        re_review = next(step for step in steps if step["id"] == "re-review")
+        text = node_description(root, re_review)
+        self.assertIn("{{max_iterations}}", text)
+        self.assertIn("family_stop", text)
+        self.assertIn("round 3 onward", text)
+        self.assertIn("class-level fix", text)
 
     def test_default_continuation_entrypoints_extend_suffix_bases(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
@@ -1975,6 +2008,7 @@ class FormulaAssetTests(unittest.TestCase):
 
         templates = {template["id"]: template for template in review["template"]}
         loop = templates["{target}.build-basic-review-loop"]
+        self.assertEqual(loop["check"]["max_attempts"], 3)
         self.assertEqual(
             [child["id"] for child in loop["children"]],
             [

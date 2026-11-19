@@ -264,7 +264,7 @@ All knobs are launch vars on `compound-build` (most are inherited from
 | `implementation_target` | `compound-engineering.ce-work` | Role that implements each drained item and the apply-fix lanes. |
 | `push` | `false` | Allow publish to push after all checks pass. |
 | `open_pr` | `false` | Allow publish to open a PR after all checks pass. |
-| `max_iterations` | `10` | Maximum implementation/review fix attempts. |
+| `max_iterations` | `3` | Maximum implementation/review fix attempts. |
 | `planning_formula` | `compound-planning` | Methodology selector adapters use to delegate planning. |
 | `decomposition_formula` | `compound-decomposition` | Methodology selector for task creation. |
 | `implementation_formula` | `compound-implementation` | Methodology selector for the implementation entry. |

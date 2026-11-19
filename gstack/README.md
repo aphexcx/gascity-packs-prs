@@ -184,7 +184,7 @@ let shared Gas City adapters pick gstack stages without using `gstack-build`.
 | `artifact_root` | (required input) | Directory under the rig where all stage artifacts land. |
 | `push` | `false` | Allow the publish stage to push after all checks pass. |
 | `open_pr` | `false` | Allow the publish stage to open a PR after all checks pass. |
-| `max_iterations` | `10` | Maximum implementation/review fix attempts. |
+| `max_iterations` | `3` | Maximum implementation/review fix attempts. |
 | `planning_formula` | `gstack-planning` | Selector: planning methodology formula. |
 | `decomposition_formula` | `gstack-decomposition` | Selector: decomposition methodology formula. |
 | `implementation_formula` | `gstack-implementation` | Selector: implementation entry formula. |

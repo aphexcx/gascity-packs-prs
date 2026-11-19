@@ -33,7 +33,24 @@ recorded review findings and implementation evidence until one of these happens:
 
 - the implementation is approved;
 - review or repair returns blocked;
+- a blocking finding repeats a family from an earlier review round (from round 3 onward);
 - max_iterations is exhausted.
+
+Count the initial review as round 1. If later rounds reuse a report path, save
+a round-specific copy before it is overwritten. Before dispatching another
+fix or recording exhaustion, compare each current blocking finding from round 3
+onward with blocking findings from all earlier rounds. Two findings are in the
+same family when they concern the same class of fault and the earlier finding's
+class-level fix, stated in one sentence, would close the current one too. If
+that comparison is uncertain, treat the pair as the same family.
+
+On a match, including a `family_stop` returned by the selected fix loop, open
+no further fix attempt. Record both findings in the repair handoff artifact,
+with the round, report path and finding identifier or text for each. Record
+`gc.build.repair_status=family_stop`, `gc.outcome=fail`,
+`gc.failure_class=review_family_stop`, `gc.restart.entrypoint=build-from-review`
+and `gc.restart.reason=review_family_stop` on the workflow root. Close the
+repair step with the same failure outcome and class.
 
 Record every attempt on the workflow root metadata and in artifacts. On
 approval, record `gc.build.repair_status=approved` and the final review report

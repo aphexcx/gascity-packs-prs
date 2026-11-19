@@ -100,7 +100,7 @@ default = "fix-loop-base"
 
 [vars.max_iterations]
 description = "Maximum implementation/review fix attempts."
-default = "10"
+default = "3"
 
 [vars.push]
 description = "Set true to allow final publish push after all checks pass."
