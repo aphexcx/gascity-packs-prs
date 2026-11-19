@@ -7,7 +7,7 @@ inside the scratch clone, and "old" must occur in it exactly once. The clone
 must be green before the first mutation. A mutation counts as KILLED only when
 pytest exits 1 and names a failing fragment test; any other non-zero exit is
 BROKEN, never a kill. The original bytes are written back after every run
-(never a git command)."""
+(never a git command). Exit 0 only when every mutation was killed."""
 
 from __future__ import annotations
 
@@ -60,3 +60,4 @@ for m in mutations:
 out_lines.append(f"{len(mutations)} mutations: " + ", ".join(f"{n} {v.lower()}" for v, n in verdicts.items()))
 Path(sys.argv[3]).write_text("\n".join(out_lines) + "\n", encoding="utf-8")
 print("\n".join(out_lines))
+sys.exit(0 if verdicts["KILLED"] == len(mutations) else 1)
