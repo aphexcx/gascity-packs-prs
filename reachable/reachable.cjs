@@ -28,6 +28,7 @@ function checkDeadline(start) {
 }
 function identifier(s) { return typeof s === 'string' && s.length > 0 && s.length <= 4096 && !/[\x00-\x20\x7f]/.test(s); }
 const SKIP = Symbol('unusable event');
+const INFERRED_SEQ = Symbol('inferred sequence');
 function eventTime(ts) {
   return typeof ts === 'string' || typeof ts === 'number' ? Date.parse(ts) : NaN;
 }
@@ -43,7 +44,7 @@ function parseRows(bytes, progress, start) {
     if (!Number.isSafeInteger(row?.seq) || row.seq <= 0) {
       progress.hadUnsequenced = true;
       progress.unsequenced++;
-      rows.push({ ...row, seq: progress.seq, [SKIP]: reason || 'invalid_event_row' });
+      rows.push({ ...row, seq: progress.seq, [INFERRED_SEQ]: true, [SKIP]: reason || 'invalid_event_row' });
       continue;
     }
     if (row.seq <= minimum) continue;
@@ -135,7 +136,10 @@ function eventFence(city) {
         fs.readSync(fd, bytes, 0, bytes.length, size - bytes.length);
         // A damaged tail has no usable fence of its own. The reader counts
         // it and releases ambiguous waits when it consumes those bytes.
-        seq = Math.max(seq, lastSequence(bytes, size > bytes.length));
+        const end = bytes.lastIndexOf(10) + 1;
+        const completeOffset = size - bytes.length + end;
+        const last = end && end < bytes.length ? sequenceAtOffset(fd, completeOffset) : lastSequence(bytes, size > bytes.length);
+        seq = Math.max(seq, last);
       } catch (e) { if (e.code !== 'ENOENT') throw e; }
       finally { if (fd !== undefined) fs.closeSync(fd); }
     }
@@ -337,9 +341,9 @@ function reduceEvents(state, rows, { now, agent, session, sessionName }) {
     if (row.type === 'extmsg.inbound' && p?.target_agent === agent && identifier(p.target_session) && identifier(p.provider) && identifier(p.conversation_id)) learned.set(row, [hash(p.target_session)]);
     for (const id of learned.get(row) || []) recognized.add(id);
   }
-  let lastSeq = state.cursor?.seq || 0;
+  let lastSeq = state.last_readable_seq ?? state.cursor?.seq ?? 0;
   for (const row of rows) {
-    lastSeq = row.seq ?? lastSeq;
+    if (!row[INFERRED_SEQ] && Number.isSafeInteger(row.seq)) lastSeq = row.seq;
     if (row[SKIP]) {
       const target = row.payload?.target_agent;
       if (row.type === 'extmsg.inbound' && identifier(target) && target !== agent) continue;
@@ -385,6 +389,7 @@ function reduceEvents(state, rows, { now, agent, session, sessionName }) {
       }
     }
   }
+  state.last_readable_seq = lastSeq;
   trimMap(own, now - LIMITS.history, LIMITS.sessions, Number);
   trimMap(state.known, now - LIMITS.history, LIMITS.known, Number);
   trimMap(state.receipts, now - LIMITS.receiptAge, LIMITS.receipts, v => v.at);
@@ -612,6 +617,37 @@ function writeJSON(file, value, lock) { atomic(file, JSON.stringify(value, null,
 function unlinkIfPresent(file) {
   try { fs.unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
+function clearRemoval(dir) {
+  const stat = fs.lstatSync(dir, { throwIfNoEntry: false });
+  if (!stat) return;
+  if (!stat.isDirectory()) throw new Error('unsafe_state_directory');
+  unlinkIfPresent(path.join(dir, 'entry'));
+  try { fs.rmdirSync(dir); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+function removeOwned(file, lock) {
+  lock.check();
+  if (!fs.lstatSync(file, { throwIfNoEntry: false })) return;
+  // A successor can remove this destination directory before it publishes.
+  // A paused rename then cannot take the successor's file.
+  const dir = path.join(path.dirname(file), '.remove-' + lock.name);
+  directory(dir);
+  try {
+    lock.check();
+    fs.renameSync(file, path.join(dir, 'entry'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    lock.check();
+  } finally { clearRemoval(dir); }
+}
+function readTicket(file) {
+  regular(file, true);
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  // Older recovery code left a zero-length ticket while withdrawing a writer.
+  if (!text) return { revoked: true };
+  try { return JSON.parse(text); } catch { throw new Error('invalid_lock'); }
+}
 function withLock(city, action, options = {}) {
   prepare(city);
   const dir = stateDir(city);
@@ -621,22 +657,16 @@ function withLock(city, action, options = {}) {
   // Nonblocking bakery tickets: each invocation owns a unique filename.
   // Withdraw a displaced writer's staged rename in both possible destination
   // directories. Names are ticket-specific and cannot belong to a successor.
-  const revoke = n => {
+  const revoke = (n, stat) => {
     const peerFile = path.join(dir, n);
-    let fd;
-    try {
-      fd = fs.openSync(peerFile, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW);
-      // An empty ticket is revoked. Keep it visible until its staged bytes
-      // are gone, including if another contender finishes this recovery.
-      fs.ftruncateSync(fd, 0);
-    } catch (error) {
-      if (error.code === 'ENOENT') return;
-      throw error;
-    } finally { if (fd !== undefined) fs.closeSync(fd); }
+    // Replace the directory entry. Never write through the displaced inode.
+    if (stat.isFile()) writeJSON(peerFile, { revoked: true });
     unlinkIfPresent(path.join(dir, '.publish-' + n));
+    clearRemoval(path.join(dir, '.remove-' + n));
     const settingsDir = path.join(city, '.claude');
     if (fs.lstatSync(settingsDir, { throwIfNoEntry: false })?.isDirectory()) {
       unlinkIfPresent(path.join(settingsDir, '.publish-' + n));
+      clearRemoval(path.join(settingsDir, '.remove-' + n));
     }
     unlinkIfPresent(peerFile);
   };
@@ -644,35 +674,37 @@ function withLock(city, action, options = {}) {
     const p = path.join(dir, n);
     const stat = fs.lstatSync(p, { throwIfNoEntry: false });
     if (!stat) return [];
-    if (stat.size === 0 || Math.abs(Date.now() - stat.mtimeMs) > LIMITS.lockAge) { revoke(n); return []; }
-    const owner = json(p, null);
+    if (Math.abs(Date.now() - stat.mtimeMs) > LIMITS.lockAge) { revoke(n, stat); return []; }
+    const owner = readTicket(p);
     if (!owner) return [];
+    if (owner.revoked) { revoke(n, stat); return []; }
     if (!Number.isInteger(owner.pid) || owner.pid <= 0 || !Number.isSafeInteger(owner.ticket)) throw new Error('invalid_lock');
     try { process.kill(owner.pid, 0); }
-    catch (e) { if (e.code === 'ESRCH') { revoke(n); return []; } }
+    catch (e) { if (e.code === 'ESRCH') { revoke(n, stat); return []; } }
     return [{ ...owner, name: n }];
   });
+  let expectedTicket = 0;
+  const lock = { name, check() {
+    const owner = readTicket(file);
+    if (owner?.pid !== process.pid || owner.ticket !== expectedTicket) throw new Error('state_busy');
+    if (lock.generation !== undefined) {
+      const current = json(path.join(dir, 'state.json'), null);
+      if ((current?.generation ?? 0) !== lock.generation) throw new Error('state_busy');
+    }
+  } };
   writeJSON(file, { pid: process.pid, ticket: 0 });
   try {
     const names = fs.readdirSync(dir);
     if (options.pruneErrors) pruneErrors(dir, names, options.now);
     const ticket = Math.max(0, ...peers(names).map(p => p.ticket)) + 1;
-    writeJSON(file, { pid: process.pid, ticket });
+    writeJSON(file, { pid: process.pid, ticket }, lock);
+    expectedTicket = ticket;
     const timer = new Int32Array(new SharedArrayBuffer(4));
     while (peers(fs.readdirSync(dir)).some(p => !p.ticket || p.ticket < ticket || (p.ticket === ticket && p.name < name))) {
       const remaining = waitUntil - performance.now();
       if (remaining <= 0) throw new Error('state_busy');
       Atomics.wait(timer, 0, 0, Math.min(10, remaining));
     }
-    const lock = { name, check() {
-      let owner;
-      try { owner = json(file, null); } catch { throw new Error('state_busy'); }
-      if (owner?.pid !== process.pid || owner.ticket !== ticket) throw new Error('state_busy');
-      if (lock.generation !== undefined) {
-        const current = json(path.join(dir, 'state.json'), null);
-        if ((current?.generation ?? 0) !== lock.generation) throw new Error('state_busy');
-      }
-    } };
     return action(lock);
   } finally { unlinkIfPresent(file); }
 }
@@ -786,15 +818,25 @@ function runHook(input, options = {}) {
       const beforeDecision = structuredClone(state);
       const result = decide(state, input, { ...o, mode, aliases: manifest.aliases, ownAlias: manifest.own_alias, caughtUp, fence, turnId });
       checkDeadline(o.start);
+      const loadedGeneration = lock.generation;
       try { state.hook_ok_at = o.now; saveState(o.city, state, lock); checkDeadline(o.start); }
       catch (error) {
-        if (error.message === 'state_busy') throw error;
+        const committed = lock.generation !== loadedGeneration;
+        if (error.message === 'state_busy') {
+          if (committed) return result;
+          throw error;
+        }
         // A save can itself cross the deadline. Persist the actual fail-open
         // outcome before releasing the lock, including duplicate accounting.
         if (result.hookSpecificOutput) decide(beforeDecision, input, { ...o, mode: 'observe', aliases: manifest.aliases, caughtUp: false, fence });
         const rollback = result.hookSpecificOutput ? beforeDecision : state;
         rollback.hook_ok_at = beforeDecision.hook_ok_at;
-        saveState(o.city, rollback, lock);
+        const beforeRollback = lock.generation;
+        try { saveState(o.city, rollback, lock); }
+        catch (retryError) {
+          if (retryError.message === 'state_busy' && committed && lock.generation === beforeRollback) return result;
+          throw retryError;
+        }
         throw error;
       }
       return result;
@@ -879,8 +921,7 @@ function backupSettings(o, file) {
       .map(name => ({ name, time: fs.statSync(path.join(dir, name), { bigint: true }).mtimeNs }))
       .sort((a, b) => a.time === b.time ? b.name.localeCompare(a.name) : a.time < b.time ? 1 : -1);
     for (const entry of older.slice(LIMITS.backups - 1)) {
-      o.lock.check();
-      unlinkIfPresent(path.join(dir, entry.name));
+      removeOwned(path.join(dir, entry.name), o.lock);
     }
   }
 }
@@ -985,8 +1026,7 @@ function uninstall(options = {}) {
           if (!fs.readFileSync(file).equals(bytes)) throw new Error('settings_readback_failed');
         }
         else {
-          lock.check();
-          unlinkIfPresent(file);
+          removeOwned(file, lock);
           const dir = path.dirname(file);
           if (!snapshot.dir_existed && fs.existsSync(dir) && !fs.readdirSync(dir).length) fs.rmdirSync(dir);
         }
@@ -994,24 +1034,23 @@ function uninstall(options = {}) {
     }
     if (!restored) saveSettings(o, file, before, value, fs.existsSync(file) ? fs.statSync(file).mode & 0o7777 : 0o600);
     writeJSON(path.join(stateDir(o.city), 'mode.json'), { mode: 'off' }, lock);
-    lock.check();
-    unlinkIfPresent(path.join(stateDir(o.city), 'hook.cjs'));
-    lock.check();
-    unlinkIfPresent(beforeFile);
-    lock.check();
-    fs.unlinkSync(manifestFile);
+    removeOwned(path.join(stateDir(o.city), 'hook.cjs'), lock);
+    removeOwned(beforeFile, lock);
+    removeOwned(manifestFile, lock);
     return { installed: false, ...(snapshot ? { layout_restored: restored } : {}) };
   });
 }
 function registration(o) {
+  let current = false;
   try {
     const manifest = json(path.join(stateDir(o.city), 'install.json'), null);
     if (!manifest) return { registered: false, current: false };
+    try { current = fs.readFileSync(o.source || __filename).equals(fs.readFileSync(path.join(stateDir(o.city), 'hook.cjs'))); }
+    catch { /* A missing copy can coexist with a registered command. */ }
     const { value } = settings(o.city);
     const registered = EVENTS.every(event => value.hooks?.[event]?.some(e => e.matcher === manifest.entries[event].matcher && e.hooks?.some(h => h.type === 'command' && h.command === manifest.entries[event].command)));
-    const current = hash(fs.readFileSync(o.source || __filename)) === hash(fs.readFileSync(path.join(stateDir(o.city), 'hook.cjs')));
     return { registered, current };
-  } catch { return { registered: false, current: false }; }
+  } catch { return { registered: false, current }; }
 }
 function doctor(options = {}) {
   const o = normalized(options);
