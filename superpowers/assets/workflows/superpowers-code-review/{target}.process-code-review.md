@@ -9,14 +9,30 @@ From round 3 onward, compare each blocking finding with the blocking findings
 in all earlier rounds of this loop. A pair belongs to the same family if it
 concerns the same class of fault and the earlier class-level fix, stated in
 one sentence, would close both findings. Treat an uncertain comparison as a
-match. On a match, apply no fix. Write a handoff identifying both findings
-and the round and preserved report path for each. On the workflow root set
-`gc.build.code_review_status=failed`,
-`gc.build.repair_status=family_stop`, `gc.outcome=fail`,
-`gc.failure_class=review_family_stop`, `gc.restart.entrypoint=build-from-review`
-and `gc.restart.reason=review_family_stop`. Close this child immediately with
-`gc.outcome=fail`, `gc.failure_class=review_family_stop`,
+match. On a match, apply no fix. In the handoff identify both findings, their
+rounds and the preserved report paths. Set `gc.build.repair_status=family_stop`,
+`gc.failure_class=review_family_stop` and `gc.restart.reason=review_family_stop`.
+
+Otherwise process this pass normally. If its verdict would be `iterate` on
+the controller's last allowed attempt, record the last report, fixes, tests
+and outstanding review in the handoff. Set `gc.build.repair_status=exhausted`,
+`gc.failure_class=review_repair_failed` and `gc.restart.reason=review_repair_exhausted`.
+
+For either exit, write those values, `gc.outcome=fail`,
+`gc.build.code_review_status=failed` and `gc.restart.review_report_path=<preserved review report path>`
+on the workflow root before closing the child. Record the restart for the
+workflow that launched this review, using its original pack binding and inputs.
+
+- For the full build, record `gc.restart.entrypoint=superpowers-build`. The handoff
+  must say to rerun the full build through review and branch finalization with the canonical implementation summary, then publish.
+- For the standalone review, record `gc.restart.entrypoint=superpowers-review` and rerun
+  that review with its original review context.
+- If another formula embeds this expansion, record that originating formula
+  as the entrypoint and list its required remaining stages from its resolved graph.
+
+Close this child with `gc.outcome=fail`, the same failure class,
 `code_review.verdict=iterate` and `code_review.report_path=<handoff path>`.
+This terminal close takes precedence over the ordinary verdict instructions below.
 
 Use the installed `receiving-code-review` skill as guidance for triaging review
 and gap-analysis findings. Resolve required findings in this single lane and

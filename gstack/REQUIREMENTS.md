@@ -91,7 +91,7 @@ for every derived pack.
 - Review/fix loop behavior: the `review` anchor expands `gstack-code-review`:
   a setup node that records the review context and planned report on the
   workflow root, then a check-gated loop wrapper
-  (`implementation-review-approved.sh`, 8 bounded attempts) whose child lanes
+  (`implementation-review-approved.sh`, 3 bounded attempts) whose child lanes
   are the sibling staff, QA-evidence, CSO-security, and gap-analysis
   reviewers, a `synthesize-code-review` fan-in (`gstack.review-synthesizer`),
   and an `apply-review-findings` lane routed to `{implementation_target}`

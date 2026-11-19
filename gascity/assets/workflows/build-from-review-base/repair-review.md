@@ -7,6 +7,11 @@ implementation_formula={{implementation_formula}}, implementation_item_formula={
 and max_iterations={{max_iterations}} from the workflow root metadata and
 artifacts.
 
+Before acting on a verdict, check the completed review workflow, or on return
+or resume check the last dispatched fix-loop workflow root for
+`gc.build.repair_status=family_stop`. On that signal take the family stop
+below with the paired findings from its recorded report, even if budget remains.
+
 If the review verdict is approved, do not mutate code. Record
 `gc.build.repair_status=not_needed`, preserve the approved review metadata, and
 close this step successfully.
@@ -36,10 +41,12 @@ recorded review findings and implementation evidence until one of these happens:
 - a blocking finding repeats a family from an earlier review round (from round 3 onward);
 - max_iterations is exhausted.
 
-Count the initial review as round 1. If later rounds reuse a report path, save
-a round-specific copy before it is overwritten. Before dispatching another
-fix or recording exhaustion, compare each current blocking finding from round 3
-onward with blocking findings from all earlier rounds. Two findings are in the
+Count the initial review as round 1. Include the round numbers and preserved
+report paths in each fix loop's findings input and record its workflow ID
+for resume. If later rounds reuse a report path, save a round-specific copy
+before it is overwritten. Before dispatching another fix or recording
+exhaustion, compare each current blocking finding from round 3 onward with
+blocking findings from all earlier rounds. Two findings are in the
 same family when they concern the same class of fault and the earlier finding's
 class-level fix, stated in one sentence, would close the current one too. If
 that comparison is uncertain, treat the pair as the same family.

@@ -641,6 +641,18 @@ def node_description(root: pathlib.Path, node: dict) -> str:
     return node["description"]
 
 
+def stages_after_review(formula: dict) -> set[tuple[str, str | None]]:
+    reachable = {"review"}
+    while True:
+        downstream = {step["id"] for step in formula["steps"]
+                      if reachable.intersection(step.get("needs", []))}
+        if downstream <= reachable:
+            break
+        reachable.update(downstream)
+    return {(step["id"], step.get("expand")) for step in formula["steps"]
+            if step["id"] in reachable - {"review"}}
+
+
 def route_target_default(target: str, vars: dict) -> str:
     if target.startswith("{{") and target.endswith("}}"):
         var_name = target.removeprefix("{{").removesuffix("}}").strip()
@@ -1873,7 +1885,7 @@ class FormulaAssetTests(unittest.TestCase):
                 with self.subTest(formula=path.name):
                     self.assertEqual(variables["max_iterations"]["default"], "3")
 
-    def test_full_build_review_controllers_enforce_cap_and_family_stop(self) -> None:
+    def test_full_build_review_exits_record_a_stage_complete_restart(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         builds = []
         for path in sorted(root.parent.glob("*/formulas/*.formula.toml")):
@@ -1907,11 +1919,29 @@ class FormulaAssetTests(unittest.TestCase):
                 for fragment in (
                     "gc.attempt", "round 3", "class-level fix",
                     "gc.build.repair_status=family_stop", "gc.failure_class=review_family_stop",
-                    "gc.restart.entrypoint=build-from-review", "gc.restart.reason=review_family_stop",
+                    "gc.restart.reason=review_family_stop",
                     "gc.outcome=fail", "code_review.verdict=iterate",
+                    "gc.build.repair_status=exhausted", "gc.restart.reason=review_repair_exhausted",
                 ):
                     with self.subTest(contract=fragment):
                         self.assertIn(fragment, text)
+
+                # The full-build and standalone entries share a fix lane but
+                # can have different inputs and different post-review stages.
+                terminal = text.split("For either exit,", 1)[-1]
+                self.assertIn("For either exit,", text)
+                self.assertIn("gc.outcome=fail", terminal)
+                self.assertIn("on the workflow root before closing", terminal)
+                restart = re.search(r"full build, record `gc\.restart\.entrypoint=([\w-]+)`", terminal)
+                self.assertIsNotNone(restart)
+                resumed = resolve_formula_from_dirs(dirs, restart[1])
+                with self.subTest(restart=restart[1]):
+                    self.assertLessEqual(stages_after_review(build), stages_after_review(resumed))
+                for path in formula_dir.glob("*.formula.toml"):
+                    entry = tomllib.loads(path.read_text(encoding="utf-8"))
+                    if any(step["id"] == "write-report" and step.get("expand") == expansion_name
+                           for step in entry.get("steps", [])):
+                        self.assertIn(f"standalone review, record `gc.restart.entrypoint={entry['formula']}`", terminal)
 
     def test_build_from_review_blocked_results_are_healable_not_passed(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
@@ -1948,7 +1978,7 @@ class FormulaAssetTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, repair)
 
-    def test_fix_loop_re_review_checks_for_family_stop(self) -> None:
+    def test_fix_loop_and_every_caller_exchange_the_family_stop(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         steps = resolve_formula(root, "fix-loop-base")["steps"]
         re_review = next(step for step in steps if step["id"] == "re-review")
@@ -1957,6 +1987,28 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertIn("family_stop", text)
         self.assertIn("round 3 onward", text)
         self.assertIn("class-level fix", text)
+        signal = "gc.build.repair_status=family_stop"
+        with self.subTest(producer="fix-loop-base/re-review"):
+            self.assertIn(signal, text)
+
+        dispatch = re.compile(
+            r"\b(?:run|dispatch|launch|invoke|sling)\s+(?:(?:or|dispatch|the|selected)\s+)*"
+            r"[`{]*(?:review_fix_formula|fix-loop-base|[\w-]+-fix-loop)\b", re.I)
+        callers = set()
+        for path in root.parent.glob("*/formulas/*.formula.toml"):
+            formula = tomllib.loads(path.read_text(encoding="utf-8"))
+            for node in formula_nodes(formula):
+                if not (node.get("description_file") or node.get("description")):
+                    continue
+                prompt = " ".join(node_description(path.parent.parent, node).split())
+                if dispatch.search(prompt):
+                    caller = (formula["formula"], node["id"])
+                    callers.add(caller)
+                    with self.subTest(caller=caller):
+                        self.assertIn(f"fix-loop workflow root for `{signal}`", prompt)
+                        self.assertIn("no further fix attempt", prompt)
+        self.assertTrue({("build-from-review-base", "repair-review"),
+                         ("github-issue-fix-base", "build")} <= callers)
 
     def test_default_continuation_entrypoints_extend_suffix_bases(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]

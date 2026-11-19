@@ -30,5 +30,28 @@ with `"{{max_iterations}}"` failed during formula loading (exit 1) with
 Compiling each of the five real builds with `gc formula show <build> --var
 max_iterations=5 --json` succeeded. Every compiled code-review controller
 recorded `gc.max_attempts=3`. A launch override still changes the continuation
-repair and fix-loop limit. Finalize admits only `approved` and `not_needed`
-as passing repair statuses.
+repair and fix-loop limit. The build-from-review continuation's finalize step
+admits only `approved` and `not_needed` as passing repair statuses.
+
+## Terminal outcomes and restarts
+
+At `10bdd0b4`, the two class tests reported 19 failing checks. The restart
+graph omitted gstack QA and release readiness and Compound's resolution
+expansion. All five full builds lacked an exhaustion record, and neither
+fix-loop caller checked the child workflow's terminal metadata.
+
+| Check | Revised result | Exit |
+| --- | --- | --- |
+| `verify -C gascity python3 -m pytest tests -q -k 'stage_complete_restart or exchange_the_family_stop' -p no:cacheprovider` | 2 passed, 68 subtests passed, 537 deselected | 0 |
+| Same formula asset suite | 138 passed, 6918 subtests passed | 0 |
+| Same Gas City Make target | 1065 passed, 128 skipped, 10598 subtests passed | 0 |
+| Same Reachable command | 91 passed, 1 skipped | 0 |
+
+The restart test follows transitive dependencies from review in each
+resolved build and compares stage IDs and expansions with the recorded
+restart. It also checks the standalone entrypoints that share four review
+expansions. The caller test checks the producing step and both dispatching
+prompts. In a scratch city, `gc formula show` also resolved the terminal
+instructions for all five builds with `max_iterations=5` and all four
+standalone reviews with `review_mode=agent`, including external prompt files.
+These are graph and prompt checks. Live agent execution was not run.
