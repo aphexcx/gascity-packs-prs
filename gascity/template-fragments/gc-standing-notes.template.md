@@ -90,14 +90,19 @@ for still give each review its own number.
    as SAME FAMILY with the round and the earlier finding it repeats, list
    every other finding of that round as OPEN beside it, and hand the PR to the
    mayor as stopped, not done, for one decision: a check for the class built
-   under its own tests, or a merge with the class filed as a bead. THE SAME
-   FAMILY means the finding names the same class as the earlier one, and the
-   earlier one's class-level fix, written in one sentence, would close it too;
-   when you cannot tell, it is the same family and you stop. Past round three,
-   only a finding reproduced in that round's own changes (a failing test, or
-   shown reachable where the changed code runs; a second model's answer alone
-   is not enough) buys another round; list the rest as NOT SHOWN with their
-   file and line.
+   under its own tests, or a merge with the class filed as a bead. That
+   decision rules on the repeated family alone: every finding listed OPEN
+   beside it keeps its own grade and needs its own outcome, each blocking one
+   before any merge. THE SAME FAMILY means the finding names the same class as
+   the earlier one, and the earlier one's class-level fix, written in one
+   sentence, would close it too; when you cannot tell, it is the same family
+   and you stop. Past round three, only a finding reproduced in that round's
+   own changes (a failing test, or shown reachable where the changed code
+   runs; a second model's answer alone is not enough) buys another round; a
+   finding shown any other way (an earlier head's fault that a failing test
+   proves, say) buys none by itself and is listed as OPEN with what shows it
+   and its grade, for the mayor; list the rest, which nobody showed, as NOT
+   SHOWN with their file and line.
 3. Let no lone reviewer force a round. Before one reviewer's finding costs a
    round, have it shown: write a failing test that shows it, or have a second
    model check that one finding and answer real or not with the line that
@@ -105,15 +110,16 @@ for still give each review its own number.
    SHOWN with what you tried, and is not fixed blind: one model's reading is a
    suspicion, not a fault.
 4. Never let a minor finding block, and give every finding an outcome. Fix a
-   minor in the same head when it is cheap, and list it otherwise. Your
-   handoff carries one line per finding of every round with its outcome: FIXED
-   (with the commit), WRONG (with the line that shows the reviewer was
-   mistaken), INTENDED, or DOES NOT MATTER, or else the listing these rules
-   give it (SAME FAMILY, OPEN, NOT SHOWN or PRECONDITION). A finding that
-   needs a runtime, a provider or a right found nowhere the changed code runs
-   is listed as PRECONDITION with the precondition in one sentence; it does
-   not block, and you do not build for it. When you cannot tell where the
-   changed code runs, the finding is not a PRECONDITION.
+   minor in the same head when it is cheap; a real, unintended minor you leave
+   unfixed is listed as OPEN with its follow-up's reference. Your handoff
+   carries one line per finding of every round with its outcome: FIXED (with
+   the commit), WRONG (with the line that shows the reviewer was mistaken),
+   INTENDED, or DOES NOT MATTER, or else the listing these rules give it (SAME
+   FAMILY, OPEN, NOT SHOWN or PRECONDITION). A finding that needs a runtime, a
+   provider or a right found nowhere the changed code runs is listed as
+   PRECONDITION with the precondition in one sentence; it does not block, and
+   you do not build for it. When you cannot tell where the changed code runs,
+   the finding is not a PRECONDITION.
 5. Let review depth follow risk. Docs, tests and small internal changes get
    your own checks and one gate; a second model reads a PR's whole first head,
    and later heads only on a risky path. Your city or its mayor sets the depth
