@@ -5,34 +5,53 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const os = require('node:os');
+const { isDeepStrictEqual } = require('node:util');
 const { performance } = require('node:perf_hooks');
 const { execFileSync } = require('node:child_process');
 
 const DAY = 86400000;
-const LIMITS = Object.freeze({ wait: 30000, refusals: 3, age: DAY, history: 14 * DAY, deadline: 2000 });
+const LIMITS = Object.freeze({
+  wait: 30000, refusals: 3, age: DAY, history: 14 * DAY, deadline: 2000,
+  receiptAge: 600000, receipts: 1000, calls: 1000, log: 2000, sessions: 1024,
+  known: 1024, errors: 100, lockAge: 10000, writeBytes: 64 * 1024, backups: 3,
+});
 const CHUNK = 8 * 1024 * 1024;
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const key = row => `${row.provider}/${row.conversation_id}`;
 function initialState() {
-  return { version: 1, cursor: null, waiting: [], exemptions: [], known: [], sessions: [], calls: {}, receipts: {}, log: [], now: 0, turn: '' };
+  return { version: 2, cursor: null, waiting: [], exemptions: [], known: {}, sessions: {}, calls: {}, receipts: {}, log: [], now: 0, turn: '',
+    skipped: { count: 0, last_seq: null, last_reason: null, last_at: null }, history_dropped: 0, hook_ok_at: null };
 }
 function checkDeadline(start) {
   if (performance.now() - start >= LIMITS.deadline) throw new Error('measurement_timeout');
 }
 function identifier(s) { return typeof s === 'string' && s.length > 0 && s.length <= 4096 && !/[\x00-\x20\x7f]/.test(s); }
-function parseRows(bytes, minimum, start) {
+const SKIP = Symbol('unusable event');
+function parseRows(bytes, progress, start) {
   const rows = [];
-  let seq = minimum;
+  const minimum = progress.seq;
   for (const line of bytes.toString('utf8').split('\n')) {
     if (!line) continue;
     checkDeadline(start);
-    let row;
-    try { row = JSON.parse(line); } catch { throw new Error('invalid_event_json'); }
-    if (!row || !Number.isSafeInteger(row.seq) || row.seq <= 0 || typeof row.type !== 'string' || !Number.isFinite(Date.parse(row.ts))) throw new Error('invalid_event_row');
+    let row, reason;
+    try { row = JSON.parse(line); } catch { reason = 'invalid_event_json'; }
+    if (!Number.isSafeInteger(row?.seq) || row.seq <= 0) {
+      progress.unsequenced++;
+      rows.push({ ...row, seq: progress.seq, [SKIP]: reason || 'invalid_event_row' });
+      continue;
+    }
     if (row.seq <= minimum) continue;
-    if (seq && row.seq !== seq + 1) throw new Error('event_sequence_gap');
-    seq = row.seq;
-    rows.push(row);
+    if (progress.unsequenced) {
+      const extra = row.seq - progress.seq - 1 - progress.unsequenced;
+      if (extra > 0) rows.push({ [SKIP]: 'gap', extra });
+      if (row.seq <= progress.seq) throw new Error('event_sequence_gap');
+      progress.unsequenced = 0;
+    } else if (progress.seq && row.seq !== progress.seq + 1) throw new Error('event_sequence_gap');
+    progress.seq = row.seq;
+    if (typeof row.type !== 'string' || !Number.isFinite(Date.parse(row.ts))) {
+      rows.push({ ...row, [SKIP]: 'invalid_event_row' });
+    } else rows.push(row);
   }
   return rows;
 }
@@ -90,10 +109,16 @@ function eventFence(city) {
         fs.readSync(fd, bytes, 0, bytes.length, size - bytes.length);
         const end = bytes.lastIndexOf(10);
         if (end < 0) continue;
-        const begin = bytes.lastIndexOf(10, end - 1) + 1;
-        const row = JSON.parse(bytes.subarray(begin, end).toString());
-        if (!Number.isSafeInteger(row.seq)) throw new Error('invalid_event_row');
-        seq = Math.max(seq, row.seq);
+        // A damaged tail has no usable fence of its own. The reader counts
+        // it and releases ambiguous waits when it consumes those bytes.
+        for (let stop = end; stop > 0;) {
+          const begin = bytes.lastIndexOf(10, stop - 1) + 1;
+          if (!begin && size > CHUNK) break;
+          let row;
+          try { row = JSON.parse(bytes.subarray(begin, stop).toString()); } catch { /* scan the previous line */ }
+          if (Number.isSafeInteger(row?.seq) && row.seq > 0) { seq = Math.max(seq, row.seq); break; }
+          stop = begin - 1;
+        }
       } catch (e) { if (e.code !== 'ENOENT') throw e; }
       finally { if (fd !== undefined) fs.closeSync(fd); }
     }
@@ -133,7 +158,7 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
     if (!stat.isFile()) throw new Error('event_log_not_regular');
     let offset = 0;
     let rows = [];
-    let seq = cursor?.seq || 0;
+    const progress = { seq: cursor?.seq || 0, unsequenced: cursor?.unsequenced || 0 };
     let archivedThrough = 0;
     let same = cursor && !cursor.archive && cursor.dev === stat.dev && cursor.ino === stat.ino && cursor.offset <= stat.size;
     if (same && cursor.offset) {
@@ -149,7 +174,7 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
       const pending = names.some(name => {
         const m = /^events\.jsonl\.rotating-(\d{8}T\d{6}Z)(?:-seq-(\d+)-(\d+))?$/.exec(name);
         if (!m) return false;
-        if (m[3]) return Number(m[3]) > seq && !names.includes(`events.jsonl.archive-${m[1]}-seq-${m[2]}-${m[3]}.gz`);
+        if (m[3]) return Number(m[3]) > progress.seq && !names.includes(`events.jsonl.archive-${m[1]}-seq-${m[2]}-${m[3]}.gz`);
         // Legacy rotating names have no sequence suffix. Their matching
         // published archive is the evidence that replay can proceed.
         return !names.some(n => new RegExp(`^events\\.jsonl\\.archive-${m[1]}-seq-\\d+-\\d+\\.gz$`).test(n));
@@ -161,22 +186,43 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
         archivedThrough = Math.max(archivedThrough, Number(m[3]));
         // Message expiry belongs in reduction. Older routing and wake rows
         // still identify the authors of replies delivered within 24 hours.
-        return Number(m[3]) > seq ? [{ name, first: Number(m[2]) }] : [];
+        return Number(m[3]) > progress.seq ? [{ name, first: Number(m[2]), last: Number(m[3]) }] : [];
       }).sort((a, b) => a.first - b.first);
       for (const [index, archive] of archives.entries()) {
         checkDeadline(start);
-        const decodedOffset = cursor?.archive?.name === archive.name ? cursor.archive.offset : 0;
-        const contents = archiveSlice(path.join(dir, archive.name), decodedOffset, start);
+        const file = path.join(dir, archive.name);
+        let decodedOffset = cursor?.archive?.name === archive.name ? cursor.archive.offset : 0;
+        let contents;
+        // A rotated archive contains the old active file verbatim. Its byte
+        // fence also identifies damaged lines that have no sequence number.
+        if (!cursor?.archive && cursor?.offset && archive.first <= cursor.seq + (cursor.unsequenced || 0)) {
+          const boundarySize = Math.min(128, cursor.offset);
+          const slice = archiveSlice(file, cursor.offset - boundarySize, start);
+          if (slice.length >= boundarySize && hash(slice.subarray(0, boundarySize)) === cursor.boundary) {
+            contents = slice;
+            decodedOffset = cursor.offset - boundarySize;
+          }
+        }
+        const prefix = contents ? cursor.offset - decodedOffset : 0;
+        contents ??= archiveSlice(file, decodedOffset, start);
+        const fullSlice = contents.length === CHUNK;
+        contents = contents.subarray(prefix);
+        decodedOffset += prefix;
         const end = contents.lastIndexOf(10) + 1;
-        if (contents.length < CHUNK && end !== contents.length) throw new Error('incomplete_archive');
-        if (!end && contents.length === CHUNK) throw new Error('event_row_too_large');
-        const recovered = parseRows(contents.subarray(0, end), seq, start);
+        if (!fullSlice && end !== contents.length) throw new Error('incomplete_archive');
+        if (!end && fullSlice) throw new Error('event_row_too_large');
+        const recovered = parseRows(contents.subarray(0, end), progress, start);
         for (const row of recovered) rows.push(row);
-        if (recovered.length) seq = recovered.at(-1).seq;
-        if (contents.length === CHUNK) return { rows, caughtUp: false, cursor: { dev: cursor?.dev || 0, ino: cursor?.ino || 0, offset: cursor?.offset || 0, boundary: cursor?.boundary || '', seq, archive: { name: archive.name, offset: decodedOffset + end } } };
+        if (fullSlice) return { rows, caughtUp: false, cursor: { dev: cursor?.dev || 0, ino: cursor?.ino || 0, offset: cursor?.offset || 0, boundary: cursor?.boundary || '', ...progress, archive: { name: archive.name, offset: decodedOffset + end } } };
+        if (progress.unsequenced && archive.last > progress.seq) {
+          const extra = archive.last - progress.seq - progress.unsequenced;
+          if (extra > 0) rows.push({ [SKIP]: 'gap', extra });
+          progress.seq = archive.last;
+          progress.unsequenced = 0;
+        }
         // Persist progress between small archives too; their aggregate can
         // exceed the deadline even when each one fits in a single slice.
-        if (index + 1 < archives.length) return { rows, caughtUp: false, cursor: { dev: cursor?.dev || 0, ino: cursor?.ino || 0, offset: cursor?.offset || 0, boundary: cursor?.boundary || '', seq } };
+        if (index + 1 < archives.length) return { rows, caughtUp: false, cursor: { dev: cursor?.dev || 0, ino: cursor?.ino || 0, offset: cursor?.offset || 0, boundary: cursor?.boundary || '', ...progress } };
       }
     }
     checkDeadline(start);
@@ -186,9 +232,8 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
     const count = fs.readSync(fd, bytes, 0, bytes.length, offset);
     const end = bytes.subarray(0, count).lastIndexOf(10) + 1;
     if (!end && count === bytes.length && count === 8 * 1024 * 1024) throw new Error('event_row_too_large');
-    const appended = parseRows(bytes.subarray(0, end), seq, start);
+    const appended = parseRows(bytes.subarray(0, end), progress, start);
     for (const row of appended) rows.push(row);
-    if (appended.length) seq = appended.at(-1).seq;
     // Pending publication was checked before replay; parseRows checks each
     // recovered sequence. An empty replacement needs no sentinel row once
     // replay reaches the published tail (including the saved cursor).
@@ -197,45 +242,86 @@ function readEvents(city, cursor, { start = performance.now() } = {}) {
         // A legacy rotating name has only second precision. An older archive
         // can share its timestamp, so confirm the actual rotating tail before
         // adopting an identity that would bypass discovery on the next call.
-        if (eventFence(city) > archivedThrough) return { rows, caughtUp: false, cursor: { ...(cursor || { dev: 0, ino: 0, offset: 0, boundary: '' }), seq, archive: undefined } };
-        if (archivedThrough !== seq) throw new Error('event_sequence_gap');
-      } else if (cursor) return { rows, caughtUp: false, cursor: { ...cursor, seq, archive: undefined } };
+        if (eventFence(city) > archivedThrough) return { rows, caughtUp: false, cursor: { ...(cursor || { dev: 0, ino: 0, offset: 0, boundary: '' }), ...progress, archive: undefined } };
+        if (archivedThrough !== progress.seq) throw new Error('event_sequence_gap');
+      } else if (cursor) return { rows, caughtUp: false, cursor: { ...cursor, ...progress, archive: undefined } };
     }
     offset += end;
     const boundary = Buffer.alloc(Math.min(128, offset));
     fs.readSync(fd, boundary, 0, boundary.length, offset - boundary.length);
     checkDeadline(start);
-    return { rows, caughtUp: offset === stat.size, cursor: { dev: stat.dev, ino: stat.ino, offset, seq, boundary: hash(boundary) } };
+    return { rows, caughtUp: offset === stat.size, cursor: { dev: stat.dev, ino: stat.ino, offset, ...progress, boundary: hash(boundary) } };
   } finally { fs.closeSync(fd); }
 }
 
+function trimMap(map, cutoff, cap, timeOf) {
+  const entries = [];
+  for (const [id, value] of Object.entries(map)) {
+    const at = timeOf(value);
+    if (at <= cutoff) delete map[id];
+    else entries.push([id, at]);
+  }
+  if (entries.length > cap) {
+    entries.sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < entries.length - cap; i++) delete map[entries[i][0]];
+  }
+}
+function trimLog(state, now) {
+  state.log = state.log.filter(e => now - e.at <= LIMITS.history);
+  if (state.log.length > LIMITS.log) {
+    state.history_dropped += state.log.length - LIMITS.log;
+    state.log = state.log.slice(-LIMITS.log);
+  }
+}
+function skipEvent(state, row, reason, now) {
+  if (reason === 'gap') { state.skipped.count += row.extra; return; }
+  state.skipped = { count: state.skipped.count + 1, last_seq: row.seq, last_reason: reason, last_at: now };
+  if (typeof row.type === 'string' && row.type !== 'extmsg.outbound') return;
+  const p = row.payload;
+  const conv = row.type === 'extmsg.outbound' && identifier(p?.provider) && identifier(p?.conversation_id) ? key(p) : null;
+  const at = Date.parse(row.ts);
+  for (const w of state.waiting) {
+    if ((!conv || conv === key(w)) && (!Number.isFinite(at) || w.at <= at)) w.released = true;
+  }
+}
 function reduceEvents(state, rows, { now, agent, session, sessionName }) {
   if (state.now > now) throw new Error('clock_moved_backwards');
-  const own = new Set(state.sessions);
-  if (session) own.add(hash(session));
-  if (sessionName) own.add(hash(sessionName));
+  const own = state.sessions;
+  trimMap(own, now - LIMITS.history, LIMITS.sessions, Number);
+  if (session) own[hash(session)] = now;
+  if (sessionName) own[hash(sessionName)] = now;
   // Learn named-session replacements before examining delivered words.
   for (const row of rows) {
+    if (row[SKIP]) continue;
     const p = row.payload;
+    const at = Date.parse(row.ts);
+    if (at > now || now - at >= LIMITS.history) continue;
     if (row.type === 'session.woke' && (row.subject === agent || row.subject === sessionName) && identifier(row.session_id)) {
-      own.add(hash(row.session_id));
-      if (identifier(row.subject)) own.add(hash(row.subject));
+      own[hash(row.session_id)] = now;
+      if (identifier(row.subject)) own[hash(row.subject)] = now;
     }
-    if (row.type === 'extmsg.inbound' && p?.target_agent === agent && identifier(p.target_session)) own.add(hash(p.target_session));
+    if (row.type === 'extmsg.inbound' && p?.target_agent === agent && identifier(p.target_session) && identifier(p.provider) && identifier(p.conversation_id)) own[hash(p.target_session)] = now;
   }
   for (const row of rows) {
+    if (row[SKIP]) { skipEvent(state, row, row[SKIP], now); continue; }
     if (!['extmsg.inbound', 'extmsg.outbound'].includes(row.type)) continue;
-    const p = row.payload;
-    if (!p || !identifier(p.provider) || !identifier(p.conversation_id)) throw new Error('invalid_message_event');
+    const p = row.payload || {};
     const at = Date.parse(row.ts);
-    if (at > now) throw new Error('event_in_future');
+    const publishingSession = identifier(row.subject) ? row.subject : p.session;
     if (row.type === 'extmsg.inbound') {
-      if (typeof p.target_agent !== 'string' && p.target_agent !== undefined) throw new Error('invalid_target_agent');
-      if (!p.target_agent && identifier(p.target_session) && !own.size && now - at < LIMITS.age) throw new Error('mayor_session_unknown');
-      const ours = p.target_agent ? p.target_agent === agent : identifier(p.target_session) && own.has(hash(p.target_session));
-      if (!ours) continue;
+      if (typeof p.target_agent !== 'string' && p.target_agent !== undefined) { skipEvent(state, row, 'invalid_target_agent', now); continue; }
+      if (p.target_agent && p.target_agent !== agent) continue;
+      if (!p.target_agent && identifier(p.target_session)) {
+        if (!Object.keys(own).length && now - at < LIMITS.age) throw new Error('mayor_session_unknown');
+        if (!Object.hasOwn(own, hash(p.target_session))) continue;
+        own[hash(p.target_session)] = now;
+      } else if (!p.target_agent && row.payload) continue;
+    } else if (identifier(publishingSession) && !Object.hasOwn(own, hash(publishingSession))) continue;
+    if (!identifier(p.provider) || !identifier(p.conversation_id)) { skipEvent(state, row, 'invalid_message_event', now); continue; }
+    if (at > now) { skipEvent(state, row, 'event_in_future', now); continue; }
+    if (row.type === 'extmsg.inbound') {
       const conv = key(p);
-      if (!state.known.includes(conv)) state.known.push(conv);
+      state.known[conv] = Math.max(state.known[conv] || 0, at);
       if (now - at >= LIMITS.age || state.exemptions.includes(conv)) continue;
       for (const call of Object.values(state.calls)) {
         if (call.priorWaiting && row.seq > (call.seenThrough || 0) && row.seq <= call.startThrough && !call.priorWaiting.includes(conv)) call.priorWaiting.push(conv);
@@ -246,18 +332,21 @@ function reduceEvents(state, rows, { now, agent, session, sessionName }) {
     } else {
       // GC credits the resolved publishing session in subject. The payload
       // retains the caller's selector, which can be an alias or empty.
-      const publishingSession = identifier(row.subject) ? row.subject : p.session;
-      if (!identifier(publishingSession)) throw new Error('invalid_outbound_session');
-      if (own.has(hash(publishingSession))) {
+      if (!identifier(publishingSession)) { skipEvent(state, row, 'invalid_outbound_session', now); continue; }
+      if (Object.hasOwn(own, hash(publishingSession))) {
+        own[hash(publishingSession)] = now;
         state.waiting = state.waiting.filter(w => key(w) !== key(p) || w.at > at);
         for (const call of Object.values(state.calls)) if (call.priorWaiting && row.seq <= call.startThrough) call.priorWaiting = call.priorWaiting.filter(c => c !== key(p));
       }
     }
   }
-  state.sessions = [...own];
+  trimMap(own, now - LIMITS.history, LIMITS.sessions, Number);
+  trimMap(state.known, now - LIMITS.history, LIMITS.known, Number);
+  trimMap(state.receipts, now - LIMITS.receiptAge, LIMITS.receipts, v => v.at);
+  trimMap(state.calls, now - LIMITS.age, LIMITS.calls, v => v.at);
   state.waiting = state.waiting.filter(w => now - w.at < LIMITS.age && !state.exemptions.includes(key(w)));
   state.waiting.sort((a, b) => a.at - b.at || a.seq - b.seq);
-  state.log = state.log.filter(e => now - e.at <= LIMITS.history);
+  trimLog(state, now);
   state.now = now;
   return state;
 }
@@ -274,36 +363,103 @@ const POLICY = Object.freeze({
 // A deliberately small shell grammar: one literal argv, no expansion,
 // redirect, pipeline, assignment prefix, or second command. Quotes may
 // contain punctuation as data; expansions inside double quotes may not.
-function literalArgv(command) {
-  if (typeof command !== 'string' || /[\r\n\x00]/.test(command)) return null;
+const AND = Symbol('&&');
+const clauses = {
+  work_tool: 'this tool does work',
+  not_talk: 'the shell command is not one gc talk command',
+  chained: 'the shell command chains, pipes, redirects, groups or backgrounds commands outside quotes',
+  expansion: 'the shell command can expand $ or a backquote into a command',
+  glob: 'the shell command has an unquoted glob, tilde, brace or comment character',
+  line_break: 'the shell command breaks a line outside quotes',
+  unclosed: 'the shell command leaves a quote open or ends in a backslash',
+  cd_form: 'only one cd DIR && may stand before the talk command',
+  write_place: 'a Write runs here only for a reply body of at most 64 KiB under the temp directory',
+};
+function shellWords(command) {
+  if (typeof command !== 'string' || command.includes('\0')) return { reason: 'not_talk' };
   const args = [];
   let word = '', quote = '', started = false;
+  const finish = () => { if (started) args.push(word); word = ''; started = false; };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
     if (quote === "'") { if (c === "'") quote = ''; else word += c; continue; }
-    if (c === '$' || c === '`') return null;
+    if (c === '`') return { reason: 'expansion' };
+    if (c === '$' && (!quote || /^[$](?:[({\[]|[A-Za-z_]\w*\[)/.test(command.slice(i)))) return { reason: 'expansion' };
     if (c === '\\') {
-      if (++i === command.length) return null;
-      word += command[i]; started = true; continue;
+      if (++i === command.length) return { reason: 'unclosed' };
+      const next = command[i];
+      if (!quote && /[\r\n]/.test(next)) return { reason: 'line_break' };
+      if (!quote && /[\x00-\x08\x0b-\x1f\x7f]/.test(next)) return { reason: 'not_talk' };
+      if (quote && !/["\\$`\n]/.test(next)) word += '\\';
+      if (!quote || next !== '\n') word += next;
+      started = true; continue;
     }
     if (quote === '"') { if (c === '"') quote = ''; else word += c; continue; }
     if (c === "'" || c === '"') { quote = c; started = true; continue; }
-    if (/[;&|<>()#*?{}\[\]~]/.test(c)) return null;
-    if (/\s/.test(c)) { if (started) args.push(word); word = ''; started = false; }
+    if (c === '&' && command[i + 1] === '&') { finish(); args.push(AND); i++; continue; }
+    if (/[;&|<>()]/.test(c)) return { reason: 'chained' };
+    if (/[#*?{}\[\]~]/.test(c)) return { reason: 'glob' };
+    if (/[\r\n]/.test(c)) return { reason: 'line_break' };
+    if (/[\x00-\x08\x0b-\x1f\x7f]/.test(c)) return { reason: 'not_talk' };
+    if (/[ \t]/.test(c)) finish();
     else { word += c; started = true; }
   }
-  if (quote) return null;
-  if (started) args.push(word);
-  return args;
+  if (quote) return { reason: 'unclosed' };
+  finish();
+  return { args };
+}
+function literalArgv(command) {
+  const { args } = shellWords(command);
+  return args && !args.includes(AND) ? args : null;
+}
+function tempBody(input) {
+  const file = input?.file_path;
+  if (typeof file !== 'string' || !path.isAbsolute(file) || typeof input.content !== 'string' || Buffer.byteLength(input.content) > LIMITS.writeBytes) return false;
+  try {
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    if (stat && !stat.isFile()) return false;
+    // Resolve path components in filesystem order. Lexically collapsing '..'
+    // before following a symlink could check a different directory.
+    let resolved = path.parse(file).root;
+    for (const part of file.split(path.sep).filter(Boolean)) {
+      resolved = path.join(resolved, part);
+      const st = fs.lstatSync(resolved, { throwIfNoEntry: false });
+      if (st) resolved = fs.realpathSync(resolved);
+    }
+    return [os.tmpdir(), '/tmp'].some(dir => {
+      const relative = path.relative(fs.realpathSync(dir), resolved);
+      return relative !== '' && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+    });
+  } catch { return false; }
+}
+function refusalCode(input, aliases) {
+  if (POLICY.readOnly.includes(input.tool_name)) return null;
+  if (input.tool_name === 'Write') return tempBody(input.tool_input) ? null : 'write_place';
+  if (input.tool_name !== 'Bash') return 'work_tool';
+  const parsed = shellWords(input.tool_input?.command);
+  if (parsed.reason) return parsed.reason;
+  let args = parsed.args;
+  const prefixed = args[0] === 'cd';
+  if (prefixed) {
+    if (typeof args[1] !== 'string' || args[2] !== AND || args[3] !== 'gc') return 'cd_form';
+    args = args.slice(3);
+  }
+  if (args.includes(AND)) return 'chained';
+  const talk = args[0] === 'gc' && (POLICY.control.includes(args[1]) || (aliases.includes(args[1]) && args.length >= 3 && !args[2].startsWith('-')));
+  return talk ? null : 'not_talk';
 }
 function allowed(input, aliases) {
-  if (POLICY.readOnly.includes(input.tool_name)) return true;
-  if (input.tool_name !== 'Bash') return false;
-  const args = literalArgv(input.tool_input?.command);
-  return Boolean(args && args[0] === 'gc' && (POLICY.control.includes(args[1]) || (aliases.includes(args[1]) && args.length >= 3 && !args[2].startsWith('-'))));
+  return !refusalCode(input, aliases);
 }
-function refusal(waiting, now) {
-  return waiting.map(w => `A person has waited ${Math.floor((now - w.at) / 1000)} seconds for an answer in ${key(w)}. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass ${key(w)}. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.`).join('\n');
+function replyShaped(input, aliases) {
+  if (input.tool_name !== 'Bash' || typeof input.tool_input?.command !== 'string') return false;
+  const match = /^[ \t]*(?:cd[ \t]+(?:[^ \t\r\n;&"'\\]|\\[^\r\n]|'[^']*'|"(?:(?:\\.)|[^"\\])*")+[ \t]*(?:&&|;)[ \t]*)?gc[ \t]+([^ \t\r\n;&|<>()]+)(?=$|[ \t\r\n;&|<>()])/.exec(input.tool_input.command);
+  return Boolean(match && (aliases.includes(match[1]) || POLICY.control.includes(match[1])));
+}
+function refusal(waiting, now, ownAlias = 'reachable', code) {
+  const lines = waiting.map(w => `A person has waited ${Math.floor((now - w.at) / 1000)} seconds for an answer in ${key(w)}. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc ${ownAlias} pass ${key(w)}. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.`);
+  if (code) lines.push('Refused because ' + clauses[code] + '.');
+  return lines.join('\n');
 }
 function decide(state, input, options) {
   const { now, mode, session, aliases = [], caughtUp = true, waitMs = LIMITS.wait } = options;
@@ -314,7 +470,7 @@ function decide(state, input, options) {
   // Use the harness prompt ID or its persisted user-row UUID, never response
   // content or a previous tool call shared by distinct tool-free turns.
   const id = hash(`${session}:${event}:${token}`);
-  if (state.receipts[id]) return state.receipts[id].output;
+  if (state.receipts[id] && now - state.receipts[id].at < LIMITS.receiptAge) return state.receipts[id].output;
   let output = {};
   if (event === 'Stop') {
     state.seenThrough = Math.max(state.seenThrough || 0, options.fence ?? state.cursor?.seq ?? Math.max(0, ...state.waiting.map(w => w.seq)));
@@ -324,17 +480,19 @@ function decide(state, input, options) {
     if (!identifier(input.tool_use_id) || !identifier(input.tool_name)) throw new Error('invalid_tool_input');
     state.turn = hash(input.tool_use_id);
     const overdue = caughtUp ? state.waiting.filter(w => now - w.at > waitMs && !w.released) : [];
-    if (overdue.length && !allowed(input, aliases)) {
+    const code = overdue.length && refusalCode(input, aliases);
+    if (code) {
+      const shaped = replyShaped(input, aliases);
       const byConversation = [...new Map(overdue.slice().reverse().map(w => [key(w), w])).values()].sort((a, b) => a.at - b.at);
       for (const w of overdue) {
-        w.refusals++;
-        state.log.push({ type: mode === 'enforce' ? 'refusal' : 'would_refuse', at: now, provider: w.provider, conversation_id: w.conversation_id, seconds: Math.floor((now - w.at) / 1000) });
+        if (!shaped) w.refusals++;
+        state.log.push({ type: mode === 'enforce' ? 'refusal' : 'would_refuse', at: now, provider: w.provider, conversation_id: w.conversation_id, seconds: Math.floor((now - w.at) / 1000), ...(shaped ? { reply_shaped: true } : {}) });
         if (w.refusals >= LIMITS.refusals) {
           w.released = true;
           state.log.push({ type: 'let_go', at: now, mode, provider: w.provider, conversation_id: w.conversation_id });
         }
       }
-      if (mode === 'enforce') output = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: refusal(byConversation, now) } };
+      if (mode === 'enforce') output = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: refusal(byConversation, now, options.ownAlias, code) } };
     }
     if (!output.hookSpecificOutput) state.calls[hash(`${session}:${input.tool_use_id}`)] = { at: now, tool: input.tool_name, waiting: state.waiting.length > 0, arrived: false, startThrough: options.fence ?? state.cursor?.seq ?? 0, seenThrough: state.seenThrough || 0, priorWaiting: caughtUp ? null : [...new Set(state.waiting.map(key))] };
   } else if (event === 'PostToolUse') {
@@ -349,8 +507,9 @@ function decide(state, input, options) {
     }
   } else throw new Error('unknown_hook_event');
   state.receipts[id] = { at: now, output };
-  for (const [k, v] of Object.entries(state.receipts)) if (now - v.at > LIMITS.age) delete state.receipts[k];
-  for (const [k, v] of Object.entries(state.calls)) if (now - v.at > LIMITS.age) delete state.calls[k];
+  trimMap(state.receipts, now - LIMITS.receiptAge, LIMITS.receipts, v => v.at);
+  trimMap(state.calls, now - LIMITS.age, LIMITS.calls, v => v.at);
+  trimLog(state, now);
   return output;
 }
 function finishCalls(state) {
@@ -376,11 +535,12 @@ function prepare(city) {
   directory(stateDir(city));
   fs.chmodSync(stateDir(city), 0o700);
 }
-function atomic(file, bytes) {
+function atomic(file, bytes, mode = 0o600) {
   regular(file, true);
   const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
   try {
     fs.writeFileSync(tmp, bytes, { mode: 0o600, flag: 'wx' });
+    if (mode !== 0o600) fs.chmodSync(tmp, mode);
     fs.renameSync(tmp, file);
   } finally { try { fs.unlinkSync(tmp); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
 }
@@ -390,15 +550,23 @@ function json(file, fallback) {
   catch (e) { if (e.code === 'ENOENT') return fallback; throw new Error('invalid_state_json'); }
 }
 function writeJSON(file, value) { atomic(file, JSON.stringify(value, null, 2) + '\n'); }
-function withLock(city, action) {
+function unlinkIfPresent(file) {
+  try { fs.unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+function withLock(city, action, options = {}) {
   prepare(city);
   const dir = stateDir(city);
+  const waitUntil = (options.start ?? performance.now()) + LIMITS.deadline - 250;
   const name = `lock-${process.pid}-${crypto.randomBytes(12).toString('hex')}.json`;
   const file = path.join(dir, name);
   // Nonblocking bakery tickets: each invocation owns a unique filename.
   // Recovery only unlinks dead owners' unique names, never a shared guard.
-  const peers = () => fs.readdirSync(dir).filter(n => /^lock-\d+-[\w-]+\.json$/.test(n) && n !== name).flatMap(n => {
-    const p = path.join(dir, n), owner = json(p, null);
+  const peers = names => names.filter(n => /^lock-\d+-[\w-]+\.json$/.test(n) && n !== name).flatMap(n => {
+    const p = path.join(dir, n);
+    const stat = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (!stat) return [];
+    if (Math.abs(Date.now() - stat.mtimeMs) > LIMITS.lockAge) { unlinkIfPresent(p); return []; }
+    const owner = json(p, null);
     if (!owner) return [];
     if (!Number.isInteger(owner.pid) || owner.pid <= 0 || !Number.isSafeInteger(owner.ticket)) throw new Error('invalid_lock');
     try { process.kill(owner.pid, 0); }
@@ -407,11 +575,18 @@ function withLock(city, action) {
   });
   writeJSON(file, { pid: process.pid, ticket: 0 });
   try {
-    const ticket = Math.max(0, ...peers().map(p => p.ticket)) + 1;
+    const names = fs.readdirSync(dir);
+    if (options.pruneErrors) pruneErrors(dir, names, options.now);
+    const ticket = Math.max(0, ...peers(names).map(p => p.ticket)) + 1;
     writeJSON(file, { pid: process.pid, ticket });
-    if (peers().some(p => !p.ticket || p.ticket < ticket || (p.ticket === ticket && p.name < name))) throw new Error('state_busy');
+    const timer = new Int32Array(new SharedArrayBuffer(4));
+    while (peers(fs.readdirSync(dir)).some(p => !p.ticket || p.ticket < ticket || (p.ticket === ticket && p.name < name))) {
+      const remaining = waitUntil - performance.now();
+      if (remaining <= 0) throw new Error('state_busy');
+      Atomics.wait(timer, 0, 0, Math.min(10, remaining));
+    }
     return action();
-  } finally { fs.unlinkSync(file); }
+  } finally { unlinkIfPresent(file); }
 }
 function saveState(city, state) {
   writeJSON(path.join(stateDir(city), 'state.json'), state);
@@ -419,9 +594,13 @@ function saveState(city, state) {
   // always be regenerated from it after a crash between the two renames.
   atomic(path.join(stateDir(city), 'log.jsonl'), state.log.map(r => JSON.stringify(r)).join('\n') + (state.log.length ? '\n' : ''));
 }
-function loadState(city) {
+function loadState(city, now) {
   const state = json(path.join(stateDir(city), 'state.json'), initialState());
-  if (state?.version !== 1 || !Number.isFinite(state.now) || !['waiting', 'exemptions', 'known', 'sessions', 'log'].every(k => Array.isArray(state[k])) || !state.calls || !state.receipts) throw new Error('invalid_state_shape');
+  if (state?.version === 1 && Array.isArray(state.known) && Array.isArray(state.sessions)) {
+    for (const field of ['known', 'sessions']) state[field] = Object.fromEntries(state[field].map(k => [k, now]));
+    Object.assign(state, { version: 2, skipped: initialState().skipped, history_dropped: 0, hook_ok_at: null });
+  }
+  if (state?.version !== 2 || !Number.isFinite(state.now) || !['waiting', 'exemptions', 'log'].every(k => Array.isArray(state[k])) || !['known', 'sessions', 'calls', 'receipts', 'skipped'].every(k => state[k] && typeof state[k] === 'object' && !Array.isArray(state[k]))) throw new Error('invalid_state_shape');
   if (!state.waiting.every(w => identifier(w.provider) && identifier(w.conversation_id) && Number.isFinite(w.at) && Number.isSafeInteger(w.seq) && Number.isInteger(w.refusals) && typeof w.released === 'boolean')) throw new Error('invalid_waiting_state');
   if (state.cursor && !['dev', 'ino', 'offset', 'seq'].every(k => Number.isSafeInteger(state.cursor[k]) && state.cursor[k] >= 0)) throw new Error('invalid_cursor');
   return state;
@@ -445,16 +624,46 @@ function syncEvents(state, options) {
   finishCalls(state);
   return result.caughtUp;
 }
+const errorCodes = new Set(['measurement_timeout', 'clock_moved_backwards', 'state_busy', 'invalid_state_json', 'invalid_event_json', 'invalid_event_row', 'event_sequence_gap', 'event_in_future', 'invalid_mode', 'mayor_session_unknown', 'incomplete_archive', 'measurement_failed']);
+function errorFiles(names) {
+  return names.flatMap(name => {
+    const match = /^error-(\d+)-[\da-f]+\.jsonl$/.exec(name);
+    return match ? [{ name, at: Number(match[1]) }] : [];
+  }).sort((a, b) => b.at - a.at || b.name.localeCompare(a.name));
+}
+function pruneErrors(dir, names, now, limit = LIMITS.errors) {
+  const files = errorFiles(names);
+  for (const [i, file] of files.entries()) {
+    if (i >= limit || now - file.at > LIMITS.history) unlinkIfPresent(path.join(dir, file.name));
+  }
+}
+function errorSummary(city, now) {
+  const dir = stateDir(city);
+  const summary = {};
+  let names;
+  try { names = fs.readdirSync(dir); } catch (e) { if (e.code === 'ENOENT') return summary; throw e; }
+  for (const { name, at } of errorFiles(names).slice(0, LIMITS.errors)) {
+    if (now - at > LIMITS.history) continue;
+    const record = json(path.join(dir, name), null);
+    if (!record) continue;
+    const code = errorCodes.has(record.code) ? record.code : 'measurement_failed';
+    const group = summary[code] ||= { count: 0, newest: at };
+    group.count++;
+  }
+  return summary;
+}
 function errorLog(city, now, error) {
   // Error codes only: filesystem errors can contain paths, and parser errors
   // can contain message text. Never write their raw messages.
-  const known = ['measurement_timeout', 'clock_moved_backwards', 'state_busy', 'invalid_state_json', 'invalid_event_json', 'invalid_event_row', 'event_sequence_gap', 'event_in_future', 'invalid_mode'];
-  const code = known.includes(error.message) ? error.message : 'measurement_failed';
+  const code = errorCodes.has(error.message) ? error.message : 'measurement_failed';
   try {
     prepare(city);
     // Unique atomic records also work when the error is lock contention.
-    const file = path.join(stateDir(city), `error-${now}-${crypto.randomBytes(12).toString('hex')}.jsonl`);
+    const dir = stateDir(city);
+    pruneErrors(dir, fs.readdirSync(dir), now, LIMITS.errors - 1);
+    const file = path.join(dir, `error-${now}-${crypto.randomBytes(12).toString('hex')}.jsonl`);
     atomic(file, JSON.stringify({ type: 'error', at: now, code }) + '\n');
+    pruneErrors(dir, fs.readdirSync(dir), now);
   } catch { /* A broken state directory must never prevent a tool call. */ }
 }
 function runHook(input, options = {}) {
@@ -467,16 +676,19 @@ function runHook(input, options = {}) {
     const mode = readMode(o.city);
     if (mode === 'off') return {};
     return withLock(o.city, () => {
-      const state = loadState(o.city);
+      // Compare transaction times in lock order, including duplicate hook
+      // processes that reached the queue in the opposite order to startup.
+      if (options.now === undefined) o.now = Date.now();
+      const state = loadState(o.city, o.now);
       const turnId = input.hook_event_name === 'Stop' ? stopIdentity(input) : undefined;
       let fence = ['Stop', 'PostToolUse'].includes(input.hook_event_name) ? Math.max(state.cursor?.seq || 0, eventFence(o.city)) : undefined;
       const caughtUp = syncEvents(state, o);
       if (!caughtUp && input.hook_event_name === 'PreToolUse') fence = eventFence(o.city);
       const manifest = json(path.join(stateDir(o.city), 'install.json'), { aliases: [] });
       const beforeDecision = structuredClone(state);
-      const result = decide(state, input, { ...o, mode, aliases: manifest.aliases, caughtUp, fence, turnId });
+      const result = decide(state, input, { ...o, mode, aliases: manifest.aliases, ownAlias: manifest.own_alias, caughtUp, fence, turnId });
       checkDeadline(o.start);
-      try { saveState(o.city, state); checkDeadline(o.start); }
+      try { state.hook_ok_at = o.now; saveState(o.city, state); checkDeadline(o.start); }
       catch (error) {
         // A save can itself cross the deadline. Persist the actual fail-open
         // outcome before releasing the lock, including duplicate accounting.
@@ -487,7 +699,7 @@ function runHook(input, options = {}) {
         throw error;
       }
       return result;
-    });
+    }, { ...o, pruneErrors: true });
   } catch (error) { if (o) errorLog(o.city, o.now, error); return {}; }
 }
 function localGC(o, args) {
@@ -519,8 +731,9 @@ function lockedCommits(city) {
   }
   return commits;
 }
-function aliasesFromImports(text, city, env = process.env) {
+function resolveImports(text, city, env) {
   const aliases = [];
+  let ownAlias;
   const commits = lockedCommits(city);
   for (const line of text.trim().split('\n')) {
     const [alias, source] = line.split('\t');
@@ -540,8 +753,12 @@ function aliasesFromImports(text, city, env = process.env) {
     const manifest = fs.readFileSync(path.join(dir, 'pack.toml'), 'utf8');
     const pack = /^\s*\[pack\]\s*(?:#[^\n]*)?\n([\s\S]*?)(?=^\s*\[|$(?![\s\S]))/m.exec(manifest)?.[1].match(/^\s*name\s*=\s*['"]([^'"]+)['"]\s*(?:#.*)?$/m)?.[1];
     if (POLICY.packs.includes(pack)) aliases.push(alias);
+    if (pack === 'reachable' && !ownAlias) ownAlias = alias;
   }
-  return [...new Set(aliases)];
+  return { aliases: [...new Set(aliases)], own_alias: ownAlias || 'reachable' };
+}
+function aliasesFromImports(text, city, env = process.env) {
+  return resolveImports(text, city, env).aliases;
 }
 const shellQuote = s => "'" + s.replace(/'/g, "'\\''") + "'";
 const EVENTS = ['PreToolUse', 'PostToolUse', 'Stop'];
@@ -554,12 +771,22 @@ function settings(city) {
   for (const e of EVENTS) if (value.hooks?.[e] && !Array.isArray(value.hooks[e])) throw new Error('invalid_settings_hooks');
   return { file, value };
 }
-function saveSettings(o, file, before, after) {
-  if (JSON.stringify(before) === JSON.stringify(after)) return;
+function backupSettings(o, file) {
+  const dir = stateDir(o.city);
   const backup = `settings-backup-${new Date(o.now).toISOString().replace(/[:.]/g, '-')}-${crypto.randomBytes(4).toString('hex')}.json`;
-  writeJSON(path.join(stateDir(o.city), backup), before);
+  if (fs.existsSync(file)) {
+    atomic(path.join(dir, backup), fs.readFileSync(file));
+    const older = fs.readdirSync(dir).filter(n => /^settings-backup-.*\.json$/.test(n) && n !== backup)
+      .map(name => ({ name, time: fs.statSync(path.join(dir, name), { bigint: true }).mtimeNs }))
+      .sort((a, b) => a.time === b.time ? b.name.localeCompare(a.name) : a.time < b.time ? 1 : -1);
+    for (const entry of older.slice(LIMITS.backups - 1)) unlinkIfPresent(path.join(dir, entry.name));
+  }
+}
+function saveSettings(o, file, before, after, mode = 0o600) {
+  if (isDeepStrictEqual(before, after)) return;
+  backupSettings(o, file);
   directory(path.dirname(file));
-  writeJSON(file, after);
+  atomic(file, JSON.stringify(after, null, 2) + '\n', mode);
   if (JSON.stringify(json(file)) !== JSON.stringify(after)) throw new Error('settings_readback_failed');
 }
 function install(options = {}) {
@@ -573,7 +800,14 @@ function install(options = {}) {
     const copy = path.join(fs.realpathSync(stateDir(o.city)), 'hook.cjs');
     const code = fs.readFileSync(source);
     const command = `${shellQuote(process.execPath)} ${shellQuote(copy)} --hook --city ${shellQuote(fs.realpathSync(o.city))}`;
-    const aliases = aliasesFromImports(o.imports ?? localGC(o, ['import', 'list']), o.city, o.env);
+    const imports = resolveImports(o.imports ?? localGC(o, ['import', 'list']), o.city, o.env);
+    let snapshot = old?.settings_before;
+    if (!old) {
+      const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+      const bytes = stat ? fs.readFileSync(file) : null;
+      snapshot = { existed: Boolean(stat), dir_existed: fs.existsSync(path.dirname(file)), mode: stat ? stat.mode & 0o7777 : null, sha256: bytes ? hash(bytes) : null };
+      if (bytes) atomic(path.join(stateDir(o.city), 'settings-before-install'), bytes);
+    }
     const entries = {};
     const existed = old?.existed || Object.fromEntries(EVENTS.map(e => [e, Object.hasOwn(value.hooks || {}, e)]));
     value.hooks ||= {};
@@ -591,9 +825,9 @@ function install(options = {}) {
       entries[event] = { matcher, command };
     }
     if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(code)) atomic(copy, code);
-    saveSettings(o, file, original, value);
-    const manifest = { source, sha: hash(code), aliases, entries, existed, hooksExisted: old?.hooksExisted ?? Object.hasOwn(original, 'hooks') };
+    const manifest = { source, sha: hash(code), ...imports, entries, existed, hooksExisted: old?.hooksExisted ?? Object.hasOwn(original, 'hooks'), ...(snapshot ? { settings_before: snapshot } : {}) };
     if (JSON.stringify(old) !== JSON.stringify(manifest)) writeJSON(manifestFile, manifest);
+    saveSettings(o, file, original, value);
     if (!old || !fs.existsSync(path.join(stateDir(o.city), 'mode.json'))) writeJSON(path.join(stateDir(o.city), 'mode.json'), { mode: 'observe' });
     return { installed: true, mode: readMode(o.city) };
   });
@@ -617,11 +851,32 @@ function uninstall(options = {}) {
       if (!value.hooks[event].length && !old.existed[event]) delete value.hooks[event];
     }
     if (value.hooks && !Object.keys(value.hooks).length && !old.hooksExisted) delete value.hooks;
-    saveSettings(o, file, before, value);
+    const snapshot = old.settings_before;
+    const beforeFile = path.join(stateDir(o.city), 'settings-before-install');
+    let restored = false;
+    if (snapshot) {
+      let bytes = null;
+      if (snapshot.existed) {
+        regular(beforeFile); bytes = fs.readFileSync(beforeFile);
+        if (hash(bytes) !== snapshot.sha256) throw new Error('settings_snapshot_changed');
+      }
+      restored = isDeepStrictEqual(value, bytes ? JSON.parse(bytes) : {});
+      if (restored) {
+        backupSettings(o, file);
+        if (bytes) { atomic(file, bytes, snapshot.mode); if (!fs.readFileSync(file).equals(bytes)) throw new Error('settings_readback_failed'); }
+        else {
+          unlinkIfPresent(file);
+          const dir = path.dirname(file);
+          if (!snapshot.dir_existed && fs.existsSync(dir) && !fs.readdirSync(dir).length) fs.rmdirSync(dir);
+        }
+      }
+    }
+    if (!restored) saveSettings(o, file, before, value, fs.existsSync(file) ? fs.statSync(file).mode & 0o7777 : 0o600);
     writeJSON(path.join(stateDir(o.city), 'mode.json'), { mode: 'off' });
+    unlinkIfPresent(path.join(stateDir(o.city), 'hook.cjs'));
     fs.unlinkSync(manifestFile);
-    fs.unlinkSync(path.join(stateDir(o.city), 'hook.cjs'));
-    return { installed: false };
+    unlinkIfPresent(beforeFile);
+    return { installed: false, ...(snapshot ? { layout_restored: restored } : {}) };
   });
 }
 function registration(o) {
@@ -649,6 +904,12 @@ function doctor(options = {}) {
     const fragment = fs.readFileSync(path.join(path.dirname(source), 'template-fragments/reachable.template.md'), 'utf8').split('\n').slice(1, -2).join('\n');
     if (!fragment || !prompt.includes(fragment)) errors.push('prompt_fragment_missing');
   } catch { errors.push('prompt_unreadable'); }
+  const summary = options.errorSummary ?? errorSummary(o.city, o.now);
+  let state;
+  try { state = loadState(o.city, o.now); } catch { /* The error trail survives a damaged state. */ }
+  const latest = Object.entries(summary).sort((a, b) => b[1].newest - a[1].newest)[0];
+  if (latest && (state?.hook_ok_at == null || latest[1].newest > state.hook_ok_at)) errors.push('hook_failing_open ' + latest[0]);
+  if (state?.skipped.count && o.now - state.skipped.last_at <= LIMITS.history) errors.push(`rows_skipped ${state.skipped.count} last_seq ${state.skipped.last_seq}`);
   return errors;
 }
 function command(verb, args, options = {}) {
@@ -658,25 +919,28 @@ function command(verb, args, options = {}) {
   }
   if (verb === 'doctor') return doctor(options);
   const o = normalized(options);
+  const errors = verb === 'status' ? options.errorSummary ?? errorSummary(o.city, o.now) : undefined;
   return withLock(o.city, () => {
+    if (options.now === undefined) o.now = Date.now();
     const dir = stateDir(o.city);
     if (verb === 'mode') {
       if (args.length !== 1 || !['off', 'observe', 'enforce'].includes(args[0])) throw new Error('usage: mode off|observe|enforce');
       writeJSON(path.join(dir, 'mode.json'), { mode: args[0] });
       return { mode: args[0] };
     }
-    const state = loadState(o.city);
+    const state = loadState(o.city, o.now);
     const caughtUp = syncEvents(state, o);
     let result;
     if (verb === 'status') {
       if (args.length && (args.length !== 1 || args[0] !== '--json')) throw new Error('usage: status [--json]');
       const waiting = [...new Map(state.waiting.slice().reverse().map(w => [key(w), w])).values()].sort((a, b) => a.at - b.at).map(w => ({ provider: w.provider, conversation_id: w.conversation_id, seconds: Math.floor((o.now - w.at) / 1000) }));
-      result = { mode: readMode(o.city), ...registration(o), caught_up: caughtUp, waiting, history: state.log };
+      result = { mode: readMode(o.city), ...registration(o), caught_up: caughtUp, waiting, history: state.log,
+        skipped_rows: state.skipped, errors, hook_ok_at: state.hook_ok_at, history_dropped: state.history_dropped };
     } else if (verb === 'exempt' && args.length === 1 && args[0] === '--list') result = state.exemptions;
     else if (verb === 'pass' || verb === 'exempt') {
       if (verb === 'pass' ? args.length !== 1 : args.length !== 2 || !['--on', '--off'].includes(args[1])) throw new Error(`usage: ${verb} PROVIDER/CONVERSATION${verb === 'exempt' ? ' --on|--off' : ''}`);
       if (!caughtUp) throw new Error('event_catchup_incomplete');
-      if (!state.known.includes(args[0])) throw new Error('unknown_conversation');
+      if (!Object.hasOwn(state.known, args[0])) throw new Error('unknown_conversation');
       if (verb === 'pass' || args[1] === '--on') state.waiting = state.waiting.filter(w => key(w) !== args[0]);
       if (verb === 'exempt') state.exemptions = args[1] === '--on' ? [...new Set([...state.exemptions, args[0]])] : state.exemptions.filter(c => c !== args[0]);
       result = { conversation: args[0], [verb === 'pass' ? 'seen' : 'exempt']: verb === 'pass' || args[1] === '--on' };
@@ -688,10 +952,14 @@ function command(verb, args, options = {}) {
 
 module.exports = { LIMITS, POLICY, hash, key, initialState, readEvents, reduceEvents, literalArgv, allowed, refusal, decide, runHook, command, install, uninstall, doctor, aliasesFromImports };
 
+function errorDetail(summary) {
+  return 'error records (14 days): ' + (Object.entries(summary).map(([code, row]) => code + ' ' + row.count).join(', ') || 'none');
+}
 if (require.main === module) {
   const start = performance.now();
   const args = process.argv.slice(2);
   const hook = args[0] === '--hook';
+  let summary;
   if (hook && process.env.GC_AGENT !== (process.env.REACHABLE_AGENT || 'mayor')) process.exit(0);
   try {
     if (Number(process.versions.node.split('.')[0]) < 20) throw new Error('Node.js 20 or newer is required');
@@ -702,12 +970,20 @@ if (require.main === module) {
       if (Object.keys(result).length) process.stdout.write(JSON.stringify(result) + '\n');
     } else {
       const verb = args.shift();
-      const result = command(verb, args);
+      if (verb === 'status' || verb === 'doctor') {
+        const o = normalized({});
+        summary = errorSummary(o.city, o.now);
+      }
+      const result = command(verb, args, { errorSummary: summary });
       if (verb === 'doctor') {
         process.stdout.write(result.length ? result.join('\n') + '\n' : 'reachable: healthy\n');
+        process.stdout.write(errorDetail(summary) + '\n');
         process.exitCode = result.length ? 1 : 0;
+      } else if (verb === 'uninstall' && result.layout_restored === false) {
+        process.stdout.write('Settings changed after install. The layout was not restored.\n');
       } else if (verb === 'status' && !args.includes('--json')) {
         process.stdout.write(`mode: ${result.mode}\nhook registered: ${result.registered}\nhook current: ${result.current}\ncaught up: ${result.caught_up}\n`);
+        for (const field of ['skipped_rows', 'errors', 'hook_ok_at', 'history_dropped']) process.stdout.write(field + ': ' + JSON.stringify(result[field]) + '\n');
         for (const row of result.waiting) process.stdout.write(`${key(row)}: ${row.seconds} seconds\n`);
         for (const row of result.history) process.stdout.write(JSON.stringify(row) + '\n');
       } else process.stdout.write(JSON.stringify(result, null, 2) + '\n');
@@ -716,6 +992,9 @@ if (require.main === module) {
     if (hook) {
       const city = (args[1] === '--city' ? args[2] : '') || process.env.GC_CITY_PATH || process.env.GC_CITY;
       if (city && path.isAbsolute(city)) errorLog(city, Date.now(), error);
-    } else { process.stderr.write(`reachable: ${error.message}\n`); process.exitCode = 1; }
+    } else {
+      if (summary !== undefined) process.stderr.write(errorDetail(summary) + '\n');
+      process.stderr.write(`reachable: ${error.message}\n`); process.exitCode = 1;
+    }
   }
 }

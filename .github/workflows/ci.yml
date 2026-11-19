@@ -10,6 +10,16 @@ permissions:
   contents: read
 
 jobs:
+  reachable:
+    name: Reachable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "20"
+      - run: make test-reachable
+
   check:
     name: Check
     runs-on: ubuntu-latest  # TEMP fallback: Blacksmith runners wedged since 8/21 (jobs queued 8h+); put back blacksmith-32vcpu-ubuntu-2404 once the account-side wedge is fixed

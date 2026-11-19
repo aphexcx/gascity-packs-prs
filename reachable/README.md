@@ -55,6 +55,12 @@ It records the absolute Node executable and city path. It preserves existing
 entries, backs up changed settings, and parses the written settings back.
 An unchanged second install writes no settings backup. Uninstall removes
 only its entries, preserves later additions, backs up its change, and sets off.
+When the remaining settings match their original value, uninstall restores the
+settings bytes and permissions from first install. It also restores an absent
+file and removes an empty directory it created. Later edits retain their value
+and current file mode. Uninstall reports when it cannot restore the layout.
+The three newest dated backups keep the exact bytes. Uninstall removes the
+separate first-install copy.
 It never edits the user's settings or GC's generated `.gc/settings.json`.
 GC projects the city's settings when it builds a session's runtime settings;
 existing sessions may need their normal settings refresh or replacement.
@@ -104,9 +110,9 @@ Before a work tool call, enforce mode refuses when someone has waited more
 than 30 seconds. It names the conversations, oldest first, and asks for one
 line saying what is happening and when the person will hear more. It never
 refuses a literal channel-pack command, this pack's own commands, `gc handoff`,
-or Claude's own read-only tools. Import aliases are resolved at install; run
-install again after renaming an import. A shell pipeline, expansion, redirect,
-or second command is work, even if the first command talks to a person.
+or Claude's own read-only tools. Run install again after renaming an import.
+A pipeline, command substitution, redirect or additional work command counts
+as work even if the first command talks to a person.
 
 Each waiting message can cause at most three refusals. After the third the
 hook lets it go and records `let_go`. Observe mode applies the same accounting
@@ -114,6 +120,10 @@ with `would_refuse` records. The hook fails open on measurement errors, corrupt
 state, a backwards clock, state contention, or a measurement over two seconds.
 It suppresses refusals until initial event-log catch-up completes. The cursor
 then reads only appended bytes; a partial final row waits for the next call.
+The hook skips and counts an unusable complete row. A damaged outbound row
+releases earlier waits it could have answered. A row whose type is unreadable
+releases earlier waits across conversations. A subsequent valid inbound can
+still start a wait. An unexplained sequence gap fails the measurement open.
 Archives replay in bounded decoded slices, including the window before a
 rotated archive is published. Stop records a sequence fence so unread older
 messages stay seen. The registered five-second harness timeout leaves cleanup
@@ -132,6 +142,13 @@ interrupt a tool that is already running.
 
 ## Inspect and test
 
+A quoted reply can contain punctuation, multiple lines and ordinary dollar
+amounts or variables. One `cd DIR &&` may precede a talk command. A Write can
+prepare a reply body of up to 64 KiB under the system temporary directory or
+`/tmp`. The refusal ends with “Refused because” and a short explanation. A
+refused attempt beginning with a talk alias or handoff leaves the message's
+refusal count intact. The suggested pass command uses this pack's import alias.
+
 `gc reachable status --json` reports mode, registered/current hook state,
 catch-up progress, waiting provider/conversation IDs and seconds, and the last
 14 days of refusals, let-go cases, and long calls. Plain status prints the
@@ -145,8 +162,27 @@ the atomic cursor/waiting/exemption transaction in `state.json`, a derived
 using a temporary file and rename. Message text and actor names are discarded;
 session and tool-use identities are hashed. Settings backups remain here too.
 
+Status shows `skipped_rows` with the count, sequence, reason and time of the
+last skip. It also shows error counts and newest times by code, `hook_ok_at`
+for the last successful hook save, and `history_dropped` for log entries
+evicted by the count limit. Doctor reports recent skips and
+`hook_failing_open` when the latest error follows the last successful save.
+It prints the error counts even when the state file cannot be read.
+
+Error records retain the newest 100 within 14 days. Duplicate receipts expire
+after 10 minutes and retain at most 1,000 entries. Pending tool calls expire
+after 24 hours and retain at most 1,000. The 14-day log retains up to 2,000
+entries. Session identities and known conversations each retain the newest
+1,024 within 14 days. Hand-set exemptions persist. Duplicate hook processes
+wait for the earlier ticket until 250 ms before the deadline. Lock files more
+than ten seconds from the current clock expire.
+
 From `reachable/test`, run `node --test --test-reporter=tap`. The fixtures use
 invented IDs and temporary cities, never a live city's event log. The suite
-includes a 256 MiB log, incremental and complete-process p95 measurements,
-rotation, duplicate hooks, installation and removal. From the repository root,
-`make test` includes this suite and the repository's Python suites.
+measures complete-process CPU time by alternating 20 hooks with 20 bare Node
+processes. Their median CPU difference must stay below 100 ms. An injected
+150 ms of work verifies the check detects a regression. Wall-clock p95 is
+reported for both groups. The default suite also measures warm decisions with
+full state collections. Use `make test-reachable-perf` for the separate 256 MiB
+wall-clock benchmark on a quiet machine. `make test-reachable` runs the default
+suite locally and in CI. The root `make test` also runs the Python suites.

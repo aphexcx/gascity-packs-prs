@@ -31,6 +31,7 @@ test('18: fragment is byte for byte the specified standing rule', () => {
 test('19: README documents both prompt options, modes, limitations and verification', () => {
   const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
   for (const expected of ['inject_fragments_append', 'append_fragments', 'mention-only', '24 hours', 'observe', 'enforce', 'fails open', 'node --test']) assert.ok(readme.includes(expected), expected);
+  for (const expected of ['reply body', 'Refused because', 'skipped_rows', 'hook_failing_open', '1,024', 'settings bytes', 'CPU time']) assert.ok(readme.includes(expected), expected);
 });
 
 module.exports = { rule };

@@ -40,9 +40,11 @@ test('13: rotation recovers an unread archived row without repeating the cursor 
   assert.deepEqual(readEvents(f.city, first.cursor).rows.map(r => r.seq), [2, 3]);
 });
 
-test('11: malformed rows and sequence gaps fail measurement', t => {
+test('11: a malformed row is counted and an unexplained sequence gap fails measurement', t => {
   const f = fixture(t); fs.writeFileSync(f.log, 'invalid\n');
-  assert.throws(() => readEvents(f.city, null));
+  const state = initialState();
+  assert.doesNotThrow(() => reduceEvents(state, readEvents(f.city, null).rows, { now: NOW, agent: 'mayor' }));
+  assert.equal(state.skipped.count, 1);
   f.write([inbound(1)]); const first = readEvents(f.city, null);
   fs.appendFileSync(f.log, JSON.stringify(inbound(3)) + '\n');
   assert.throws(() => readEvents(f.city, first.cursor));
