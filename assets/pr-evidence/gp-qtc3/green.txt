@@ -1,0 +1,17 @@
+Implementation f00ccd433641cb13ca9b345378d027f165e8fcdf. Node v24.21.0. GC_BIN unset.
+cd reachable/test && node --test --test-reporter=tap
+Exit 0. tests 187, pass 186, fail 0, skipped 1.
+all collection caps, 100 warm decisions: p95 CPU=17.81 ms
+extra work=false, median CPU delta=10.40 ms, wall p95 hook=56.37 ms bare=40.83 ms
+extra work=true, median CPU delta=160.73 ms, wall p95 hook=197.60 ms bare=43.55 ms
+
+make test-reachable
+Run 1 on the final implementation: exit 0. tests 187, pass 186, fail 0, skipped 1.
+The complete six-run results for both implementations, including nonzero exits, are in load.txt.
+
+verify -C reachable/test node --test --test-skip-pattern '^review 4: archive replay advances in bounded chunks without dropping rows$'
+Exit 0. 186 tests, 185 passed, 0 failed, 1 opt-in test skipped. The command excludes the archive replay case.
+The full default suite above includes that case.
+
+At the initial implementation a full-suite run also observed the installed outer-deadline case return a null child exit status. It passed in isolation.
+During review fixes, verification caught three cursor tests losing the first new active row on rotation. The sequence check on a matching boundary fixed all three.
