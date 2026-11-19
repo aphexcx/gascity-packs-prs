@@ -247,10 +247,10 @@ REVIEW_RULES = (
     # three, in a round that does not stop the PR, only a reproduction in the
     # round's own changes buys a round, and a second model's answer is not
     # one; a finding shown any other way is FIXED, with the head that fixed
-    # it, once it no longer happens at the reviewed head, and while it still
-    # happens there takes the outcome or PRECONDITION it can have without a
-    # fix, or else is OPEN with its proof and grade; never NOT SHOWN, which
-    # is for what nobody showed.
+    # it, once it no longer happens at the reviewed head, and otherwise takes
+    # the outcome or PRECONDITION it can have without a fix, or else is OPEN
+    # with its proof and grade; never NOT SHOWN, which is for what nobody
+    # showed.
     "2. Stop at round three.",
     "From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding "
     "of an earlier round of this PR, shown or not, stops the PR: fix nothing more in that "
@@ -272,7 +272,7 @@ REVIEW_RULES = (
     "any other way "
     "(an earlier head's fault that a failing test proves, say) buys none by itself: once it "
     "no longer happens at the reviewed head (its proof no longer fails there) it is FIXED, "
-    "with the head that fixed it, and while it still happens there it takes the outcome or "
+    "with the head that fixed it, and otherwise it takes the outcome or "
     "PRECONDITION it can have without a fix, or else is listed as OPEN with what shows it and "
     "its grade, for the mayor; list the rest, which nobody showed, as NOT SHOWN with their "
     "file and line.",
@@ -392,7 +392,7 @@ def test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_show
     and head two fixes it; in round four, which no repeated family stops, a
     reviewer sends head one's failing test, and it passes at head four. The
     finding is FIXED, with the head that fixed it, and OPEN, which asks the
-    mayor for an outcome before any merge, is only for what still happens.
+    mayor for an outcome before any merge, is for every other case.
     The same clause gives a fault that still fails only under a provider
     found nowhere the changed code runs its PRECONDITION before any OPEN.
     Both words turn on one fact, whether the fault still happens at the
@@ -423,9 +423,9 @@ def test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_show
     assert 0 <= fixed < opened, clause
     # Still failing, but only where the changed code never runs: rule 4's
     # PRECONDITION, or any outcome it can have without a fix, comes first;
-    # OPEN is what is left of what still happens there, the same fact's
+    # OPEN is what is left of everything not shown gone, the same fact's
     # other side.
-    still = clause.find("while it still happens there it takes the outcome or PRECONDITION it "
+    still = clause.find("otherwise it takes the outcome or PRECONDITION it "
                         "can have without a fix, or else")
     assert fixed < still < opened, clause
 
@@ -538,3 +538,23 @@ def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
     ):
         assert clause in words, f"README Standing notes lacks: {clause!r}"
     assert words.index(CALL_LINE) < words.index(f"never as `{PLAIN_CALL}`")
+
+
+def test_review_rules_keep_open_a_shown_finding_whose_state_at_the_reviewed_head_nobody_can_tell() -> None:
+    """The gate's sequence: head one shows a fault, head two changes the
+    code, and in a later round whose changes are docs only a reviewer sends
+    head one's proof; nobody can tell whether the fault still happens at the
+    reviewed head. It was shown, so it is not NOT SHOWN; it is not shown
+    gone, so it is not FIXED; the branch that ends in OPEN, with what shows
+    it and its grade, must reach it, so a proven blocker keeps its ruling
+    before any merge."""
+    sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+    governing = [sentence for sentence in sentences
+                 if sentence.startswith("Past round three, in a round that does not stop the PR,")]
+    assert len(governing) == 1
+    clause = governing[0].split("a finding shown any other way", 1)[1]
+    clause = clause.split("; list the rest, which nobody showed", 1)[0]
+    after_fixed = clause.split("FIXED, with the head that fixed it, and ", 1)[1]
+    # The branch that leads to OPEN is the whole rest, not only what is
+    # known to still happen.
+    assert after_fixed.startswith("otherwise"), after_fixed
