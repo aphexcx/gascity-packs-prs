@@ -88,21 +88,22 @@ for still give each review its own number.
    SAME FAMILY as a blocking finding of an earlier round of this PR, shown or
    not, stops the PR: fix nothing more in that round, list it in your handoff
    as SAME FAMILY with the round and the earlier finding it repeats, list
-   every other finding of that round as OPEN beside it, and hand the PR to the
-   mayor as stopped, not done, for one decision: a check for the class built
-   under its own tests, or a merge with the class filed as a bead. That
-   decision rules on the repeated family alone: every finding listed OPEN
-   beside it keeps its own grade and needs its own outcome, each blocking one
-   before any merge. THE SAME FAMILY means the finding names the same class as
-   the earlier one, and the earlier one's class-level fix, written in one
-   sentence, would close it too; when you cannot tell, it is the same family
-   and you stop. Past round three, only a finding reproduced in that round's
-   own changes (a failing test, or shown reachable where the changed code
-   runs; a second model's answer alone is not enough) buys another round; a
-   finding shown any other way (an earlier head's fault that a failing test
-   proves, say) buys none by itself and is listed as OPEN with what shows it
-   and its grade, for the mayor; list the rest, which nobody showed, as NOT
-   SHOWN with their file and line.
+   every other finding of that round beside it as OPEN (as NOT SHOWN when
+   nobody showed it), and hand the PR to the mayor as stopped, not done, for
+   one decision: a check for the class built under its own tests, or a merge
+   with the class filed as a bead. That decision rules on the repeated family
+   alone: every finding you list as OPEN keeps its own grade and needs its own
+   outcome before any merge, from a later head or the mayor's ruling on that
+   one finding, a minor's follow-up counting as its outcome. THE SAME FAMILY
+   means the finding names the same class as the earlier one, and the earlier
+   one's class-level fix, written in one sentence, would close it too; when
+   you cannot tell, it is the same family and you stop. Past round three, only
+   a finding reproduced in that round's own changes (a failing test, or shown
+   reachable where the changed code runs; a second model's answer alone is not
+   enough) buys another round; a finding shown any other way (an earlier
+   head's fault that a failing test proves, say) buys none by itself and is
+   listed as OPEN with what shows it and its grade, for the mayor; list the
+   rest, which nobody showed, as NOT SHOWN with their file and line.
 3. Let no lone reviewer force a round. Before one reviewer's finding costs a
    round, have it shown: write a failing test that shows it, or have a second
    model check that one finding and answer real or not with the line that
