@@ -75,12 +75,18 @@ def pr_body_lines_note() -> str:
 
 
 def review_rules_note() -> str:
-    """THE REVIEW RULES whole, its marker included, up to the next note or the
-    end of the define, on one line; template comments never count."""
+    """THE REVIEW RULES whole, from its heading to the end of the define, on
+    one line: text between the heading and the marker, or after the last
+    rule, reaches a worker as surely as a rule does. The note is the define's
+    last; a note added after it lands inside this text until the boundary
+    moves with it. Template comments never count."""
     text = renderable(fragment())
+    heading = "\n## Review rules"
+    assert text.count(heading) == 1
     assert text.count("THE REVIEW RULES") == 1
-    body = text[text.index("THE REVIEW RULES"):].split("\n## ", 1)[0]
-    return flat(body.split("{{- end }}", 1)[0])
+    body = text.split(heading, 1)[1]
+    assert body.count("{{- end }}") == 1
+    return flat(heading + body.split("{{- end }}", 1)[0])
 
 
 def test_fragment_defines_exactly_one_template() -> None:
@@ -212,6 +218,8 @@ def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
 # exactly these parts: a sentence added anywhere fails, even one that names
 # no rule's subject, and so does a clause hidden in a template comment.
 REVIEW_RULES = (
+    # The heading: text between it and the marker reaches a worker too.
+    "## Review rules",
     # When the rules apply (on sending a PR to review as well as on its
     # findings), why, and what a round is for them, apart from the numbers
     # the role text's review records give each review.
@@ -229,9 +237,13 @@ REVIEW_RULES = (
     "your handoff names the class, its cases and the test.",
     "A case fixed alone can bring the same finding back on another line in the next round.",
     # 2. A repeated family stops the PR from round three, shown or not, with
-    # the round's other findings left OPEN for the mayor's one decision; what
-    # THE SAME FAMILY is; past round three only a reproduction buys a round,
-    # and a second model's answer is not one.
+    # the round's other findings left OPEN for the mayor's one decision; that
+    # decision rules on the family alone, and every OPEN finding keeps its
+    # own grade and is owed its own outcome, a blocking one before any merge;
+    # what THE SAME FAMILY is; past round three only a reproduction in the
+    # round's own changes buys a round, and a second model's answer is not
+    # one; a finding shown any other way is OPEN with its proof and grade,
+    # never NOT SHOWN, which is for what nobody showed.
     "2. Stop at round three.",
     "From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding "
     "of an earlier round of this PR, shown or not, stops the PR: fix nothing more in that "
@@ -239,12 +251,17 @@ REVIEW_RULES = (
     "repeats, list every other finding of that round as OPEN beside it, and hand the PR to "
     "the mayor as stopped, not done, for one decision: a check for the class built under its "
     "own tests, or a merge with the class filed as a bead.",
+    "That decision rules on the repeated family alone: every finding listed OPEN beside it "
+    "keeps its own grade and needs its own outcome, each blocking one before any merge.",
     "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
     "earlier one's class-level fix, written in one sentence, would close it too; when you "
     "cannot tell, it is the same family and you stop.",
     "Past round three, only a finding reproduced in that round's own changes (a failing "
     "test, or shown reachable where the changed code runs; a second model's answer alone is "
-    "not enough) buys another round; list the rest as NOT SHOWN with their file and line.",
+    "not enough) buys another round; a finding shown any other way (an earlier head's fault "
+    "that a failing test proves, say) buys none by itself and is listed as OPEN with what "
+    "shows it and its grade, for the mayor; list the rest, which nobody showed, as NOT SHOWN "
+    "with their file and line.",
     # 3. No lone reviewer forces a round: a failing test, or a second model's
     # check of that one finding with the line; else NOT SHOWN, never a blind fix.
     "3. Let no lone reviewer force a round.",
@@ -253,11 +270,13 @@ REVIEW_RULES = (
     "line that shows it.",
     "A finding shown by neither after an honest try is listed as NOT SHOWN with what you "
     "tried, and is not fixed blind: one model's reading is a suspicion, not a fault.",
-    # 4. Minors never block; every finding gets one of the four outcomes or
-    # the listing a rule gave it; PRECONDITION only for what no place running
-    # the changed code has.
+    # 4. Minors never block; a real, unintended minor left for later is OPEN
+    # with its follow-up; every finding gets one of the four outcomes or the
+    # listing a rule gave it; PRECONDITION only for what no place running the
+    # changed code has.
     "4. Never let a minor finding block, and give every finding an outcome.",
-    "Fix a minor in the same head when it is cheap, and list it otherwise.",
+    "Fix a minor in the same head when it is cheap; a real, unintended minor you leave "
+    "unfixed is listed as OPEN with its follow-up's reference.",
     "Your handoff carries one line per finding of every round with its outcome: FIXED (with "
     "the commit), WRONG (with the line that shows the reviewer was mistaken), INTENDED, or "
     "DOES NOT MATTER, or else the listing these rules give it (SAME FAMILY, OPEN, NOT SHOWN "
@@ -299,6 +318,33 @@ def test_review_rules_give_every_finding_a_word_for_the_handoff() -> None:
     # The four outcomes, each once, so one list carries them.
     for outcome in ("FIXED", "WRONG", "INTENDED", "DOES NOT MATTER"):
         assert note.count(outcome) == 1, outcome
+
+
+def test_review_rules_list_as_not_shown_only_what_nobody_showed() -> None:
+    """NOT SHOWN states the evidence, never which round or head brought the
+    fault in: each clause that gives it names its findings as ones nobody
+    showed, so a finding a failing test proves is never listed NOT SHOWN,
+    whichever head of the PR it came from."""
+    clauses = re.split(r"(?<=[.;])\s+", review_rules_note())
+    giving = [clause for clause in clauses if "as NOT SHOWN" in clause]
+    assert giving
+    for clause in giving:
+        assert re.search(r"\b(?:shown by neither|nobody showed)\b", clause), clause
+
+
+def test_review_rules_let_a_decision_on_a_family_dispose_of_that_family_alone() -> None:
+    """Wherever the rules offer the mayor a merge, the sentence that follows
+    keeps every finding listed OPEN beside the family at its own grade, each
+    blocking one owed its own outcome before any merge: a ruling on one
+    repeated finding never waives the round's other blockers."""
+    sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+    offers = [index for index, sentence in enumerate(sentences) if re.search(r"\bor a merge\b", sentence)]
+    assert offers
+    for index in offers:
+        limit = sentences[index + 1]
+        for clause in ("alone", "every finding listed OPEN", "keeps its own grade",
+                       "each blocking one before any merge"):
+            assert clause in limit, (sentences[index], clause)
 
 
 def test_review_rules_judge_reach_where_the_changed_code_runs() -> None:
