@@ -86,19 +86,20 @@ for still give each review its own number.
    on another line in the next round.
 2. Stop at round three. From review round three on, a blocking finding of THE
    SAME FAMILY as a blocking finding of an earlier round of this PR, shown or
-   not, stops the PR: fix nothing more in that round, list it in your handoff
-   as SAME FAMILY with the round and the earlier finding it repeats, list
-   every other finding of that round beside it as OPEN (as NOT SHOWN when
-   nobody showed it), and hand the PR to the mayor as stopped, not done, for
-   one decision: a check for the class built under its own tests, or a merge
-   with the class filed as a bead. That decision rules on the repeated family
-   alone: every finding you list as OPEN keeps its own grade and needs its own
-   outcome before any merge, from a later head or the mayor's ruling on that
-   one finding, a minor's follow-up counting as its outcome. THE SAME FAMILY
-   means the finding names the same class as the earlier one, and the earlier
-   one's class-level fix, written in one sentence, would close it too; when
-   you cannot tell, it is the same family and you stop. Past round three, only
-   a finding reproduced in that round's own changes (a failing test, or shown
+   not, stops the PR: fix nothing more in that round, list each such finding
+   in your handoff as SAME FAMILY with the round and the earlier finding it
+   repeats, list every other finding of that round beside them as OPEN with
+   what shows it or what would settle it, and hand the PR to the mayor as
+   stopped, not done, for one decision on each repeated family: a check for
+   the class built under its own tests, or a merge with the class filed as a
+   bead. Each decision rules on its own family alone: every finding you list
+   as OPEN keeps its own grade and needs its own outcome before any merge,
+   from a later head or the mayor's ruling on that one finding, a minor's
+   follow-up counting as its outcome. THE SAME FAMILY means the finding names
+   the same class as the earlier one, and the earlier one's class-level fix,
+   written in one sentence, would close it too; when you cannot tell, it is
+   the same family and you stop. Past round three, short of a stop, only a
+   finding reproduced in that round's own changes (a failing test, or shown
    reachable where the changed code runs; a second model's answer alone is not
    enough) buys another round; a finding shown any other way (an earlier
    head's fault that a failing test proves, say) buys none by itself and is
