@@ -1,5 +1,5 @@
 """Static checks on the `gc-standing-notes` template fragment (gp-rj21; the
-PR body lines, gp-hdn2).
+PR body lines, gp-hdn2; the review rules, gp-kiis).
 
 A city opts in with one line after its `gc-role-worker` call; the rendered
 order and the byte-identical render without the line are proven against a
@@ -28,7 +28,11 @@ PLAIN_CALL = '{{ template "gc-standing-notes" . }}'
 # below refuses it: it would eat the whitespace next to it.
 TEMPLATE_COMMENT = re.compile(r"\{\{/\*.*?\*/\}\}", re.S)
 # Each note's heading, in the fragment's order, with its bead of record.
-NOTES = (("## Deepening note", "gp-gsww"), ("## PR body lines", "gp-hdn2"))
+NOTES = (
+    ("## Deepening note", "gp-gsww"),
+    ("## PR body lines", "gp-hdn2"),
+    ("## Review rules", "gp-kiis"),
+)
 # The PR body lines' labels, in the order the body carries them, and the
 # three lines as the note shows them, each label with its own instruction:
 # text swapped between two labels fails.
@@ -68,6 +72,10 @@ def deepening_note() -> str:
 
 def pr_body_lines_note() -> str:
     return note("THE PR BODY LINES")
+
+
+def review_rules_note() -> str:
+    return note("THE REVIEW RULES")
 
 
 def test_fragment_defines_exactly_one_template() -> None:
@@ -194,6 +202,77 @@ def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
     assert note.count("On the revert line") == 1
 
 
+# The six review rules, each by the words that open it, in the order the note
+# gives them.
+REVIEW_RULE_HEADS = (
+    "1. Fix the whole class.",
+    "2. Stop at round three.",
+    "3. Let no lone reviewer force a round.",
+    "4. Never let a minor finding block, and give every finding an outcome.",
+    "5. Let review depth follow risk.",
+    "6. Take the merge list from its owner.",
+)
+
+
+def test_review_rules_note_carries_every_rule_of_its_bead() -> None:
+    note = review_rules_note()
+    for clause in (
+        "Whenever a review returns findings on your PR, act on them by these rules",
+        # The class fix and its one test.
+        "1. Fix the whole class. When a review finds a blocking fault, name its class "
+        "(the general fault, not the one case), fix every case of that class in your diff, "
+        "and add one test at the class level; your handoff names the class, its cases and "
+        "the test.",
+        # The family stop at round three, what THE SAME FAMILY is, and what
+        # alone buys a round past it.
+        "2. Stop at round three. From review round three on, a blocking finding of THE SAME "
+        "FAMILY as a blocking finding of an earlier round of this PR is not fixed in that "
+        "round: stop, list it in your handoff with the round and the earlier finding it "
+        "repeats, and leave the mayor one decision, either a check for the class built under "
+        "its own tests or a merge with the class filed as a bead.",
+        "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
+        "earlier one's class-level fix, written in one sentence, would close it too; when you "
+        "cannot tell, it is the same family and you stop.",
+        "Past round three, only a finding reproduced in that round's own changes (a failing "
+        "test, or shown reachable in what your city runs) buys another round; list the rest "
+        "as NOT SHOWN with their file and line.",
+        # The reproduction or the second model's check.
+        "3. Let no lone reviewer force a round. Before one reviewer's finding costs a round, "
+        "have it shown: write a failing test that shows it, or have a second model check that "
+        "one finding and answer real or not with the line that shows it.",
+        "A finding you cannot show either way after an honest try is listed as NOT SHOWN with "
+        "what you tried, and is not fixed blind",
+        # Minors never block; every finding gets one of the four outcomes; a
+        # finding outside what the city runs is listed, not built for.
+        "4. Never let a minor finding block, and give every finding an outcome. Fix a minor "
+        "in the same head when it is cheap, and list it otherwise.",
+        "Your handoff carries one line per finding of every round, each with one of four "
+        "outcomes: FIXED (with the commit), WRONG (with the line that shows the reviewer was "
+        "mistaken), INTENDED, or DOES NOT MATTER.",
+        "A finding that needs a runtime, a provider or a right your city does not run is "
+        "listed as PRECONDITION with the precondition in one sentence; it does not block, and "
+        "you do not build for it.",
+        # Depth is the city's: the worker follows the review class the bead names.
+        "Your city or its mayor sets the depth: follow the review class the bead names, and "
+        "where it asks for more than these rules, it wins.",
+        # The path list is the city's: the worker reads it, never invents it.
+        "6. Take the merge list from its owner. Which paths need a person's word before a "
+        "merge is your city's written list, kept by its founder or owner: read it for the "
+        "risk line of the PR body lines above, and never invent one.",
+        "Until that list exists, your city's merge rule stands.",
+    ):
+        assert clause in note, f"THE REVIEW RULES lacks: {clause!r}"
+    positions = [note.index(head) for head in REVIEW_RULE_HEADS]
+    assert positions == sorted(positions)
+    # Each outcome word once, so one list carries all four; the listing word
+    # for a finding outside what the city runs, once.
+    for word in ("FIXED", "WRONG", "INTENDED", "DOES NOT MATTER", "PRECONDITION"):
+        assert note.count(word) == 1, word
+    # The only digits are the six rule numbers: a count measured in one city
+    # is that city's evidence, not a rule.
+    assert re.findall(r"\d+", note) == ["1", "2", "3", "4", "5", "6"]
+
+
 def test_pr_body_lines_placement_leaves_room_for_the_closing_trailers() -> None:
     """Every place that says where the three lines go says it one way: after
     every other section, with the body's closing trailer or sign-off lines
@@ -283,6 +362,7 @@ def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
         "Its second note is THE PR BODY LINES",
         "`Testing:`, `Risk:` and `How to revert:`, after every other section, "
         "with only trailer or sign-off lines below them",
+        "Its third note is THE REVIEW RULES",
     ):
         assert clause in words, f"README Standing notes lacks: {clause!r}"
     assert words.index(CALL_LINE) < words.index(f"never as `{PLAIN_CALL}`")
