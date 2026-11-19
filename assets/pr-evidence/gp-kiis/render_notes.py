@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 repo = Path(sys.argv[1]).resolve()
-gc_bin = Path(sys.argv[2])
+# Resolved here, before any subprocess runs in the fixture city: a path
+# relative to the caller (./build/gc) or a name on PATH (gc) still finds it.
+gc_bin = Path(shutil.which(sys.argv[2]) or sys.argv[2]).expanduser().resolve()
 spec = importlib.util.spec_from_file_location(
     "integration", repo / "tests" / "test_gc_role_prompt_integration.py"
 )
