@@ -1,6 +1,6 @@
 # Reachable verification
 
-The dispatch base was `7876f9768281dc85036160c9dddd71173401b5e3`. The accepted six-run timing series used `567f0c781599163726ff119dcba9d683bcddcb67`. The verified implementation head is `f00ccd433641cb13ca9b345378d027f165e8fcdf`. All hook, command and settings examples used temporary cities.
+The dispatch base was `7876f9768281dc85036160c9dddd71173401b5e3`. The accepted six-run timing series used `567f0c781599163726ff119dcba9d683bcddcb67`. The verified implementation head is `b44e04a9200662f0ea8bef1e948d5cd1ba52005f`. All hook, command and settings examples used temporary cities.
 
 | Item | Result | Coverage |
 | --- | --- | --- |
@@ -23,7 +23,7 @@ All six CPU checks passed. All six injected regressions exceeded the 100 ms budg
 
 ## Self-review
 
-The fixed implementation also completed six CPU runs, all starting above load 20. Four complete suites passed. The two nonzero exits were the archive timeout and an existing outer-deadline test observing a child with a null exit status. Four isolated runs each of the outer-deadline case against the dispatch and final modules returned exit zero. A final unfiltered suite passed 186 tests, with the opt-in benchmark skipped.
+The implementation immediately after self-review completed six CPU runs, all starting above load 20. Four complete suites passed. The two nonzero exits were the archive timeout and an existing outer-deadline test observing a child with a null exit status. Four isolated runs each of the outer-deadline case against the dispatch and review-fixed modules returned exit zero.
 
 The read-only Codex review of `567f0c781599163726ff119dcba9d683bcddcb67` reported 1 P1, 11 P2 and 2 P3 findings. All were fixed in `f00ccd433641cb13ca9b345378d027f165e8fcdf`. The regression fixtures in `retention-review.test.cjs` exercise the following cases.
 
@@ -43,3 +43,9 @@ The read-only Codex review of `567f0c781599163726ff119dcba9d683bcddcb67` reporte
 | P2 | Apply the history cap after replay completes deferred long calls. |
 | P3 | Preserve the complete row-size budget when reusing a consumed archive prefix. |
 | P3 | Recreate the original settings directory when restoring its file requires it. |
+
+## Hosted verification
+
+The first Linux run exposed three rotation failures. A replacement file can reuse an inode and have the same trailing bytes even when its last consumed sequence differs. A deterministic in-place rewrite reproduced the missing rows locally. The final fix checks the sequence before reusing the cursor and retains the fast path for an unchanged empty file.
+
+The Linux Reachable job passed on the fixed implementation. All six default-suite runs on that implementation exited zero at starting loads of 27.58–37.40. Each passed 187 tests and skipped the opt-in benchmark. The separate 256 MiB benchmark also passed. [Hosted Reachable job](https://github.com/aphexcx/gascity-packs-prs/actions/runs/44478391821/job/135404382880)

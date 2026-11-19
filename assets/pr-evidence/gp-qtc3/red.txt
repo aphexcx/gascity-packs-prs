@@ -84,3 +84,5 @@ messages=720, hook events=40000, receipts=40000, cap=1000. The dispatch hook fai
 The full-state CPU fixture also fails its cap assertion against the dispatch module.
 The later rotation regression first failed on the implementation with 2 skipped rows where 1 was expected.
 At the initial implementation commit the 11 class-level self-review fixtures failed by assertion.
+
+The first Linux Reachable job failed three existing rotation and archive-backpressure tests. The added fixture "rotation: a reused inode and matching trailing bytes cannot conceal a new sequence" failed its assertion on f00ccd433641cb13ca9b345378d027f165e8fcdf. On b44e04a9200662f0ea8bef1e948d5cd1ba52005f the regression and all three hosted cases passed.

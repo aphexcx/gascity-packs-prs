@@ -15,3 +15,10 @@ The full default suite above includes that case.
 
 At the initial implementation a full-suite run also observed the installed outer-deadline case return a null child exit status. It passed in isolation.
 During review fixes, verification caught three cursor tests losing the first new active row on rotation. The sequence check on a matching boundary fixed all three.
+
+Final implementation b44e04a9200662f0ea8bef1e948d5cd1ba52005f, Node v24.21.0, GC_BIN unset.
+cd reachable/test && node --test --test-reporter=tap: 188 tests, 187 passed, 0 failed, 1 skipped, exit 0.
+make test-reachable: six complete suites, each 188 tests, 187 passed, 0 failed, 1 skipped, exit 0. See load.txt.
+Repository Verify command above: 187 tests, 186 passed, 0 failed, 1 skipped, exit 0.
+make test-reachable-perf: 1 passed, exit 0. Warm-decision p95 2.462 ms, complete-process p95 60.375 ms.
+The hosted Linux Reachable job on the cursor fix also passed with Node 20.
