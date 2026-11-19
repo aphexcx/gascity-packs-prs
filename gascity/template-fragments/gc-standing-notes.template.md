@@ -104,9 +104,11 @@ for still give each review its own number.
    own changes (a failing test, or shown reachable where the changed code
    runs; a second model's answer alone is not enough) buys another round; a
    finding shown any other way (an earlier head's fault that a failing test
-   proves, say) buys none by itself and is listed as OPEN with what shows it
-   and its grade, for the mayor; list the rest, which nobody showed, as NOT
-   SHOWN with their file and line.
+   proves, say) buys none by itself: once its proof no longer fails at the
+   reviewed head it is FIXED, with the head that fixed it, and while it still
+   happens it takes the outcome or PRECONDITION it can have without a fix, or
+   else is listed as OPEN with what shows it and its grade, for the mayor;
+   list the rest, which nobody showed, as NOT SHOWN with their file and line.
 3. Let no lone reviewer force a round. Before one reviewer's finding costs a
    round, have it shown: write a failing test that shows it, or have a second
    model check that one finding and answer real or not with the line that
