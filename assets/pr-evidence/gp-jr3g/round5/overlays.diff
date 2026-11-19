@@ -1,0 +1,92 @@
+# red-pr-last
+--- a/gchat/adapter/internal/catchup/catchup.go
++++ b/gchat/adapter/internal/catchup/catchup.go
+@@ -266,6 +265,0 @@
+-	if s.FirstRead != nil && !s.FirstRead.Complete {
+-		p.MessageLower = s.FirstRead.Lower
+-		if p.MessageLower.Before(floor) {
+-			p.MessageLower = floor
+-		}
+-	}
+# red-main-last
+--- a/gchat/adapter/internal/catchup/catchup.go
++++ b/gchat/adapter/internal/catchup/catchup.go
+@@ -268,3 +267,0 @@
+-		if p.MessageLower.Before(floor) {
+-			p.MessageLower = floor
+-		}
+# red-app-fixture
+--- a/gchat/adapter/internal/app/keyholder_test.go
++++ b/gchat/adapter/internal/app/keyholder_test.go
+@@ -323,3 +322,0 @@
+-	// A box whose history begins before the join's margin, as a running box's does.
+-	window := "1h"
+-	f.cfg.Settings.FirstStartHistory = &window
+# red-listed
+--- a/gchat/adapter/internal/catchup/catchup.go
++++ b/gchat/adapter/internal/catchup/catchup.go
+@@ -161,6 +160,0 @@
+-		if before.SpacesListedAt.After(b.at) {
+-			b.at = before.SpacesListedAt
+-		}
+-		if before.HistoryFloor.After(b.at) {
+-			b = bound{before.HistoryFloor, "history_floor"}
+-		}
+@@ -194 +187,0 @@
+-				inbound.RetireSpaceHistory(l, r.opts.Config, space.Name, r.opts.Logger)
+# red-retire
+--- a/gchat/adapter/internal/catchup/catchup.go
++++ b/gchat/adapter/internal/catchup/catchup.go
+@@ -194 +193,0 @@
+-				inbound.RetireSpaceHistory(l, r.opts.Config, space.Name, r.opts.Logger)
+# red-skip
+--- a/gchat/adapter/internal/inbound/history.go
++++ b/gchat/adapter/internal/inbound/history.go
+@@ -296,3 +295,0 @@
+-	if cause == "before_history_floor" && firstReadAdmits(l, c, p.identity()) {
+-		cause = ""
+-	}
+# red-recorded-only
+--- a/gchat/adapter/internal/inbound/history.go
++++ b/gchat/adapter/internal/inbound/history.go
+@@ -296 +296 @@
+-	if cause == "before_history_floor" && firstReadAdmits(l, c, p.identity()) {
++	if cause == "before_history_floor" && firstReadAdmits(l, c, p.identity()) && l.Spaces[c.Space].FirstRead.PreJoinMessages[c.Message.Name] {
+# red-default-wake
+--- a/gchat/adapter/internal/catchup/catchup_test.go
++++ b/gchat/adapter/internal/catchup/catchup_test.go
+@@ -260 +260 @@
+-	if s == nil || s.Wake != "mentions" || !s.MessageCursor.Equal(time.Unix(0, 0)) || !s.EventCursor.Equal(time.Unix(0, 0)) {
++	if s == nil || s.Wake != "mentions" || !s.MessageCursor.Equal(frozen) || !s.EventCursor.Equal(frozen) {
+# red-no-list
+--- a/gchat/adapter/internal/catchup/join_test.go
++++ b/gchat/adapter/internal/catchup/join_test.go
+@@ -250,2 +249,0 @@
+-	// No list has been recorded: the fallback is the time found.
+-	f.opts.Ledger.SpacesListedAt = time.Time{}
+# red-join-floor
+--- a/gchat/adapter/internal/catchup/history_floor_test.go
++++ b/gchat/adapter/internal/catchup/history_floor_test.go
+@@ -41 +41 @@
+-		if !s.MessageCursor.Equal(floor) || !s.EventCursor.Equal(floor) || !s.JoinedAt.Equal(floor) {
++		if !s.MessageCursor.Equal(floor) || !s.EventCursor.Equal(floor) || !s.JoinedAt.IsZero() {
+# red-open
+--- a/gchat/adapter/internal/catchup/join_test.go
++++ b/gchat/adapter/internal/catchup/join_test.go
+@@ -331,2 +331 @@
+-	rebound, err := decodeProgress(s.PageToken)
+-	if err != nil || s.HistoryStart.IsZero() || !rebound.MessageLower.Equal(s.HistoryStart) || !s.JoinedAt.IsZero() || s.FirstRead != nil || len(f.google.MembershipRequests) != 0 {
++	if s.PageToken != encode(p) || !s.JoinedAt.IsZero() || s.FirstRead != nil || len(f.google.MembershipRequests) != 0 {
+# red-parity
+--- a/gchat/adapter/internal/inbound/offparity_test.go
++++ b/gchat/adapter/internal/inbound/offparity_test.go
+@@ -246,3 +245,0 @@
+-	if err := json.Unmarshal([]byte(`{"spaces_listed_at":"`+now.Add(-time.Hour).Format(time.RFC3339Nano)+`"}`), opts.Ledger); err != nil {
+-		t.Fatal(err)
+-	}
+@@ -271,5 +267,0 @@
+-		for i := range changes {
+-			if err := json.Unmarshal([]byte(`{"EventTime":"`+time.Now().UTC().Format(time.RFC3339Nano)+`"}`), &changes[i]); err != nil {
+-				t.Fatal(err)
+-			}
+-		}
