@@ -1,0 +1,16 @@
+.........F...F.......                                                    [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+      
+      Skipping 1077 identical leading characters in diff, use -v to show
+      -  repeats, give every other finding of that round the outcome or PRECONDITION it can have without a fix, list the rest beside them as OPEN, never NOT SHOWN, with what shows each or what would settle it, and hand the PR to the mayor as stopped, not done, for one decision on each repeated family: a check for the class built under its own tests, or a merge with the class filed as a bead. Each decision rules on its own family alone: every finding you list as OPEN keeps its own grade and needs its own outcome...
+      
+      ...Full output truncated, use '-vv' to show
+<clone>/tests/test_gc_standing_notes_fragment.py:315: AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+E   AssertionError: assert 'as OPEN, never NOT SHOWN,' in 'From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding of an earlier round of this P...n on each repeated family: a check for the class built under its own tests, or a merge with the class filed as a bead.'
+<clone>/tests/test_gc_standing_notes_fragment.py:369: AssertionError: assert 'as OPEN, never NOT SHOWN,' in 'From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding of an earlier round of this P...n on each repeated family: a check for the class built under its own tests, or a merge with the class filed as a bead.'
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_note_is_exactly_the_six_rules_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_give_each_finding_of_a_stopped_round_one_word
+2 failed, 19 passed in 0.04s
+exit 1

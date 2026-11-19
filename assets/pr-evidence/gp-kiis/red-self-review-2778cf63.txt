@@ -1,0 +1,17 @@
+.........F..F.......                                                     [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+      
+      Skipping 1101 identical leading characters in diff, use -v to show
+      - hat round beside it as OPEN (as NOT SHOWN when nobody showed it), and hand the PR to the mayor as stopped, not done, for one decision: a check for the class built under its own tests, or a merge with the class filed as a bead. That decision rules on the repeated family alone: every finding you list as OPEN keeps its own grade and needs its own outcome before any merge, from a later head or the mayor's ruling on that one finding, a minor's follow-up counting as its outcome. THE SAME FAMILY means the find...
+      
+      ...Full output truncated, use '-vv' to show
+<clone>/tests/test_gc_standing_notes_fragment.py:311: AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+E   AssertionError: ('From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding of an earlier round of this ...for the class built under its own tests, or a merge with the class filed as a bead.', 'every finding you list as OPEN')
+    assert 'every finding you list as OPEN' in 'That decision rules on the repeated family alone: every finding listed OPEN beside it keeps its own grade and needs its own outcome, each blocking one before any merge.'
+<clone>/tests/test_gc_standing_notes_fragment.py:353: AssertionError: ('From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding of an earlier round of this ...for the class built under its own tests, or a merge with the class filed as a bead.', 'every finding you list as OPEN')
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_note_is_exactly_the_six_rules_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_let_a_decision_on_a_family_dispose_of_that_family_alone
+2 failed, 18 passed in 0.03s
+exit 1
