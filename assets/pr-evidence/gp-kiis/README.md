@@ -267,7 +267,7 @@ round on the delta, no more.
 | `rendered-notes-9a4769eb.txt` and `rendered-notes-a15fd2b9.txt`: the render helper with the dev gc | `9a4769eb`, `a15fd2b9` | `gc prime --strict` exit 0 both ways; each note once, in order, byte for byte the fragment's body; no slash, date or bead id; the review rules' only digits are 1 to 6; against `rendered-notes-b994cbf3.txt` only the changed sentence differs, each time |
 | `suites-a88c9572.txt`: the full Python suite as in round 2's table | `a88c9572` | 3108 passed, 132 skipped, exit 0 (650 s) |
 | `verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider'` | `a88c9572` | 1071 passed, 128 skipped, exit 0 (377 s) |
-| CI's gc step, in a clean environment (`env -i`, as in CI) | `a88c9572` | 103 passed, exit 0; a first run in the worker's own environment failed one test this PR does not touch on the worker's own variables, and that test passed alone in the clean one (both in the file) |
+| CI's gc step's two test files, the worker's clean-environment reproduction (`env -i` with `PATH`, `HOME`, `TMPDIR` and `GC_TEST_BIN`; CI itself runs them with the runner's inherited environment, which the fixture copies) | `a88c9572` | 103 passed, exit 0; a first run in the worker's own environment failed one test this PR does not touch on the worker's own variables, and that test passed alone in the clean one (both in the file) |
 | `git diff --check 7876f976..HEAD` | the head | exit 0 |
 
 `tests/test_gc_role_prompt_integration.py` is unchanged this round too.
@@ -295,7 +295,7 @@ BLOCKER 0, MAJOR 0, MINOR 5 (two uncertain), NIT 3.
 | MINOR 2 (uncertain): a finding still happening at head four and fixed at head five gets OPEN and FIXED | WRONG: each round's handoff gives it one word, OPEN in round four and FIXED in round five, which is the order of "every finding you list as OPEN ... needs its own outcome before any merge, from a later head" |
 | MINOR 3: five rewordings pass every test once the whole-note pin is edited with them | DOES NOT MATTER: each fails the whole-note pin until the pin is rewritten in the same commit, which puts the new words in front of whoever reviews it; round 2 gave its MINOR 6, the same class, the same outcome |
 | MINOR 4: the PRECONDITION half goes past the order's one clause and was not declared | FIXED: declared in the gate table above and in the READY |
-| MINOR, unnumbered (uncertain): no suite counts at the round's heads | FIXED: the suites rows below and the PR body's testing line |
+| MINOR, unnumbered (uncertain): no suite counts at the round's heads | FIXED: the suites rows above, in `suites-a88c9572.txt`; the hosted PR body's testing line carries the same counts, read on the hosted body in round 4 |
 | NIT 5: "FIXED, with the head that fixed it" beside "FIXED (with the commit)" | INTENDED: the order's own words; a head is the commit sent to review |
 | NIT 6: the removed tools' commands read as runnable; the gate outcomes named no commit | FIXED: each command row says the tool is not in this PR; the outcomes name `25056cae` |
 | NIT 7 (uncertain): the relative links follow the ref a reader views, so a later change to main can move the cited lines | INTENDED: the order allows relative links, as the base had them; the link text keeps the cited line numbers |
@@ -309,11 +309,11 @@ fixing it.
 
 | Finding | Outcome |
 | --- | --- |
-| MAJOR 1: a finding an earlier head's proof showed, whose state at the reviewed head nobody can tell, gets no word: FIXED needs it gone, OPEN needs it still happening, and NOT SHOWN would take a live blocker out of the merge gate | SAME FAMILY, handed to the mayor: the class of codex round 2's P1 (a blocker leaves the merge gate for want of evidence), whose fix, OPEN with what would settle it, would close it too. This round's clause opened it in the past-round-three branch ("OPEN is only for what still happens"). Shown: a probe test fails at `a88c9572`, and a one-word candidate ("otherwise" for "while it still happens there") turns it green with every other test; the candidate is kept with the builder's private records and is not applied |
+| MAJOR 1: a finding an earlier head's proof showed, whose state at the reviewed head nobody can tell, gets no word: FIXED needs it gone, OPEN needs it still happening, and NOT SHOWN would take a live blocker out of the merge gate | SAME FAMILY, handed to the mayor: the class of codex round 2's P1 (a blocker leaves the merge gate for want of evidence), whose fix, OPEN with what would settle it, would close it too. This round's clause opened it in the past-round-three branch ("OPEN is only for what still happens"). Shown: a probe test fails at `a88c9572`. A one-word candidate ("otherwise" for "while it still happens there") turned it green with every other test only with the whole-note pin and the walk test's lookup moved with it; against the tests committed at `a88c9572`, the one word alone fails those two (2 failed, 20 passed, rechecked in round 4). Landed in round 4, below |
 | MINOR 2: a fault that goes away with no head of the PR fixing it (a provider changed) cannot name the head that fixed it | DOES NOT MATTER: it no longer happens, so no merge decision turns on its line, which can name what changed |
 | MINOR 3: "or else may be listed as OPEN" passes every test once the whole-note pin moves with it | DOES NOT MATTER: the class of the self-review's MINOR 3 and round 2's MINOR 6, with their outcome |
 | MINOR 4: the gate table above said the scan reads whole every pushed file; it reads whole only the files under this directory, and the PR's other files by their added lines | FIXED in the commit after `a88c9572`: the row says so. The two lines a whole read of the test file adds are on main already (the city-neutral test's own patterns) |
-| MINOR 5: the saved PR body named no suite counts at the round's heads | FIXED: the suites rows below and the PR body's testing line |
+| MINOR 5: the saved PR body named no suite counts at the round's heads | FIXED: the suites rows above, in `suites-a88c9572.txt`; the hosted PR body's testing line carries the same counts, read on the hosted body in round 4 |
 
 ### Files (round 3)
 
@@ -326,3 +326,38 @@ fixing it.
 - `suites-a88c9572.txt`: the closing lines of each suite at `a88c9572`; the
   commit after it touches only this directory.
 - `mutate.py` and `render_notes.py` are gone; every file they made stays.
+
+## Round 4: the mayor's gate round 3
+
+The mayor's gate at `5152369e` (DEEP, on the delta from `cd96d635`) returned
+BLOCK: MAJOR 1, MINOR 5. Its record stays in the city's own records.
+`5152369e` is the lane's `4b21f887` plus one empty commit the mayor added to
+make the host rebuild a stuck pull ref; the two have the same tree. The
+round's order was one narrow step on the mayor's word: land the lane's
+candidate for the MAJOR as a red-first pair, and correct the evidence lines
+the gate named. No codex round this round; the mayor reads the diff.
+
+| Commit | What |
+| --- | --- |
+| `5792a9b5` | the tests, red first: a probe walks the gate's sequence (a fault shown at head one, the code changed at head two, a later docs-only round, nobody can tell); the whole-note pin and the walk test's lookup move with the sentence |
+| `68bee4fc` | the note: rule 2's past-round-three clause, "and while it still happens there it takes" becomes "and otherwise it takes", one line of the template, no rewrap |
+| the commit after it | the probe pins the whole mandatory fallback; this section and the corrected lines above |
+
+### Commands and counts
+
+| Run | Tree | Result |
+| --- | --- | --- |
+| `red-gate-r3-5792a9b5.txt`: `verify python3 -m pytest tests/test_gc_standing_notes_fragment.py -q -p no:cacheprovider -rf` | `5792a9b5` (the tests on `5152369e`'s note) | 3 failed, 20 passed, exit 1: the pin, the walk test and the probe |
+| `green-68bee4fc.txt`: the same | `68bee4fc` | 23 passed, exit 0 |
+| `mutation-optional-open-r4.txt`: "or else is listed as OPEN" made "or else may be listed as OPEN" in the note and the whole-note pin together, then the same command | the commit after `68bee4fc` | 1 failed (the probe), 22 passed, exit 1; at `68bee4fc` the same mutation passed all 23 |
+
+### The gate's findings
+
+| Finding | Outcome |
+| --- | --- |
+| MAJOR 1: a finding shown at an earlier head whose state at the reviewed head nobody can tell gets no word, so a proven blocker can leave the merge gate | FIXED `68bee4fc`: OPEN, with what shows it and its grade, is the fallback for every shown finding not shown gone; probe red at `5792a9b5` |
+| MINOR 2: a fault gone with no head of the PR fixing it cannot name the head that fixed it | OPEN, for the mayor: a true word for it needs rule 2's FIXED clause and rule 4's "FIXED (with the commit)" both changed, two sentences, past this step's one |
+| MINOR 3: making OPEN optional passed every test once the whole-note pin moved with it | FIXED in the commit after `68bee4fc`: the probe pins the whole fallback apart from the pin; the mutation row above |
+| MINOR 4: the one-word candidate's green did not reproduce against the committed tests | FIXED in the commit after `68bee4fc`: the codex round 3 row says the pin and the walk test moved with it |
+| MINOR 5: the evidence said CI runs the gc step with `env -i` | FIXED in the commit after `68bee4fc`: the row is the worker's clean-environment reproduction; CI runs it with the runner's inherited environment |
+| MINOR 6: two rows closed a PR-body finding without checking the hosted body | FIXED in the commit after `68bee4fc`: the hosted body was read, and its testing line carries the counts; the rows cite the suites file first |

@@ -556,5 +556,9 @@ def test_review_rules_keep_open_a_shown_finding_whose_state_at_the_reviewed_head
     clause = clause.split("; list the rest, which nobody showed", 1)[0]
     after_fixed = clause.split("FIXED, with the head that fixed it, and ", 1)[1]
     # The branch that leads to OPEN is the whole rest, not only what is
-    # known to still happen.
-    assert after_fixed.startswith("otherwise"), after_fixed
+    # known to still happen, and OPEN is an order, not a choice: the whole
+    # fallback is pinned here, apart from the whole-note pin, so a rewording
+    # that makes it optional fails this test even when that pin moves with it.
+    assert after_fixed == ("otherwise it takes the outcome or PRECONDITION it can have without "
+                           "a fix, or else is listed as OPEN with what shows it and its grade, "
+                           "for the mayor"), after_fixed
