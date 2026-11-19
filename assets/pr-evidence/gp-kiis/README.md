@@ -52,8 +52,9 @@ expected render from the fragment, so the new note needs no edit there.
   own helpers. Each note appears once, in order, the notes are byte for byte
   the fragment's body, no slash, date or bead id renders, and the only digits
   in THE REVIEW RULES are the rule numbers. The stderr bytes are the fixture
-  city's two standing warnings (no core or bd import; the prompt budget
-  line), the same with and without the call line.
+  city's two standing warnings (it imports neither the core pack nor the
+  beads pack; the prompt budget line), the same with and without the call
+  line.
 - `mutations-prefold-866934f8.txt`: the self-review's four surviving
   mutations, all green on the tests before the folds.
 - `mutations-4b0af8fe.txt`: 24 mutations of the text at `4b0af8fe`, all red.
