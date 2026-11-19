@@ -212,12 +212,33 @@ REVIEW_RULE_HEADS = (
     "5. Let review depth follow risk.",
     "6. Take the merge list from its owner.",
 )
+# Each rule's subject and how many times the note names it. Each outcome word
+# once, so one list carries all four.
+REVIEW_RULE_SUBJECTS = (
+    ("round three", 3),
+    ("buys another round", 1),
+    ("SAME FAMILY", 4),
+    ("NOT SHOWN", 3),
+    ("PRECONDITION", 2),
+    ("second model", 3),
+    ("minor", 2),
+    ("review class", 1),
+    ("risk tier", 1),
+    ("the class wins", 1),
+    ("FIXED", 1),
+    ("WRONG", 1),
+    ("INTENDED", 1),
+    ("DOES NOT MATTER", 1),
+)
 
 
 def test_review_rules_note_carries_every_rule_of_its_bead() -> None:
     note = review_rules_note()
     for clause in (
         "Whenever a review returns findings on your PR, act on them by these rules",
+        # What a round is, so every count below counts the same thing.
+        "A round is one head of your PR sent to review, however many reviewers read it; "
+        "when the bead names a round number, count from it.",
         # The class fix and its one test.
         "1. Fix the whole class. When a review finds a blocking fault, name its class "
         "(the general fault, not the one case), fix every case of that class in your diff, "
@@ -225,49 +246,62 @@ def test_review_rules_note_carries_every_rule_of_its_bead() -> None:
         "the test.",
         # The family stop at round three, what THE SAME FAMILY is, and what
         # alone buys a round past it.
+        # A repeated family stops the PR, shown or not; what THE SAME FAMILY
+        # is; past round three only a reproduction buys a round, and a second
+        # model's answer is not one.
         "2. Stop at round three. From review round three on, a blocking finding of THE SAME "
-        "FAMILY as a blocking finding of an earlier round of this PR is not fixed in that "
-        "round: stop, list it in your handoff with the round and the earlier finding it "
-        "repeats, and leave the mayor one decision, either a check for the class built under "
-        "its own tests or a merge with the class filed as a bead.",
+        "FAMILY as a blocking finding of an earlier round of this PR, shown or not, stops the "
+        "PR: fix nothing more in that round, list it in your handoff as SAME FAMILY with the "
+        "round and the earlier finding it repeats, and hand the PR to the mayor as stopped, "
+        "not done, for one decision: a check for the class built under its own tests, or a "
+        "merge with the class filed as a bead.",
         "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
         "earlier one's class-level fix, written in one sentence, would close it too; when you "
         "cannot tell, it is the same family and you stop.",
         "Past round three, only a finding reproduced in that round's own changes (a failing "
-        "test, or shown reachable in what your city runs) buys another round; list the rest "
-        "as NOT SHOWN with their file and line.",
+        "test, or shown reachable in what your city runs; a second model's answer alone is "
+        "not enough) buys another round; list the rest as NOT SHOWN with their file and line.",
         # The reproduction or the second model's check.
         "3. Let no lone reviewer force a round. Before one reviewer's finding costs a round, "
         "have it shown: write a failing test that shows it, or have a second model check that "
         "one finding and answer real or not with the line that shows it.",
-        "A finding you cannot show either way after an honest try is listed as NOT SHOWN with "
-        "what you tried, and is not fixed blind",
-        # Minors never block; every finding gets one of the four outcomes; a
-        # finding outside what the city runs is listed, not built for.
+        "A finding shown by neither after an honest try is listed as NOT SHOWN with what you "
+        "tried, and is not fixed blind",
+        # Minors never block; every finding gets one of the four outcomes or
+        # the listing a rule gave it; a finding outside what the city has is
+        # listed, not built for.
         "4. Never let a minor finding block, and give every finding an outcome. Fix a minor "
         "in the same head when it is cheap, and list it otherwise.",
-        "Your handoff carries one line per finding of every round, each with one of four "
-        "outcomes: FIXED (with the commit), WRONG (with the line that shows the reviewer was "
-        "mistaken), INTENDED, or DOES NOT MATTER.",
-        "A finding that needs a runtime, a provider or a right your city does not run is "
+        "Your handoff carries one line per finding of every round with its outcome: FIXED "
+        "(with the commit), WRONG (with the line that shows the reviewer was mistaken), "
+        "INTENDED, or DOES NOT MATTER, or else the listing these rules give it (SAME FAMILY, "
+        "NOT SHOWN or PRECONDITION).",
+        "A finding that needs a runtime, a provider or a right your city does not have is "
         "listed as PRECONDITION with the precondition in one sentence; it does not block, and "
         "you do not build for it.",
-        # Depth is the city's: the worker follows the review class the bead names.
-        "Your city or its mayor sets the depth: follow the review class the bead names, and "
-        "where it asks for more than these rules, it wins.",
-        # The path list is the city's: the worker reads it, never invents it.
-        "6. Take the merge list from its owner. Which paths need a person's word before a "
-        "merge is your city's written list, kept by its founder or owner: read it for the "
-        "risk line of the PR body lines above, and never invent one.",
+        # Depth follows risk, and the city sets it: the worker follows the
+        # review class the bead names, which wins wherever it asks more.
+        "5. Let review depth follow risk. Docs, tests and small internal changes get your own "
+        "checks and one gate; a second model reads a PR's whole first head, and later heads "
+        "only on a risky path.",
+        "Your city or its mayor sets the depth by the review class the bead names: follow it, "
+        "and where it asks more of you than any rule here (every finding fixed, say), the "
+        "class wins.",
+        # The path list is the city's, by the name the PR body lines give it:
+        # the worker reads it, never invents it.
+        "6. Take the merge list from its owner. Your city's written list of paths by risk "
+        "tier, kept by its founder or owner, says which paths need a person's word before a "
+        "merge: read it for the risk line of the PR body lines above, and never invent one.",
         "Until that list exists, your city's merge rule stands.",
     ):
         assert clause in note, f"THE REVIEW RULES lacks: {clause!r}"
     positions = [note.index(head) for head in REVIEW_RULE_HEADS]
     assert positions == sorted(positions)
-    # Each outcome word once, so one list carries all four; the listing word
-    # for a finding outside what the city runs, once.
-    for word in ("FIXED", "WRONG", "INTENDED", "DOES NOT MATTER", "PRECONDITION"):
-        assert note.count(word) == 1, word
+    # Each rule's subject is named only where the rules above name it: a
+    # sentence added anywhere else in the note that contradicts a rule has
+    # to name that rule's subject, and so changes its count.
+    for phrase, count in REVIEW_RULE_SUBJECTS:
+        assert note.count(phrase) == count, (phrase, note.count(phrase))
     # The only digits are the six rule numbers: a count measured in one city
     # is that city's evidence, not a rule.
     assert re.findall(r"\d+", note) == ["1", "2", "3", "4", "5", "6"]
@@ -363,6 +397,7 @@ def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
         "`Testing:`, `Risk:` and `How to revert:`, after every other section, "
         "with only trailer or sign-off lines below them",
         "Its third note is THE REVIEW RULES",
+        "stopping a repeated family at round three",
     ):
         assert clause in words, f"README Standing notes lacks: {clause!r}"
     assert words.index(CALL_LINE) < words.index(f"never as `{PLAIN_CALL}`")

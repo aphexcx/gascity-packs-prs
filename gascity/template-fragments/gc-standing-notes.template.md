@@ -74,45 +74,51 @@ labels.
 
 THE REVIEW RULES. Whenever a review returns findings on your PR, act on them
 by these rules: each review round costs a full read of the PR, so spend one
-only where it buys a fix.
+only where it buys a fix. A round is one head of your PR sent to review,
+however many reviewers read it; when the bead names a round number, count from
+it.
 
 1. Fix the whole class. When a review finds a blocking fault, name its class
    (the general fault, not the one case), fix every case of that class in your
    diff, and add one test at the class level; your handoff names the class,
-   its cases and the test. A case fixed alone brings the same finding back on
-   another line in the next round.
+   its cases and the test. A case fixed alone can bring the same finding back
+   on another line in the next round.
 2. Stop at round three. From review round three on, a blocking finding of THE
-   SAME FAMILY as a blocking finding of an earlier round of this PR is not
-   fixed in that round: stop, list it in your handoff with the round and the
-   earlier finding it repeats, and leave the mayor one decision, either a
-   check for the class built under its own tests or a merge with the class
-   filed as a bead. THE SAME FAMILY means the finding names the same class as
-   the earlier one, and the earlier one's class-level fix, written in one
-   sentence, would close it too; when you cannot tell, it is the same family
-   and you stop. Past round three, only a finding reproduced in that round's
-   own changes (a failing test, or shown reachable in what your city runs)
-   buys another round; list the rest as NOT SHOWN with their file and line.
+   SAME FAMILY as a blocking finding of an earlier round of this PR, shown or
+   not, stops the PR: fix nothing more in that round, list it in your handoff
+   as SAME FAMILY with the round and the earlier finding it repeats, and hand
+   the PR to the mayor as stopped, not done, for one decision: a check for the
+   class built under its own tests, or a merge with the class filed as a bead.
+   THE SAME FAMILY means the finding names the same class as the earlier one,
+   and the earlier one's class-level fix, written in one sentence, would close
+   it too; when you cannot tell, it is the same family and you stop. Past
+   round three, only a finding reproduced in that round's own changes (a
+   failing test, or shown reachable in what your city runs; a second model's
+   answer alone is not enough) buys another round; list the rest as NOT SHOWN
+   with their file and line.
 3. Let no lone reviewer force a round. Before one reviewer's finding costs a
    round, have it shown: write a failing test that shows it, or have a second
    model check that one finding and answer real or not with the line that
-   shows it. A finding you cannot show either way after an honest try is
-   listed as NOT SHOWN with what you tried, and is not fixed blind: one
-   model's reading is a suspicion, not a fault.
+   shows it. A finding shown by neither after an honest try is listed as NOT
+   SHOWN with what you tried, and is not fixed blind: one model's reading is a
+   suspicion, not a fault.
 4. Never let a minor finding block, and give every finding an outcome. Fix a
    minor in the same head when it is cheap, and list it otherwise. Your
-   handoff carries one line per finding of every round, each with one of four
-   outcomes: FIXED (with the commit), WRONG (with the line that shows the
-   reviewer was mistaken), INTENDED, or DOES NOT MATTER. A finding that needs
-   a runtime, a provider or a right your city does not run is listed as
+   handoff carries one line per finding of every round with its outcome: FIXED
+   (with the commit), WRONG (with the line that shows the reviewer was
+   mistaken), INTENDED, or DOES NOT MATTER, or else the listing these rules
+   give it (SAME FAMILY, NOT SHOWN or PRECONDITION). A finding that needs a
+   runtime, a provider or a right your city does not have is listed as
    PRECONDITION with the precondition in one sentence; it does not block, and
    you do not build for it.
 5. Let review depth follow risk. Docs, tests and small internal changes get
    your own checks and one gate; a second model reads a PR's whole first head,
-   and later heads only on a risky path. Your city or its mayor sets the
-   depth: follow the review class the bead names, and where it asks for more
-   than these rules, it wins.
-6. Take the merge list from its owner. Which paths need a person's word before
-   a merge is your city's written list, kept by its founder or owner: read it
-   for the risk line of the PR body lines above, and never invent one. Until
-   that list exists, your city's merge rule stands.
+   and later heads only on a risky path. Your city or its mayor sets the depth
+   by the review class the bead names: follow it, and where it asks more of
+   you than any rule here (every finding fixed, say), the class wins.
+6. Take the merge list from its owner. Your city's written list of paths by
+   risk tier, kept by its founder or owner, says which paths need a person's
+   word before a merge: read it for the risk line of the PR body lines above,
+   and never invent one. Until that list exists, your city's merge rule
+   stands.
 {{- end }}

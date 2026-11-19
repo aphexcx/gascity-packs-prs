@@ -257,8 +257,8 @@ and `How to revert:`, after every other section, with only trailer or sign-off
 lines below them. Its third note is THE REVIEW RULES: how a worker answers
 review findings, by fixing each blocking fault's whole class with one test,
 stopping a repeated family at round three, letting no lone reviewer force a
-round, giving every finding an outcome, and following the review class its
-bead names and its city's written list of paths that need a person's word.
+round, giving every finding an outcome, and following the review class the
+bead names and the city's written list of paths by risk tier.
 
 The role fragment does not call it. A city opts a lane in with one line in
 that lane's `prompt.template.md`, right after its
