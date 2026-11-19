@@ -745,6 +745,61 @@ def test_city_lane_renders_the_standing_notes_once_after_the_role_text(
     assert "gp-gsww" not in both.stdout
 
 
+# gp-hdn2: the standing notes' second note, THE PR BODY LINES. Its labels in
+# the order a PR body carries them, and the particulars of one city that no
+# rendered note may carry: a path (any slash, so a relative one too), a date,
+# a bead id.
+PR_BODY_LABELS = ("Testing:", "Risk:", "How to revert:")
+# The three lines as the note shows them, each label with its own
+# instruction: text swapped between two labels fails.
+PR_BODY_LINES = (
+    "Testing: <the exact commands you ran, each with its counts and exit code>",
+    "Risk: <the tier and the path that set it>",
+    "How to revert: <the one command that undoes the change once merged>",
+)
+RENDERED_PARTICULARS = (
+    (re.compile(r"/"), "a path"),
+    (re.compile(r"\b20\d\d-\d\d-\d\d\b|\b\d{1,2}/\d{1,2}\b"), "a date"),
+    (BEAD_ID, "a bead id"),
+)
+
+
+def test_city_lane_renders_the_pr_body_lines_once_each_in_order(
+    tmp_path: Path, gc_test_bin: Path,
+) -> None:
+    role_only = render_city_lane(
+        gc_test_bin, tmp_path / "role-only", gascity_pack=REPO_ROOT / "gascity",
+        prompt=f"{ROLE_CALL}\n",
+    )
+    both = render_city_lane(
+        gc_test_bin, tmp_path / "both", gascity_pack=REPO_ROOT / "gascity",
+        prompt=f"{ROLE_CALL}\n\n{STANDING_NOTES_CALL}\n",
+    )
+
+    for result in (role_only, both):
+        assert result.returncode == 0, result.stderr
+        assert "gc: prompt template" not in result.stderr, result.stderr
+    assert_clean_worker_render(both.stdout, "# GC Role Worker")
+    assert both.stdout.startswith(role_only.stdout)
+    notes = both.stdout[len(role_only.stdout):]
+    # The second note follows the first, and its three labels appear once
+    # each, each with its own instruction, as three consecutive whole lines
+    # of it in the order a PR body carries them.
+    assert notes.count("THE PR BODY LINES") == 1
+    assert notes.index("THE DEEPENING NOTE") < notes.index("THE PR BODY LINES")
+    for label in PR_BODY_LABELS:
+        assert notes.count(label) == 1, label
+    assert all(line.startswith(f"{label} ") for line, label in zip(PR_BODY_LINES, PR_BODY_LABELS))
+    lines = "\n".join(PR_BODY_LINES)
+    block = re.findall(rf"(?m)^{re.escape(lines)}$", notes)
+    assert len(block) == 1, block
+    assert notes.index(block[0]) > notes.index("THE PR BODY LINES")
+    for pattern, what in RENDERED_PARTICULARS:
+        match = pattern.search(notes)
+        assert match is None, f"the rendered notes name {what}: {match.group(0)!r}"
+    assert "gp-hdn2" not in both.stdout
+
+
 @pytest.mark.parametrize("binding", ["gascity", "custom"])
 def test_city_lane_renders_the_code_ownership_sentence_once_where_called(
     tmp_path: Path, gc_test_bin: Path, binding: str,

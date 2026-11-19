@@ -1,0 +1,47 @@
+Self-review folds, shown to bite. Each run: a fresh clone of the branch at
+e745a672 with the files named below taken from 2d6715dd, then the targeted
+command of README.md ("the targeted run"); output filtered to its FAILED and
+summary lines.
+
+1. Fold red: the 2d6715dd tests against the e745a672 note and README (tests
+   copied, fragment and README left at e745a672).
+
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_placement_leaves_room_for_the_closing_trailers
+FAILED tests/test_gc_standing_notes_fragment.py::test_readme_documents_the_templatefirst_call_line_and_why
+3 failed, 29 passed, 76 deselected in 7.34s
+
+2. Mutations of the 2d6715dd fragment (fragment, README and both test files
+   copied from 2d6715dd, then one mutation applied):
+
+mutated: split-block (a blank line between the Testing and Risk lines)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_shows_the_three_labels_once_as_one_block_in_order
+FAILED tests/test_gc_role_prompt_integration.py::test_city_lane_renders_the_pr_body_lines_once_each_in_order
+2 failed, 30 passed, 76 deselected in 7.41s
+mutated: relative-path (the note ends "The tier list lives at assets/ops/risk-tiers.toml.")
+FAILED tests/test_gc_standing_notes_fragment.py::test_fragment_text_is_city_neutral
+FAILED tests/test_gc_role_prompt_integration.py::test_city_lane_renders_the_pr_body_lines_once_each_in_order
+2 failed, 30 passed, 76 deselected in 9.12s
+mutated: last-word ("and keeps them after every other section." becomes "and keeps them last.")
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_placement_leaves_room_for_the_closing_trailers
+2 failed, 30 passed, 76 deselected in 8.57s
+mutated: trailer-clause-gone (the "only the body's closing trailer or sign-off lines may follow them" clause deleted)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 9.90s
+
+Codex round 1 folds, shown to bite. Each run: a fresh clone at 2d6715dd with
+the e65b23bf static test copied in.
+
+3. Fold red: the e65b23bf static test against the 2d6715dd note (the three
+   new clauses: secrets as placeholders, the revert named through the PR,
+   the unmatched-path tier fallback).
+
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 9.50s
+
+4. Mutation of the e65b23bf fragment (fragment copied from e65b23bf too):
+
+mutated: hide-in-comment (the "write `none: <why>` when you ran none" bullet moved into a template comment)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 7.04s
