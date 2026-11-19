@@ -1,0 +1,13 @@
+# Suites at 14703af1 (clean clones; the verify function of the base's verify skill)
+
+## verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q -p no:cacheprovider
+3107 passed, 132 skipped, 2 warnings, 10746 subtests passed in 591.79s (0:09:51)
+exit 0 after 599s; load { 12.40 11.40 10.60 }
+
+## verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider'
+1070 passed, 128 skipped, 10518 subtests passed in 433.85s (0:07:13)
+exit 0 after 435s; load { 18.69 14.33 12.20 }
+
+## CI's gc step: GC_TEST_BIN=<gc> python3 -m pytest tests/test_gc_role_prompt_integration.py tests/test_pack_composition_warnings.py -q -p no:cacheprovider (env -i: PATH, HOME, TMPDIR, GC_TEST_BIN)
+103 passed in 719.23s (0:11:59)
+exit 0 after 720s; load { 18.58 25.61 20.40 }

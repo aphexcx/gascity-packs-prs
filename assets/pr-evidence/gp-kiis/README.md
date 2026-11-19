@@ -145,7 +145,9 @@ one input, in a scratch clone that was left clean.
 | `mutations-boundary-0e6e35df.txt`: the same with m33 and m42 only | `0e6e35df` (its tests and text) | 2 survived, exit 1: a sentence between the heading and the marker (the gate's NOTE 9) and a heading after the last rule both passed the old tests; both are killed at the head |
 | `rendered-notes-b994cbf3.txt`: `python3 render_notes.py <clone> ./build/gc` | `b994cbf3` | `gc prime --strict` exit 0 both ways; each note once, in order, byte for byte the fragment's body; no slash, date or bead id; the review rules' only digits are 1 to 6 |
 | `tools-before-after.txt` | the tools at `0e6e35df`, `b166108d` and `e00ccfa5` against the head's | each old tool shows its finding, and the head's does not |
-| SUITES_PLACEHOLDER | | |
+| `suites-14703af1.txt`: `verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q -p no:cacheprovider` | `14703af1` (the head with this round's evidence) | 3107 passed, 132 skipped, exit 0 (599 s) |
+| `verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider'` | `14703af1` | 1070 passed, 128 skipped, exit 0 (435 s) |
+| CI's gc step: `GC_TEST_BIN=<gc> python3 -m pytest tests/test_gc_role_prompt_integration.py tests/test_pack_composition_warnings.py -q -p no:cacheprovider` | `14703af1` | 103 passed, exit 0 |
 
 `tests/test_gc_role_prompt_integration.py` is unchanged this round too.
 
@@ -227,3 +229,7 @@ self-review. The round's one codex round was spent, and the mayor's gate from
   each fix.
 - `rendered-notes-b994cbf3.txt`: the real gc render at the head.
 - `codex-r2-b166108d.md`: the lane's codex round 2, as described above.
+- `suites-14703af1.txt`: the closing lines of each suite at `14703af1`. The
+  commit after it adds only that file and these rows; at that commit the
+  fragment tests and the repository's bare-command scan ran again (the
+  closing lines are in the PR body's testing line).
