@@ -2,8 +2,10 @@ Process Superpowers code-review feedback.
 
 Before applying fixes, read the review findings for this round. Use this
 child's `gc.attempt` as the round number (the first review is round 1).
-Keep a copy of each input report under the build artifact root, keyed by
-workflow, review loop and round. Reuse those copies if this step is retried.
+Keep a copy of each input report under the build artifact root.
+For a standalone review, use the directory containing the requested report
+(`gc.var.report_path`).
+Key the copies by workflow, review loop and round. Reuse them on retry.
 
 From round 3 onward, compare each blocking finding with the blocking findings
 in all earlier rounds of this loop. A pair belongs to the same family if it
@@ -18,17 +20,17 @@ the controller's last allowed attempt, record the last report, fixes, tests
 and outstanding review in the handoff. Set `gc.build.repair_status=exhausted`,
 `gc.failure_class=review_repair_failed` and `gc.restart.reason=review_repair_exhausted`.
 
-For either exit, write those values, `gc.outcome=fail`,
-`gc.build.code_review_status=failed` and `gc.restart.review_report_path=<preserved review report path>`
-on the workflow root before closing the child. Record the restart for the
-workflow that launched this review, using its original pack binding and inputs.
+For either exit, write one terminal handoff alongside the preserved reports,
+keyed by workflow, loop and round. Reuse its path on retry. Include the reason,
+outstanding findings and preserved report paths. After writing it, record
+these values on the workflow root along with the status, reason and failure class.
 
-- For the full build, record `gc.restart.entrypoint=superpowers-build`. The handoff
-  must say to rerun the full build through review and branch finalization with the canonical implementation summary, then publish.
-- For the standalone review, record `gc.restart.entrypoint=superpowers-review` and rerun
-  that review with its original review context.
-- If another formula embeds this expansion, record that originating formula
-  as the entrypoint and list its required remaining stages from its resolved graph.
+- `gc.outcome=fail` and `gc.build.code_review_status=failed`
+- `gc.restart.review_report_path=<preserved review report path>`
+- `gc.restart.handoff_path=<handoff path>`
+- `gc.restart.entrypoint=manual`
+
+Stop here. A person decides what happens next.
 
 Close this child with `gc.outcome=fail`, the same failure class,
 `code_review.verdict=iterate` and `code_review.report_path=<handoff path>`.

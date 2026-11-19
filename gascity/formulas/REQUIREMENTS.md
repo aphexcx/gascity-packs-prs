@@ -121,7 +121,7 @@ this ledger against the `FORMULAS` constant and formula directory.
 | GC-BF-BR-010 | GC-BF-US-002 | WHEN a formula produces a base artifact, THE formula SHALL invoke shared artifact validation for the expected schema and path. |
 | GC-BF-BR-011 | GC-BF-US-002 | WHEN shared artifact validation fails, THE formula graph SHALL route back to the producer for bounded repair or stop as `blocked` after finite attempts. |
 | GC-BF-BR-012 | GC-BF-US-002 | WHEN formula output includes traceability, THE formula SHALL preserve YAML coverage as the machine-readable source and mirrored markdown coverage for humans. |
-| GC-BF-BR-013 | GC-BF-US-002 | WHEN a continuation review, drain, or repair stage cannot reach approval, including when maximum iterations are exhausted or a blocking finding repeats a family from round 3 onward (`family_stop`), THE formula graph SHALL record `gc.build.repair_status`, `gc.restart.*` metadata, and a failing blocked outcome instead of allowing finalize or publish no-op to close the workflow as pass. |
+| GC-BF-BR-013 | GC-BF-US-002 | WHEN a continuation review, drain, or repair stage cannot reach approval, THE graph SHALL record a failing outcome, `gc.build.repair_status` and `gc.restart.*` metadata that finalize and publish preserve. On `family_stop` from round 3 onward or `exhausted`, the graph SHALL stop with the reason and one `gc.restart.handoff_path`. The recorded `gc.restart.entrypoint` SHALL be `manual` unless an existing entry runs every required downstream stage without repeating completed work. A person decides whether to continue. |
 
 ## Scenario Ledger
 

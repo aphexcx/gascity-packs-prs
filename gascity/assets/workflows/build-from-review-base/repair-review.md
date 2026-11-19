@@ -7,10 +7,14 @@ implementation_formula={{implementation_formula}}, implementation_item_formula={
 and max_iterations={{max_iterations}} from the workflow root metadata and
 artifacts.
 
-Before acting on a verdict, check the completed review workflow, or on return
-or resume check the last dispatched fix-loop workflow root for
-`gc.build.repair_status=family_stop`. On that signal take the family stop
-below with the paired findings from its recorded report, even if budget remains.
+Read `gc.build.repair_status` from the completed review workflow root before
+using its verdict. After a fix, including on resume, check the last dispatched
+fix-loop root first. If it is `family_stop` or `exhausted`, open no further
+fix attempt. Forward its status, `gc.failure_class`, `gc.restart.reason` and
+`gc.restart.handoff_path` unchanged to the continuation root. The handoff
+contains both findings, rounds and preserved report paths for a family stop.
+Record `gc.outcome=fail` and `gc.restart.entrypoint=build-from-review` on
+this root and close this step with the same failure outcome and class.
 
 If the review verdict is approved, do not mutate code. Record
 `gc.build.repair_status=not_needed`, preserve the approved review metadata, and
@@ -51,18 +55,25 @@ same family when they concern the same class of fault and the earlier finding's
 class-level fix, stated in one sentence, would close the current one too. If
 that comparison is uncertain, treat the pair as the same family.
 
-On a match, including a `family_stop` returned by the selected fix loop, open
-no further fix attempt. Record both findings in the repair handoff artifact,
+On a local match, open no further fix attempt. Record both findings in one repair handoff,
 with the round, report path and finding identifier or text for each. Record
 `gc.build.repair_status=family_stop`, `gc.outcome=fail`,
 `gc.failure_class=review_family_stop`, `gc.restart.entrypoint=build-from-review`
-and `gc.restart.reason=review_family_stop` on the workflow root. Close the
+and `gc.restart.reason=review_family_stop` on the workflow root. Set
+`gc.restart.handoff_path` to that artifact before closing. Close the
 repair step with the same failure outcome and class.
 
 Record every attempt on the workflow root metadata and in artifacts. On
 approval, record `gc.build.repair_status=approved` and the final review report
-path. On blocked or exhausted attempts, record `gc.build.repair_status=blocked`
-or `gc.build.repair_status=exhausted`, `gc.outcome=fail`,
+path. On local exhaustion, write one handoff with the last review, fixes,
+tests and outstanding findings. Record its path in `gc.restart.handoff_path`,
+`gc.build.repair_status=exhausted`, `gc.restart.reason=review_repair_exhausted`,
+`gc.outcome=fail`, `gc.failure_class=review_repair_failed` and
+`gc.restart.entrypoint=build-from-review` on the workflow root. Close this
+step with the same failure outcome and class. The continuation entrypoint
+is for a person's decision. Both terminal outcomes end this run.
+
+On blocked attempts, record `gc.build.repair_status=blocked`, `gc.outcome=fail`,
 `gc.failure_class=review_repair_failed`, and restart metadata with
 `gc.restart.entrypoint=build-from-review`.
 
