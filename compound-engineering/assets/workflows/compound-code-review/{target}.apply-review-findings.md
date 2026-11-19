@@ -1,5 +1,23 @@
 Apply required Compound Engineering code-review findings.
 
+Before applying fixes, read the review findings for this round. Use this
+child's `gc.attempt` as the round number (the first review is round 1).
+Keep a copy of each input report under the build artifact root, keyed by
+workflow, review loop and round. Reuse those copies if this step is retried.
+
+From round 3 onward, compare each blocking finding with the blocking findings
+in all earlier rounds of this loop. A pair belongs to the same family if it
+concerns the same class of fault and the earlier class-level fix, stated in
+one sentence, would close both findings. Treat an uncertain comparison as a
+match. On a match, apply no fix. Write a handoff identifying both findings
+and the round and preserved report path for each. On the workflow root set
+`gc.build.code_review_status=failed`,
+`gc.build.repair_status=family_stop`, `gc.outcome=fail`,
+`gc.failure_class=review_family_stop`, `gc.restart.entrypoint=build-from-review`
+and `gc.restart.reason=review_family_stop`. Close this child immediately with
+`gc.outcome=fail`, `gc.failure_class=review_family_stop`,
+`code_review.verdict=iterate` and `code_review.report_path=<handoff path>`.
+
 Read the synthesized review report and resolve required findings in this single
 lane. Preserve traceability to the reviewer, finding id, severity, file anchors,
 and acceptance criteria.
@@ -20,7 +38,7 @@ perform a no-op pass, update workflow root metadata with
 workflow root metadata with `gc.build.code_review_status=draft` and close with
 `code_review.verdict=iterate`.
 
-Always close with `gc.outcome=pass`,
+For ordinary approval or iteration, close with `gc.outcome=pass`,
 `code_review.report_path=<review fix summary path>`, and
 `code_review.output_path=<review fix summary path>`.
 

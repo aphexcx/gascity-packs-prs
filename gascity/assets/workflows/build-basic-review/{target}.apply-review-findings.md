@@ -1,5 +1,23 @@
 Apply build-basic starter review findings.
 
+Before applying fixes, read the review findings for this round. Use this
+child's `gc.attempt` as the round number (the first review is round 1).
+Keep a copy of each input report under the build artifact root, keyed by
+workflow, review loop and round. Reuse those copies if this step is retried.
+
+From round 3 onward, compare each blocking finding with the blocking findings
+in all earlier rounds of this loop. A pair belongs to the same family if it
+concerns the same class of fault and the earlier class-level fix, stated in
+one sentence, would close both findings. Treat an uncertain comparison as a
+match. On a match, apply no fix. Write a handoff identifying both findings
+and the round and preserved report path for each. On the workflow root set
+`gc.build.code_review_status=failed`,
+`gc.build.repair_status=family_stop`, `gc.outcome=fail`,
+`gc.failure_class=review_family_stop`, `gc.restart.entrypoint=build-from-review`
+and `gc.restart.reason=review_family_stop`. Close this child immediately with
+`gc.outcome=fail`, `gc.failure_class=review_family_stop`,
+`code_review.verdict=iterate` and `code_review.report_path=<handoff path>`.
+
 Use implementation target {{implementation_target}} for any code changes. Read
 the starter review synthesis. If all three review lanes approve, write a no-op
 review summary. If required fixes or missing evidence remain, make the smallest
@@ -104,7 +122,7 @@ Set `code_review.verdict=done` only when acceptance, test evidence, and
 simplicity all approve after this pass. Set `code_review.verdict=iterate` when
 required fixes remain.
 
-Always close with `gc.outcome=pass`,
+For ordinary approval or iteration, close with `gc.outcome=pass`,
 `code_review.verdict=done|iterate`,
 `code_review.report_path=<starter review summary path>`, and
 `code_review.output_path=<starter review summary path>`.

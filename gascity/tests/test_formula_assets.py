@@ -1873,6 +1873,46 @@ class FormulaAssetTests(unittest.TestCase):
                 with self.subTest(formula=path.name):
                     self.assertEqual(variables["max_iterations"]["default"], "3")
 
+    def test_full_build_review_controllers_enforce_cap_and_family_stop(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        builds = []
+        for path in sorted(root.parent.glob("*/formulas/*.formula.toml")):
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            declares_review = any(
+                step["id"] == "review" and step.get("expand") for step in data.get("steps", [])
+            )
+            if "build-base" in data.get("extends", []) or declares_review:
+                builds.append((path.parent, data["formula"]))
+        self.assertTrue(builds)
+
+        for formula_dir, name in builds:
+            with self.subTest(build=name):
+                dirs = [root / "formulas", formula_dir]
+                build = resolve_formula_from_dirs(dirs, name)
+                review = next(step for step in build["steps"] if step["id"] == "review")
+                expansion_name = review["expand"]
+                expansion_root = next(directory.parent for directory in reversed(dirs)
+                                      if (directory / f"{expansion_name}.formula.toml").is_file())
+                expansion = load_formula(expansion_root, expansion_name)
+                loops = [node for node in expansion["template"] if node.get("children") and "check" in node]
+                self.assertEqual(len(loops), 1)
+                loop = loops[0]
+                self.assertEqual(pathlib.Path(loop["check"]["check"]["path"]).name,
+                                 "implementation-review-approved.sh")
+                limit = int(build["vars"]["max_iterations"]["default"])
+                with self.subTest(contract="review attempt limit"):
+                    self.assertEqual(loop["check"]["max_attempts"], limit)
+                apply_step = loop["children"][-1]
+                text = node_description(expansion_root, apply_step)
+                for fragment in (
+                    "gc.attempt", "round 3", "class-level fix",
+                    "gc.build.repair_status=family_stop", "gc.failure_class=review_family_stop",
+                    "gc.restart.entrypoint=build-from-review", "gc.restart.reason=review_family_stop",
+                    "gc.outcome=fail", "code_review.verdict=iterate",
+                ):
+                    with self.subTest(contract=fragment):
+                        self.assertIn(fragment, text)
+
     def test_build_from_review_blocked_results_are_healable_not_passed(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         resolved = resolve_formula(root, "build-from-review-base")

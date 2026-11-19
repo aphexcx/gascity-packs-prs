@@ -291,7 +291,7 @@ Superpowers-specific.
 | `implementation_target` | `superpowers.implementer` | Role that runs implementation and apply-fix lanes. |
 | `push` | `false` | Set `true` to allow the publish stage to push after all checks pass. |
 | `open_pr` | `false` | Set `true` to allow the publish stage to open a PR after all checks pass. |
-| `max_iterations` | `3` | Bound on implementation/review fix attempts. |
+| `max_iterations` | `3` | Maximum attempts in continuation repair and fix-loop workflows. A launch override changes that limit. The full-build review check has a fixed cap of three attempts. |
 | `context_path` | `""` | Optional source context bundle path. |
 | `requirements_path`, `plan_path`, `decomposition_path` | `""` | Reuse an existing artifact instead of regenerating it. |
 | `planning_formula` | `superpowers-planning` | Selector: planning methodology formula. |

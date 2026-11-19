@@ -36,7 +36,7 @@ metadata = { "gc.run_target" = "gc.run-operator" }
 description_file = "../assets/workflows/bmad-code-review-flow/{target}.bmad-code-review-loop.md"
 
 [template.check]
-max_attempts = 6
+max_attempts = 3
 
 [template.check.check]
 mode = "exec"
