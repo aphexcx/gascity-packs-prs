@@ -237,22 +237,26 @@ REVIEW_RULES = (
     "your handoff names the class, its cases and the test.",
     "A case fixed alone can bring the same finding back on another line in the next round.",
     # 2. A repeated family stops the PR from round three, shown or not, with
-    # the round's other findings left OPEN for the mayor's one decision; that
-    # decision rules on the family alone, and every OPEN finding keeps its
-    # own grade and is owed its own outcome, a blocking one before any merge;
-    # what THE SAME FAMILY is; past round three only a reproduction in the
-    # round's own changes buys a round, and a second model's answer is not
-    # one; a finding shown any other way is OPEN with its proof and grade,
-    # never NOT SHOWN, which is for what nobody showed.
+    # the round's other findings beside it, OPEN or NOT SHOWN, for the
+    # mayor's one decision; that decision rules on the family alone, and
+    # every OPEN finding anywhere keeps its own grade and needs its own
+    # outcome before any merge, from a later head or the mayor's ruling on
+    # it, a minor's follow-up counting; what THE SAME FAMILY is; past round
+    # three only a reproduction in the round's own changes buys a round, and
+    # a second model's answer is not one; a finding shown any other way is
+    # OPEN with its proof and grade, never NOT SHOWN, which is for what
+    # nobody showed.
     "2. Stop at round three.",
     "From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding "
     "of an earlier round of this PR, shown or not, stops the PR: fix nothing more in that "
     "round, list it in your handoff as SAME FAMILY with the round and the earlier finding it "
-    "repeats, list every other finding of that round as OPEN beside it, and hand the PR to "
-    "the mayor as stopped, not done, for one decision: a check for the class built under its "
-    "own tests, or a merge with the class filed as a bead.",
-    "That decision rules on the repeated family alone: every finding listed OPEN beside it "
-    "keeps its own grade and needs its own outcome, each blocking one before any merge.",
+    "repeats, list every other finding of that round beside it as OPEN (as NOT SHOWN when "
+    "nobody showed it), and hand the PR to the mayor as stopped, not done, for one decision: "
+    "a check for the class built under its own tests, or a merge with the class filed as a "
+    "bead.",
+    "That decision rules on the repeated family alone: every finding you list as OPEN keeps "
+    "its own grade and needs its own outcome before any merge, from a later head or the "
+    "mayor's ruling on that one finding, a minor's follow-up counting as its outcome.",
     "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
     "earlier one's class-level fix, written in one sentence, would close it too; when you "
     "cannot tell, it is the same family and you stop.",
@@ -334,16 +338,18 @@ def test_review_rules_list_as_not_shown_only_what_nobody_showed() -> None:
 
 def test_review_rules_let_a_decision_on_a_family_dispose_of_that_family_alone() -> None:
     """Wherever the rules offer the mayor a merge, the sentence that follows
-    keeps every finding listed OPEN beside the family at its own grade, each
-    blocking one owed its own outcome before any merge: a ruling on one
-    repeated finding never waives the round's other blockers."""
+    keeps every finding listed OPEN at its own grade and owed its own
+    outcome before any merge, from a later head or a ruling on that one
+    finding: a ruling on one repeated finding never waives another."""
     sentences = re.split(r"(?<=\.)\s+", review_rules_note())
     offers = [index for index, sentence in enumerate(sentences) if re.search(r"\bor a merge\b", sentence)]
     assert offers
     for index in offers:
+        assert index + 1 < len(sentences), sentences[index]
         limit = sentences[index + 1]
-        for clause in ("alone", "every finding listed OPEN", "keeps its own grade",
-                       "each blocking one before any merge"):
+        for clause in ("alone", "every finding you list as OPEN", "keeps its own grade",
+                       "needs its own outcome before any merge",
+                       "from a later head or the mayor's ruling on that one finding"):
             assert clause in limit, (sentences[index], clause)
 
 
