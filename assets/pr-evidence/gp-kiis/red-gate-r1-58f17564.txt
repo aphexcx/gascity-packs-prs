@@ -1,10 +1,10 @@
 .........F.FF.......                                                     [100%]
 =================================== FAILURES ===================================
 E   AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
-      
+
       Skipping 1282 identical leading characters in diff, use -v to show
       -  a bead. That decision rules on the repeated family alone: every finding listed OPEN beside it keeps its own grade and needs its own outcome, each blocking one before any merge. THE SAME FAMILY means the finding names the same class as the earlier one, and the earlier one's class-level fix, written in one sentence, would close it too; when you cannot tell, it is the same family and you stop. Past round three, only a finding reproduced in that round's own changes (a failing test, or shown reachable where...
-      
+
       ...Full output truncated, use '-vv' to show
 <clone>/tests/test_gc_standing_notes_fragment.py:307: AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
 E   AssertionError: list the rest as NOT SHOWN with their file and line.

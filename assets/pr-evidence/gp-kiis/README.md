@@ -5,9 +5,11 @@ The third note in `gascity/template-fragments/gc-standing-notes.template.md`
 tests. Base: main at `7876f976`. Round 1 ended at `0e6e35df` (code head
 `d845e279`; the two commits after it touch only this directory). Round 2, the
 mayor's gate round 1 on `0e6e35df`, ends at code head `b994cbf3`; its section
-is [the last one below](#round-2-the-mayors-gate-round-1), and the files it
-names carry its commits in their names. Files named for a round 1 commit
-describe that commit, not the head.
+is [below](#round-2-the-mayors-gate-round-1), and the files it names carry its
+commits in their names. Round 3, the mayor's gate round 2 on `cd96d635`, ends
+at code head `9a4769eb`; its section is
+[the last one below](#round-3-the-mayors-gate-round-2). Files named for an
+earlier commit describe that commit, not the head.
 
 Round 1:
 
@@ -67,13 +69,16 @@ expected render from the fragment, so the new note needs no edit there.
 - `mutations-d845e279.txt`: 32 mutations of the text at `d845e279` (the list
   is `mutations-d845e279.json`), all red, including codex's added sentence
   (m25), which the per-subject counts at `4b0af8fe` let through.
-- `mutate.py`: the mutation runner. Each mutation writes one text change into
-  a scratch clone, runs the fragment tests, and writes the original text back.
+- The tools that made these files, the mutation runner `mutate.py` and the
+  render helper `render_notes.py`, left this PR in round 3 and are kept with
+  the builder's private records; the runner's last run, at `b994cbf3`, ran 55
+  mutations, 54 distinct (m45 and m55 make the same change), all killed.
 - `codex-r1-4b0af8fe.md`: the lane's codex round 1 (STANDARD) at `4b0af8fe`,
   its header and its final review. The worktree path is replaced by
   `<lane worktree>`. Since round 2, the header's session identifier is
-  `<removed>` and the two source links point at the files at main `7876f976`
-  (identical at `4b0af8fe`); the review text is otherwise as codex wrote it.
+  `<removed>`; since round 3, the two source links are links relative to this
+  file that reach the cited files in this repository (`../../../REVIEW.md`
+  and the like). The review text is otherwise as codex wrote it.
 
 ## Review rounds and outcomes
 
@@ -141,7 +146,7 @@ one input, in a scratch clone that was left clean.
 | `red-codex-r2-058841e1.txt`: the same | `058841e1` (on `f7a35e8d`'s note) | 1 failed, 19 passed, exit 1 |
 | `red-self-review-2-22948310.txt`: the same | `22948310` (on `f73492a0`'s note) | 2 failed, 19 passed, exit 1 |
 | `green-b994cbf3.txt`: the same without `--tb=line` | `b994cbf3` | 21 passed, exit 0 |
-| `mutations-b994cbf3.txt`: `verify python3 -I mutate.py <clone> mutations-b994cbf3.json <out>` | `b994cbf3` | 55 mutations, 55 killed, exit 0 |
+| `mutations-b994cbf3.txt`: `verify python3 -I mutate.py <clone> mutations-b994cbf3.json <out>` | `b994cbf3` | 55 mutations run, 54 distinct (m45 and m55 make the same change), all killed, exit 0 |
 | `mutations-boundary-0e6e35df.txt`: the same with m33 and m42 only | `0e6e35df` (its tests and text) | 2 survived, exit 1: a sentence between the heading and the marker (the gate's NOTE 9) and a heading after the last rule both passed the old tests; both are killed at the head |
 | `rendered-notes-b994cbf3.txt`: `python3 render_notes.py <clone> ./build/gc` | `b994cbf3` | `gc prime --strict` exit 0 both ways; each note once, in order, byte for byte the fragment's body; no slash, date or bead id; the review rules' only digits are 1 to 6 |
 | `tools-before-after.txt` | the tools at `0e6e35df`, `b166108d` and `e00ccfa5` against the head's | each old tool shows its finding, and the head's does not |
@@ -162,7 +167,7 @@ one input, in a scratch clone that was left clean.
 | MINOR 5: the runner counted a broken test invocation as a kill | | FIXED `7f8c1be4`: a green baseline is required, and a kill needs exit 1 and a named failing test. From `e00ccfa5` both are read from pytest's JUnit XML report |
 | MINOR 6: a mutation target could resolve outside the scratch clone | | FIXED `7f8c1be4`: refused when it resolves outside the clone, symlinks included; the original bytes are restored |
 | MINOR 7: the render helper lost a caller-relative gc path | | FIXED `7f8c1be4`: resolved before any subprocess runs |
-| MINOR 8: two source links in the transcript resolved inside this directory | The same class reached the round 2 transcript's link | FIXED `7f8c1be4`: they point at main `7876f976`, where the cited files are unchanged |
+| MINOR 8: two source links in the transcript resolved inside this directory | The same class reached the round 2 transcript's link | FIXED `7f8c1be4`: they point at main `7876f976`, where the cited files are unchanged. Round 3 replaced those links, which named an account, with relative ones (the gate round 2's MAJOR 2) |
 | NOTE 9: the whole-note test started at the marker, not the heading | | FIXED `58f17564`: it runs from `## Review rules` to the end of the define (m33, m41, m42) |
 
 ### The first self-review (fresh subagent, the lane's model, at `7f8c1be4`)
@@ -220,7 +225,8 @@ self-review. The round's one codex round was spent, and the mayor's gate from
 - `red-gate-r1-58f17564.txt`, `red-self-review-2778cf63.txt`,
   `red-codex-r2-058841e1.txt`, `red-self-review-2-22948310.txt`: each test
   commit's red on the note before it. `green-b994cbf3.txt`: the head.
-- `mutations-b994cbf3.json` and `.txt`: 55 mutations at the head, all killed.
+- `mutations-b994cbf3.json` and `.txt`: 55 mutations run at the head, 54
+  distinct (m45 and m55 make the same change), all killed.
   m01 to m32 come from round 1, re-anchored on the new text; m33 onward are
   this round's, each named for the finding it guards.
 - `mutations-boundary-0e6e35df.txt`: m33 and m42 at the gate's head, both
@@ -233,3 +239,48 @@ self-review. The round's one codex round was spent, and the mayor's gate from
   commit after it adds only that file and these rows; at that commit the
   fragment tests and the repository's bare-command scan ran again (the
   closing lines are in the PR body's testing line).
+
+## Round 3: the mayor's gate round 2
+
+The mayor's gate at `cd96d635` (DEEP, on the delta from `0e6e35df`) returned
+BLOCK: CRITICAL 1 (PRECONDITION), MAJOR 2, MINOR 4, NOTE 1. Its record stays
+in the city's own records. The bead names this round as the mayor's round 2,
+so rule 2's stop, which starts at round three, did not apply to it. The
+round's order was: the lane's own reviewer on the delta, then one codex DEEP
+round on the delta, no more.
+
+| Commit | What |
+| --- | --- |
+| `8c3ae355` | the test, red first: the gate's sequence walked on the note's own words; the whole-note pin carries the changed sentence |
+| `9a4769eb` | the note: rule 2's last sentence gives FIXED, with the head that fixed it, to a finding whose proof no longer fails at the reviewed head (code head) |
+| the commit after it | the evidence: three links made relative, the two tools removed, trailing whitespace trimmed, this section |
+
+### Commands and counts
+
+| Run | Tree | Result |
+| --- | --- | --- |
+| `red-gate-r2-8c3ae355.txt`: `verify python3 -m pytest tests/test_gc_standing_notes_fragment.py -q -p no:cacheprovider -rf --tb=line` | `8c3ae355` (the test on `cd96d635`'s note) | 2 failed, 20 passed, exit 1 |
+| `green-9a4769eb.txt`: the same without `--tb=line` | `9a4769eb` | 22 passed, exit 0 |
+| `rendered-notes-9a4769eb.txt`: the render helper with the dev gc | `9a4769eb` | `gc prime --strict` exit 0 both ways; each note once, in order, byte for byte the fragment's body; no slash, date or bead id; the review rules' only digits are 1 to 6; against `rendered-notes-b994cbf3.txt` only the changed sentence differs |
+
+`tests/test_gc_role_prompt_integration.py` is unchanged this round too.
+
+### The gate's findings
+
+| Finding | Class, cases, test | Outcome |
+| --- | --- | --- |
+| CRITICAL 1 (PRECONDITION): a bare gc name that missed on PATH made the render helper run a program from the caller's directory | Evidence tools in the public PR, reviewed as product code. Cases: `render_notes.py` (this finding) and `mutate.py` (MINORs 4 to 6). Test: the lane's public-repo scan, kept privately, now fails on any file in this directory that is not a record (`.md`, `.txt` or `.json`); it finds both tools at `cd96d635` and none at the head | FIXED in the evidence commit: the helper left the PR. Nothing inside it was changed; the private copy is as it was |
+| MAJOR 2: three source links in the committed transcripts carried an operator's account name in the link destination | An identifier of a person, an account, a session or a machine in anything pushed, read in every link destination, URL and path as well as in the text. Cases: `codex-r1-4b0af8fe.md` lines 20 and 29, `codex-r2-b166108d.md` line 20. Test: the lane's public-repo scan now reads every link destination, URL and path in every pushed file, the new commit messages, the title and the body, with positive controls for a name in a destination and for a link shaped like the gate's; it finds the 3 at `cd96d635` (round 2's text scan found none of them) and 0 at the head | FIXED in the evidence commit: each is a link relative to its file, rooted at this repository (`../../../REVIEW.md#L77-L81` and the like), as the base had them but rooted correctly. The value stays in the branch history; it was not rewritten |
+| MAJOR 3 (UNKNOWN): past round three, rule 2 sent an earlier head's fault proven by a failing test to the mayor as OPEN, even when that test passes at the reviewed head | Rule 2's past-round-three branch gave OPEN before the word a finding can have without a fix. Cases: a fault the reviewed head no longer shows (FIXED, with the head that fixed it) and one that still fails only where the changed code never runs (PRECONDITION); the stop's sentence already gives that order. Shown first: the walk fails on `cd96d635`'s note, whose clause reaches OPEN with no FIXED before it; rule 4's "or else the listing these rules give it" does not answer it, since rule 2's sentence gives that finding OPEN by name. Test: `test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_shows` (red at `8c3ae355`) | FIXED `9a4769eb` |
+| MINOR 4: the runner counted a setup error or a skip as part of a kill | CRITICAL 1's class | FIXED in the evidence commit: the runner left the PR, unchanged |
+| MINOR 5: the runner could overwrite its own input when the report path aliased it | CRITICAL 1's class | FIXED in the evidence commit: the runner left the PR, unchanged |
+| MINOR 6: multi-line mutations broke on CR-only files | CRITICAL 1's class | FIXED in the evidence commit: the runner left the PR, unchanged |
+| MINOR 7: 13 lines with trailing whitespace across four red transcripts and `tools-before-after.txt` | One class, five files | FIXED in the evidence commit: trimmed; `git diff --check` from the base exits 0 |
+| NOTE 8: m45 and m55 are one mutation | One case | FIXED in the evidence commit: the README says 55 run, 54 distinct |
+
+### Files (round 3)
+
+- `red-gate-r2-8c3ae355.txt`: the test commit's red on `cd96d635`'s note.
+  `green-9a4769eb.txt`: the code head.
+- `rendered-notes-9a4769eb.txt`: the real gc render at the code head.
+- `mutate.py` and `render_notes.py` are gone; every file they made stays.

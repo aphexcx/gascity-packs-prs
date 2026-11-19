@@ -7,14 +7,14 @@ the same input, in a scratch clone left clean afterwards.
 
 ### MINOR 5: a broken test invocation (an interpreter without pytest) counted as a kill
 interpreter: /usr/bin/python3 (no pytest)
-old runner: exit 0; KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; red: none) 1 mutations, 1 killed, 0 survived 
+old runner: exit 0; KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; red: none) 1 mutations, 1 killed, 0 survived
 new runner: exit 1; the clone is not green before any mutation (exit 1, 0 tests ran); nothing was run out file written
 tc5 clone left clean: yes
 
 ### MINOR 6: a mutation target outside the scratch clone (parent-relative, and an outward symlink)
-old runner: exit 0; SURVIVED x1 parent-relative target (exit 0; red: none) SURVIVED x2 symlink target (exit 0; red: none) 2 mutations, 0 killed, 2 survived 
+old runner: exit 0; SURVIVED x1 parent-relative target (exit 0; red: none) SURVIVED x2 symlink target (exit 0; red: none) 2 mutations, 0 killed, 2 survived
 old runner: the file outside the clone was rewritten (sha256 7dd0237c09c2f51a before, 768396196c7442d1 after; CRLF line ends now 0)
-new runner: exit 1; SETUP-ERROR x1 parent-relative target: '../tc6-outside/sentinel.txt' is not a file inside the clone SETUP-ERROR x2 symlink target: 'link.txt' is not a file inside the clone 2 mutations: 0 killed, 0 survived, 0 broken, 2 setup-error 
+new runner: exit 1; SETUP-ERROR x1 parent-relative target: '../tc6-outside/sentinel.txt' is not a file inside the clone SETUP-ERROR x2 symlink target: 'link.txt' is not a file inside the clone 2 mutations: 0 killed, 0 survived, 0 broken, 2 setup-error
 new runner: the file outside the clone is byte for byte as it was
 tc6 clone left clean: yes
 
@@ -28,8 +28,8 @@ old runner, PYTEST_ADDOPTS=-q, m01: exit 1 :: no out file written :: printed: th
 old runner, PYTEST_ADDOPTS=--color=yes, m01: exit 1 :: BROKEN m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; red: none) :: printed: BROKEN m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; red: none)
 old runner, a CRLF checkout of the fragment, m01: exit 1 :: SETUP-ERROR m01 rule 5's depth sentence replaced (self-review survivor): old text occurs 0 times
 old runner, baseline red (an interpreter without pytest), out file held a stale report: exit 1 :: out file now: STALE: 43 mutations, 43 killed
-new runner, PYTEST_ADDOPTS=-q, m01: exit 0 :: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran; red: test_review_rules_note_is :: printed: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran; 
-new runner, PYTEST_ADDOPTS=--color=yes, m01: exit 0 :: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran; red: test_review_rules_note_is :: printed: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran; 
+new runner, PYTEST_ADDOPTS=-q, m01: exit 0 :: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran; red: test_review_rules_note_is :: printed: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran;
+new runner, PYTEST_ADDOPTS=--color=yes, m01: exit 0 :: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran; red: test_review_rules_note_is :: printed: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran;
 new runner, a CRLF checkout of the fragment, m01: exit 0 :: KILLED m01 rule 5's depth sentence replaced (self-review survivor) (exit 1; 20 of 20 ran; red: test_review_rules_note_is
 new runner, baseline red (an interpreter without pytest), out file held a stale report: exit 1 :: out file now: the clone is not green before any mutation (exit 1, 0 tests ran); nothing was run
 scratch clone left clean: yes
