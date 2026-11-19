@@ -1,0 +1,23 @@
+# Suites at a88c9572 (clean clones; the verify function of the base's verify skill)
+
+## verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q -p no:cacheprovider
+3108 passed, 132 skipped, 2 warnings, 10746 subtests passed in 643.18s (0:10:43)
+exit 0
+elapsed 650s; load { 16.10 15.87 14.23 }
+
+## verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider'
+1071 passed, 128 skipped, 10518 subtests passed in 376.10s (0:06:16)
+exit 0
+elapsed 377s; load { 15.59 15.73 14.83 }
+
+## CI's gc step: GC_TEST_BIN=<gc> python3 -m pytest tests/test_gc_role_prompt_integration.py tests/test_pack_composition_warnings.py -q -p no:cacheprovider (env -i: PATH, HOME, TMPDIR, GC_TEST_BIN)
+103 passed in 389.15s (0:06:29)
+exit 0 after 389s; load { 10.34 10.91 12.01 }
+
+## The same step's first run, in the worker's own environment (not clean; for the record)
+The worker's own gc variables reached the fixture, and one test this PR does not touch failed on them:
+E       AssertionError: CLAIM_REJECTED route mismatch for bd-123
+FAILED tests/test_gc_role_prompt_integration.py::test_registered_claim_command_dispatches_store_aware_show_and_normalizes_json
+1 failed, 102 passed in 461.11s (0:07:41)
+exit 1 after 462s; load { 9.71 11.07 12.69 }
+That test alone, in the clean environment above: 1 passed.

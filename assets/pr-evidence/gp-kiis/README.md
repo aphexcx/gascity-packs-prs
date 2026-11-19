@@ -265,6 +265,10 @@ round on the delta, no more.
 | `red-self-review-3-1e419929.txt`: the same as the first row | `1e419929` (the fold's test on `9a4769eb`'s note) | 2 failed, 20 passed, exit 1 |
 | `green-a15fd2b9.txt`: the same without `--tb=line` | `a15fd2b9` | 22 passed, exit 0 |
 | `rendered-notes-9a4769eb.txt` and `rendered-notes-a15fd2b9.txt`: the render helper with the dev gc | `9a4769eb`, `a15fd2b9` | `gc prime --strict` exit 0 both ways; each note once, in order, byte for byte the fragment's body; no slash, date or bead id; the review rules' only digits are 1 to 6; against `rendered-notes-b994cbf3.txt` only the changed sentence differs, each time |
+| `suites-a88c9572.txt`: the full Python suite as in round 2's table | `a88c9572` | 3108 passed, 132 skipped, exit 0 (650 s) |
+| `verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider'` | `a88c9572` | 1071 passed, 128 skipped, exit 0 (377 s) |
+| CI's gc step, in a clean environment (`env -i`, as in CI) | `a88c9572` | 103 passed, exit 0; a first run in the worker's own environment failed one test this PR does not touch on the worker's own variables, and that test passed alone in the clean one (both in the file) |
+| `git diff --check 7876f976..HEAD` | the head | exit 0 |
 
 `tests/test_gc_role_prompt_integration.py` is unchanged this round too.
 
@@ -273,7 +277,7 @@ round on the delta, no more.
 | Finding | Class, cases, test | Outcome |
 | --- | --- | --- |
 | CRITICAL 1 (PRECONDITION): a bare gc name that missed on PATH made the render helper run a program from the caller's directory | Evidence tools in the public PR, reviewed as product code. Cases: `render_notes.py` (this finding) and `mutate.py` (MINORs 4 to 6). Test: the lane's public-repo scan, kept privately, now fails on any file in this directory that is not a record (`.md`, `.txt` or `.json`); it finds both tools at `cd96d635` and none at the head | FIXED `25056cae`: the helper left the PR. Nothing inside it was changed; the private copy is as it was |
-| MAJOR 2: three source links in the committed transcripts carried an operator's account name in the link destination | An identifier of a person, an account, a session or a machine in anything pushed, read in every link destination, URL and path as well as in the text. Cases: `codex-r1-4b0af8fe.md` lines 20 and 29, `codex-r2-b166108d.md` line 20. Test: the lane's public-repo scan now reads every link destination, URL and path in every pushed file, the new commit messages, the title and the body, with positive controls for a name in a destination and for a link shaped like the gate's; it finds the 3 at `cd96d635` (round 2's text scan found none of them) and 0 at the head | FIXED `25056cae`: each is a link relative to its file, rooted at this repository (`../../../REVIEW.md#L77-L81` and the like), as the base had them but rooted correctly. The value stays in the branch history; it was not rewritten |
+| MAJOR 2: three source links in the committed transcripts carried an operator's account name in the link destination | An identifier of a person, an account, a session or a machine in anything pushed, read in every link destination, URL and path as well as in the text. Cases: `codex-r1-4b0af8fe.md` lines 20 and 29, `codex-r2-b166108d.md` line 20. Test: the lane's public-repo scan now reads every link destination, URL and path as well as the text in each file under this directory whole, in the added lines of the PR's other files, in the new commit messages, the title and the body, with positive controls for a name in a destination and for a link shaped like the gate's; it finds the 3 at `cd96d635` (round 2's text scan found none of them) and 0 at the head | FIXED `25056cae`: each is a link relative to its file, rooted at this repository (`../../../REVIEW.md#L77-L81` and the like), as the base had them but rooted correctly. The value stays in the branch history; it was not rewritten |
 | MAJOR 3 (UNKNOWN): past round three, rule 2 sent an earlier head's fault proven by a failing test to the mayor as OPEN, even when that test passes at the reviewed head | Rule 2's past-round-three branch gave OPEN before the word a finding can have without a fix. Cases: a fault the reviewed head no longer shows (FIXED, with the head that fixed it) and one that still fails only where the changed code never runs (PRECONDITION); the stop's sentence already gives that order. Shown first: the walk fails on `cd96d635`'s note, whose clause reaches OPEN with no FIXED before it; rule 4's "or else the listing these rules give it" does not answer it, since rule 2's sentence gives that finding OPEN by name. Test: `test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_shows` (red at `8c3ae355`) | FIXED `9a4769eb`, completed at `a15fd2b9` (the self-review's MINOR 1). A departure from the order's one clause: the PRECONDITION half is a second clause, for the gate's own second case |
 | MINOR 4: the runner counted a setup error or a skip as part of a kill | CRITICAL 1's class | FIXED `25056cae`: the runner left the PR, unchanged |
 | MINOR 5: the runner could overwrite its own input when the report path aliased it | CRITICAL 1's class | FIXED `25056cae`: the runner left the PR, unchanged |
@@ -291,10 +295,25 @@ BLOCKER 0, MAJOR 0, MINOR 5 (two uncertain), NIT 3.
 | MINOR 2 (uncertain): a finding still happening at head four and fixed at head five gets OPEN and FIXED | WRONG: each round's handoff gives it one word, OPEN in round four and FIXED in round five, which is the order of "every finding you list as OPEN ... needs its own outcome before any merge, from a later head" |
 | MINOR 3: five rewordings pass every test once the whole-note pin is edited with them | DOES NOT MATTER: each fails the whole-note pin until the pin is rewritten in the same commit, which puts the new words in front of whoever reviews it; round 2 gave its MINOR 6, the same class, the same outcome |
 | MINOR 4: the PRECONDITION half goes past the order's one clause and was not declared | FIXED: declared in the gate table above and in the READY |
-| MINOR, unnumbered (uncertain): no suite counts at the round's heads | FIXED: the suites at the evidence head are in the PR body's testing line |
+| MINOR, unnumbered (uncertain): no suite counts at the round's heads | FIXED: the suites rows below and the PR body's testing line |
 | NIT 5: "FIXED, with the head that fixed it" beside "FIXED (with the commit)" | INTENDED: the order's own words; a head is the commit sent to review |
 | NIT 6: the removed tools' commands read as runnable; the gate outcomes named no commit | FIXED: each command row says the tool is not in this PR; the outcomes name `25056cae` |
 | NIT 7 (uncertain): the relative links follow the ref a reader views, so a later change to main can move the cited lines | INTENDED: the order allows relative links, as the base had them; the link text keeps the cited line numbers |
+
+### Codex round 3 (the lane's, DEEP, through the hub, on the delta from `cd96d635` at `a88c9572`)
+
+MAJOR 1, MINOR 4. `codex-r3-a88c9572.md` holds its header (session
+identifier removed) and its final review. It is the round's one codex round,
+and the order lists a same-family finding in it and hands it over instead of
+fixing it.
+
+| Finding | Outcome |
+| --- | --- |
+| MAJOR 1: a finding an earlier head's proof showed, whose state at the reviewed head nobody can tell, gets no word: FIXED needs it gone, OPEN needs it still happening, and NOT SHOWN would take a live blocker out of the merge gate | SAME FAMILY, handed to the mayor: the class of codex round 2's P1 (a blocker leaves the merge gate for want of evidence), whose fix, OPEN with what would settle it, would close it too. This round's clause opened it in the past-round-three branch ("OPEN is only for what still happens"). Shown: a probe test fails at `a88c9572`, and a one-word candidate ("otherwise" for "while it still happens there") turns it green with every other test; the candidate is kept with the builder's private records and is not applied |
+| MINOR 2: a fault that goes away with no head of the PR fixing it (a provider changed) cannot name the head that fixed it | DOES NOT MATTER: it no longer happens, so no merge decision turns on its line, which can name what changed |
+| MINOR 3: "or else may be listed as OPEN" passes every test once the whole-note pin moves with it | DOES NOT MATTER: the class of the self-review's MINOR 3 and round 2's MINOR 6, with their outcome |
+| MINOR 4: the gate table above said the scan reads whole every pushed file; it reads whole only the files under this directory, and the PR's other files by their added lines | FIXED in the commit after `a88c9572`: the row says so. The two lines a whole read of the test file adds are on main already (the city-neutral test's own patterns) |
+| MINOR 5: the saved PR body named no suite counts at the round's heads | FIXED: the suites rows below and the PR body's testing line |
 
 ### Files (round 3)
 
@@ -303,4 +322,7 @@ BLOCKER 0, MAJOR 0, MINOR 5 (two uncertain), NIT 3.
   `green-9a4769eb.txt` and `green-a15fd2b9.txt`: each note commit.
 - `rendered-notes-9a4769eb.txt` and `rendered-notes-a15fd2b9.txt`: the real
   gc render at each note commit.
+- `codex-r3-a88c9572.md`: the lane's codex round 3, as described above.
+- `suites-a88c9572.txt`: the closing lines of each suite at `a88c9572`; the
+  commit after it touches only this directory.
 - `mutate.py` and `render_notes.py` are gone; every file they made stays.
