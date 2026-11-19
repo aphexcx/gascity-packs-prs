@@ -27,3 +27,30 @@ run 3, load 36.59 to 35.36, exit 0 | all collection caps, 100 warm decisions: p9
 run 4, load 35.36 to 31.41, exit 0 | all collection caps, 100 warm decisions: p95 CPU=17.60 ms | extra work=false, median CPU delta=11.67 ms, wall p95 hook=71.10 ms bare=75.17 ms | extra work=true, median CPU delta=160.86 ms, wall p95 hook=208.86 ms bare=37.77 ms | pass 187 | fail 0 | skipped 1
 run 5, load 31.41 to 27.58, exit 0 | all collection caps, 100 warm decisions: p95 CPU=16.54 ms | extra work=false, median CPU delta=10.51 ms, wall p95 hook=49.36 ms bare=35.07 ms | extra work=true, median CPU delta=160.75 ms, wall p95 hook=196.48 ms bare=35.49 ms | pass 187 | fail 0 | skipped 1
 run 6, load 27.58 to 25.52, exit 0 | all collection caps, 100 warm decisions: p95 CPU=16.59 ms | extra work=false, median CPU delta=11.14 ms, wall p95 hook=50.21 ms bare=34.65 ms | extra work=true, median CPU delta=161.24 ms, wall p95 hook=196.75 ms bare=35.99 ms | pass 187 | fail 0 | skipped 1
+
+Round 2. Every row ran env -u GC_BIN make test-reachable with Node v26.12.1. Normal CPU must be below 100 ms. Adding 150 ms must be detected. All CPU checks and warm at-cap checks met their assertions in every row.
+
+Preliminary candidate 48bd4a6f62b8fc15e88a6a4e86ecb814915d7ca3.
+Row | starting one-minute load | median added CPU ms | injected median CPU ms | at-cap p95 CPU ms | pass/fail/skip | target exit
+run 1 | 15.73 | 14.81 | 160.72 | 19.50 | 210/0/1 | 0
+run 2 | 16.43 | 10.02 | 160.87 | 19.75 | 210/0/1 | 0
+run 3 | 15.53 | 9.81 | 159.27 | 18.25 | 210/0/1 | 0
+run 4 | 14.18 | 10.77 | 163.05 | 19.42 | 210/0/1 | 0
+run 5 | 21.05 | 15.08 | 163.25 | 25.50 | 210/0/1 | 0
+run 6 | 39.17 | 16.43 | 164.47 | 26.21 | 207/3/1 | 2
+Run 6 failed in three existing tests:
+R4: paired hook processes for one call leave no error record
+R5: complete hook CPU above bare Node is under 100 ms and detects 150 ms of added work
+review 4: archive replay advances in bounded chunks without dropping rows
+The paired hook recorded state_busy, the CPU test counted 39 of 40 receipts, and the archive child returned ETIMEDOUT.
+
+Comparison and final implementation 97ad7056d9b41b1b02f0673c1a10f8ca25faff9e. The compare-base row used the unchanged 060bc2aa75add7e91cacf01cbd06dd4bb04aa39f Make target and fixtures.
+Row | starting one-minute load | median added CPU ms | injected median CPU ms | at-cap p95 CPU ms | pass/fail/skip | target exit
+compare-base | 35.12 | 10.95 | 165.46 | 20.13 | 187/0/1 | 0
+compare-head | 40.37 | 10.12 | 161.27 | 18.08 | 219/0/1 | 0
+compare-moderate | 29.29 | 12.43 | 161.49 | 19.04 | 219/0/1 | 0
+compare-head-matched | 35.15 | 13.70 | 159.05 | 23.18 | 218/1/1 | 2
+final-moderate | 29.33 | 11.57 | 160.00 | 18.31 | 219/0/1 | 0
+final-default-5 | 23.67 | 10.17 | 160.58 | 17.49 | 219/0/1 | 0
+final-default-6 | 19.96 | 9.25 | 160.96 | 18.68 | 219/0/1 | 0
+The paired-hook test passed in both matched runs (35.12 and 35.15, same 24 low-priority load workers active). The earlier 40.37 row began as load fell after the workers stopped. The 29.29 and 29.33 rows cover the requested moderate window. The only final failure was review 4: archive replay advances in bounded chunks without dropping rows (ETIMEDOUT) at 35.15.

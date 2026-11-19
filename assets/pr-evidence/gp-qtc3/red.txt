@@ -86,3 +86,44 @@ The later rotation regression first failed on the implementation with 2 skipped 
 At the initial implementation commit the 11 class-level self-review fixtures failed by assertion.
 
 The first Linux Reachable job failed three existing rotation and archive-backpressure tests. The added fixture "rotation: a reused inode and matching trailing bytes cannot conceal a new sequence" failed its assertion on f00ccd433641cb13ca9b345378d027f165e8fcdf. On b44e04a9200662f0ea8bef1e948d5cd1ba52005f the regression and all three hosted cases passed.
+
+Round 2. Implementation 060bc2aa75add7e91cacf01cbd06dd4bb04aa39f, test-only commit fa1038386bc64ef80a1ecd424a9fd46125adc6de.
+From reachable/test with Node v26.12.1:
+env -u GC_BIN node --test --test-reporter=tap --test-name-pattern='^(R2-[1-7]|M9:|M10:)'
+Exit 1. Of the 23 new assertions, 21 failed and two existing-order controls passed.
+not ok 4 - R2-1: outdated copy preserves v1 state on status
+not ok 5 - R2-1: outdated copy preserves v1 state on exempt --list
+not ok 6 - R2-1: outdated copy preserves v1 state on pass example/room-a
+not ok 7 - R2-1: outdated copy preserves v1 state on exempt example/room-a --on
+not ok 8 - R2-2: displaced status cannot restore a passed wait
+not ok 9 - R2-2: displaced hook cannot restore a passed wait
+not ok 10 - R2-5: moved install recovers a failed settings.json via retry and uninstall
+not ok 11 - R2-5: moved install recovers a failed settings.json via uninstall
+ok 12 - R2-5: moved install recovers a failed install.json via retry and uninstall
+ok 13 - R2-5: moved install recovers a failed install.json via uninstall
+not ok 14 - R2-5: failed first install still selects observe on retry
+not ok 15 - R2-6: a listed exemption can be removed after age eviction
+not ok 16 - R2-6: a listed exemption can be removed after cap eviction
+not ok 17 - M9: uninstall preserves user settings with a missing snapshot
+not ok 18 - M9: uninstall preserves user settings with a changed snapshot
+not ok 19 - M10: status and doctor retain diagnostics beside an unreadable record
+not ok 25 - R2-3: cursor advances past a maximum-size complete row
+not ok 26 - R2-3: Stop includes a maximum-size complete row in its fence
+not ok 27 - R2-4: an inferred gap releases older waits after other inbound
+not ok 28 - R2-4: an inferred gap releases older waits after mayor inbound
+not ok 29 - R2-4: an inferred gap releases older waits after archive tail
+not ok 30 - R2-7: recent wake survives replay eviction with different timestamps
+not ok 31 - R2-7: recent wake survives replay eviction with equal timestamps
+
+Native review of 48bd4a6f62b8fc15e88a6a4e86ecb814915d7ca3. Test-only commit 66bd42240d34da59d4ae93a7da49e8fe1dbbae08.
+From reachable/test, env -u GC_BIN node --test --test-reporter=tap --test-name-pattern='^R2-R' exited 1. All eight review cases failed.
+The additional version-two compatibility test was run separately with the prefix '^R2-R8: v2 state' and exited 1 on the same implementation.
+not ok 16 - R2-R8: v2 state without last_readable_seq resumes from its cursor
+not ok 10 - R2-R1: a displaced mirror writer returns its committed receipt
+not ok 11 - R2-R2: interrupted manifest removal preserves a successor install
+not ok 12 - R2-R3: a revoked zero ticket cannot promote itself
+not ok 13 - R2-R4: unfinished bytes after the longest row do not lower the Stop fence
+not ok 14 - R2-R5: recovery replaces a stale ticket without opening it for writes
+not ok 15 - R2-R6: unreadable settings allow pass with a matching hook copy
+not ok 16 - R2-R7: revocation observed after stat is recoverable
+not ok 17 - R2-R8: consecutive archive and active gaps retain the last readable sequence

@@ -22,3 +22,44 @@ make test-reachable: six complete suites, each 188 tests, 187 passed, 0 failed, 
 Repository Verify command above: 187 tests, 186 passed, 0 failed, 1 skipped, exit 0.
 make test-reachable-perf: 1 passed, exit 0. Warm-decision p95 2.462 ms, complete-process p95 60.375 ms.
 The hosted Linux Reachable job on the cursor fix also passed with Node 20.
+
+Round 2 implementation 97ad7056d9b41b1b02f0673c1a10f8ca25faff9e, Node v26.12.1.
+From reachable/test, env -u GC_BIN node --test --test-reporter=tap exited 0.
+# tests 220
+# pass 219
+# fail 0
+# skipped 1
+ok 22 - R2-1: outdated copy preserves v1 state on status
+ok 23 - R2-1: outdated copy preserves v1 state on exempt --list
+ok 24 - R2-1: outdated copy preserves v1 state on pass example/room-a
+ok 25 - R2-1: outdated copy preserves v1 state on exempt example/room-a --on
+ok 26 - R2-2: displaced status cannot restore a passed wait
+ok 27 - R2-2: displaced hook cannot restore a passed wait
+ok 28 - R2-5: moved install recovers a failed settings.json via retry and uninstall
+ok 29 - R2-5: moved install recovers a failed settings.json via uninstall
+ok 30 - R2-5: moved install recovers a failed install.json via retry and uninstall
+ok 31 - R2-5: moved install recovers a failed install.json via uninstall
+ok 32 - R2-5: failed first install still selects observe on retry
+ok 33 - R2-6: a listed exemption can be removed after age eviction
+ok 34 - R2-6: a listed exemption can be removed after cap eviction
+ok 35 - M9: uninstall preserves user settings with a missing snapshot
+ok 36 - M9: uninstall preserves user settings with a changed snapshot
+ok 37 - M10: status and doctor retain diagnostics beside an unreadable record
+ok 71 - R2-R1: a displaced mirror writer returns its committed receipt
+ok 72 - R2-R2: interrupted manifest removal preserves a successor install
+ok 73 - R2-R3: a revoked zero ticket cannot promote itself
+ok 74 - R2-R4: unfinished bytes after the longest row do not lower the Stop fence
+ok 75 - R2-R5: recovery replaces a stale ticket without opening it for writes
+ok 76 - R2-R6: unreadable settings allow pass with a matching hook copy
+ok 77 - R2-R7: revocation observed after stat is recoverable
+ok 78 - R2-R8: consecutive archive and active gaps retain the last readable sequence
+ok 79 - R2-3: cursor advances past a maximum-size complete row
+ok 80 - R2-3: Stop includes a maximum-size complete row in its fence
+ok 81 - R2-4: an inferred gap releases older waits after other inbound
+ok 82 - R2-4: an inferred gap releases older waits after mayor inbound
+ok 83 - R2-4: an inferred gap releases older waits after archive tail
+ok 84 - R2-7: recent wake survives replay eviction with different timestamps
+ok 85 - R2-7: recent wake survives replay eviction with equal timestamps
+ok 185 - R2-R8: v2 state without last_readable_seq resumes from its cursor
+
+From the repository root, env -u GC_BIN make test-reachable at the final implementation passed five of six runs, each with 219 passed, 0 failed and one opt-in skip. The matched high-load run passed 218, failed the existing archive replay test and skipped one, exit 2. See load.txt for all starting loads, comparison rows and CPU measurements.
