@@ -237,33 +237,36 @@ REVIEW_RULES = (
     "your handoff names the class, its cases and the test.",
     "A case fixed alone can bring the same finding back on another line in the next round.",
     # 2. A repeated family stops the PR from round three, shown or not: each
-    # repeated family listed, every other finding of the round OPEN beside
-    # them with what shows it or would settle it, one decision per family;
-    # each decision rules on its own family alone, and every OPEN finding
-    # anywhere keeps its own grade and needs its own outcome before any
-    # merge, from a later head or the mayor's ruling on it, a minor's
-    # follow-up counting; what THE SAME FAMILY is; past round three, short
-    # of a stop, only a reproduction in the round's own changes buys a round,
-    # and a second model's answer is not one; a finding shown any other way
-    # is OPEN with its proof and grade, never NOT SHOWN, which is for what
-    # nobody showed.
+    # repeated family listed; every other finding of the round keeps an
+    # outcome or PRECONDITION it can have without a fix, and the rest are
+    # OPEN, never NOT SHOWN, with what shows each or would settle it; one
+    # decision per family; each decision rules on its own family alone, and
+    # every OPEN finding anywhere keeps its own grade and needs its own
+    # outcome before any merge, from a later head or the mayor's ruling on
+    # it, a minor's follow-up counting; what THE SAME FAMILY is; past round
+    # three, in a round that does not stop the PR, only a reproduction in the
+    # round's own changes buys a round, and a second model's answer is not
+    # one; a finding shown any other way is OPEN with its proof and grade,
+    # never NOT SHOWN, which is for what nobody showed.
     "2. Stop at round three.",
     "From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding "
     "of an earlier round of this PR, shown or not, stops the PR: fix nothing more in that "
     "round, list each such finding in your handoff as SAME FAMILY with the round and the "
-    "earlier finding it repeats, list every other finding of that round beside them as OPEN "
-    "with what shows it or what would settle it, and hand the PR to the mayor as stopped, "
-    "not done, for one decision on each repeated family: a check for the class built under "
-    "its own tests, or a merge with the class filed as a bead.",
+    "earlier finding it repeats, give every other finding of that round the outcome or "
+    "PRECONDITION it can have without a fix, list the rest beside them as OPEN, never NOT "
+    "SHOWN, with what shows each or what would settle it, and hand the PR to the mayor as "
+    "stopped, not done, for one decision on each repeated family: a check for the class "
+    "built under its own tests, or a merge with the class filed as a bead.",
     "Each decision rules on its own family alone: every finding you list as OPEN keeps its "
     "own grade and needs its own outcome before any merge, from a later head or the mayor's "
     "ruling on that one finding, a minor's follow-up counting as its outcome.",
     "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
     "earlier one's class-level fix, written in one sentence, would close it too; when you "
     "cannot tell, it is the same family and you stop.",
-    "Past round three, short of a stop, only a finding reproduced in that round's own "
-    "changes (a failing test, or shown reachable where the changed code runs; a second "
-    "model's answer alone is not enough) buys another round; a finding shown any other way "
+    "Past round three, in a round that does not stop the PR, only a finding reproduced in "
+    "that round's own changes (a failing test, or shown reachable where the changed code "
+    "runs; a second model's answer alone is not enough) buys another round; a finding shown "
+    "any other way "
     "(an earlier head's fault that a failing test proves, say) buys none by itself and is "
     "listed as OPEN with what shows it and its grade, for the mayor; list the rest, which "
     "nobody showed, as NOT SHOWN with their file and line.",
@@ -346,12 +349,29 @@ def test_review_rules_let_a_decision_on_a_family_dispose_of_that_family_alone() 
     offers = [index for index, sentence in enumerate(sentences) if re.search(r"\bor a merge\b", sentence)]
     assert offers
     for index in offers:
+        assert "one decision on each repeated family" in sentences[index], sentences[index]
         assert index + 1 < len(sentences), sentences[index]
         limit = sentences[index + 1]
-        for clause in ("alone", "every finding you list as OPEN", "keeps its own grade",
+        for clause in ("its own family alone", "every finding you list as OPEN", "keeps its own grade",
                        "needs its own outcome before any merge",
                        "from a later head or the mayor's ruling on that one finding"):
             assert clause in limit, (sentences[index], clause)
+
+
+def test_review_rules_give_each_finding_of_a_stopped_round_one_word() -> None:
+    """A stop says which word wins: the stop's OPEN is never NOT SHOWN, so a
+    blocker nobody could show or settle keeps its grade and its merge gate,
+    and every other sentence that gives NOT SHOWN is rule 3's honest try or
+    is held to a round that does not stop the PR."""
+    sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+    stops = [sentence for sentence in sentences if "stops the PR:" in sentence]
+    assert len(stops) == 1
+    assert "as OPEN, never NOT SHOWN," in stops[0]
+    assert "PRECONDITION it can have without a fix" in stops[0]
+    for sentence in sentences:
+        if "as NOT SHOWN" in sentence:
+            assert ("shown by neither" in sentence
+                    or sentence.startswith("Past round three, in a round that does not stop the PR,")), sentence
 
 
 def test_review_rules_judge_reach_where_the_changed_code_runs() -> None:
