@@ -81,3 +81,9 @@ The read-only gpt-6.2-astra review of `48bd4a6f62b8fc15e88a6a4e86ecb814915d7ca3`
 | 6 · P2 | Fixed. A settings inspection failure preserves the result of comparing the installed hook with the source. |
 | 7 · P2 | Fixed. A contender recognizes a revoked ticket from the bytes it reads, including an empty legacy marker. |
 | 8 · P3 | Fixed. Inferred positions cannot move the recorded last readable sequence. Existing version-two state resumes from its cursor. |
+
+### Verification of the published change
+
+The hosted Reachable job passed on Node 20 at `089f23b2515319270afd5c71d5fc89e27696ebbd`. The default target also passed at that commit on Node v26.12.1 with 219 passes and one opt-in skip. The PR checks page tracks the published head as evidence is added. [Hosted Reachable run](https://github.com/aphexcx/gascity-packs-prs/actions/runs/44561246929/job/135690813532) · [Checks at the PR head](https://github.com/aphexcx/gascity-packs-prs/pull/118/checks)
+
+`git diff --stat origin/main HEAD` covers 25 files. Seventeen are under reachable/, seven are evidence files, and one is the Reachable CI job added in round 1.
