@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"gchat-adapter/internal/ack"
+	"gchat-adapter/internal/redact"
 	"github.com/BurntSushi/toml"
 )
 
@@ -103,14 +105,16 @@ type Settings struct {
 	Media             Media      `toml:"media,omitempty"`               // as decoded; effective values are in Endpoints
 	CatchupBudget     int        `toml:"catchup_budget,omitzero"`       // per space per pass, default 50
 	FirstStartHistory *string    `toml:"first_start_history,omitempty"` // optional history window, at most one week
+	JoinReachback     string     `toml:"join_reachback,omitempty"`      // duration, default 5m, maximum 60m
 }
 
 type Config struct {
-	Secrets     Secrets
-	Settings    Settings
-	Endpoints   Endpoints
-	SecretsDir  string
-	NeverSilent struct {
+	Acknowledgement ack.Options `json:"-"`
+	Secrets         Secrets
+	Settings        Settings
+	Endpoints       Endpoints
+	SecretsDir      string
+	NeverSilent     struct {
 		Enabled                                    bool
 		HealthFile, OperatorContext, OperatorAgent string
 	}
@@ -151,6 +155,15 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 		return nil, fmt.Errorf("secrets %s: missing required keys: %s", envFile, strings.Join(missing, ", "))
 	}
 	c := &Config{SecretsDir: secretsDir}
+	arrivalValue := func(key string) string {
+		if value, ok := values[key]; ok {
+			return value
+		}
+		return os.Getenv(key)
+	}
+	c.Acknowledgement = ack.Options{Mode: arrivalValue("ACK_REACTION"), Scope: arrivalValue("ACK_SCOPE"), Base: arrivalValue("JEV_API_BASE_URL"), Model: arrivalValue("JEV_MODEL"), Key: arrivalValue("JEV_API_KEY"), Catalog: ack.Catalog,
+		// The Jev state passes Slack's secret redaction first, as on Slack.
+		Redact: redact.Text}
 	c.Secrets = Secrets{
 		ProjectID: values["GCHAT_PROJECT_ID"], Topic: values["GCHAT_PUBSUB_TOPIC"],
 		Subscription: values["GCHAT_PUBSUB_SUBSCRIPTION"], TokenSource: source,
@@ -190,6 +203,9 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	catchupBudget := 50
 	if metadata.IsDefined("catchup_budget") {
 		catchupBudget = c.Settings.CatchupBudget
+	}
+	if metadata.IsDefined("join_reachback") && c.Settings.JoinReachback == "" {
+		return nil, fmt.Errorf("settings %s: join_reachback must be a duration between 0s and 60m", settingsFile)
 	}
 	if err := c.validateSettings(mediaMaxBytes, mediaMaxAttachments, mediaMaxTotalBytes, catchupBudget); err != nil {
 		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
@@ -349,6 +365,15 @@ func (c *Config) FirstStartWindow() time.Duration {
 	return d
 }
 
+// JoinReachback applies only to the first message read of a newly bounded room.
+func (c *Config) JoinReachback() time.Duration {
+	if c.Settings.JoinReachback == "" {
+		return 5 * time.Minute
+	}
+	d, _ := time.ParseDuration(c.Settings.JoinReachback) // validated at load
+	return d
+}
+
 // Identities returns a fresh slice with resolved token paths, or the default
 // identity when none are configured. Settings is never modified.
 func (c *Config) Identities() []Identity {
@@ -413,6 +438,12 @@ func (c *Config) validateSettings(mediaMaxBytes int64, mediaMaxAttachments int, 
 		}
 		if d < 0 || d > 168*time.Hour {
 			return fmt.Errorf("first_start_history must be between 0s and 168h")
+		}
+	}
+	if c.Settings.JoinReachback != "" {
+		d, err := time.ParseDuration(c.Settings.JoinReachback)
+		if err != nil || d < 0 || d > time.Hour {
+			return fmt.Errorf("join_reachback must be a duration between 0s and 60m")
 		}
 	}
 	return nil

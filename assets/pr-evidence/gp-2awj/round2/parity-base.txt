@@ -1,0 +1,56 @@
+# PARITY AT THE BASE c99694367081b2b3e98a58aafaf1320e091621fe: the shared off-parity tests with base-hooks/
+## gchat/adapter at c9969436 with the shared off-parity test and the base hook
+$ env -u GC_BIN go test ./internal/inbound -run TestOffParity -count=1 -v
+=== RUN   TestOffParityWithTheBase
+    offparity_test.go:237: turns=[]string{"spaces/dm | dm | spaces/dm/messages/one | [from: Reader <users/456> | external | item gchat:spaces/dm/messages/one]\na direct message", "spaces/room | room | spaces/room/messages/mention | [from: Reader <users/456> | external | item gchat:spaces/room/messages/mention]\nhello Example", "spaces/dm | dm | spaces/dm/messages/bot | [from: Helper <users/789> | external, bot | item gchat:spaces/dm/messages/bot]\na bot speaks", "spaces/dm | dm | spaces/dm/messages/one#updated#<edited-at> | [from: Reader <users/456> | external | item gchat:spaces/dm/messages/one]\nedited: a direct message, edited", "spaces/room | room | spaces/room/messages/mention#deleted | [from: Reader <users/456> | external | item gchat:spaces/room/messages/mention]\ndeleted", "spaces/room | room | spaces/room/messages/mine/reactions/human#created | [from: <users/456> | external]\nreaction created: 👍 on spaces/room/messages/mine", "spaces/room | room | spaces/room/messages/mine/reactions/own#created | [from: <users/123> | external]\nreaction created: 👍 on spaces/room/messages/mine"}
+    offparity_test.go:238: calls=[]string{"GET /v1/spaces x1", "GET /v1/spaces/room/messages/mine x1", "POST /v1/spaces/dm/messages x1", "POST /v1/spaces/dm/messages/one/reactions x3"}
+    offparity_test.go:239: counters=[]string{"turns:spaces/dm=3", "turns:spaces/room=4", "unavailable:spaces/mystery=1", "unresolved=0"}
+    offparity_test.go:240: logs=[]string{"level=WARN msg=\"inbound change retained\" space=spaces/mystery change=spaces/mystery/messages/one message=spaces/mystery/messages/one cause=\"space unavailable\""}
+    offparity_test.go:241: listing=[]string{"state.json"}
+--- PASS: TestOffParityWithTheBase (1.38s)
+=== RUN   TestOffParityStartsAsTheBase
+=== RUN   TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c)
+=== RUN   TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d)
+--- PASS: TestOffParityStartsAsTheBase (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c) (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d) (0.00s)
+PASS
+ok  	gchat-adapter/internal/inbound	1.675s
+exit=0
+
+## slack-full/adapter at c9969436 with the shared off-parity test and the base hook
+$ env -u GC_BIN go test . -run TestOffParity -count=1 -v
+=== RUN   TestOffParityWithTheBase
+    offparity_test.go:362: turns=[]string{"POST /v0/city/test-city/extmsg/inbound | CEXAMPLE | room | <now>.000103 |  | <@U0BOTSELF> please look", "POST /v0/city/test-city/extmsg/inbound | CEXAMPLE | room | <now>.000104 |  | no mention here", "POST /v0/city/test-city/extmsg/inbound | DEXAMPLE | dm | <now>.000101 |  | a direct message", "POST /v0/city/test-city/extmsg/inbound | GEXAMPLE | room | <now>.000102 |  | <@U0BOTSELF> in a group"}
+    offparity_test.go:363: calls=[]string{"chat.postMessage thread_ts=<now>.000300 x1", "chat.postMessage x1", "conversations.history x1", "conversations.replies ts=<now>.000300 x1", "files.completeUploadExternal x1", "files.getUploadURLExternal x1", "reactions.add x3", "reactions.remove x1", "upload x1"}
+    offparity_test.go:364: company=[]string{"membership_probes=1", "session_calls=1", "company_barrier_ready=true", "company_store_ready=true", "company_store_error=\"\"", "company_write_failures=0", "company_delivery_failures=0", "company_target_reresolved=0", "company_materialize_requests=0", "company_boot_requests=0", "company_delivered_asleep=0", "company_roster_drift_wakes=1", "company_stale_posting_intents=0", "company_correlation_parked=0", "company_directory_loaded=true", "company_bindings_loaded=true", "company_dm_bindings_loaded=false", "registered_agent_apps=0", "registered_agent_apps_join_warnings=0", "company_dm_sig_reject=0", "company_dm_token_missing=0", "company_dm_receipts_received=0", "company_dm_receipts_routing=0", "company_dm_receipts_delivered=0", "company_dm_receipts_no_delivery=0", "company_dm_receipts_failed=0", "company_mpim_receipts_received=0", "company_mpim_receipts_routing=0", "company_mpim_receipts_delivered=0", "company_mpim_receipts_no_delivery=0", "company_mpim_receipts_failed=0", "company_body_missing=0", "company_bodies_redacted=0", "company_body_digest_mismatch=0"}
+    offparity_test.go:365: healthz=[]string{"dispatch_dropped_total=+0", "ok="}
+    offparity_test.go:366: logs=[]string{"company: roster-drift eligibility overlay admitted agent=riley bot_user_id=U0AAAAAA2 room=orchestrator-team channel=C0AAAAAAA (live channel member, directory roster stale — recapture declaratively)", "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000103 thread= target=\"\" bot_mention=true files=0 spooled=0 text=24ch posted=24ch receipt=unsupported", "inbound: chan=CEXAMPLE user=U0AAAAAA1 ts=<now>.000104 thread= target=\"\" bot_mention=false files=0 spooled=0 text=15ch posted=15ch receipt=unsupported", "inbound: chan=DEXAMPLE user=U0AAAAAA1 ts=<now>.000101 thread= target=\"\" bot_mention=false files=0 spooled=0 text=16ch posted=16ch receipt=unsupported", "inbound: chan=GEXAMPLE user=U0AAAAAA1 ts=<now>.000102 thread= target=\"\" bot_mention=true files=0 spooled=0 text=23ch posted=23ch receipt=unsupported", "publish-file: conv=CEXAMPLE file=answer.txt size=9 reply_to= session= as=\"\"", "publish: conv=CEXAMPLE text=32ch posted=32ch reply_to= idem=offparity-root session=gc-offparity as=\"\" mentions_rewritten=false", "publish: conv=CEXAMPLE text=33ch posted=33ch reply_to=<now>.000300 idem=offparity-child session=gc-offparity as=\"\" mentions_rewritten=false", "react: op=reactions.add conv=CEXAMPLE ts=<now>.000103 emoji=thumbsup"}
+    offparity_test.go:367: state=[]string{".gc/", ".gc/slack/", ".gc/slack/inbound-journal/", ".gc/slack/inbound-journal/<date>.jsonl rows=accepted@CEXAMPLE/<now>.000103/thread=,accepted@CEXAMPLE/<now>.000104/thread=,accepted@DEXAMPLE/<now>.000101/thread=,accepted@GEXAMPLE/<now>.000102/thread=,reaction@CEXAMPLE/<now>.000103/thread=,reply@CEXAMPLE/<now>.000502/thread=<now>.000300", ".gc/slack/publish-receipts/", ".gc/slack/publish-receipts/11f3a8939e248e75a8027adc52c8b4f2f94cab4b721b1f5a176f82cd0e923876.json message=<now>.000502 thread=<now>.000300 reply_to=<now>.000300 delivered=true readback=confirmed", ".gc/slack/publish-receipts/ed059699115662aeca1fcd2785a50a6348f8f6877ae71e9b6bb765319f9f2a51.json message=<now>.000501 thread= reply_to= delivered=true readback=confirmed", "uploads/", "uploads/answer.txt"}
+--- PASS: TestOffParityWithTheBase (1.68s)
+=== RUN   TestOffParityStartsAsTheBase
+=== RUN   TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c)
+=== RUN   TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d)
+--- PASS: TestOffParityStartsAsTheBase (0.00s)
+    --- PASS: TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c) (0.00s)
+    --- PASS: TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d) (0.00s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	1.869s
+exit=0
+
+## whatsapp/adapter
+# PARITY at the base c99694367081b2b3e98a58aafaf1320e091621fe (git archive), with base-hooks/offparity-hook.js
+# node: v24.21.0
+# from <tmp>/whatsapp/adapter: env -i HOME=<tmp> PATH=/usr/bin:/bin  node --test --test-concurrency=2 test/offparity.test.js
+# uptime: load averages: 6.57 8.03 8.14
+✔ with ACK_REACTION unset the script observes as at the base (base) (1580.014375ms)
+✔ an ACK_SCOPE that is neither addressed nor all starts as at the base (1c, base) (275.341125ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1906.395292
+# exit=0

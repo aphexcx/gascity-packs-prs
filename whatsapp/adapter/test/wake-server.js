@@ -8,7 +8,7 @@ function frame(text, opcode = 1) {
 }
 
 export function attachWakeServer(server, gateway, now) {
-  const link = { enabled: true, answerPings: true, attempts: [], sockets: new Set(), pings: [] };
+  const link = { enabled: true, answerPings: true, closeOnOpen: false, attempts: [], sockets: new Set(), pings: [] };
   server.on('upgrade', (req, socket, head) => {
     link.attempts.push({ at: now(), url: req.url, authorization: req.headers.authorization, protocol: req.headers['sec-websocket-protocol'] });
     if (!link.enabled || req.url !== '/v1/wake') {
@@ -53,6 +53,8 @@ export function attachWakeServer(server, gateway, now) {
     };
     socket.on('data', parse);
     if (head.length) { buffer = Buffer.alloc(0); parse(head); }
+    // A gateway or network that accepts the upgrade and closes it straight away (gp-urx1 item 4).
+    if (link.closeOnOpen) socket.write(frame(Buffer.from([0x03, 0xf0]), 8)); // 1008
   });
   link.wake = () => { for (const socket of link.sockets) socket.write(frame('wake')); };
   link.close = (code) => {

@@ -33,4 +33,40 @@ config, evidence and diffs under about forty changed lines, and say
 when the bead names a recipient, else the close reason). Never run a
 repository-wide pass from a lane, and never add a new seam with a single
 adapter.
+
+## PR body lines{{/* Bead of record: gp-hdn2. A comment renders nothing. */}}
+
+THE PR BODY LINES. Whenever you open a PR or update its body, end the body
+with three lines, each on its own line and starting with its label, after
+every other section (a Deepening note included); only the body's closing
+trailer or sign-off lines may follow them:
+
+```text
+Testing: <the exact commands you ran, each with its counts and exit code>
+Risk: <the tier and the path that set it>
+How to revert: <the one command that undoes the change once merged>
+```
+
+- On the testing line, write `none: <why>` when you ran none.
+- On the risk line, the tier comes from your city's written list of paths by
+  risk tier: the highest tier of any path the diff touches, and that path;
+  without such a list, or when no path the diff touches is on it, write
+  `not tiered` and the highest-risk path the diff touches.
+- On the revert line, the command runs after the merge, so name what the PR
+  landed as: the squash commit when squashed; the first-parent change of the
+  merge commit when merged with two parents; the whole landed range, oldest
+  to newest, when rebased or fast-forwarded, as one range from the commit it
+  landed on (`git revert --no-merges <landed-on>..<newest>`, which reverts
+  newest first). Never name a branch commit the merge may not keep; when you
+  cannot yet tell how the PR will land, cover each way the repository allows;
+  when no command undoes all of the change, also say what a revert would leave
+  behind (a migration that ran, a deploy, a message sent).
+- On every line, write a secret (a token, a key, a password) as a placeholder
+  such as `<token>`, never its value: the body is read by everyone who can see
+  the PR.
+
+A later round that updates the body rewrites the three lines for its own head
+and keeps them after every other section. Keep the labels exactly as written:
+a reviewer reads these lines first, and a city's tools may read them by their
+labels.
 {{- end }}

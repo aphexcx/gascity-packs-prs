@@ -1,0 +1,34 @@
+PR 104 round 4: the WhatsApp suite, three runs at main 68884bf1 (a git archive, <main>) and three at
+the tip c7ac084e (<clone>), interleaved, one line per run: tree, start, load averages (1, 5 and
+15 minutes), duration, counts, exit, failing tests. Nothing else of the lane's ran meanwhile; the
+box was shared with other work.
+
+Summary: main 430/431, 429/431, 431/431; tip 460/464, 463/464, 460/464 (one cancelled). Every
+failing test, at main and at the tip, is one of main's own tests in a file identical to main's
+(link, deadack, pipeline, restore, never-silent-held-link, never-silent-integration). The PR's tests
+passed in all three tip runs: test/round4-reaction-counts.test.js (four), test/both-switches.test.js,
+test/offparity.test.js (three), and main's test/react.test.js, which this round's P2 touches.
+main's held-link safety read failed in both trees (main 1 of 3, tip 2 of 3). Reported, not fixed:
+the mayor's ticket from round 3 stands.
+
+node: main v24.21.0, tip v24.21.0
+each run: (cd <tree>/whatsapp/adapter) env -i PATH=<toolchain>:/usr/bin:/bin:/usr/sbin:/sbin HOME=<scratch> LANG=en_US.UTF-8 TMPDIR=<tmp> bash -c "GC_NO_INSTALL=1 pnpm exec node --test --test-concurrency=2 --test-timeout=240000 'test/*.test.js'", bounded at 900 s
+run 1 main: start 2026-11-14T17:01:00Z load 4.29 4.63 5.19; 292s; tests 431 pass 430 fail 1 cancelled 0 exit 1; failing: held: a safety read that finds an unannounced delivery reads at WHATSAPP_POLL_MS until a reconnect (gp-urx1)
+run 2 tip: start 2026-11-14T17:05:52Z load 5.05 5.03 5.24; 274s; tests 464 pass 460 fail 4 cancelled 0 exit 1; failing: held: a safety read that finds an unannounced delivery reads at WHATSAPP_POLL_MS until a reconnect (gp-urx1) | on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status | repost_bound
+run 3 main: start 2026-11-14T17:10:26Z load 6.06 7.64 6.53; 255s; tests 431 pass 429 fail 2 cancelled 0 exit 1; failing: (11a) accepted pending at N, the store restored below it, the log empty: no plain post; the gap on disk BEFORE the one marked copy | never-silent integration: captioned reply activity survives primary receipt SIGKILL without replay
+run 4 tip: start 2026-11-14T17:14:41Z load 3.41 5.60 5.93; 271s; tests 464 pass 463 fail 1 cancelled 0 exit 1; failing: C: dropping and reconnecting a held link preserves the outage and notice marks
+run 5 main: start 2026-11-14T17:19:12Z load 4.97 5.31 5.71; 282s; tests 431 pass 431 fail 0 cancelled 0 exit 0
+run 6 tip: start 2026-11-14T17:23:54Z load 4.43 4.65 5.28; 388s; tests 464 pass 460 fail 3 cancelled 1 exit 1; failing: (11g) clear-gap prints the gap and the head, rebases the watermark; a SIGKILL and restart read no gap; a later message raises it as before | (keeper r2 m6) a kill between a join's received line and its keeper bind loses nothing: the restart binds the invite at startup, consent ON | C: dropping and reconnecting a held link preserves the outage and notice marks | held: a safety read that finds an unannounced delivery reads at WHATSAPP_POLL_MS until a reconnect (gp-urx1)
+
+failing tests by location (run, file:line):
+run1-main: test/link.test.js:278:3
+run2-tip: test/deadack.test.js:124:13
+run2-tip: test/link.test.js:278:3
+run2-tip: test/pipeline.test.js:33:1
+run3-main: test/never-silent-integration.test.js:31:1
+run3-main: test/restore.test.js:35:1
+run4-tip: test/never-silent-held-link.test.js:115:1
+run6-tip: test/link.test.js:278:3
+run6-tip: test/never-silent-held-link.test.js:115:1
+run6-tip: test/pipeline.test.js:198:1
+run6-tip: test/restore.test.js:156:1

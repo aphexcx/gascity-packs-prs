@@ -62,6 +62,8 @@ func TestCatchupCadence(t *testing.T) {
 						}
 					case strings.HasSuffix(r.URL.Path, "/spaceEvents"):
 						history.Add(1)
+					case r.URL.Path == "/v1/spaces/room/members/123456":
+						body = `{"state":"JOINED","createTime":"` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano) + `"}`
 					default:
 						t.Errorf("unexpected request: %s", r.URL)
 					}

@@ -1,0 +1,13 @@
+Release release-a
+First message: 2020-01-01T00:00:00Z
+Messages: 3
+First reaction: 2; median 1.000s; p90 3.000s
+First words: 3; median 5.000s; p90 6.000s
+Without words after one hour: 0
+
+Release release-b
+First message: 2020-02-01T00:00:00Z
+Messages: 1
+First reaction: 0; median -; p90 -
+First words: 0; median -; p90 -
+Without words after one hour: 1

@@ -380,6 +380,7 @@ func TestObservedIdentityReplacesContradictedLedgerIdentity(t *testing.T) {
 
 func TestTokenReloadDrainsPublishBeforeRebuilding(t *testing.T) {
 	f := newFixture(t, true)
+	f.replaceIdentityToken(t, fakegoogle.UserID)
 	f.google.Configure(func(g *fakegoogle.Server) {
 		g.Spaces["spaces/room"] = &api.Space{Name: "spaces/room", SpaceType: "SPACE"}
 	})
@@ -559,6 +560,25 @@ func (b *logBuffer) Write(p []byte) (int, error) {
 	return b.text.Write(p)
 }
 func (b *logBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.text.String() }
+
+func TestLegacyIdentityDiscoveryKeepsPublishingAvailable(t *testing.T) {
+	f := newFixture(t, true)
+	f.google.Configure(func(g *fakegoogle.Server) {
+		g.Spaces["spaces/room"] = &api.Space{Name: "spaces/room", SpaceType: "SPACE"}
+	})
+	f.start(t)
+	f.health(t, "catching-up", 5*time.Second)
+	resp, err := f.client.Post("http://adapter/publish", "application/json", strings.NewReader(`{"idempotency_key":"learn-identity","conversation":{"scope_id":"examplecity","provider":"gchat","account_id":"default","conversation_id":"spaces/room","kind":"room"},"text":"hello"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), `"delivered":true`) {
+		t.Fatalf("publish unavailable while identity unknown: %s", body)
+	}
+	f.health(t, "ready", 10*time.Second)
+}
 
 func TestLegacyTokenWarnsOnce(t *testing.T) {
 	f := newFixture(t, true)

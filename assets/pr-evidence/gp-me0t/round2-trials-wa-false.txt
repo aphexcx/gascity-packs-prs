@@ -1,0 +1,6 @@
+$ verify -C whatsapp/adapter node --test --test-timeout=45000 --test-name-pattern '^held\ config:\ "false"\ means\ on$' test/config.test.js
+Trial 1: tests 1, pass 0, fail 1, cancelled 0, skipped 0, exit=1, elapsed_seconds=11.76, one_minute_load=15.02
+Trial 2: tests 1, pass 0, fail 1, cancelled 0, skipped 0, exit=1, elapsed_seconds=5.9, one_minute_load=17.33
+Trial 3: tests 1, pass 0, fail 1, cancelled 0, skipped 0, exit=1, elapsed_seconds=3.61, one_minute_load=16.66
+Trial 4: tests 1, pass 0, fail 1, cancelled 0, skipped 0, exit=1, elapsed_seconds=3.01, one_minute_load=16.12
+Trial 5: tests 1, pass 0, fail 1, cancelled 0, skipped 0, exit=1, elapsed_seconds=3.27, one_minute_load=15.27

@@ -89,6 +89,10 @@ var errSpaceUnavailable = errors.New("catchup: space unavailable")
 var errSpaceRetired = errors.New("catchup: space retired")
 var errUnchanged = errors.New("catchup: ledger unchanged")
 
+// ErrIdentityUnavailable holds discovery until legacy credentials learn the
+// identity. Outbound must remain available because its response can supply it.
+var ErrIdentityUnavailable = errors.New("catchup: identity unavailable for membership lookup")
+
 func New(opts Options) (*Runner, error) {
 	if opts.Config == nil || opts.Ledger == nil || opts.LedgerMu == nil || opts.Chat == nil || opts.Processor == nil || (opts.Save == nil && opts.LedgerPath == "") {
 		return nil, errors.New("catchup: config, clients, processor, ledger, shared mutex and persistence are required")
@@ -112,6 +116,11 @@ func New(opts Options) (*Runner, error) {
 // An unfinished interval survives a restart unchanged. A newer Freeze queues
 // its upper bound so Pass also recovers the gap through the latest restart.
 func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
+	return r.FreezeFrom(ctx, now, "startup")
+}
+
+// FreezeFrom records the existing trigger; it creates no additional schedule.
+func (r *Runner) FreezeFrom(ctx context.Context, now time.Time, foundBy string) error {
 	if err := r.enter(ctx); err != nil {
 		return err
 	}
@@ -123,15 +132,67 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("catchup: refresh spaces: %w", err)
 	}
+	before, err := r.snapshot()
+	if err != nil {
+		return err
+	}
+	type bound struct {
+		at     time.Time
+		source string
+	}
+	bounds := make(map[string]bound)
+	identity := before.IdentityUserID
+	if identity == "" {
+		identity = r.opts.Processor.IdentityUserID()
+	}
+	for _, space := range spaces {
+		if !before.Spaces[space.Name].Bare() {
+			continue
+		}
+		if identity == "" {
+			return ErrIdentityUnavailable
+		}
+		member, err := r.opts.Chat.GetMembership(ctx, space.Name, identity)
+		var apiErr *googleapi.Error
+		if err != nil && !(errors.As(err, &apiErr) && (apiErr.Code == 403 || apiErr.Code == 404)) {
+			return fmt.Errorf("catchup: read membership for %s: %w", space.Name, err)
+		}
+		b := bound{before.LastSpaceList, "recorded_list"}
+		if before.SpacesListedAt.After(b.at) {
+			b.at = before.SpacesListedAt
+		}
+		if before.HistoryFloor.After(b.at) {
+			b = bound{before.HistoryFloor, "history_floor"}
+		}
+		if err == nil && member != nil && member.State == "JOINED" {
+			if joined, err := time.Parse(time.RFC3339Nano, member.CreateTime); err == nil && joined.After(time.Unix(0, 0)) && !joined.After(now) && !joined.Before(b.at) {
+				b = bound{joined.UTC(), "membership_create_time"}
+			}
+		}
+		if b.at.IsZero() {
+			b = bound{now.UTC(), "time_found"}
+		}
+		bounds[space.Name] = b
+	}
 	var reported, clockAhead []string
+	var firstSeen [][]any
 	err = r.update(func(l *ledger.Ledger) error {
 		listed := make(map[string]bool, len(spaces))
 		for _, space := range spaces {
 			listed[space.Name] = true
 			s := l.Spaces[space.Name]
-			if s == nil {
-				s = &ledger.SpaceState{Wake: string(r.opts.Config.Wake(space.Name))}
-				l.Spaces[space.Name] = s
+			if s.Bare() {
+				b, ok := bounds[space.Name]
+				if !ok {
+					return errors.New("catchup: space changed during membership lookup; retry Freeze")
+				}
+				if s == nil {
+					s = &ledger.SpaceState{}
+					l.Spaces[space.Name] = s
+				}
+				s.StartFirstRead(b.at, r.opts.Now().UTC(), r.opts.Config.JoinReachback(), foundBy, b.source)
+				inbound.RetireSpaceHistory(l, r.opts.Config, space.Name, r.opts.Logger)
+				firstSeen = append(firstSeen, s.FirstSeenFields(space.Name))
 			}
 			if s.Wake == "" {
 				s.Wake = string(r.opts.Config.Wake(space.Name))
@@ -177,9 +238,15 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 			}
 		}
 		l.SpacesListedAt = now.UTC()
+		if now.After(l.LastSpaceList) {
+			l.LastSpaceList = now.UTC()
+		}
 		return nil
 	})
 	if err == nil {
+		for _, fields := range firstSeen {
+			r.opts.Logger.Info("gchat space first seen", fields...)
+		}
 		for _, name := range clockAhead {
 			r.opts.Logger.Warn("catch-up skipped space with cursor ahead of clock", "space", name)
 		}
@@ -192,12 +259,18 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 
 func (r *Runner) begin(s *ledger.SpaceState, upper, floor time.Time) progress {
 	p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
-	floor = ledger.HistoryBound(s, floor)
-	if p.MessageLower.Before(floor) {
-		p.MessageLower = floor
+	bound := ledger.HistoryBound(s, floor)
+	if p.MessageLower.Before(bound) {
+		p.MessageLower = bound
 	}
-	if p.EventLower.Before(floor) {
-		p.EventLower = floor
+	if s.FirstRead != nil && !s.FirstRead.Complete {
+		p.MessageLower = s.FirstRead.Lower
+		if p.MessageLower.Before(floor) {
+			p.MessageLower = floor
+		}
+	}
+	if p.EventLower.Before(bound) {
+		p.EventLower = bound
 	}
 	// Request the full retained event window. Message history has no 28-day
 	// limit. Report only a known cursor older than the retention boundary.
@@ -329,6 +402,16 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 				if message != nil {
 					at, _ = time.Parse(time.RFC3339Nano, message.CreateTime)
 				}
+				// Only creations in this first frozen window may cross the join.
+				// Non-mentions are discarded before backlog/budget/inbound handling.
+				if s.FirstRead != nil && !s.FirstRead.Complete && !at.IsZero() {
+					if !at.After(p.MessageLower) || !at.Before(s.FrozenUpper) {
+						continue
+					}
+					if at.Before(s.JoinedAt) && s.Kind != "dm" && !r.opts.Processor.MentionsIdentity(message) {
+						continue
+					}
+				}
 				page = append(page, queuedChange{Change: puller.Change{Kind: "message.created", Space: name, Message: message}, At: at})
 			}
 		} else {
@@ -432,6 +515,12 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 					continue
 				}
 				s.Backlog = append(s.Backlog, encode(item))
+				if first := s.FirstRead; first != nil && !first.Complete && item.Change.Kind == "message.created" && item.Change.Message != nil && item.At.Before(s.JoinedAt) {
+					if first.PreJoinMessages == nil {
+						first.PreJoinMessages = make(map[string]bool)
+					}
+					first.PreJoinMessages[item.Change.Message.Name] = true
+				}
 				seen[id] = true
 			}
 			s.PageToken = encode(p)
@@ -576,6 +665,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		}
 	}
 	reported := false
+	var completed []any
 	err = r.update(func(l *ledger.Ledger) error {
 		s, err := spaceState(l, name)
 		if err != nil {
@@ -589,6 +679,22 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			// Neither cursor may advance until both streams' last pages are saved.
 			if p.Phase != "done" {
 				return errUnchanged
+			}
+			if first := s.FirstRead; first != nil && !first.Complete {
+				turns, older := 0, 0
+				// The delivery ledger owns the result, even if the catch-up
+				// save failed after delivery or a pending receipt settled later.
+				for _, c := range l.Changes {
+					if c.Space != name || !c.CatchUp || c.Status != "committed" || (c.Reason != "delivered" && c.Reason != "landed_unconfirmed") || c.Created.Before(first.SeenAt) {
+						continue
+					}
+					turns++
+					if c.Kind == "message.created" && first.PreJoinMessages[c.Message] {
+						older++
+					}
+				}
+				completed = []any{"space", name, "found_by", first.FoundBy, "turns", turns, "pre_join_turns", older, "elapsed_seconds", max(0, r.opts.Now().Sub(first.SeenAt).Seconds())}
+				first.Complete, first.PreJoinMessages = true, nil
 			}
 			s.MessageCursor, s.EventCursor = s.FrozenUpper, s.FrozenUpper
 			s.PageToken, s.FrozenUpper = "", time.Time{}
@@ -607,6 +713,9 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 	})
 	if err == nil && reported {
 		r.report(name)
+	}
+	if err == nil && completed != nil {
+		r.opts.Logger.Info("gchat space first read complete", completed...)
 	}
 	return delivered, err
 }

@@ -1,0 +1,3 @@
+$ verify -C oversight-rig/skills/city-executive-status/tests python3 -m pytest -q .
+35 passed, 7 subtests passed in 0.20s
+exit=0 elapsed_seconds=3.99 one_minute_load=14.61

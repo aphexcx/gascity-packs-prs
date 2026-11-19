@@ -210,7 +210,7 @@ class CodexInfisicalShimTests(unittest.TestCase):
         self.assertTrue(os.access(installed, os.X_OK))
         self.assertEqual(
             (installed.parent / "codex.env").read_text(encoding="utf-8"),
-            "CODEX_SHIM_PATH_PREPEND=/abs/path/to/city/.gc/shims/toolchain\nCODEX_SHIM_EXEC=npx -y @openai/codex@0.153.3\n",
+            "CODEX_SHIM_PATH_PREPEND=/abs/path/to/city/.gc/shims/toolchain\nCODEX_SHIM_EXEC=npx -y @openai/codex@0.167.0\n",
         )
 
     def test_readme_verify_recipe_records_a_literal_md5_and_fails_closed(self) -> None:

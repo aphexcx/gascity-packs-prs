@@ -104,6 +104,7 @@ export async function startFakeGateway({ clock } = {}) {
     ackBehaviour: [], // 'ok' | 500 | 'hang'
     sends: [], // every Graph call the gateway would make
     sendAnswers: new Map(), // idempotency_key -> answer
+    quoteHeaders: {}, // opt-in simulated gateway support for quoted replies
     uploads: new Map(), // outbound handle -> fake Meta bytes and metadata
     uploadAnswers: new Map(),
     uploadCalls: [],
@@ -130,6 +131,7 @@ export async function startFakeGateway({ clock } = {}) {
     requests: [],
     hung: [],
     inboxDelayMs: 0, // a page computed now, answered later (the poll/ack race)
+    inboxFailures: 0, // inbox reads that answer 503 before one succeeds
     mediaFailures: 0, // media downloads that answer 503 before one succeeds
     ackMaxIds: Infinity, // a batch over this answers 413
   };
@@ -229,6 +231,7 @@ export async function startFakeGateway({ clock } = {}) {
       return send(res, 200, invite);
     }
     if (route === 'GET /v1/inbox') {
+      if (g.inboxFailures > 0) { g.inboxFailures -= 1; return send(res, 503, { error: 'unavailable' }); }
       const after = url.searchParams.has('after') ? Number(url.searchParams.get('after')) : -Infinity;
       const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 200), 1), 200);
       const page = [...g.deliveries.values()]
@@ -268,7 +271,7 @@ export async function startFakeGateway({ clock } = {}) {
       const answer = { message_id: `wamid.out.${g.sends.length + 1}` };
       g.sends.push({ ...body, owner, at: now() });
       g.sendAnswers.set(key, answer);
-      return send(res, 200, answer);
+      return send(res, 200, answer, body.context ? g.quoteHeaders : {});
     }
     if (route === 'POST /v1/read') { g.reads.push(body.message_id); return send(res, 200, { ok: true }); }
     if (route === 'GET /v1/window') {
@@ -314,11 +317,13 @@ export const FAKE_HELD_ROUTE = 'GET /v1/wake';
 
 // --- the fake gc -------------------------------------------------------------------
 
-export function pasteText({ conversationId, actor = 'Owner', kind = 'human', text, pmid, thread }) {
+export function pasteText({ conversationId, actor = 'Owner', kind = 'human', text, pmid, thread, replyInstructions }) {
   // formatExtmsgNotifyReminder, handler_extmsg.go:656-685 at f22b3ed4a (long form).
   let out = `<system-reminder>\nNew message in shared conversation whatsapp/${conversationId}:\n\n- ${actor} (${kind}): ${text}\n\n`;
   out += `Message id: ${pmid}${thread ? ` (in thread ${thread})` : ''}\n\n`;
-  out += 'Reply: write the reply to a file, then run: gc whatsapp publish --to ' + conversationId + ' --text-file <path>\n</system-reminder>';
+  const template = replyInstructions ?? 'Reply: write the reply to a file, then run: gc whatsapp publish --to {conversation_id} --text-file <path>';
+  out += template.replaceAll('{conversation_id}', conversationId).replaceAll('{message_ts}', pmid)
+    .replaceAll('{thread_ts}', thread ?? '').replaceAll('{handle}', `whatsapp/${conversationId}`) + '\n</system-reminder>';
   return out;
 }
 
@@ -358,7 +363,8 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
   f.records = (conversationId) => conv(conversationId).records;
   f.recordsFor = (pmid) => [...f.conversations.values()].flatMap((c) => c.records).filter((r) => r.ProviderMessageID === pmid);
   f.addLogTurn = (sessionId, role, text) => f.logs.get(sessionId).push({ role, text, timestamp: new Date(now()).toISOString() });
-  f.logPaste = (sessionId, { conversationId, text, pmid, actor }) => f.addLogTurn(sessionId, 'user', pasteText({ conversationId, text, pmid, actor }));
+  f.logPaste = (sessionId, { conversationId, text, pmid, actor }) => f.addLogTurn(sessionId, 'user', pasteText({ conversationId, text, pmid, actor,
+    replyInstructions: f.registrations.at(-1)?.reply_instructions }));
   // Restart: receipts and the fan-out memory are in memory; the transcript is the beads store's.
   f.restart = () => { f.receipts.clear(); f.fanout.clear(); };
   f.backup = () => JSON.parse(JSON.stringify([...f.conversations]));
@@ -443,7 +449,8 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
       const sessionId = 's-mayor';
       if (plan.paste !== false) f.pastes.push({ pmid, text: message.text, session: sessionId, at: now() });
       if (plan.logPaste) f.logPaste(sessionId, { conversationId, text: message.text, pmid, actor: message.actor?.display_name });
-      if (plan.panePaste) f.panes.set(sessionId, pasteText({ conversationId, text: message.text, pmid }));
+      if (plan.panePaste) f.panes.set(sessionId, pasteText({ conversationId, text: message.text, pmid,
+        replyInstructions: f.registrations.at(-1)?.reply_instructions }));
       const verdict = plan.verdict ?? 'delivered';
       const bytes = Buffer.byteLength(message.text ?? '');
       const member = { session_id: sessionId, status: verdict, delivered_bytes: plan.deliveredBytes ?? (verdict === 'failed' ? 0 : bytes), expected_bytes: bytes };

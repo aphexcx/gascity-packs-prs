@@ -16,6 +16,33 @@ import (
 	"gchat-adapter/internal/wire"
 )
 
+func TestFirstReadCloneAndRoundTrip(t *testing.T) {
+	l := ledger.New()
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	l.LastSpaceList = now
+	s := &ledger.SpaceState{}
+	s.StartFirstRead(now, now, 5*time.Minute, "event", "event_create_time")
+	s.FirstRead.PreJoinMessages = map[string]bool{"spaces/joined/messages/one": true}
+	l.Spaces["spaces/joined"] = s
+	clone := l.Clone()
+	clone.Spaces["spaces/joined"].FirstRead.Complete = true
+	clone.Spaces["spaces/joined"].FirstRead.PreJoinMessages["spaces/joined/messages/one"] = false
+	if s.FirstRead.Complete || !s.FirstRead.PreJoinMessages["spaces/joined/messages/one"] {
+		t.Fatal("clone aliases first-read state")
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := ledger.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded.Spaces, l.Spaces) || !loaded.LastSpaceList.Equal(now) {
+		t.Fatal("first-read state lost on reload")
+	}
+}
+
 func TestRoundTrip(t *testing.T) {
 	now := time.Date(2026, 10, 22, 8, 0, 0, 123456789, time.UTC)
 	l := ledger.New()

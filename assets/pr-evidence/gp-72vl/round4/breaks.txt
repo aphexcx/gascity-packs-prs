@@ -1,0 +1,129 @@
+Each case ran in an archive of 475c6a10f389f83362a381fd7a2eba56bc714529.
+The original doc or fragment was restored between cases. Comparisons used the
+complete gate test file from 02825004 in the same tree. All codex executables
+used by these checks were stand-ins. Lookup paths below are normalized.
+
+1. Fixed exec command ignores the worker pin (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_reports_the_model_each_caller_sends -q
+AssertionError: expected gate_probe: -m previous-gate-model, review_model previous-gate-model: STALE from the worker:
+Observed report: gate_probe: -m gpt-6.2-astra, review_model gpt-6.2-astra: OK
+1 failed in 0.81s
+exit 1
+
+2. Write to the caller’s real output (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_reports_the_model_each_caller_sends -q
+AssertionError: the probe replaced the real verdict
+1 failed in 0.45s
+exit 1
+
+3. Use braces for the probe body (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_reports_the_model_each_caller_sends -q
+AssertionError: PATH-AFTER differed from the original PATH
+1 failed in 0.43s
+exit 1
+
+4. Remove the refusal guard (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/bin/codex
+codex (function)
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_refuses_an_unusable_stub -q
+AssertionError: unexpected codex call: fallback
+AssertionError: unexpected codex call: fallback
+AssertionError: unexpected codex call: function
+3 failed in 0.74s
+exit 1
+
+5. Remove the resolved-file comparison (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/bin/codex
+codex (function)
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_refuses_an_unusable_stub -q
+AssertionError: unexpected codex call: function
+1 failed, 2 passed in 0.47s
+exit 1
+
+6. Remove the CAPTURE assignment (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_names_its_own_record -q
+AssertionError: expected 1 named records (found 0)
+1 failed in 0.38s
+exit 1
+
+7. Append #old to the exec example model (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/bin/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+AssertionError: citadel-codex-gates.md: the exec example must pass --model gpt-6.2-astra
+1 failed in 0.20s
+exit 1
+
+7. Append #old to the exec example model (02825004)
+$ command -v codex
+<tmp>/outer-bin/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_02825004.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+1 passed in 0.01s
+exit 0
+
+8. Append #old to the worker model (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/bin/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+AssertionError: gc-role-worker.template.md: the review command must pass --model gpt-6.2-astra
+1 failed in 0.14s
+exit 1
+
+8. Append #old to the worker model (02825004)
+$ command -v codex
+<tmp>/outer-bin/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_02825004.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+1 passed in 0.01s
+exit 0
+
+9. Use the previous model in the review example (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/bin/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+AssertionError: citadel-codex-gates.md: the review example must pass --model gpt-6.2-astra
+1 failed in 0.16s
+exit 1
+
+9. Use the previous model in the review example (02825004)
+$ command -v codex
+<tmp>/outer-bin/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_02825004.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+AssertionError: citadel-codex-gates.md: the review example must pass --model gpt-6.2-astra
+1 failed in 0.02s
+exit 1
+
+10. Drop --model from the exec example (round 4)
+$ command -v codex
+<tmp>/outer-bin/codex
+<tmp>/bin/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+AssertionError: citadel-codex-gates.md: the exec example must pass --model gpt-6.2-astra
+1 failed in 0.15s
+exit 1
+
+10. Drop --model from the exec example (02825004)
+$ command -v codex
+<tmp>/outer-bin/codex
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate_at_02825004.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+AssertionError: citadel-codex-gates.md: the exec example must pass --model gpt-6.2-astra
+1 failed in 0.03s
+exit 1

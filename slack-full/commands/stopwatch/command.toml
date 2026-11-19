@@ -1,0 +1,2 @@
+description = "Report first reaction and first words timing by release"
+run = "../stopwatch.py"

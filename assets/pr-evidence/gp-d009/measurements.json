@@ -1,0 +1,86 @@
+{
+  "after": {
+    "dm_first": {
+      "bytes": 437,
+      "message_bytes": 40,
+      "other_bytes": 397,
+      "tokens": 105
+    },
+    "dm_subsequent": {
+      "bytes": 40,
+      "message_bytes": 40,
+      "other_bytes": 0,
+      "tokens": 7
+    },
+    "forty_reply_thread": {
+      "bytes": 12319,
+      "tokens": 3360
+    },
+    "mention": {
+      "bytes": 307,
+      "message_bytes": 40,
+      "other_bytes": 267,
+      "tokens": 84
+    },
+    "own_thread": {
+      "bytes": 307,
+      "message_bytes": 40,
+      "other_bytes": 267,
+      "tokens": 84
+    },
+    "shared_first": {
+      "bytes": 437,
+      "message_bytes": 40,
+      "other_bytes": 397,
+      "tokens": 105
+    },
+    "shared_subsequent": {
+      "bytes": 40,
+      "message_bytes": 40,
+      "other_bytes": 0,
+      "tokens": 7
+    }
+  },
+  "before": {
+    "dm_first": {
+      "bytes": 437,
+      "message_bytes": 40,
+      "other_bytes": 397,
+      "tokens": 105
+    },
+    "dm_subsequent": {
+      "bytes": 40,
+      "message_bytes": 40,
+      "other_bytes": 0,
+      "tokens": 7
+    },
+    "forty_reply_thread": {
+      "bytes": 53239,
+      "tokens": 12280
+    },
+    "mention": {
+      "bytes": 1272,
+      "message_bytes": 40,
+      "other_bytes": 1232,
+      "tokens": 289
+    },
+    "own_thread": {
+      "bytes": 1330,
+      "message_bytes": 40,
+      "other_bytes": 1290,
+      "tokens": 307
+    },
+    "shared_first": {
+      "bytes": 437,
+      "message_bytes": 40,
+      "other_bytes": 397,
+      "tokens": 105
+    },
+    "shared_subsequent": {
+      "bytes": 40,
+      "message_bytes": 40,
+      "other_bytes": 0,
+      "tokens": 7
+    }
+  }
+}

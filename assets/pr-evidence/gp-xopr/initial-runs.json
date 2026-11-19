@@ -1,0 +1,340 @@
+[
+  {
+    "label": "initial-node24-suite-1",
+    "node": "v24.21.0",
+    "uptime": "23:31  up 7 days, 10:54, 5 users, load averages: 11.99 16.27 13.34",
+    "command": "pnpm exec node --test --test-reporter=tap",
+    "exit": 0,
+    "elapsed": 13.86,
+    "summary": [
+      "# tests 91",
+      "# pass 91",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node24-suite-2",
+    "node": "v24.21.0",
+    "uptime": "23:32  up 7 days, 10:55, 5 users, load averages: 10.90 15.90 13.24",
+    "command": "pnpm exec node --test --test-reporter=tap",
+    "exit": 0,
+    "elapsed": 13.72,
+    "summary": [
+      "# tests 91",
+      "# pass 91",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node24-suite-3",
+    "node": "v24.21.0",
+    "uptime": "23:32  up 7 days, 10:55, 5 users, load averages: 10.11 15.48 13.13",
+    "command": "pnpm exec node --test --test-reporter=tap",
+    "exit": 0,
+    "elapsed": 13.69,
+    "summary": [
+      "# tests 91",
+      "# pass 91",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node24-suite-4",
+    "node": "v24.21.0",
+    "uptime": "23:32  up 7 days, 10:55, 5 users, load averages: 8.92 14.95 12.98",
+    "command": "pnpm exec node --test --test-reporter=tap",
+    "exit": 1,
+    "elapsed": 6.86,
+    "summary": [
+      "# tests 91",
+      "# pass 89",
+      "# fail 2",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 50 - review 4: archive replay advances in bounded chunks without dropping rows",
+      "not ok 69 - review 7: installed outer deadline leaves time to persist fail-open rollback"
+    ],
+    "eagain": true
+  },
+  {
+    "label": "initial-node24-suite-5",
+    "node": "v24.21.0",
+    "uptime": "23:32  up 7 days, 10:55, 5 users, load averages: 8.44 14.75 12.93",
+    "command": "pnpm exec node --test --test-reporter=tap",
+    "exit": 0,
+    "elapsed": 13.74,
+    "summary": [
+      "# tests 91",
+      "# pass 91",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node24-named-1",
+    "node": "v24.21.0",
+    "uptime": "23:32  up 7 days, 10:55, 5 users, load averages: 8.89 14.54 12.88",
+    "command": "pnpm exec node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 0,
+    "elapsed": 6.13,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node24-named-2",
+    "node": "v24.21.0",
+    "uptime": "23:32  up 7 days, 10:56, 5 users, load averages: 8.50 14.36 12.83",
+    "command": "pnpm exec node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 0,
+    "elapsed": 6.18,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node24-named-3",
+    "node": "v24.21.0",
+    "uptime": "23:33  up 7 days, 10:56, 5 users, load averages: 8.38 14.24 12.79",
+    "command": "pnpm exec node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 1,
+    "elapsed": 0.89,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "eagain": true
+  },
+  {
+    "label": "initial-node24-named-4",
+    "node": "v24.21.0",
+    "uptime": "23:33  up 7 days, 10:56, 5 users, load averages: 8.35 14.14 12.77",
+    "command": "pnpm exec node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 1,
+    "elapsed": 0.9,
+    "summary": [
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 1 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "eagain": true
+  },
+  {
+    "label": "initial-node24-named-5",
+    "node": "v24.21.0",
+    "uptime": "23:33  up 7 days, 10:56, 5 users, load averages: 8.35 14.14 12.77",
+    "command": "pnpm exec node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 0,
+    "elapsed": 6.42,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-suite-1",
+    "node": "v26.12.1",
+    "uptime": "23:33  up 7 days, 10:56, 5 users, load averages: 8.16 14.00 12.73",
+    "command": "node --test --test-reporter=tap",
+    "exit": 1,
+    "elapsed": 18.13,
+    "summary": [
+      "# tests 91",
+      "# pass 90",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-suite-2",
+    "node": "v26.12.1",
+    "uptime": "23:33  up 7 days, 10:56, 5 users, load averages: 7.91 13.59 12.61",
+    "command": "node --test --test-reporter=tap",
+    "exit": 1,
+    "elapsed": 18.05,
+    "summary": [
+      "# tests 91",
+      "# pass 90",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-suite-3",
+    "node": "v26.12.1",
+    "uptime": "23:33  up 7 days, 10:56, 5 users, load averages: 7.40 13.20 12.49",
+    "command": "node --test --test-reporter=tap",
+    "exit": 1,
+    "elapsed": 10.02,
+    "summary": [
+      "# tests 91",
+      "# pass 89",
+      "# fail 2",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up",
+      "not ok 50 - review 4: archive replay advances in bounded chunks without dropping rows"
+    ],
+    "eagain": true
+  },
+  {
+    "label": "initial-node26-suite-4",
+    "node": "v26.12.1",
+    "uptime": "23:33  up 7 days, 10:57, 5 users, load averages: 7.18 12.96 12.41",
+    "command": "node --test --test-reporter=tap",
+    "exit": 1,
+    "elapsed": 17.58,
+    "summary": [
+      "# tests 91",
+      "# pass 90",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-suite-5",
+    "node": "v26.12.1",
+    "uptime": "23:34  up 7 days, 10:57, 5 users, load averages: 6.66 12.47 12.25",
+    "command": "node --test --test-reporter=tap",
+    "exit": 1,
+    "elapsed": 18.06,
+    "summary": [
+      "# tests 91",
+      "# pass 90",
+      "# fail 1",
+      "# skipped 0"
+    ],
+    "failures": [
+      "not ok 10 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up"
+    ],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-named-1",
+    "node": "v26.12.1",
+    "uptime": "23:34  up 7 days, 10:57, 5 users, load averages: 7.36 12.35 12.21",
+    "command": "node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 0,
+    "elapsed": 9.48,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-named-2",
+    "node": "v26.12.1",
+    "uptime": "23:34  up 7 days, 10:57, 5 users, load averages: 7.00 12.11 12.12",
+    "command": "node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 0,
+    "elapsed": 9.09,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-named-3",
+    "node": "v26.12.1",
+    "uptime": "23:34  up 7 days, 10:57, 5 users, load averages: 6.53 11.84 12.03",
+    "command": "node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 0,
+    "elapsed": 9.05,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-named-4",
+    "node": "v26.12.1",
+    "uptime": "23:34  up 7 days, 10:58, 5 users, load averages: 8.41 12.09 12.11",
+    "command": "node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 0,
+    "elapsed": 9.58,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  },
+  {
+    "label": "initial-node26-named-5",
+    "node": "v26.12.1",
+    "uptime": "23:35  up 7 days, 10:58, 5 users, load averages: 8.06 11.89 12.04",
+    "command": "node --test --test-reporter=tap --test-name-pattern='review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs",
+    "exit": 0,
+    "elapsed": 9.09,
+    "summary": [
+      "# tests 1",
+      "# pass 1",
+      "# fail 0",
+      "# skipped 0"
+    ],
+    "failures": [],
+    "eagain": false
+  }
+]

@@ -1,0 +1,49 @@
+PR 104 round 3, item 6: the WhatsApp suite, three runs at main and three at the tip, interleaved.
+
+main: a git archive of whatsapp/ at 205d0aecedf944792f1e3b3fbc420b9e5ad910d8 (362 tests).
+tip: the round's tip, whatsapp/ as at 20b8c2c0 (no WhatsApp file changed after it; 391 tests).
+Each run: env -i with the toolchain PATH and a scratch HOME, then
+  GC_NO_INSTALL=1 pnpm exec node --test --test-concurrency=2 --test-timeout=240000 'test/*.test.js'
+under a 900 s bound; pnpm exec node --version: v24.21.0. load_start and load_end are the
+1-minute load average when the run started and ended; the box was shared with other sessions.
+
+run 1 main: exit=1 tests=362 pass=359 fail=2 cancelled=1 load_start=12.09 load_end=30.86 seconds=388 failing=C: dropping and reconnecting a held link preserves the outage and notice marks | on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status | video survives SIGKILL at before-media-upload with one upload and one send
+run 1 tip: exit=1 tests=391 pass=387 fail=4 cancelled=0 load_start=30.86 load_end=33.56 seconds=414 failing=(7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST | a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) | never-silent integration: crash after admission or terminal acceptance retains notice eligibility | with ACK_REACTION unset the script observes as at the base (head or tip)
+run 2 main: exit=1 tests=362 pass=360 fail=1 cancelled=1 load_start=33.56 load_end=41.97 seconds=707 failing=held: a quiet connection reads only once each safety interval | video survives SIGKILL at before-media-upload with one upload and one send
+run 2 tip: exit=1 tests=391 pass=386 fail=5 cancelled=0 load_start=41.97 load_end=33.15 seconds=632 failing=audio survives SIGKILL at after-media-journal with one upload and one send | held: every reconnect reads a delivery whose wake was lost | held: reconnect attempts follow 1, 5, 15, 60, then 300 seconds without a loop | image survives SIGKILL at after-media-upload with one upload and one send | with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (head or tip)
+run 3 main: exit=1 tests=362 pass=357 fail=5 cancelled=0 load_start=33.15 load_end=50.02 seconds=695 failing=(7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST | a 404 retries (gc answers it during a city restart) | a failed receipt reposts three times, then dead-letters and acks: four POSTs in all | held: wake, reconnect and safety reads of a held row cause one post | on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status
+run 3 tip: exit=1 tests=391 pass=384 fail=7 cancelled=0 load_start=50.02 load_end=38.55 seconds=671 failing=a 404 retries (gc answers it during a city restart) | a slowed flush never delays a delivery or a send (ACK_REACTION=eyes) | held: a missed pong closes the socket within forty clock seconds and resumes polling | held: an owed keeper bind retries at the original cadence without another inbox read | nine live deliveries reach gc while Jev holds, with four choices and one reaction each | on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status | with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (head or tip)
+
+Every failing test, per tree (a test that fails in main's runs is main's own):
+
+main 2/3 (runs 1,3) | tip 1/3 (runs 3) | main's test | on gc's first acceptance the owner's message is marked read (POST /v1/read), once, never for a status
+main 1/3 (runs 3) | tip 1/3 (runs 1) | main's test | (7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST
+main 1/3 (runs 3) | tip 1/3 (runs 3) | main's test | a 404 retries (gc answers it during a city restart)
+main 0/3 (runs -) | tip 2/3 (runs 1,3) | this PR's test | a slowed flush never delays a delivery or a send (ACK_REACTION=eyes)
+main 2/3 (runs 1,2) | tip 0/3 (runs -) | main's test | video survives SIGKILL at before-media-upload with one upload and one send
+main 0/3 (runs -) | tip 2/3 (runs 2,3) | this PR's test | with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (head or tip)
+main 1/3 (runs 1) | tip 0/3 (runs -) | main's test | C: dropping and reconnecting a held link preserves the outage and notice marks
+main 1/3 (runs 3) | tip 0/3 (runs -) | main's test | a failed receipt reposts three times, then dead-letters and acks: four POSTs in all
+main 0/3 (runs -) | tip 1/3 (runs 2) | main's test | audio survives SIGKILL at after-media-journal with one upload and one send
+main 0/3 (runs -) | tip 1/3 (runs 3) | main's test | held: a missed pong closes the socket within forty clock seconds and resumes polling
+main 1/3 (runs 2) | tip 0/3 (runs -) | main's test | held: a quiet connection reads only once each safety interval
+main 0/3 (runs -) | tip 1/3 (runs 3) | main's test | held: an owed keeper bind retries at the original cadence without another inbox read
+main 0/3 (runs -) | tip 1/3 (runs 2) | main's test | held: every reconnect reads a delivery whose wake was lost
+main 0/3 (runs -) | tip 1/3 (runs 2) | main's test | held: reconnect attempts follow 1, 5, 15, 60, then 300 seconds without a loop
+main 1/3 (runs 3) | tip 0/3 (runs -) | main's test | held: wake, reconnect and safety reads of a held row cause one post
+main 0/3 (runs -) | tip 1/3 (runs 2) | main's test | image survives SIGKILL at after-media-upload with one upload and one send
+main 0/3 (runs -) | tip 1/3 (runs 1) | main's test | never-silent integration: crash after admission or terminal acceptance retains notice eligibility
+main 0/3 (runs -) | tip 1/3 (runs 3) | this PR's test | nine live deliveries reach gc while Jev holds, with four choices and one reaction each
+main 0/3 (runs -) | tip 1/3 (runs 1) | this PR's test | with ACK_REACTION unset the script observes as at the base (head or tip)
+
+The off-parity file under the same load, at the base (main 205d0aec with round 2's base hooks)
+and at the tip, run at the same time, four rounds (this file is not in main's suite):
+
+round 1 base: load=71.91 pass=1 fail=2 inbox-deadline-line=yes failing=with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (base) | with ACK_REACTION unset the script observes as at the base (base)
+round 1 tip: load=71.91 pass=1 fail=2 inbox-deadline-line=yes failing=with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (head or tip) | with ACK_REACTION unset the script observes as at the base (head or tip)
+round 2 base: load=67.06 pass=2 fail=1 inbox-deadline-line=no failing=with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (base)
+round 2 tip: load=67.06 pass=2 fail=1 inbox-deadline-line=no failing=with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (head or tip)
+round 3 base: load=63.35 pass=2 fail=1 inbox-deadline-line=yes failing=with ACK_REACTION unset the script observes as at the base (base)
+round 3 tip: load=63.35 pass=2 fail=1 inbox-deadline-line=yes failing=with ACK_REACTION unset the script observes as at the base (head or tip)
+round 4 base: load=56.27 pass=1 fail=2 inbox-deadline-line=yes failing=with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (base) | with ACK_REACTION unset the script observes as at the base (base)
+round 4 tip: load=56.27 pass=1 fail=2 inbox-deadline-line=yes failing=with ACK_REACTION unset and NEVER_SILENT=on the script observes as at the base (head or tip) | with ACK_REACTION unset the script observes as at the base (head or tip)

@@ -1,4 +1,5 @@
-"""Static checks on the `gc-standing-notes` template fragment (gp-rj21).
+"""Static checks on the `gc-standing-notes` template fragment (gp-rj21; the
+PR body lines, gp-hdn2).
 
 A city opts in with one line after its `gc-role-worker` call; the rendered
 order and the byte-identical render without the line are proven against a
@@ -12,6 +13,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRAGMENTS = REPO_ROOT / "gascity" / "template-fragments"
 FRAGMENT = FRAGMENTS / "gc-standing-notes.template.md"
@@ -24,6 +27,17 @@ PLAIN_CALL = '{{ template "gc-standing-notes" . }}'
 # prompt. A trimmed comment ({{- /* */ -}}) is not matched, so the body check
 # below refuses it: it would eat the whitespace next to it.
 TEMPLATE_COMMENT = re.compile(r"\{\{/\*.*?\*/\}\}", re.S)
+# Each note's heading, in the fragment's order, with its bead of record.
+NOTES = (("## Deepening note", "gp-gsww"), ("## PR body lines", "gp-hdn2"))
+# The PR body lines' labels, in the order the body carries them, and the
+# three lines as the note shows them, each label with its own instruction:
+# text swapped between two labels fails.
+PR_BODY_LABELS = ("Testing:", "Risk:", "How to revert:")
+PR_BODY_LINES = (
+    "Testing: <the exact commands you ran, each with its counts and exit code>",
+    "Risk: <the tier and the path that set it>",
+    "How to revert: <the one command that undoes the change once merged>",
+)
 
 
 def fragment() -> str:
@@ -39,10 +53,21 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+def note(marker: str) -> str:
+    """One note's renderable text, from its marker to the next heading, on one
+    line: a clause hidden in a template comment never reaches a worker, so it
+    never counts."""
+    text = renderable(fragment())
+    assert text.count(marker) == 1
+    return flat(text.split(marker, 1)[1].split("\n## ", 1)[0])
+
+
 def deepening_note() -> str:
-    text = fragment()
-    assert text.count("THE DEEPENING NOTE") == 1
-    return flat(text.split("THE DEEPENING NOTE", 1)[1])
+    return note("THE DEEPENING NOTE")
+
+
+def pr_body_lines_note() -> str:
+    return note("THE PR BODY LINES")
 
 
 def test_fragment_defines_exactly_one_template() -> None:
@@ -59,10 +84,21 @@ def test_fragment_defines_exactly_one_template() -> None:
     assert "{{" not in body and "}}" not in body
 
 
-def test_bead_of_record_is_cited_only_inside_a_template_comment() -> None:
+def test_notes_appear_once_each_in_order() -> None:
+    text = fragment()
+    for heading, _ in NOTES:
+        assert text.count(f"\n{heading}") == 1, heading
+    positions = [text.index(f"\n{heading}") for heading, _ in NOTES]
+    assert positions == sorted(positions)
+
+
+@pytest.mark.parametrize(("heading", "bead"), NOTES)
+def test_bead_of_record_is_cited_only_inside_a_template_comment(heading: str, bead: str) -> None:
     """The real render without it is proven in the GC_TEST_BIN render test."""
-    assert any("gp-gsww" in comment for comment in TEMPLATE_COMMENT.findall(fragment()))
-    assert "gp-gsww" not in renderable(fragment())
+    text = fragment()
+    assert f"{heading}{{{{/* Bead of record: {bead}." in text
+    assert any(bead in comment for comment in TEMPLATE_COMMENT.findall(text))
+    assert bead not in renderable(text)
 
 
 def test_define_name_is_unique_across_every_pack_fragment() -> None:
@@ -118,6 +154,69 @@ def test_deepening_note_glosses_the_deletion_test_for_a_lane_without_the_skill()
     assert "reappears across its callers" in gloss
 
 
+def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
+    note = pr_body_lines_note()
+    for clause in (
+        "Whenever you open a PR or update its body",
+        "end the body with three lines, each on its own line and starting with its label",
+        "after every other section (a Deepening note included)",
+        "only the body's closing trailer or sign-off lines may follow them",
+        "the exact commands you ran, each with its counts and exit code",
+        "write `none: <why>` when you ran none",
+        "On the risk line, the tier comes from your city's written list of paths by risk tier: "
+        "the highest tier of any path the diff touches, and that path",
+        "without such a list, or when no path the diff touches is on it, write `not tiered` "
+        "and the highest-risk path the diff touches",
+        "the one command that undoes the change once merged",
+        # One instruction names every way a PR lands: a revert of the one sha
+        # a PR resolves to leaves a rebased PR's earlier commits in place. A
+        # range must start at the commit the PR landed on (`A..B` leaves A
+        # out; `git revert A B` reverts in the order listed and stops when B
+        # touched A's lines), and a fast-forward that merged its base stops
+        # at the merge commit without --no-merges.
+        "On the revert line, the command runs after the merge, so name what the PR landed as: "
+        "the squash commit when squashed; the first-parent change of the merge commit when "
+        "merged with two parents; the whole landed range, oldest to newest, when rebased or "
+        "fast-forwarded, as one range from the commit it landed on "
+        "(`git revert --no-merges <landed-on>..<newest>`, which reverts newest first). "
+        "Never name a branch commit the merge may not keep; when you cannot yet tell how the "
+        "PR will land, cover each way the repository allows; when no command undoes all of "
+        "the change, also say what a revert would leave behind (a migration that ran, "
+        "a deploy, a message sent).",
+        "On every line, write a secret (a token, a key, a password) as a placeholder such as "
+        "`<token>`, never its value",
+        "A later round that updates the body rewrites the three lines for its own head "
+        "and keeps them after every other section",
+        "Keep the labels exactly as written",
+    ):
+        assert clause in note, f"THE PR BODY LINES lacks: {clause!r}"
+    # One revert instruction: a second one could undo the first.
+    assert note.count("On the revert line") == 1
+
+
+def test_pr_body_lines_placement_leaves_room_for_the_closing_trailers() -> None:
+    """Every place that says where the three lines go says it one way: after
+    every other section, with the body's closing trailer or sign-off lines
+    still below them. "Last" would put them under the trailers."""
+    note = pr_body_lines_note()
+    assert re.search(r"(?i)\blast\b", note) is None, "the note says the lines go last"
+    readme = flat(README.read_text(encoding="utf-8").split("## Standing notes", 1)[1].split("\n## ", 1)[0])
+    sentence = readme.split("Its second note is THE PR BODY LINES", 1)[1].split(".", 1)[0]
+    assert "after every other section, with only trailer or sign-off lines below them" in sentence
+    assert re.search(r"(?i)\blast\b", sentence) is None
+
+
+def test_pr_body_lines_note_shows_each_label_with_its_instruction_once_as_one_block() -> None:
+    """The render test proves the same on real gc output; this one runs
+    everywhere."""
+    text = renderable(fragment()).split("THE PR BODY LINES", 1)[-1]
+    for label in PR_BODY_LABELS:
+        assert text.count(label) == 1, label
+    assert all(line.startswith(f"{label} ") for line, label in zip(PR_BODY_LINES, PR_BODY_LABELS))
+    lines = "\n".join(PR_BODY_LINES)
+    assert len(re.findall(rf"(?m)^{re.escape(lines)}$", text)) == 1
+
+
 # One city's particulars: a machine path, a home path, a date, a Slack
 # channel or timestamp, a mayor ordinal, the city this pack was built in, a
 # bead id of one of that city's stores. A bead id's shape alone (letters, a
@@ -127,6 +226,7 @@ BEAD_ID = r"\b(?:ci|cp|cs|dy|gf|gp|hw)-[a-z0-9]{3,}"
 CITY_PARTICULARS = (
     (BEAD_ID, "a bead id"),
     (r"(?<![\w.])/(?:Users|home|private|tmp|opt|var|etc)/", "an absolute machine path"),
+    (r"/", "a path (a relative one too)"),
     (r"~/", "a home-relative path"),
     (r"\$(?:GC_CITY_PATH|GC_CITY|HOME)\b", "a city or home variable"),
     (r"\b20\d\d-\d\d-\d\d\b", "a date"),
@@ -180,6 +280,9 @@ def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
         "A city that does not add the line renders exactly what it rendered before",
         "A note that belongs to one city stays in that city's own prompt template",
         "THE DEEPENING NOTE",
+        "Its second note is THE PR BODY LINES",
+        "`Testing:`, `Risk:` and `How to revert:`, after every other section, "
+        "with only trailer or sign-off lines below them",
     ):
         assert clause in words, f"README Standing notes lacks: {clause!r}"
     assert words.index(CALL_LINE) < words.index(f"never as `{PLAIN_CALL}`")

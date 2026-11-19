@@ -138,6 +138,9 @@ func newFixture(t *testing.T) *fixture {
 	f.google.Configure(func(g *fakegoogle.Server) {
 		g.Spaces["spaces/dm"] = &api.Space{Name: "spaces/dm", SpaceType: "DIRECT_MESSAGE"}
 		g.Spaces["spaces/room"] = &api.Space{Name: "spaces/room", SpaceType: "SPACE"}
+		for _, space := range []string{"spaces/dm", "spaces/room"} {
+			g.Memberships[space+"/members/"+strings.TrimPrefix(fakegoogle.UserID, "users/")] = &api.Membership{State: "JOINED", CreateTime: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)}
+		}
 	})
 	t.Cleanup(func() {
 		f.stop()
@@ -968,10 +971,12 @@ func scenariosRecovery(t *testing.T) {
 		f := newFixture(t)
 		f.ready()
 		f.stop()
+		joined := time.Now().Add(-50 * time.Millisecond)
 		f.google.Configure(func(g *fakegoogle.Server) {
 			g.Spaces["spaces/joined"] = &api.Space{Name: "spaces/joined", SpaceType: "SPACE"}
+			g.Memberships["spaces/joined/members/"+strings.TrimPrefix(fakegoogle.UserID, "users/")] = &api.Membership{State: "JOINED", CreateTime: joined.UTC().Format(time.RFC3339Nano)}
 		})
-		f.history(1, "spaces/joined", time.Now().Add(-time.Second))
+		f.history(1, "spaces/joined", joined.Add(time.Millisecond))
 		f.ready()
 		turn := f.expectTurn(t, "missed 0000")
 		if turn.Conversation.ConversationID != "spaces/joined" || !strings.HasPrefix(turn.Text, "[catch-up]") {

@@ -1,0 +1,19 @@
+Cut c92f2a3ee8d43e7d9d621156fd8c8952f6557335
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py gascity/tests/test_codex_infisical_shim.py -q
+70 passed in 11.46s
+Exit 0
+
+Fix 7a6aa98b9df1a3e886a9b0717f0b17592902d3b7
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest 'gascity/tests/test_codex_gate.py::test_pin_reader_sees_what_bash_passes' 'gascity/tests/test_codex_gate.py::test_gate_fixture_runs_no_caller_git_hook' 'gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default' 'gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default' -q
+6 passed in 3.91s
+Exit 0
+
+Gate and shim at the fix
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py gascity/tests/test_codex_infisical_shim.py -q
+72 passed in 12.35s
+Exit 0
+
+Full pack suite at the fix (GC_TEST_BIN set to the installed gc)
+$ make -C <clone> test-gascity
+1076 passed, 11 skipped, 10518 subtests passed in 1195.34s (0:19:55)
+Exit 0

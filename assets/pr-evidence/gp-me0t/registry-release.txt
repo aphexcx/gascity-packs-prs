@@ -1,0 +1,4 @@
+$ verify make registry-validate
+gc pack release validate registry.toml
+registry release hashes ok (39 checked)
+exit=0 elapsed_seconds=806.21

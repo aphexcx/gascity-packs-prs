@@ -1,0 +1,4 @@
+verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q -p no:cacheprovider
+Python 3.12.13, clean main at 148e4a0f, one-minute load 10.03.
+2997 passed, 131 skipped, 2 warnings, 10746 subtests passed in 534.07 s.
+Elapsed including setup 540.22 s, exit 0. Empty Git porcelain status after the run.

@@ -1,0 +1,17 @@
+-- linear: git revert A B (listed oldest first)
+exit=1 (nonzero = stopped)
+-- linear: git revert A..B
+exit=0
+tree != base: f is a
+-- linear: git revert BASE..B (from the commit it landed on)
+exit=0
+tree == base
+Revert "A"|Revert "B"|
+-- fast-forward: git revert LANDED_ON..NEWEST
+exit=128 (nonzero = stopped)
+-- fast-forward: git revert --no-merges LANDED_ON..NEWEST
+exit=0
+tree == landed-on
+-- linear: git revert --no-merges BASE..B (the same form on a rebase landing)
+exit=0
+tree == base

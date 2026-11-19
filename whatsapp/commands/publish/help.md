@@ -5,7 +5,7 @@ Send text or one file to an owner's WhatsApp chat through the running adapter.
 ## Usage
 
 ```
-gc whatsapp publish --to <conversation_id> --text-file <path>
+gc whatsapp publish --to <conversation_id> --reply-to <message_id> --text-file <path>
 gc whatsapp publish --to <conversation_id> --text "message"
 gc whatsapp publish --to <conversation_id> --file <path> [--caption "text" | --caption-file <path>]
 gc whatsapp publish --update --to <conversation_id> --text "today's update"
@@ -21,6 +21,12 @@ gc whatsapp publish --update --to <conversation_id> --text "today's update"
 - `--text-file`: a file holding the message; preferred, since reply text
   with quotes or code is unsafe to put on a command line.
 - `--text`: an inline message (simple strings only).
+- `--reply-to` (or `--reply-to=ID`): quote the id from the inbound "Message id:"
+  line on the first chunk, or on a file's message. An empty value means no
+  quote. With `--update` it is accepted but ignored: templates cannot quote.
+  A retry keeps the first call's quote even when this flag changes. A quote
+  that could not be applied never fails a send; stderr names the reason.
+  An older gateway sends plain; a replay may leave the quote outcome unknown.
 - `--file`: one file, with its type checked from its bytes against its extension.
   Images (JPEG/PNG/static WebP) cap at 5 MB; audio (AAC/AMR/MP3/M4A/mono Opus
   Ogg) and video (MP4/3GP) at 16 MB; documents (PDF, UTF-8 text, Office) at

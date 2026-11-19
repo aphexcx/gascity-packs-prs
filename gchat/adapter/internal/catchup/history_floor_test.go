@@ -38,7 +38,7 @@ func TestFloorBoundsEveryNewSpace(t *testing.T) {
 	}
 	f.freeze(t)
 	for name, s := range f.opts.Ledger.Spaces {
-		if !s.MessageCursor.Equal(floor) || !s.EventCursor.Equal(floor) || !s.JoinedAt.IsZero() {
+		if !s.MessageCursor.Equal(floor) || !s.EventCursor.Equal(floor) || !s.JoinedAt.Equal(floor) {
 			t.Errorf("%s cursors=%s/%s join=%s", name, s.MessageCursor, s.EventCursor, s.JoinedAt)
 		}
 		p, err := decodeProgress(s.PageToken)

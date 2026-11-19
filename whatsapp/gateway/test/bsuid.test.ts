@@ -285,9 +285,10 @@ describe("BSUID: sends", () => {
     const wa = phone();
     const user = bsuid();
     await t.joinAs(city, { wa, user });
+    const target = (await t.held(city)).find((d) => d.kind === "joined")!.wamid;
     const bodies = [
       { type: "text", text: "hello by BSUID" },
-      { type: "reaction", reaction: { message_id: "wamid.X", emoji: "\u{1F44D}" } },
+      { type: "reaction", reaction: { message_id: target, emoji: "\u{1F44D}" } },
       { type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } },
     ];
     for (const body of bodies) {

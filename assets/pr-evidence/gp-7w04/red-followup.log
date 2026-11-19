@@ -1,0 +1,173 @@
+TAP version 13
+1..0
+# Subtest: bounds.test.cjs
+ok 1 - bounds.test.cjs
+  ---
+  duration_ms: 40.888583
+  type: 'test'
+  ...
+1..0
+# Subtest: decision.test.cjs
+ok 2 - decision.test.cjs
+  ---
+  duration_ms: 39.584042
+  type: 'test'
+  ...
+1..0
+# Subtest: events.test.cjs
+ok 3 - events.test.cjs
+  ---
+  duration_ms: 38.607958
+  type: 'test'
+  ...
+1..0
+# Subtest: pack.test.cjs
+ok 4 - pack.test.cjs
+  ---
+  duration_ms: 35.463708
+  type: 'test'
+  ...
+# Subtest: review 1: fresh cursors wait for archives still being published
+not ok 5 - review 1: fresh cursors wait for archives still being published
+  ---
+  duration_ms: 5.207
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:33:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      [
+    -   1,
+    -   2,
+        3
+      ]
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 1
+    1: 2
+    2: 3
+  actual:
+    0: 3
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:41:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+# Subtest: review 2: deferred call history includes a preexisting unread wait
+not ok 6 - review 2: deferred call history includes a preexisting unread wait
+  ---
+  duration_ms: 23.546334
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:80:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    false !== true
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:86:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    node:internal/test_runner/test:1305:31
+    node:internal/process/task_queues:151:7
+    AsyncResource.runInAsyncScope (node:async_hooks:227:14)
+    AsyncResource.runMicrotask (node:internal/process/task_queues:148:8)
+  ...
+# Subtest: review 6: bundled unrelated imports do not prevent local channel resolution
+not ok 7 - review 6: bundled unrelated imports do not prevent local channel resolution
+  ---
+  duration_ms: 0.986833
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:133:1'
+  failureType: 'testCodeFailure'
+  error: 'import_resolution_unavailable'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    aliasesFromImports (<worktree>/reachable/reachable.cjs:454:26)
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:138:20)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+  ...
+# Subtest: review 7: installed outer deadline leaves time to persist fail-open rollback
+not ok 8 - review 7: installed outer deadline leaves time to persist fail-open rollback
+  ---
+  duration_ms: 2008.763458
+  type: 'test'
+  location: '<worktree>/reachable/test/review.test.cjs:166:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + Error: spawnSync /example/node ETIMEDOUT
+    +     at Object.spawnSync (node:internal/child_process:1160:20)
+    +     at spawnSync (node:child_process:928:24)
+    +     at TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:172:18)
+    +     at Test.runInAsyncScope (node:async_hooks:227:14)
+    +     at Test.run (node:internal/test_runner/test:1402:25)
+    +     at Test.processPendingSubtests (node:internal/test_runner/test:974:18) {
+    +   code: 'ETIMEDOUT',
+    +   errno: -60,
+    +   path: '/example/node',
+    +   spawnargs: [
+    +     '--require',
+    +     '<fixture-path>',
+    +     '<fixture-path>',
+    +     '--hook',
+    +     '--city',
+    +     '<fixture-path>'
+    +   ],
+    +   syscall: 'spawnSync /example/node'
+    + }
+    - undefined
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  actual:
+  error: 'spawnSync /example/node ETIMEDOUT'
+  stack: |-
+    Object.spawnSync (node:internal/child_process:1160:20)
+    spawnSync (node:child_process:928:24)
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:172:18)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (<worktree>/reachable/test/review.test.cjs:173:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+  ...
+1..0
+# Subtest: runtime.test.cjs
+ok 6 - runtime.test.cjs
+  ---
+  duration_ms: 35.1845
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 5
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2088.200334

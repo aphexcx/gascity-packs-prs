@@ -72,6 +72,9 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprintf(w, "ok\ndispatch_dropped_total=%d\n", dispatchDroppedTotal.Load())
+	if status := arrivalKeyStatus.Load(); status != nil {
+		_, _ = fmt.Fprintf(w, "jev_api_key=%s\n", status.(string))
+	}
 	if gw := companyHealthStatus.Load(); gw != nil {
 		_, _ = io.WriteString(w, gw.healthzDetail())
 	}

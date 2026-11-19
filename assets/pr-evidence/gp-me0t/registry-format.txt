@@ -1,0 +1,4 @@
+$ verify make registry-format-validate
+python3 validate_registry.py registry.toml
+registry.toml: ok
+exit=0 elapsed_seconds=61.24

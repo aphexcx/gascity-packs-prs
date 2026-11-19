@@ -1,0 +1,4 @@
+gofmt -l . exit=0
+env -u GC_BIN go vet ./... exit=0
+env -u GC_BIN go test -count=1 ./... exit=1
+env -u GC_BIN go test -race -count=1 ./... exit=-15

@@ -1,0 +1,11 @@
+ready_test.go:46: condition did not become true
+FAIL gchat-adapter/internal/app/TestLegacyIdentityHoldResumesInterruptedOutbound/publish (20.1s)
+ready_test.go:46: condition did not become true
+FAIL gchat-adapter/internal/app/TestLegacyIdentityHoldResumesInterruptedOutbound/upload (20.09s)
+FAIL gchat-adapter/internal/app/TestLegacyIdentityHoldResumesInterruptedOutbound (40.2s)
+FAIL gchat-adapter/internal/app (40.48s)
+PASS gchat-adapter/internal/catchup/TestFirstReadLogsCountConcludedPendingTurn/delivered (0.15s)
+FAIL gchat-adapter/internal/catchup/TestFirstReadLogsCountConcludedPendingTurn/pending (0.14s)
+FAIL gchat-adapter/internal/catchup/TestFirstReadLogsCountConcludedPendingTurn (0.29s)
+FAIL gchat-adapter/internal/catchup (0.572s)
+COUNTS {"package_fail": 2, "subtest_fail": 3, "subtest_pass": 1, "test_fail": 2}

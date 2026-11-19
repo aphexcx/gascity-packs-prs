@@ -1,0 +1,54 @@
+backpressure-base: pnpm exec node --test --test-reporter=tap '--test-name-pattern=^archive backpressure:' review.test.cjs -> 1
+backpressure-head24: pnpm exec node --test --test-reporter=tap '--test-name-pattern=^archive backpressure:' review.test.cjs -> 0
+backpressure-head26: node --test --test-reporter=tap '--test-name-pattern=^archive backpressure:' review.test.cjs -> 0
+replay-base-01: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-base-02: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-base-03: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-04: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-base-05: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-06: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-base-07: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-base-08: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-09: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-base-10: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-base-11: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-12: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-13: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-base-14: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-15: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-16: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-17: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-18: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-19: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-base-20: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 1
+replay-head-01: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-02: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-03: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-04: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-05: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-06: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-07: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-08: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-09: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-10: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-11: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-12: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-13: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-14: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-15: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-16: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-17: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-18: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-19: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+replay-head-20: pnpm exec node --test --test-reporter=tap '--test-name-pattern=review 4: archive replay advances in bounded chunks without dropping rows' review.test.cjs -> 0
+pair-1-base: env -u GC_BIN -u GC_TEMPLATE make test -> 2
+pair-1-head: env -u GC_BIN -u GC_TEMPLATE make test -> 0
+pair-2-base: env -u GC_BIN -u GC_TEMPLATE make test -> 2
+pair-2-head: env -u GC_BIN -u GC_TEMPLATE make test -> 0
+pair-3-base: env -u GC_BIN -u GC_TEMPLATE make test -> 2
+pair-3-head: env -u GC_BIN -u GC_TEMPLATE make test -> 0
+negative-python: env -u GC_BIN -u GC_TEMPLATE make test PYTEST_DIRS=negative-tests 'PYTEST_ARGS=-q -k intentional_failure' -> 2
+negative-reachable: env -u GC_BIN -u GC_TEMPLATE REACHABLE_FORCE_FAILURE=1 make test PYTEST_DIRS=negative-tests 'PYTEST_ARGS=-q -k success_marker' -> 2
+opt-in-loaded: make test-reachable-perf -> 2
+switch-zero: env REACHABLE_PERF=0 node --test --test-reporter=tap bounds.test.cjs -> 0
+switch-one: env REACHABLE_PERF=1 node --test --test-reporter=tap bounds.test.cjs -> 1

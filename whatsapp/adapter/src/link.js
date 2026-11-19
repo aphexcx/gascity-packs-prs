@@ -2,6 +2,9 @@
 const RECONNECT_MS = [1000, 5000, 15000, 60000, 300000];
 const PING_MS = 30000;
 const PONG_MS = 10000;
+// A timed read found a delivery that no wake announced: the gateway side of an
+// up link cannot wake this box (a deploy without its binding, or failed wakes).
+const UNANNOUNCED = 'unannounced_delivery';
 
 export function createLink({ gatewayURL, credential, clock, enabled = true,
   onRead = () => {}, onDown = () => {}, WebSocketImpl = globalThis.WebSocket } = {}) {
@@ -22,6 +25,9 @@ export function createLink({ gatewayURL, credential, clock, enabled = true,
 
   if (!enabled) { state = 'disabled'; reason = 'disabled'; }
   else if (typeof WebSocketImpl !== 'function') { state = 'unavailable'; reason = 'no_websocket'; }
+
+  // Held: up, and not shown deaf by an unannounced delivery since the last wake or connect.
+  const held = () => state === 'up' && reason === '';
 
   function transition(next, why) {
     if (state !== next || reason !== why) since = clock();
@@ -53,7 +59,6 @@ export function createLink({ gatewayURL, credential, clock, enabled = true,
       socket = current;
       current.addEventListener('open', () => {
         if (socket !== current || stopped) return;
-        failures = 0;
         pingAt = clock() + PING_MS;
         transition('up', '');
         onRead();
@@ -63,10 +68,12 @@ export function createLink({ gatewayURL, credential, clock, enabled = true,
         if (data === 'wake') {
           lastWakeAt = clock();
           wakes += 1;
+          transition('up', ''); // the gateway can wake this box again
           onRead();
         } else if (data === 'pong') {
           if (pongBy !== null && clock() >= pongBy) { disconnect('pong_timeout'); return; }
           pongBy = null;
+          failures = 0; // the link stayed up: the reconnect ladder starts over
         } else disconnect('invalid_frame');
       });
       current.addEventListener('error', () => { if (socket === current && !stopped) disconnect('connect_error'); });
@@ -76,6 +83,8 @@ export function createLink({ gatewayURL, credential, clock, enabled = true,
 
   return {
     get up() { return state === 'up'; },
+    get held() { return held(); },
+    unannounced() { if (state === 'up') transition('up', UNANNOUNCED); },
     tick() {
       if (stopped || state === 'disabled' || state === 'unavailable') return;
       const now = clock();
@@ -98,7 +107,7 @@ export function createLink({ gatewayURL, credential, clock, enabled = true,
       try { old?.close(); } catch { /* Shutdown is final. */ }
     },
     status() {
-      return { mode: state === 'up' ? 'held' : 'poll', state, since,
+      return { mode: held() ? 'held' : 'poll', state, since,
         last_wake_at: lastWakeAt, wakes, reconnects, reason };
     },
   };

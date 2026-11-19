@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/sjarmak/gc-slack-adapter/internal/stopwatch"
 	"log"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ type injectionWindow struct {
 }
 
 type inboundJournal struct {
+	watch               *stopwatch.Writer
 	mu                  sync.Mutex
 	dir                 string
 	retentionDays       int

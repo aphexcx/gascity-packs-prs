@@ -254,6 +254,17 @@ func HistorySpeaker(l *ledger.Ledger, cfg *config.Config, c puller.Change) prove
 	return r.Speaker(context.Background(), historyUser(c), l.IdentityDomainID)
 }
 
+// firstReadAdmits lifts only the join part of the bound for an adding message.
+func firstReadAdmits(l *ledger.Ledger, c puller.Change, identity string) bool {
+	s := l.Spaces[c.Space]
+	if s == nil || s.FirstRead == nil || s.FirstRead.Complete || !s.HistoryStart.IsZero() || c.Kind != "message.created" || c.Message == nil {
+		return false
+	}
+	at := c.ActTime()
+	return at.After(s.FirstRead.Lower) && at.After(l.HistoryFloor) && at.Before(s.JoinedAt) &&
+		(s.Kind == "dm" || mentions(c.Message, identity))
+}
+
 func (p *Processor) history(ctx context.Context, c puller.Change, catchUp bool) (bool, error) {
 	l, err := p.snapshot()
 	if err != nil {
@@ -282,6 +293,9 @@ func (p *Processor) history(ctx context.Context, c puller.Change, catchUp bool) 
 		}
 	}
 	cause := HistorySkipCause(l, c)
+	if cause == "before_history_floor" && firstReadAdmits(l, c, p.identity()) {
+		cause = ""
+	}
 	if cause == "" {
 		return false, nil
 	}

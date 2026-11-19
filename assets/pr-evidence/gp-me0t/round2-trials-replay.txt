@@ -1,0 +1,6 @@
+$ verify -C reachable/test node --test --test-name-pattern '^review 4: archive replay advances in bounded chunks without dropping rows$' review.test.cjs
+Trial 1: tests 1, pass 0, fail 1, cancelled 0, skipped 0, exit=1, elapsed_seconds=25.64, one_minute_load=10.21
+Trial 2: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=10.56, one_minute_load=15.13
+Trial 3: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=10.55, one_minute_load=14.8
+Trial 4: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=10.04, one_minute_load=15.07
+Trial 5: tests 1, pass 1, fail 0, cancelled 0, skipped 0, exit=0, elapsed_seconds=9.4, one_minute_load=15.67

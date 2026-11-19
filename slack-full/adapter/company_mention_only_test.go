@@ -111,7 +111,7 @@ func TestCompanyRoomMentionOnlyOutsiderReceivesBotMention(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("mention-only injections to outsider = %d, want 1 (company gateway consumed the event; the lane must still run)", len(got))
 	}
-	if !strings.Contains(got[0], "you were @mentioned") || !strings.Contains(got[0], "Slack ts 1700000000.000500") {
+	if !strings.Contains(got[0], "Slack mention-only room delivery:") || !strings.Contains(got[0], "ts=1700000000.000500; thread=1700000000.000500") {
 		t.Errorf("reminder body wrong:\n%s", got[0])
 	}
 	if len(lane) != 1 {
@@ -149,8 +149,8 @@ func TestCompanyRoomMentionOnlyOutsiderReceivesOwnThreadFollowUp(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("own-thread follow-up injections = %d, want 1", len(got))
 	}
-	if !strings.Contains(got[0], "a reply landed in a thread you posted in") || !strings.Contains(got[0], "--thread-ts 1700000000.000600") {
-		t.Errorf("reminder must carry the own-thread reason and anchor at the root:\n%s", got[0])
+	if !strings.Contains(got[0], "ts=1700000000.000601; thread=1700000000.000600") || !strings.Contains(got[0], "--thread-ts 1700000000.000600") {
+		t.Errorf("reminder must carry both timestamps and anchor at the root:\n%s", got[0])
 	}
 }
 
@@ -329,7 +329,7 @@ func TestCompanyRoomMentionOnlyFailedInjectionRetried(t *testing.T) {
 	gc.respStatus = func(reqNum int) int {
 		gc.mu.Lock()
 		defer gc.mu.Unlock()
-		if strings.Contains(gc.calls[reqNum].path, "/session/outsider-session/") && strings.Contains(gc.calls[reqNum].body, "Slack ts 1700000000.001200") && rejected < 3 {
+		if strings.Contains(gc.calls[reqNum].path, "/session/outsider-session/") && strings.Contains(gc.calls[reqNum].body, "ts=1700000000.001200;") && rejected < 3 {
 			rejected++
 			return http.StatusNotFound
 		}
@@ -977,8 +977,11 @@ func TestCompanyRoomMentionOnlyOutsiderReceivesMappedUserGroupMention(t *testing
 			if len(got) != 1 {
 				t.Fatalf("User Group mention injections to outsider = %d, want 1 (the company lane dropped a mapped subteam mention)", len(got))
 			}
-			if !strings.Contains(got[0], "@outsider addressed you") {
-				t.Errorf("reminder must carry the handle reason:\n%s", got[0])
+			if !strings.Contains(got[0], "ts=1700000000.000900; thread=1700000000.000900") {
+				t.Errorf("reminder must carry the message and thread timestamps:\n%s", got[0])
+			}
+			if deliveries := h.gw.cfg.mentionOnlyDeliveries.forSession("outsider-session"); len(deliveries) != 1 || deliveries[0].Reason != mentionOnlyReasonHandle {
+				t.Errorf("handle routing reason missing from delivery metadata: %+v", deliveries)
 			}
 		})
 	}

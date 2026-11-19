@@ -35,6 +35,8 @@ import { createKeeper } from './keeper.js';
 import { createLedger, lastFour } from './ledger.js';
 import { createMedia, describeAttachments } from './media.js';
 import { createPublisher, outboundChunkChars } from './outbound.js';
+import { createChoice, createArrival } from './arrival.js';
+import { createStopwatch } from './stopwatch.js';
 import { createNeverSilent } from './never-silent.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -52,7 +54,16 @@ function intEnv(name, fallback) {
   return value;
 }
 
+// The box's one parse of its off switch: off in any case and with spaces is off;
+// absent or empty is on; any other value (false, 0 and no included) stays on and
+// is named once at start, so a mistyped rollback lever is not silent.
+function heldConnectionSwitch(raw = '') {
+  const value = raw.trim().toLowerCase();
+  return { on: value !== 'off', unknown: ['', 'on', 'off'].includes(value) ? '' : raw };
+}
+
 export function loadConfig() {
+  const held = heldConnectionSwitch(process.env.WHATSAPP_HELD_CONNECTION);
   const cityPath = getenv('GC_CITY_PATH', path.join(os.homedir(), 'city'));
   const cfg = {
     cityName: getenv('GC_CITY_NAME'),
@@ -73,7 +84,8 @@ export function loadConfig() {
     gatewayURL: getenv('WHATSAPP_GATEWAY_URL'),
     credential: getenv('WHATSAPP_GATEWAY_CREDENTIAL'),
     pollMs: intEnv('WHATSAPP_POLL_MS', 2000),
-    heldConnection: getenv('WHATSAPP_HELD_CONNECTION', 'on') !== 'off',
+    heldConnection: held.on,
+    heldConnectionUnknown: held.unknown,
     heldPollMs: intEnv('WHATSAPP_HELD_POLL_MS', 300000),
     watermarkCheckMs: intEnv('WHATSAPP_WATERMARK_CHECK_MS', 60000),
     tickMs: intEnv('WHATSAPP_TICK_MS', 250),
@@ -140,6 +152,7 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
     'GET /healthz': async () => ({ status: 200, json: health() }),
     'POST /publish': async (body) => publisher.handlePublish(body),
     'POST /publish-update': async (body) => publisher.handlePublishUpdate(body),
+    'POST /react': async (body) => publisher.handleReact(body),
     'GET /status': async () => ({
       status: 200,
       json: { inbound: inbound.status(), keeper: keeper.status(), ledger: ledger.snapshot(), health: health(), never_silent: notices?.status() },
@@ -221,7 +234,7 @@ async function registerUntilDone(gc, cfg, isStopping) {
         callback_url: cfg.callbackURL,
         // gc renders this into every inbound paste (handler_extmsg.go:727-751);
         // file-based so reply text never has to survive shell quoting.
-        reply_instructions: 'Reply: write the reply to a file, then run: gc whatsapp publish --to {conversation_id} --text-file <path>',
+        reply_instructions: 'Reply: write the reply to a file, then run: gc whatsapp publish --to {conversation_id} --reply-to {message_ts} --text-file <path>',
         capabilities: {
           SupportsChildConversations: false,
           SupportsAttachments: true,
@@ -241,9 +254,15 @@ async function registerUntilDone(gc, cfg, isStopping) {
 export async function main() {
   const cfg = loadConfig();
   const clock = createClock(process.env);
+  const choice = createChoice({ log, now: clock });
+  const timingDir = process.env.GC_SERVICE_STATE_ROOT || cfg.stateDir;
+  const stopwatch = createStopwatch({ stateDir: timingDir, clock, log });
   const journal = openJournal({ stateDir: cfg.stateDir, clock });
   const deadLetters = createDeadLetters({ stateDir: cfg.stateDir });
   const gateway = createGatewayClient({ url: cfg.gatewayURL, credential: cfg.credential, timeoutMs: cfg.gatewayTimeoutMs });
+  const arrival = createArrival({ choice, stateDir: timingDir, gateway, stopwatch, clock, log });
+  // Both prune their old attempt markers at start; again once a day.
+  setInterval(() => { arrival.prune(); stopwatch.prune(); }, 24 * 60 * 60 * 1000).unref();
   const gc = createGcClient({ base: cfg.gcAPIBase, city: cfg.cityName, postTimeoutMs: cfg.gcPostTimeoutMs });
   const ledger = createLedger({ stateDir: cfg.stateDir, clock, log });
   const keeper = createKeeper({
@@ -279,6 +298,7 @@ export async function main() {
     post: (message, line, canPost) => publisher.notice(message.conversation, line, `never-silent:${message.id}:${message.created}`, canPost),
   });
   const publisher = createPublisher({
+    stopwatch,
     stateDir: cfg.stateDir,
     gateway,
     gc,
@@ -297,6 +317,7 @@ export async function main() {
 
   let authState = cfg.credential ? 'unverified' : 'not enrolled';
   const inbound = createInbound({
+    arrival,
     journal,
     deadLetters,
     gateway,
@@ -318,6 +339,7 @@ export async function main() {
   });
 
   const health = () => ({
+    jev_api_key: choice.keyStatus,
     ok: true,
     gateway_auth: inbound.authFailed ? authState : 'ok',
     city: cfg.cityName,
@@ -342,11 +364,15 @@ export async function main() {
     inbound.stop();
     server.close();
     journal.close();
-    setTimeout(() => process.exit(0), 200).unref();
+    // Drain the stopwatch's queued lines and marker flushes, bounded so the
+    // stop stays inside the two seconds gc allows before SIGKILL.
+    const bound = new Promise((resolve) => { setTimeout(resolve, 1500).unref(); });
+    void Promise.race([stopwatch.flush(), bound]).finally(() => setTimeout(() => process.exit(0), 200).unref());
   };
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGINT', () => stop('SIGINT'));
 
+  if (cfg.heldConnectionUnknown) log(`WHATSAPP_HELD_CONNECTION=${JSON.stringify(cfg.heldConnectionUnknown)} is neither on nor off; the held link stays on (only off, in any case, turns it off)`);
   if (!cfg.credential) log('WHATSAPP_GATEWAY_CREDENTIAL is not set: not enrolled (gc whatsapp enroll); polling will stop on the first 401');
   if (cfg.registerOnStart) void registerUntilDone(gc, cfg, () => stopping);
 

@@ -78,9 +78,9 @@ export interface WebhookBatch {
 }
 
 export type SendRequest =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; context?: { message_id: string } }
   | { type: "reaction"; messageId: string; emoji: string }
-  | { type: "image" | "document" | "audio" | "video"; mediaId: string; caption?: string; filename?: string }
+  | { type: "image" | "document" | "audio" | "video"; mediaId: string; caption?: string; filename?: string; context?: { message_id: string } }
   | { type: "template"; name: string; language: string; params: string[] };
 
 export interface GraphClient {
@@ -293,7 +293,8 @@ function recipientOf(id: string): { to: string } | { recipient: string } {
 
 /** The Graph body for a send (POST /<version>/<phone number id>/messages) to a wa_id or a user_id. */
 export function sendBody(to: string, req: SendRequest): Record<string, unknown> {
-  const head = { messaging_product: "whatsapp", recipient_type: "individual", ...recipientOf(to) };
+  const head = { messaging_product: "whatsapp", recipient_type: "individual", ...recipientOf(to),
+    ...("context" in req && req.context ? { context: req.context } : {}) };
   switch (req.type) {
     case "text":
       return { ...head, type: "text", text: { body: req.text, preview_url: false } };

@@ -1,0 +1,7 @@
+source_sha=5b579d614aadc5392385300cf93de5194a546fca
+go version go1.27.3 darwin/arm64
+command=env -u GC_BIN gofmt -l . | cwd=gchat/adapter | exit=0 | elapsed=0.0s | log=race-fixed-gofmt.log
+command=env -u GC_BIN go vet ./... | cwd=gchat/adapter | exit=0 | elapsed=0.8s | log=race-fixed-vet.log
+command=env -u GC_BIN go test -p 1 -race -count=10 -timeout=30m -json ./internal/app -run '^TestManagedSourceChatRefusalRetriesWithoutSignIn$' | cwd=gchat/adapter | exit=0 | elapsed=36.9s | log=race-fixture-recheck.jsonl
+command=env -u GC_BIN go test -p 1 -race -count=1 -timeout=30m -json ./... | cwd=gchat/adapter | exit=0 | elapsed=2031.9s | log=race-fixed.jsonl
+command=env -u GC_BIN make test PYTEST_DIRS=gchat/tests | cwd=. | exit=0 | elapsed=20.4s | log=final-pack.log

@@ -1,0 +1,217 @@
+PR 104 round 4: the suites of VERIFY at the code head c7ac084e (the evidence commit adds only
+files under assets/pr-evidence/gp-2awj/round4/). <clone> is the lane's clone, <main> a git
+archive of main 68884bf1. Go counts are per test event (tests and subtests); "load" is the
+1-minute, 5-minute and 15-minute load average when the run started. The box was shared with
+other work.
+
+Go, in brief:
+- Slack: gofmt lists company_thread_ambient.go, as main does; go vet clean. Full suite run 1:
+  13,536 pass, 1 fail, 3 skip. The failure is this PR's TestOffParityWithTheBaseNeverSilentOn
+  (offparity_test.go, unchanged since round 3), which compares the adapter's log lines: two
+  "coalesce: chan=C1 ... retry in 1m ... connection refused" lines landed in its two-second
+  capture. They come from a coalescer retry left running by main's tests (first seen in
+  TestCoalescerIsolationStopsAtFirstTransientError, inbound_dead_letter_test.go at main); the
+  run shows 46 such lines across unrelated tests. Run 2: 13,537 pass, 0 fail, 3 skip, exit 0,
+  with the same 46 stray lines falling outside the capture. Reported, not fixed: neither file is
+  this round's.
+- Google Chat: gofmt and go vet clean. Full suite at c7ac084e: 2,061 pass, 2 fail, 2 skip; the
+  failure is main's TestCommandPreparationFailureSettlesExistingIntent/send-lock (a wall-clock
+  wait). Its package then passed at the tip and at main run side by side (221 and 220), and the
+  test passed five of five alone. The full suite at 07aed5ac (before the self-review's fix, which
+  touched internal/ack, internal/chat and internal/arrival only) lost main's
+  TestMissingTokenReplacementResumes and TestDefaultNoticeUsesConfiguredAgentAndDedup ("did not
+  become ready in 5s", "in 1s"); internal/app run beside main passed 96 of 96 at the tip while
+  main lost one of its own shutdown waits, and the two passed five of five alone.
+
+== gofmt and go vet at c7ac084e
+$ (cd <clone>/slack-full/adapter) gofmt -l . ; go vet ./...
+$ (cd <clone>/gchat/adapter) gofmt -l . ; go vet ./...
+slack gofmt: [company_thread_ambient.go ]
+slack go vet ./...: exit 0
+gchat gofmt: []
+gchat go vet ./...: exit 0
+
+== Slack full suite at c7ac084e
+$ (cd <clone>/slack-full/adapter) env -u GC_BIN go test ./... -count=1 -json
+start 2026-11-14T16:42:25Z load 7.01 5.99 6.51; 203s
+pass 13536 fail 1 skip 3 exit 1
+FAIL github.com/sjarmak/gc-slack-adapter TestOffParityWithTheBaseNeverSilentOn
+FAIL package github.com/sjarmak/gc-slack-adapter
+
+== Slack full suite at c7ac084e, second run
+$ (cd <clone>/slack-full/adapter) env -u GC_BIN go test ./... -count=1 -json
+start 2026-11-14T16:57:05Z load 4.84 4.75 5.40; 228s
+pass 13537 fail 0 skip 3 exit 0
+
+== Google Chat full suite at c7ac084e
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test ./... -count=1 -timeout=30m -json
+start 2026-11-14T16:45:48Z load 4.25 5.41 6.17; 533s
+pass 2061 fail 2 skip 2 exit 1
+FAIL gchat-adapter/internal/server TestCommandPreparationFailureSettlesExistingIntent/send-lock
+FAIL gchat-adapter/internal/server TestCommandPreparationFailureSettlesExistingIntent
+FAIL package gchat-adapter/internal/server
+
+== Google Chat internal/server at the tip c7ac084e (paired)
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test ./internal/server/ -count=1 -json
+start 2026-11-14T16:55:34Z load 4.57 4.87 5.52; 80s
+pass 221 fail 0 skip 0 exit 0
+
+== Google Chat internal/server at main 68884bf1 (paired)
+$ (cd <tmp> env -u GC_BIN go test ./internal/server/ -count=1 -json
+start 2026-11-14T16:55:34Z load 4.57 4.87 5.52; 81s
+pass 220 fail 0 skip 0 exit 0
+
+== the send-lock failure alone at the tip, five times
+$ (cd <clone>/gchat/adapter) set -o pipefail; env -u GC_BIN go test ./internal/server/ -run 'TestCommandPreparationFailureSettlesExistingIntent' -count=5 -v 2>&1 | grep -E -- '^--- |^    --- |^ok|^FAIL'
+start 2026-11-14T16:56:55Z load 4.13 4.61 5.36
+--- PASS: TestCommandPreparationFailureSettlesExistingIntent (0.28s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/after-intent (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/not-ready (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/send-lock (0.22s)
+--- PASS: TestCommandPreparationFailureSettlesExistingIntent (0.27s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/after-intent (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/not-ready (0.02s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/send-lock (0.22s)
+--- PASS: TestCommandPreparationFailureSettlesExistingIntent (0.28s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/after-intent (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/not-ready (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/send-lock (0.22s)
+--- PASS: TestCommandPreparationFailureSettlesExistingIntent (0.28s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/after-intent (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/not-ready (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/send-lock (0.22s)
+--- PASS: TestCommandPreparationFailureSettlesExistingIntent (0.28s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/after-intent (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/not-ready (0.03s)
+    --- PASS: TestCommandPreparationFailureSettlesExistingIntent/send-lock (0.22s)
+ok  	gchat-adapter/internal/server	1.644s
+exit 0 (2.6s)
+
+== Google Chat full suite at 07aed5ac
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test ./... -count=1 -timeout=30m -json
+start 2026-11-14T16:19:02Z load 6.01 6.10 7.76; 618s
+pass 2059 fail 2 skip 2 exit 1
+FAIL gchat-adapter/internal/app TestMissingTokenReplacementResumes
+FAIL gchat-adapter/internal/app TestDefaultNoticeUsesConfiguredAgentAndDedup
+FAIL package gchat-adapter/internal/app
+
+== Google Chat internal/app at the tip 07aed5ac (paired)
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -count=1 -json
+start 2026-11-14T16:29:44Z load 9.27 8.51 7.99; 320s
+pass 96 fail 0 skip 0 exit 0
+
+== Google Chat internal/app at main 68884bf1 (paired)
+$ (cd <tmp> env -u GC_BIN go test ./internal/app/ -count=1 -json
+start 2026-11-14T16:29:44Z load 9.27 8.51 7.99; 316s
+pass 86 fail 2 skip 0 exit 1
+FAIL gchat-adapter/internal/app TestShutdownCheckpointsBeforeDrainingStalledRequestBody/post-drain-save
+FAIL gchat-adapter/internal/app TestShutdownCheckpointsBeforeDrainingStalledRequestBody
+FAIL package gchat-adapter/internal/app
+
+== the two internal/app failures alone at the tip, five times
+$ (cd <clone>/gchat/adapter) set -o pipefail; env -u GC_BIN go test ./internal/app/ -run 'TestMissingTokenReplacementResumes|TestDefaultNoticeUsesConfiguredAgentAndDedup' -count=5 -v 2>&1 | grep -E -- '^--- |^ok|^FAIL'
+start 2026-11-14T16:36:03Z load 4.49 5.87 6.89
+--- PASS: TestMissingTokenReplacementResumes (3.13s)
+--- PASS: TestDefaultNoticeUsesConfiguredAgentAndDedup (0.14s)
+--- PASS: TestMissingTokenReplacementResumes (3.11s)
+--- PASS: TestDefaultNoticeUsesConfiguredAgentAndDedup (0.15s)
+--- PASS: TestMissingTokenReplacementResumes (3.13s)
+--- PASS: TestDefaultNoticeUsesConfiguredAgentAndDedup (0.15s)
+--- PASS: TestMissingTokenReplacementResumes (3.12s)
+--- PASS: TestDefaultNoticeUsesConfiguredAgentAndDedup (0.16s)
+--- PASS: TestMissingTokenReplacementResumes (3.12s)
+--- PASS: TestDefaultNoticeUsesConfiguredAgentAndDedup (0.13s)
+ok  	gchat-adapter/internal/app	16.642s
+exit 0 (17.6s)
+
+== Slack: round 4, main's guards, round 3, parity, by name at c7ac084e
+$ (cd <clone>/slack-full/adapter) set -o pipefail; env -u GC_BIN go test . ./internal/ack -run 'TestRound4|TestNeverSilentRepeatedReactionIsNotNewActivity|TestNeverSilentReactionJournal|TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords|TestOffParity|TestPlacementRecord' -count=1 -v 2>&1 | grep -E -- '^--- |^    --- |^ok|^FAIL'
+start 2026-11-14T17:30:49Z load 3.91 4.29 4.89
+--- PASS: TestNeverSilentReactionJournal (0.04s)
+    --- PASS: TestNeverSilentReactionJournal/off_already_reacted (0.01s)
+    --- PASS: TestNeverSilentReactionJournal/on_already_reacted (0.01s)
+    --- PASS: TestNeverSilentReactionJournal/on_fresh (0.02s)
+--- PASS: TestNeverSilentRepeatedReactionIsNotNewActivity (0.17s)
+    --- PASS: TestNeverSilentRepeatedReactionIsNotNewActivity/repeat=true (0.09s)
+    --- PASS: TestNeverSilentRepeatedReactionIsNotNewActivity/repeat=false (0.09s)
+--- PASS: TestOffParityWithTheBase (2.12s)
+--- PASS: TestOffParityWithTheBaseNeverSilentOn (2.19s)
+--- PASS: TestOffParityStartsAsTheBase (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c) (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d) (0.00s)
+--- PASS: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords (3.51s)
+    --- PASS: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/switchboard (0.98s)
+    --- PASS: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/room (0.86s)
+    --- PASS: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/dm (0.85s)
+    --- PASS: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords/mpim (0.83s)
+--- PASS: TestRound4SessionReactionCountsAsWithAckOff (0.74s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.10s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.08s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.10s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.10s)
+--- PASS: TestRound4CompanyRoomReactionCountsAsWithAckOff (0.19s)
+ok  	github.com/sjarmak/gc-slack-adapter	9.280s
+--- PASS: TestPlacementRecordIsTakenOnceAndOnlyWhileOn (0.07s)
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	0.265s
+exit 0 (10.0s)
+
+== Google Chat: round 4, the guard, the fake, round 3, parity, by name at c7ac084e
+$ (cd <clone>/gchat/adapter) set -o pipefail; env -u GC_BIN go test ./internal/app/ ./internal/inbound/ ./internal/fakes/fakegoogle/ ./internal/ack/ -run 'TestRound4|TestRepeatedReactionConflictsIsOptIn|TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords|TestOffParity|TestPlacementRecord' -count=1 -v 2>&1 | grep -E -- '^--- |^    --- |^ok|^FAIL'
+start 2026-11-14T17:30:59Z load 3.54 4.19 4.85
+--- PASS: TestRound4SessionReactionCountsAsWithAckOff (6.01s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.33s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.30s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.22s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.26s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.66s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (3.69s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.27s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.28s)
+--- PASS: TestRound4RepeatedSessionReactionWithoutAckIsNoNewAnswer (0.30s)
+ok  	gchat-adapter/internal/app	6.554s
+--- PASS: TestOffParityWithTheBase (1.35s)
+--- PASS: TestOffParityWithTheBaseNeverSilentOn (5.17s)
+--- PASS: TestOffParityStartsAsTheBase (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c) (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d) (0.00s)
+--- PASS: TestBothSwitchesOnAckIsNoAnswerAndNoticeIsNoWords (0.81s)
+ok  	gchat-adapter/internal/inbound	7.568s
+--- PASS: TestRepeatedReactionConflictsIsOptIn (0.00s)
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.260s
+--- PASS: TestPlacementRecordIsTakenOnceAndOnlyWhileOn (0.07s)
+ok  	gchat-adapter/internal/ack	0.213s
+exit 0 (9.1s)
+
+== root: the stopwatch, catalog, redaction copies, texting rules and Slack prompt contract
+$ (cd <clone>) env -u GC_BIN make test PYTEST_DIRS='tests/test_stopwatch.py tests/test_reaction_catalog.py tests/test_redaction_copies.py tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py' 2>&1 | tail -2
+start 2026-11-14T17:31:08Z load 4.73 4.42 4.92
+...........................................                              [100%]
+115 passed in 0.82s
+exit 0 (1.5s)
+
+== root: whatsapp/tests
+$ (cd <clone>) env -u GC_BIN make test PYTEST_DIRS=whatsapp/tests 2>&1 | tail -2
+start 2026-11-14T17:31:09Z load 4.73 4.42 4.92
+...................................                                      [100%]
+107 passed in 53.18s
+exit 0 (53.4s)
+
+== the shared copies at c7ac084e
+$ (cd <clone>) diff -rq gchat/adapter/internal/ack slack-full/adapter/internal/ack; echo diff ack exit $?; diff -rq gchat/adapter/internal/stopwatch slack-full/adapter/internal/stopwatch; echo diff stopwatch exit $?; for f in internal/ack/catalog.go internal/ack/choice.go internal/ack/service.go internal/ack/placed_test.go internal/stopwatch/stopwatch.go; do cmp gchat/adapter/$f slack-full/adapter/$f && echo "cmp $f: equal"; done
+start 2026-11-14T17:32:03Z load 3.96 4.27 4.83
+diff ack exit 0
+diff stopwatch exit 0
+cmp internal/ack/catalog.go: equal
+cmp internal/ack/choice.go: equal
+cmp internal/ack/service.go: equal
+cmp internal/ack/placed_test.go: equal
+cmp internal/stopwatch/stopwatch.go: equal
+exit 0 (0.0s)
+
+== WhatsApp at c7ac084e
+Three full runs at the tip beside three at main: wa-runs.txt. Every test of this PR passed in all
+three tip runs; the failures are main's own load-sensitive waits, in files identical to main's.

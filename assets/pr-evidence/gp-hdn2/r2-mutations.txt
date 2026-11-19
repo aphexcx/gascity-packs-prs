@@ -1,0 +1,49 @@
+The gate round 1 folds and their self-review folds, shown to bite. Each run:
+a fresh clone of the branch, checked out at the sha named, then the targeted
+command of README.md ("the targeted run"); output filtered to its FAILED and
+summary lines. The note's code head is 659265c0.
+
+1. The old wordings. 659265c0's tests with the note taken from an earlier
+   commit (the whole transcript of the first is r2-red.txt).
+
+note from e4d27c78 (before the gate fold: the revert of the one sha the PR resolves to)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 7.34s
+
+note from 9ca68b17 (the gate fold before its self-review: "oldest to newest" with no range form, "or" for "also")
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 7.19s
+
+2. MINOR 3, the gap: at e4d27c78 (the tests and the note before the fold),
+   the text after `Testing:` and the text after `Risk:` swapped in the note's
+   three lines. The old block checks accept any text after a label.
+
+mutated: swap-testing-risk
+32 passed, 76 deselected in 7.42s
+
+3. Mutations of the 659265c0 note, one each.
+
+mutated: swap-testing-risk (MINOR 3: Testing's and Risk's text trade places)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_shows_each_label_with_its_instruction_once_as_one_block
+FAILED tests/test_gc_role_prompt_integration.py::test_city_lane_renders_the_pr_body_lines_once_each_in_order
+2 failed, 30 passed, 76 deselected in 7.74s
+
+mutated: rebase-case-gone (MAJOR 1: the rebased or fast-forwarded case deleted)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 9.43s
+
+mutated: bullet-split (MAJOR 1: the one revert instruction split into two bullets)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 9.32s
+
+mutated: second-revert-bullet ("- On the revert line, revert only the one sha the PR resolves to." added; fails on the new count, 2 == 1)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 7.18s
+
+mutated: or-not-also (what a revert leaves behind said instead of the command)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 8.54s
+
+mutated: range-from-oldest (`git revert <oldest>..<newest>`, the left end left out and no --no-merges)
+FAILED tests/test_gc_standing_notes_fragment.py::test_pr_body_lines_note_carries_every_fact_of_its_bead
+1 failed, 31 passed, 76 deselected in 8.65s

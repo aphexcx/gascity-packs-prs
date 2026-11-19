@@ -1,0 +1,10 @@
+$ verify -C follow-through/test node --test
+ℹ tests 108
+ℹ suites 0
+ℹ pass 108
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 58182.518
+exit=0 elapsed_seconds=59.53

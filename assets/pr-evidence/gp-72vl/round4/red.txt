@@ -1,0 +1,15 @@
+Probe-test commit b54ab2c7a3b4a82b0553d75d3b25411beebdc9e9
+Caller report: expected reports for default and worker; gate_probe: command not found.
+Empty directory: unexpected codex call: fallback.
+Non-executable stub: unexpected codex call: fallback.
+Shadowing function: unexpected codex call: function.
+Capture: expected 1 named records; 0 paths were printed.
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_gate_probe_reports_the_model_each_caller_sends gascity/tests/test_codex_gate.py::test_gate_probe_refuses_an_unusable_stub gascity/tests/test_codex_gate.py::test_gate_probe_names_its_own_record -q
+5 failed in 1.24s
+exit 1
+
+Pin-reader test commit d7450532b6e2f2695aaec37bea682c56f9152cbc
+Hash suffix: DID NOT RAISE AssertionError. The separate shell comment and the two intact pins passed.
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_pin_reader_sees_what_bash_passes gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default -q
+1 failed, 3 passed in 2.44s
+exit 1

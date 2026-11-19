@@ -198,6 +198,36 @@ class ProxyFixture(unittest.TestCase):
 
 
 class ProxyCommandsTest(ProxyFixture):
+    def test_join_takes_exactly_one_room(self):
+        for args, reason in [
+            (("--request",), "--space is required"),
+            (("--space", "spaces/room", "--space", "spaces/dm", "--request"), "--space must be supplied once"),
+            (("--space", "spaces/room,spaces/dm", "--request"), "one exact room id"),
+            (("--space", "spaces/*", "--request"), "one exact room id"),
+            (("--space", "spaces/room/", "--request"), "one exact room id"),
+            (("--space", "spaces/..", "--request"), "one exact room id"),
+            (("--space", "Vendor Updates", "--request"), "one exact room id"),
+            (("--all",), "unknown argument"),
+            (("--space", "spaces/room", "--check"), "--check takes no room"),
+            (("--space", "spaces/room", "--request", "--yes", "spaces/dm/messages/a"), "choose one"),
+        ]:
+            with self.subTest(args=args):
+                result = self.run_command("join", *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(reason, result.stderr)
+                self.assertEqual(self.requests, [])
+
+    def test_join_sends_one_request_and_reports_refusal(self):
+        self.respond("/join", {"result": "requested", "code": "EXAMPLE", "expires_at": "2026-01-02T00:00:00Z"})
+        result = self.run_command("join", "--space", "spaces/room", "--request")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][3], {"space": "spaces/room", "request": True})
+        self.respond("/join", {"result": "no_owner_yes", "message": "The message sender is not an owner of this box."})
+        result = self.run_command("join", "--space", "spaces/room", "--yes", "spaces/dm/messages/a")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not an owner", result.stdout)
+        self.assertEqual(self.requests[-1][3], {"space": "spaces/room", "yes": "spaces/dm/messages/a"})
+
     def test_reaction_preserves_session_attribution(self):
         self.env["GC_SESSION_ID"] = "example-session"
         self.respond("/react", {"ok": True})

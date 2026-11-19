@@ -1,0 +1,34 @@
+cd reachable/test && REACHABLE_PERF=1 node --test --test-reporter=tap --test-name-pattern='^13: 256 MiB fixture' bounds.test.cjs
+TAP version 13
+# Subtest: 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
+not ok 1 - 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up
+  ---
+  duration_ms: 3364.316292
+  type: 'test'
+  location: '<clone>/reachable/test/bounds.test.cjs:110:1'
+  failureType: 'testCodeFailure'
+  error: 'CLI p95 127.63108399999987ms'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (<clone>/reachable/test/bounds.test.cjs:140:10)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+# 256 MiB, 100 warm decisions: p95=1.726ms
+# 256 MiB, 20 complete hook processes: p95=127.631ms
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3491.400875
+make: *** [test-reachable-perf] Error 1
