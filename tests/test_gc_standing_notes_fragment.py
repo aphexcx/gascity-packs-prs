@@ -247,8 +247,8 @@ REVIEW_RULES = (
     # three, in a round that does not stop the PR, only a reproduction in the
     # round's own changes buys a round, and a second model's answer is not
     # one; a finding shown any other way is FIXED, with the head that fixed
-    # it, once its proof no longer fails at the reviewed head, and while it
-    # still happens takes the outcome or PRECONDITION it can have without a
+    # it, once it no longer happens at the reviewed head, and while it still
+    # happens there takes the outcome or PRECONDITION it can have without a
     # fix, or else is OPEN with its proof and grade; never NOT SHOWN, which
     # is for what nobody showed.
     "2. Stop at round three.",
@@ -270,11 +270,12 @@ REVIEW_RULES = (
     "that round's own changes (a failing test, or shown reachable where the changed code "
     "runs; a second model's answer alone is not enough) buys another round; a finding shown "
     "any other way "
-    "(an earlier head's fault that a failing test proves, say) buys none by itself: once its "
-    "proof no longer fails at the reviewed head it is FIXED, with the head that fixed it, and "
-    "while it still happens it takes the outcome or PRECONDITION it can have without a fix, "
-    "or else is listed as OPEN with what shows it and its grade, for the mayor; list the "
-    "rest, which nobody showed, as NOT SHOWN with their file and line.",
+    "(an earlier head's fault that a failing test proves, say) buys none by itself: once it "
+    "no longer happens at the reviewed head (its proof no longer fails there) it is FIXED, "
+    "with the head that fixed it, and while it still happens there it takes the outcome or "
+    "PRECONDITION it can have without a fix, or else is listed as OPEN with what shows it and "
+    "its grade, for the mayor; list the rest, which nobody showed, as NOT SHOWN with their "
+    "file and line.",
     # 3. No lone reviewer forces a round: a failing test, or a second model's
     # check of that one finding with the line; else NOT SHOWN, never a blind fix.
     "3. Let no lone reviewer force a round.",
@@ -394,8 +395,11 @@ def test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_show
     mayor for an outcome before any merge, is only for what still happens.
     The same clause gives a fault that still fails only under a provider
     found nowhere the changed code runs its PRECONDITION before any OPEN.
-    The stop's sentence gives the same order (the stopped-round test), and
-    rule 4's OPEN is for a minor left unfixed, which still happens."""
+    Both words turn on one fact, whether the fault still happens at the
+    reviewed head, so a finding gets exactly one, whatever shows it: a
+    second model's line settles it as a test does. The stop's sentence gives
+    the same order (the stopped-round test), and rule 4's OPEN is for a minor
+    left unfixed, which still happens."""
     sentences = re.split(r"(?<=\.)\s+", review_rules_note())
     # Round four, and no finding repeats an earlier round's family: the stop
     # is not this round's sentence; the one for a round past three that does
@@ -411,16 +415,18 @@ def test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_show
     assert clause.startswith(" (an earlier head's fault that a failing test proves, say) buys none by itself")
     assert clause.count("as OPEN") == 1
     opened = clause.index("as OPEN")
-    # The test passes at head four: FIXED, with the head that fixed it,
-    # before the clause ever reaches OPEN.
-    fixed = clause.find("once its proof no longer fails at the reviewed head it is FIXED, "
-                        "with the head that fixed it")
+    # The test passes at head four: the fault no longer happens at the
+    # reviewed head, so FIXED, with the head that fixed it, before the
+    # clause ever reaches OPEN.
+    fixed = clause.find("once it no longer happens at the reviewed head (its proof no longer "
+                        "fails there) it is FIXED, with the head that fixed it")
     assert 0 <= fixed < opened, clause
     # Still failing, but only where the changed code never runs: rule 4's
     # PRECONDITION, or any outcome it can have without a fix, comes first;
-    # OPEN is what is left of what still happens.
-    still = clause.find("while it still happens it takes the outcome or PRECONDITION it can have "
-                        "without a fix, or else")
+    # OPEN is what is left of what still happens there, the same fact's
+    # other side.
+    still = clause.find("while it still happens there it takes the outcome or PRECONDITION it "
+                        "can have without a fix, or else")
     assert fixed < still < opened, clause
 
 
