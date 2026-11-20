@@ -1,0 +1,16 @@
+=== RUN   TestMessageWithoutActTimeUsesPublishTime
+=== RUN   TestMessageWithoutActTimeUsesPublishTime/created/old
+--- PASS: TestMessageWithoutActTimeUsesPublishTime/created/old (0.33s)
+=== RUN   TestMessageWithoutActTimeUsesPublishTime/created/new
+--- PASS: TestMessageWithoutActTimeUsesPublishTime/created/new (0.36s)
+=== RUN   TestMessageWithoutActTimeUsesPublishTime/created/none
+--- PASS: TestMessageWithoutActTimeUsesPublishTime/created/none (0.08s)
+=== RUN   TestMessageWithoutActTimeUsesPublishTime/updated/old
+--- PASS: TestMessageWithoutActTimeUsesPublishTime/updated/old (0.08s)
+=== RUN   TestMessageWithoutActTimeUsesPublishTime/updated/new
+--- PASS: TestMessageWithoutActTimeUsesPublishTime/updated/new (0.11s)
+=== RUN   TestMessageWithoutActTimeUsesPublishTime/updated/none
+--- PASS: TestMessageWithoutActTimeUsesPublishTime/updated/none (0.07s)
+--- PASS: TestMessageWithoutActTimeUsesPublishTime (1.02s)
+PASS
+ok  	gchat-adapter/internal/inbound	1.249s

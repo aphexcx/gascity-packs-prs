@@ -1,0 +1,47 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 6,
+    "subtests_pass": 2,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/inbound",
+    "-run",
+    "^TestLiveActsBeforeTheFloorAreNotTurns$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.created
+FAIL gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.updated
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.deleted
+FAIL gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.created
+FAIL gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.deleted
+FAIL gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.created-message.updated
+FAIL gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.created-reaction.deleted
+FAIL gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.updated-message.deleted
+FAIL gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns
+FAIL gchat-adapter/internal/inbound
+
+    history_bound_test.go:60: old acts became 1 turns
+    history_bound_test.go:70: old body retained
+    history_bound_test.go:60: old acts became 1 turns
+    history_bound_test.go:60: old acts became 1 turns
+    history_bound_test.go:60: old acts became 1 turns
+    history_bound_test.go:70: old body retained
+    history_bound_test.go:60: old acts became 2 turns
+    history_bound_test.go:60: old acts became 2 turns
+    history_bound_test.go:70: old body retained

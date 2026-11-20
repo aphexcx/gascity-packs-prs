@@ -1,0 +1,14 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1
+  },
+  "command": null,
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/catchup
+
+internal/catchup/history_bound_test.go:112:7: l.SpacesListedAt undefined (type *ledger.Ledger has no field or method SpacesListedAt)
+internal/catchup/history_bound_test.go:117:68: unknown field EventTime in struct literal of type puller.Change
+internal/catchup/history_bound_test.go:133:128: c.EventTime undefined (type puller.Change has no field or method EventTime)

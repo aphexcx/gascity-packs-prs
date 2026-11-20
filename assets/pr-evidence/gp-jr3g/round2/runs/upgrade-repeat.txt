@@ -1,0 +1,22 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "top_level_pass": 5
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/app TestReleasedCursorlessHistoryCannotReplayAfterHold
+PASS gchat-adapter/internal/app TestReleasedCursorlessHistoryCannotReplayAfterHold
+PASS gchat-adapter/internal/app TestReleasedCursorlessHistoryCannotReplayAfterHold
+PASS gchat-adapter/internal/app TestReleasedCursorlessHistoryCannotReplayAfterHold
+PASS gchat-adapter/internal/app TestReleasedCursorlessHistoryCannotReplayAfterHold
+PASS gchat-adapter/internal/app
+
+    history_upgrade_test.go:154: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages
+    history_upgrade_test.go:154: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages
+    history_upgrade_test.go:154: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages
+    history_upgrade_test.go:154: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages
+    history_upgrade_test.go:154: removed 3 old queued rows; delivered 3 saved-cursor outage messages and 1 new DM; zero of 120 old DM messages

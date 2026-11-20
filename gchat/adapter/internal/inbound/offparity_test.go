@@ -243,6 +243,9 @@ func offParityScript(t *testing.T, neverSilent bool) {
 	}}))
 	opts := Options{Config: cfg, Ledger: ledger.New(), LedgerMu: &sync.Mutex{}, LedgerPath: cfg.Endpoints.StateFile,
 		GC: gcclient.New(gc.URL(), "examplecity"), Chat: c, IdentityUserID: identity, Logger: logger, RetryDelay: time.Millisecond}
+	if err := json.Unmarshal([]byte(`{"spaces_listed_at":"`+now.Add(-time.Hour).Format(time.RFC3339Nano)+`"}`), opts.Ledger); err != nil {
+		t.Fatal(err)
+	}
 	var notices *neversilent.Engine
 	posted := 0
 	if neverSilent {
@@ -265,6 +268,11 @@ func offParityScript(t *testing.T, neverSilent bool) {
 	}
 	step := func(id string, changes ...puller.Change) {
 		t.Helper()
+		for i := range changes {
+			if err := json.Unmarshal([]byte(`{"EventTime":"`+time.Now().UTC().Format(time.RFC3339Nano)+`"}`), &changes[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if out, err := p.Handle(context.Background(), &puller.Event{PubSubID: id, Changes: changes}); out != puller.Ack || err != nil {
 			t.Fatalf("%s: Handle = %v, %v", id, out, err)
 		}

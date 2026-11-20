@@ -1,0 +1,16 @@
+
+1. **MAJOR — NEW: retirement reconciliation races with live admission and backup restore.** Locations: [inbound/never_silent.go:36](<repo>/gchat/adapter/internal/inbound/never_silent.go:36), [server/server.go:1837](<repo>/gchat/adapter/internal/server/server.go:1837).
+
+   **CLASS:** Notice retirement relies on an outdated ledger snapshot without ordering it against admission or restore. The independent watch releases the ledger lock before reconciliation and polling. Two cases are shown by code:
+
+   **SEQUENCE — valid current create silenced:** Enable notices. Retain a missing-time create for message `M` under its history-only ID, with no primary `Changes[M]`. Pause the watch after it clones that ledger. Admit a live create for `M` with a timestamp after the bound; let gc return `no_route`. Resume reconciliation using the old snapshot. Its missing-primary check calls `ForgetTracked(M)`, permanently removing the valid enrollment. Subsequent polls emit neither its owner notice nor start mail. A snapshot taken between `Track` and `record` has the same problem. This regression is **new in d6721ca0**.
+
+   **SEQUENCE — restored retirement still produces a notice:** In recovery-required state, retain an overdue stopped enrollment and pause the watch after its snapshot. Restore a main-written, cursorless backup whose attempt `InitializeHistory` retires. Let the provider become ready while registration remains pending, then resume the stale reconciliation and poll. That snapshot contains no retirement, so the engine can post the owner notice and start mail after restore. This interaction is **new in merge 0b479e57 and remains unfixed**.
+
+   Order retirement reconciliation with admission and restore, including subsequent notice decisions. Add one deterministic regression test with both interleavings: the current create must retain its notice; the restored retirement must produce none. The existing B test always reconciles a fresh snapshot after restore. These are code-demonstrated sequences; I did not execute reproductions.
+
+The mechanical merge matches the recorded merge tree except for the two prescribed resolutions. CLI History precedes Never silent; the API retains both keys. Existing parent tests remain unchanged. The interaction table covers the required components but misses the concurrency class above. The space-start test correctly captures differing encounter times when both saved boundaries are absent.
+
+Tests: **not run (sandbox)**. Worker transcripts show A 12 passing rows, B 14, C 3, E 6, space-start 4, both status checks, rollback exchange, and F’s 25 tests/177 subtests. B’s merge run had the expected 12 failures and two passing controls. A’s two initial fixture-only 503s were corrected. Python’s first full run had one failure; the clean-environment run passed 464 tests. The full Go run had no completion record when inspected.
+
+VERDICT: BLOCK

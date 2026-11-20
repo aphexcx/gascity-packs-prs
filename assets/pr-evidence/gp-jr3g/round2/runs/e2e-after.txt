@@ -1,0 +1,103 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 30,
+    "top_level_pass": 30
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e TestEndToEnd/a_live_event_arriving_while_catch-up_runs_does_not_move_the_frozen_cursors,_equal_timestamps_across_a_page_boundary_are_not_skipped,_and_a_restart_in_the_middle_of_draining_a_backlog_resumes_from_the_persisted_progress
+PASS gchat-adapter/test/e2e TestEndToEnd
+PASS gchat-adapter/test/e2e
+
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.061030708s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.06500825s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.06414275s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.059923166s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.076110917s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.057497917s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.058853584s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.056084416s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.057721791s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.065458s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.0597755s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=8.184807041s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=4.065500458s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=4.068278958s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.057289791s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.048038209s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.054161083s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.081497s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.060955333s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.047517875s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.044386625s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.05824375s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.054866708s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.051652292s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.056262333s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.057775s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.047855208s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.048179875s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.053548667s ceiling=1m26s turns=24 failed=false
+    e2e_test.go:214: RECOVERY_WAIT elapsed=5.057575709s ceiling=1m26s turns=24 failed=false

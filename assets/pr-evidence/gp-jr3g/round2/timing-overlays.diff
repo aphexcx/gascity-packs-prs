@@ -1,0 +1,62 @@
+--- before/gchat/adapter/internal/ledger/ledger.go
++++ before/gchat/adapter/internal/ledger/ledger.go.overlay
+@@ -330,6 +330,7 @@
+ // the containing directory. Callers create the parent directory first. Failed
+ // writes and renames remove the temporary file, reporting any cleanup error.
+ func (l *Ledger) Save(path string) error {
++   if os.Getenv("GCHAT_TEST_SLOW_SAVE") != "" { time.Sleep(200*time.Millisecond); fmt.Fprintln(os.Stderr, "SLOW_SAVE delay=200ms") }
+    if l.saveGuard != nil {
+        if err := l.saveGuard(); err != nil {
+            return fmt.Errorf("save ledger %s: %w", path, err)
+--- before/gchat/adapter/test/e2e/e2e_test.go
++++ before/gchat/adapter/test/e2e/e2e_test.go.overlay
+@@ -192,10 +192,10 @@
+    f.cancel = cancel
+    f.done = make(chan error, 1)
+    go func() {
+-       f.done <- app.RunWithOptions(ctx, f.cfg, app.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RetryDelay: time.Millisecond})
++       f.done <- app.RunWithOptions(ctx, f.cfg, app.Options{Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), RetryDelay: time.Millisecond})
+    }()
+ }
+-func (f *fixture) ready() { f.start(); f.health("ready", 10*time.Second) }
++func (f *fixture) ready() { started := time.Now(); defer func() { f.t.Logf("READY_WAIT elapsed=%s turns=%d failed=%t", time.Since(started), len(f.gc.Inbound()), f.t.Failed()) }(); f.start(); f.health("ready", 10*time.Second) }
+ func (f *fixture) stop() {
+    if f.cancel == nil {
+        return
+@@ -1046,6 +1046,7 @@
+        // Persisted backlog must be sufficient even when remote history is gone.
+        f.google.Configure(func(g *fakegoogle.Server) { g.Messages = map[string]*api.Message{} })
+        f.setHook(nil)
++       t.Setenv("GCHAT_TEST_SLOW_SAVE", "yes")
+        f.ready()
+        f.turns(24)
+        seen := map[string]bool{}
+--- after/gchat/adapter/internal/ledger/ledger.go
++++ after/gchat/adapter/internal/ledger/ledger.go.overlay
+@@ -372,6 +372,7 @@
+ // the containing directory. Callers create the parent directory first. Failed
+ // writes and renames remove the temporary file, reporting any cleanup error.
+ func (l *Ledger) Save(path string) error {
++   if os.Getenv("GCHAT_TEST_SLOW_SAVE") != "" { time.Sleep(200*time.Millisecond); fmt.Fprintln(os.Stderr, "SLOW_SAVE delay=200ms") }
+    if l.saveGuard != nil {
+        if err := l.saveGuard(); err != nil {
+            return fmt.Errorf("save ledger %s: %w", path, err)
+--- after/gchat/adapter/test/e2e/e2e_test.go
++++ after/gchat/adapter/test/e2e/e2e_test.go.overlay
+@@ -192,7 +192,7 @@
+    f.cancel = cancel
+    f.done = make(chan error, 1)
+    go func() {
+-       f.done <- app.RunWithOptions(ctx, f.cfg, app.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RetryDelay: time.Millisecond})
++       f.done <- app.RunWithOptions(ctx, f.cfg, app.Options{Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), RetryDelay: time.Millisecond})
+    }()
+ }
+ func (f *fixture) ready() { f.start(); f.health("ready", 10*time.Second) }
+@@ -1077,6 +1077,7 @@
+        // Persisted backlog must be sufficient even when remote history is gone.
+        f.google.Configure(func(g *fakegoogle.Server) { g.Messages = map[string]*api.Message{} })
+        f.setHook(nil)
++       t.Setenv("GCHAT_TEST_SLOW_SAVE", "yes")
+        f.resumeHistory(saved, 24)
+        f.turns(24)
+        seen := map[string]bool{}

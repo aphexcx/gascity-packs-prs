@@ -86,6 +86,143 @@ func TestOlderHistoryOfAJoinedRoomIsNeverATurn(t *testing.T) {
 	}
 }
 
+func TestFirstReadNeverReachesBelowTheInstallationFloor(t *testing.T) {
+	f := setup(t)
+	floor := frozen.Add(-2 * time.Minute)
+	setHistoryFloor(t, f.opts.Ledger, floor)
+	f.addSpace("spaces/joined", false)
+	joined := floor.Add(time.Minute)
+	mention(f.addMessage("spaces/joined", 1, joined.Add(-3*time.Minute)))
+	adding := f.addMessage("spaces/joined", 2, joined.Add(-30*time.Second))
+	mention(adding)
+	join(t, f, joined)
+	f.freeze(t)
+	if err := f.r.enumerate(t.Context(), "spaces/joined"); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range f.opts.Ledger.Spaces["spaces/joined"].Backlog {
+		var q queuedChange
+		if err := json.Unmarshal([]byte(raw), &q); err != nil {
+			t.Fatal(err)
+		}
+		if q.At.Before(floor) {
+			t.Fatal("history from before the floor was queued")
+		}
+	}
+	f.pass(t, 1, 0)
+	historyLower(t, f, floor)
+	if got := f.gc.Inbound(); len(got) != 1 || got[0].ProviderMessageID != adding.Name {
+		t.Fatalf("expected only the adding mention, got %+v", got)
+	}
+}
+
+func TestJoinedSpaceHistoryAfterMigration(t *testing.T) {
+	const space = "spaces/joined"
+	listed := frozen.Add(-3 * time.Hour)
+	setupMigrated := func(t *testing.T, restart time.Time, dm bool) *fixture {
+		t.Helper()
+		f := setup(t)
+		l := f.opts.Ledger
+		// The released ledger saved last_space_list and had no spaces_listed_at.
+		l.LastSpaceList, l.SpacesListedAt = listed, time.Time{}
+		if err := l.Save(f.opts.LedgerPath); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := ledger.Load(f.opts.LedgerPath, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Replace(loaded)
+		if err := InitializeHistory(l, f.opts.Config, restart, nil); err != nil {
+			t.Fatal(err)
+		}
+		f.addSpace(space, false)
+		if dm {
+			f.google.Spaces[space].SpaceType = "DIRECT_MESSAGE"
+		}
+		return f
+	}
+	live := func(t *testing.T, f *fixture, m *api.Message) {
+		t.Helper()
+		c := puller.Change{Kind: "message.created", Space: space, Message: m}
+		if out, err := f.p.Handle(t.Context(), &puller.Event{Changes: []puller.Change{c}}); err != nil || out != puller.Ack {
+			t.Fatalf("live message: %v %v", out, err)
+		}
+	}
+	checkTurns := func(t *testing.T, f *fixture, want *api.Message) {
+		t.Helper()
+		f.freeze(t)
+		if _, remaining, err := f.r.Pass(t.Context()); err != nil || remaining != 0 {
+			t.Fatalf("first read: remaining=%d err=%v", remaining, err)
+		}
+		var names []string
+		for _, turn := range f.gc.Inbound() {
+			names = append(names, turn.ProviderMessageID)
+		}
+		if len(names) != 1 || names[0] != want.Name {
+			t.Fatalf("turns = %v, want only %s", names, want.Name)
+		}
+	}
+	t.Run("offline-dm", func(t *testing.T) {
+		f := setupMigrated(t, frozen, true)
+		opened := listed.Add(time.Hour)
+		member := &api.Membership{Name: space + "/members/123", State: "JOINED", Member: &api.User{Name: "users/123"}, CreateTime: opened.Format(time.RFC3339Nano)}
+		f.google.Memberships[member.Name] = member
+		checkTurns(t, f, f.addMessage(space, 1, opened.Add(time.Minute)))
+	})
+	t.Run("live-room-before-join", func(t *testing.T) {
+		f := setupMigrated(t, listed, false)
+		joined := listed.Add(45 * time.Minute)
+		f.addMessage(space, 1, joined.Add(-30*time.Minute))
+		current := f.addMessage(space, 2, joined.Add(time.Minute))
+		live(t, f, current)
+		join(t, f, joined)
+		checkTurns(t, f, current)
+	})
+	t.Run("live-dm-after-join", func(t *testing.T) {
+		f := setupMigrated(t, listed, true)
+		joined := listed.Add(time.Minute)
+		f.opts.Ledger.HistoryFloor = listed
+		f.addMessage(space, 1, listed.Add(-time.Second))
+		first := f.addMessage(space, 2, joined.Add(-2*time.Second))
+		join(t, f, joined)
+		live(t, f, first)
+		checkTurns(t, f, first)
+		historyLower(t, f, listed)
+	})
+	for _, tc := range []struct {
+		name  string
+		space *api.Space
+	}{
+		{"live-dm-after-join-name-only", &api.Space{Name: space}},
+		{"live-dm-after-join-no-space", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupMigrated(t, listed, true)
+			joined := listed.Add(time.Minute)
+			f.opts.Ledger.HistoryFloor = listed
+			first := f.addMessage(space, 2, joined.Add(-2*time.Second))
+			join(t, f, joined)
+			event := *first
+			event.Space = tc.space
+			live(t, f, &event)
+			checkTurns(t, f, first)
+		})
+	}
+	t.Run("live-room-after-join-name-only", func(t *testing.T) {
+		f := setupMigrated(t, listed, false)
+		joined := listed.Add(time.Minute)
+		f.opts.Ledger.HistoryFloor = listed
+		early := f.addMessage(space, 1, joined.Add(-2*time.Second))
+		current := f.addMessage(space, 2, joined.Add(time.Minute))
+		join(t, f, joined)
+		event := *early
+		event.Space = &api.Space{Name: space}
+		live(t, f, &event)
+		checkTurns(t, f, current)
+	})
+}
+
 func TestTheReachBackHappensOnce(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/joined", false)
@@ -217,6 +354,8 @@ func TestMembershipWithoutATimeTakesTheRecordedList(t *testing.T) {
 
 func TestMembershipReadThatMayPassFailsTheFreeze(t *testing.T) {
 	f := setup(t)
+	// No list has been recorded: the fallback is the time found.
+	f.opts.Ledger.SpacesListedAt = time.Time{}
 	f.addSpace("spaces/joined", false)
 	f.onRequest = func(r *http.Request) error {
 		if strings.Contains(r.URL.Path, "/members/") {
@@ -296,7 +435,8 @@ func TestLegacyOpenReadKeepsItsBounds(t *testing.T) {
 	f.opts.Ledger.Spaces["spaces/joined"] = &ledger.SpaceState{FrozenUpper: frozen, PageToken: encode(p)}
 	f.freeze(t)
 	s := f.opts.Ledger.Spaces["spaces/joined"]
-	if s.PageToken != encode(p) || !s.JoinedAt.IsZero() || s.FirstRead != nil || len(f.google.MembershipRequests) != 0 {
+	rebound, err := decodeProgress(s.PageToken)
+	if err != nil || s.HistoryStart.IsZero() || !rebound.MessageLower.Equal(s.HistoryStart) || !s.JoinedAt.IsZero() || s.FirstRead != nil || len(f.google.MembershipRequests) != 0 {
 		t.Fatalf("legacy read changed: %+v", s)
 	}
 }

@@ -1,0 +1,47 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 6,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/catchup",
+    "-run",
+    "^TestCursorlessSpaceStartsWhereItWasFirstSeen$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/unreadable
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/no-interval
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/next-listing
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/queued
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/old-floor
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/outage-dm
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen
+FAIL gchat-adapter/internal/catchup
+
+    history_bound_test.go:86: turns=121
+    history_bound_test.go:88: cursorless replay: 121 turns
+    history_bound_test.go:86: turns=121
+    history_bound_test.go:88: cursorless replay: 121 turns
+    history_bound_test.go:86: turns=121
+    history_bound_test.go:88: cursorless replay: 121 turns
+    history_bound_test.go:86: turns=4
+    history_bound_test.go:88: cursorless replay: 4 turns
+    history_bound_test.go:86: turns=32
+    history_bound_test.go:88: cursorless replay: 32 turns
+    history_bound_test.go:86: turns=121
+    history_bound_test.go:88: cursorless replay: 121 turns

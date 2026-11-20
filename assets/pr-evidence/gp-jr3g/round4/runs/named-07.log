@@ -1,0 +1,20 @@
+{"Time":"2026-11-13T05:00:33.423636-06:00","Action":"start","Package":"gchat-adapter/internal/inbound"}
+{"Time":"2026-11-13T05:00:33.647211-06:00","Action":"run","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime"}
+{"Time":"2026-11-13T05:00:33.651569-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime","Output":"=== RUN   TestBoundedActWithoutTimeUsesPublishTime","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.651672-06:00","Action":"run","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/old"}
+{"Time":"2026-11-13T05:00:33.651687-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/old","Output":"=== RUN   TestBoundedActWithoutTimeUsesPublishTime/old","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.734143-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/old","Output":"--- PASS: TestBoundedActWithoutTimeUsesPublishTime/old (0.09s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.734212-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/old","Elapsed":0.09}
+{"Time":"2026-11-13T05:00:33.734272-06:00","Action":"run","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/new"}
+{"Time":"2026-11-13T05:00:33.734287-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/new","Output":"=== RUN   TestBoundedActWithoutTimeUsesPublishTime/new","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.926907-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/new","Output":"--- PASS: TestBoundedActWithoutTimeUsesPublishTime/new (0.19s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.926967-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/new","Elapsed":0.19}
+{"Time":"2026-11-13T05:00:33.926982-06:00","Action":"run","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/none"}
+{"Time":"2026-11-13T05:00:33.926993-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/none","Output":"=== RUN   TestBoundedActWithoutTimeUsesPublishTime/none","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.992403-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/none","Output":"--- PASS: TestBoundedActWithoutTimeUsesPublishTime/none (0.07s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.992503-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime/none","Elapsed":0.07}
+{"Time":"2026-11-13T05:00:33.992522-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime","Output":"--- PASS: TestBoundedActWithoutTimeUsesPublishTime (0.35s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.992535-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Test":"TestBoundedActWithoutTimeUsesPublishTime","Elapsed":0.35}
+{"Time":"2026-11-13T05:00:33.992577-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:00:33.993831-06:00","Action":"output","Package":"gchat-adapter/internal/inbound","Output":"ok  \tgchat-adapter/internal/inbound\t0.568s"}
+{"Time":"2026-11-13T05:00:33.993865-06:00","Action":"pass","Package":"gchat-adapter/internal/inbound","Elapsed":0.57}

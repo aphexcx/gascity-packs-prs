@@ -1,0 +1,5 @@
+=== RUN   TestStatusCarriesTheFloorAndTheNotices
+    history_notice_test.go:39: status={"backlog":0,"counters":{},"deliveries":[],"health":{"state":"ready","reason":""},"last_event_time":null,"never_silent":{"enabled":true,"health":{"state":"unknown","since":"0001-01-01T00:00:00Z","checked_at":"0001-01-01T00:00:00Z","resets_at":"0001-01-01T00:00:00Z","age_seconds":0,"reason":"unavailable"},"outages":[],"owner_lines_seven_days":0},"pending":0,"quarantine":0,"spaces":{},"stuck":0,"subscription":{"name":"","state":"","expiry":"0001-01-01T00:00:00Z","target":""},"unrecorded":0,"unresolved":0}
+--- FAIL: TestStatusCarriesTheFloorAndTheNotices (0.00s)
+FAIL
+FAIL	gchat-adapter/internal/server	0.301s

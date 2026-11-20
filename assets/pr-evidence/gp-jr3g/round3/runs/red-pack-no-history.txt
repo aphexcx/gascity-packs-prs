@@ -1,0 +1,27 @@
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) gchat/tests -q -k status_prints_history_before_never_silent
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ ProxyCommandsTest.test_status_prints_history_before_never_silent _______
+
+self = <test_commands.ProxyCommandsTest testMethod=test_status_prints_history_before_never_silent>
+
+    def test_status_prints_history_before_never_silent(self):
+        value = {"health": {"state": "ready"},
+                 "history_floor": "2030-01-02T03:04:05Z",
+                 "never_silent": {"enabled": True, "outages": []}}
+        self.respond("/status", value)
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        index = lines.index("Last event: none")
+>       self.assertEqual(lines[index + 1],
+            "History: first start skipped messages written before 2030-01-02T03:04:05Z; gc gchat read still reads them")
+E       AssertionError: 'Never silent: {"enabled":true,"outages":[]}' != 'History: first start skipped messages wri[60 chars]them'
+E       - Never silent: {"enabled":true,"outages":[]}
+E       + History: first start skipped messages written before 2030-01-02T03:04:05Z; gc gchat read still reads them
+
+gchat/tests/test_commands.py:382: AssertionError
+=========================== short test summary info ============================
+FAILED gchat/tests/test_commands.py::ProxyCommandsTest::test_status_prints_history_before_never_silent
+1 failed, 50 deselected in 0.70s
+make: *** [test] Error 1

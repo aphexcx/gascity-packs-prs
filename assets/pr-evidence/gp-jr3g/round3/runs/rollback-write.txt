@@ -1,0 +1,5 @@
+=== RUN   TestHistoryRollbackExchange
+    history_exchange_test.go:53: wrote five skipped-act records for the released reader
+--- PASS: TestHistoryRollbackExchange (0.16s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.372s

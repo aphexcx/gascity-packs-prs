@@ -1,0 +1,36 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 21,
+    "top_level_pass": 3
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/message_space/401
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/message_space/403
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/message_space/408
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/message_space/409
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/message_space/503
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/message_space/429
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/401
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/403
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/408
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/409
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/503
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/429
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/401
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/403
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/408
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/409
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/503
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/429
+PASS gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind
+PASS gchat-adapter/internal/inbound TestLookupHoldPreservesTokenError/message_space
+PASS gchat-adapter/internal/inbound TestLookupHoldPreservesTokenError/reaction_parent
+PASS gchat-adapter/internal/inbound TestLookupHoldPreservesTokenError/reaction_space
+PASS gchat-adapter/internal/inbound TestLookupHoldPreservesTokenError
+PASS gchat-adapter/internal/inbound TestLiveReactionThenCatchUpDoesNotRecordOrPostAgain
+PASS gchat-adapter/internal/inbound

@@ -1,0 +1,5 @@
+=== RUN   TestHistoryRollbackExchange
+    history_exchange_test.go:93: read 5 skipped-act records: zero turns after every unmentioned edit and deletion
+--- PASS: TestHistoryRollbackExchange (0.27s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.486s

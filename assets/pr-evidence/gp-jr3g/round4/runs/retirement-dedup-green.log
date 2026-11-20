@@ -1,0 +1,8 @@
+{"Time":"2026-11-13T04:55:53.517457-06:00","Action":"start","Package":"gchat-adapter/internal/app"}
+{"Time":"2026-11-13T04:55:53.719098-06:00","Action":"run","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup"}
+{"Time":"2026-11-13T04:55:53.719169-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup","Output":"=== RUN   TestHistoryRetirementNoticeDedup","OutputType":"frame"}
+{"Time":"2026-11-13T04:55:53.719219-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup","Output":"--- PASS: TestHistoryRetirementNoticeDedup (0.00s)","OutputType":"frame"}
+{"Time":"2026-11-13T04:55:53.719237-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup","Elapsed":0}
+{"Time":"2026-11-13T04:55:53.719252-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T04:55:53.719761-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"ok  \tgchat-adapter/internal/app\t0.202s"}
+{"Time":"2026-11-13T04:55:53.719775-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Elapsed":0.202}

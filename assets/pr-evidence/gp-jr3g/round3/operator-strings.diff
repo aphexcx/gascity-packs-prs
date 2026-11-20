@@ -1,0 +1,140 @@
+diff --git a/gchat/README.md b/gchat/README.md
+index 4928a77f..56b55679 100644
+--- a/gchat/README.md
++++ b/gchat/README.md
+@@ -233,0 +234,2 @@ Set `NEVER_SILENT=on` to enable notices for newly admitted human messages addres
++An act older than its history bound starts no notice, and a message whose attempt the first load retired earns none.
++
+diff --git a/gchat/adapter/internal/app/app.go b/gchat/adapter/internal/app/app.go
+index 90761af3..e0c9ae35 100644
+--- a/gchat/adapter/internal/app/app.go
++++ b/gchat/adapter/internal/app/app.go
+@@ -52,0 +53 @@ type application struct {
++	noticeStateMu      sync.Mutex // orders notice passes with state replacement
+@@ -134,0 +136,2 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
++			a.noticeStateMu.Lock()
++			defer a.noticeStateMu.Unlock()
+diff --git a/gchat/adapter/internal/app/never_silent.go b/gchat/adapter/internal/app/never_silent.go
+index ab9c78af..4d49f774 100644
+--- a/gchat/adapter/internal/app/never_silent.go
++++ b/gchat/adapter/internal/app/never_silent.go
+@@ -60,4 +60,18 @@ func (a *application) neverSilentGate() error {
+-	a.mu.Lock()
+-	snapshot := a.l.Clone()
+-	a.mu.Unlock()
+-	return inbound.ReconcileNeverSilent(snapshot, a.neverSilent)
++	return a.neverSilent.WithHistory(func() error {
++		a.mu.Lock()
++		snapshot := a.l.Clone()
++		a.mu.Unlock()
++		return inbound.ReconcileNeverSilent(snapshot, a.neverSilent)
++	})
++}
++
++func (a *application) pollNeverSilentOnce(ctx context.Context) error {
++	// POST /state holds noticeStateMu through replacement and migration.
++	// Keep the watch's snapshot, decisions and effects on one side of that
++	// boundary. The ledger mutex remains free during network effects.
++	a.noticeStateMu.Lock()
++	defer a.noticeStateMu.Unlock()
++	if err := a.neverSilentGate(); err != nil {
++		return err
++	}
++	return a.neverSilent.Poll(ctx)
+@@ -76,4 +90 @@ func (a *application) pollNeverSilent(ctx context.Context) {
+-			err := a.neverSilentGate()
+-			if err == nil {
+-				err = a.neverSilent.Poll(ctx)
+-			}
++			err := a.pollNeverSilentOnce(ctx)
+diff --git a/gchat/adapter/internal/inbound/inbound.go b/gchat/adapter/internal/inbound/inbound.go
+index 7b644988..a2d396ed 100644
+--- a/gchat/adapter/internal/inbound/inbound.go
++++ b/gchat/adapter/internal/inbound/inbound.go
+@@ -281,5 +281,9 @@ func (p *Processor) Pass(ctx context.Context) error {
+-	l, err := p.snapshot()
+-	if err != nil {
+-		return err
+-	}
+-	if err := ReconcileNeverSilent(l, p.opts.NeverSilent); err != nil {
++	var l *ledger.Ledger
++	if err := p.opts.NeverSilent.WithHistory(func() error {
++		var err error
++		l, err = p.snapshot()
++		if err != nil {
++			return err
++		}
++		return ReconcileNeverSilent(l, p.opts.NeverSilent)
++	}); err != nil {
+@@ -896,3 +900,5 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool)
+-	if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
+-		if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
+-			return err
++	if err := p.opts.NeverSilent.WithHistory(func() error {
++		if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
++			if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
++				return err
++			}
+@@ -900,2 +906,2 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool)
+-	}
+-	if err := p.record(c, id, w, &state, s, local, catchUp, learnedDomain); err != nil {
++		return p.record(c, id, w, &state, s, local, catchUp, learnedDomain)
++	}); err != nil {
+diff --git a/gchat/adapter/internal/inbound/never_silent.go b/gchat/adapter/internal/inbound/never_silent.go
+index a2d7ecce..4bd60830 100644
+--- a/gchat/adapter/internal/inbound/never_silent.go
++++ b/gchat/adapter/internal/inbound/never_silent.go
+@@ -31,0 +32,10 @@ func ReconcileNeverSilent(l *ledger.Ledger, notices *neversilent.Engine) error {
++		case c.Status == "committed" && c.Reason == "local" && (c.Cause == "before_history_floor" || c.Cause == "history_time_missing"):
++			// Migration can retain old delivery observations, but the retired
++			// attempt no longer owes an answer. Do this before NoticeDelivered.
++			err = notices.ForgetTracked(id)
++			if err == nil && c.Kind == "message.created" && c.Message != id && l.Changes[c.Message] == nil {
++				// A queued create with no usable time has a history-only ID.
++				// Its old enrollment used the message ID. A surviving primary
++				// record belongs to a valid act and must not be forgotten.
++				err = notices.ForgetTracked(c.Message)
++			}
+diff --git a/gchat/adapter/internal/neversilent/engine.go b/gchat/adapter/internal/neversilent/engine.go
+index 4d293075..c502305f 100644
+--- a/gchat/adapter/internal/neversilent/engine.go
++++ b/gchat/adapter/internal/neversilent/engine.go
+@@ -113,4 +113,5 @@ type Engine struct {
+-	pollMu sync.Mutex
+-	mu     sync.Mutex
+-	opts   Options
+-	state  state
++	historyMu sync.Mutex
++	pollMu    sync.Mutex
++	mu        sync.Mutex
++	opts      Options
++	state     state
+@@ -349,0 +351,12 @@ func (e *Engine) Enabled() bool { return e != nil && e.opts.Enabled }
++// WithHistory orders local admission (Track plus its ledger record) against
++// taking and reconciling a ledger snapshot. Callers release it before network
++// delivery or notice effects; neither can hold the independent watch hostage.
++func (e *Engine) WithHistory(fn func() error) error {
++	if !e.Enabled() {
++		return fn()
++	}
++	e.historyMu.Lock()
++	defer e.historyMu.Unlock()
++	return fn()
++}
++
+@@ -350,0 +364,10 @@ func (e *Engine) Forget(id string) error {
++	return e.forget(id, true)
++}
++
++// ForgetTracked retires an already enrolled message without creating a
++// tombstone for historical acts that were never eligible for notices.
++func (e *Engine) ForgetTracked(id string) error {
++	return e.forget(id, false)
++}
++
++func (e *Engine) forget(id string, tombstone bool) error {
+@@ -356,2 +379,2 @@ func (e *Engine) Forget(id string) error {
+-	m := e.state.Messages[id]
+-	if m.Removed {
++	m, exists := e.state.Messages[id]
++	if m.Removed || (!exists && !tombstone) {

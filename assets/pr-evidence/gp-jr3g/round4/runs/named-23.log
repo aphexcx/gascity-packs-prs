@@ -1,0 +1,16 @@
+{"Time":"2026-11-13T05:01:46.807356-06:00","Action":"start","Package":"gchat-adapter/internal/catchup"}
+{"Time":"2026-11-13T05:01:46.991693-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity"}
+{"Time":"2026-11-13T05:01:46.999073-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity","Output":"=== RUN   TestRetainedHistoryKeepsReleasedEventIdentity","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:46.999127-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity/batch=false"}
+{"Time":"2026-11-13T05:01:46.999136-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity/batch=false","Output":"=== RUN   TestRetainedHistoryKeepsReleasedEventIdentity/batch=false","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:47.121065-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity/batch=false","Output":"--- PASS: TestRetainedHistoryKeepsReleasedEventIdentity/batch=false (0.13s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:47.121092-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity/batch=false","Elapsed":0.13}
+{"Time":"2026-11-13T05:01:47.12112-06:00","Action":"run","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity/batch=true"}
+{"Time":"2026-11-13T05:01:47.121126-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity/batch=true","Output":"=== RUN   TestRetainedHistoryKeepsReleasedEventIdentity/batch=true","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:47.29973-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity/batch=true","Output":"--- PASS: TestRetainedHistoryKeepsReleasedEventIdentity/batch=true (0.18s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:47.305338-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity/batch=true","Elapsed":0.18}
+{"Time":"2026-11-13T05:01:47.305372-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity","Output":"--- PASS: TestRetainedHistoryKeepsReleasedEventIdentity (0.31s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:47.305387-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Test":"TestRetainedHistoryKeepsReleasedEventIdentity","Elapsed":0.31}
+{"Time":"2026-11-13T05:01:47.305401-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:01:47.30546-06:00","Action":"output","Package":"gchat-adapter/internal/catchup","Output":"ok  \tgchat-adapter/internal/catchup\t0.496s"}
+{"Time":"2026-11-13T05:01:47.305479-06:00","Action":"pass","Package":"gchat-adapter/internal/catchup","Elapsed":0.498}

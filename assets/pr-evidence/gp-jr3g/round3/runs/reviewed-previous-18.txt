@@ -1,0 +1,12 @@
+=== RUN   TestCatchupMissingEnvelopeTime
+=== RUN   TestCatchupMissingEnvelopeTime/message.updated/bounded=false
+--- PASS: TestCatchupMissingEnvelopeTime/message.updated/bounded=false (0.09s)
+=== RUN   TestCatchupMissingEnvelopeTime/reaction.created/bounded=false
+--- PASS: TestCatchupMissingEnvelopeTime/reaction.created/bounded=false (0.08s)
+=== RUN   TestCatchupMissingEnvelopeTime/message.updated/bounded=true
+--- PASS: TestCatchupMissingEnvelopeTime/message.updated/bounded=true (0.12s)
+=== RUN   TestCatchupMissingEnvelopeTime/reaction.created/bounded=true
+--- PASS: TestCatchupMissingEnvelopeTime/reaction.created/bounded=true (0.37s)
+--- PASS: TestCatchupMissingEnvelopeTime (0.67s)
+PASS
+ok  	gchat-adapter/internal/catchup	0.871s

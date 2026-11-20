@@ -1,0 +1,52 @@
+=== RUN   TestHistoryFloorSurvivesRetentionFallback
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=false/bound=floor
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=false/bound=floor (0.14s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=true/bound=floor
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=true/bound=floor (0.17s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=false/bound=floor
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=false/bound=floor (0.11s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=true/bound=floor
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=true/bound=floor (0.12s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=false/bound=floor
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=false/bound=floor (0.12s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=true/bound=floor
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=true/bound=floor (0.18s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=false/bound=floor
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=false/bound=floor (0.13s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=true/bound=floor
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=true/bound=floor (0.18s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=false/bound=floor-and-join
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=false/bound=floor-and-join (0.13s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=true/bound=floor-and-join
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=true/bound=floor-and-join (0.18s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=false/bound=floor-and-join
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=false/bound=floor-and-join (0.10s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=true/bound=floor-and-join
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=true/bound=floor-and-join (0.13s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=false/bound=floor-and-join
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=false/bound=floor-and-join (0.12s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=true/bound=floor-and-join
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=true/bound=floor-and-join (0.18s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=false/bound=floor-and-join
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=false/bound=floor-and-join (0.12s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=true/bound=floor-and-join
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=true/bound=floor-and-join (0.18s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=false/bound=join-only
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=false/bound=join-only (0.12s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=true/bound=join-only
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.updated/batch=true/bound=join-only (0.17s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=false/bound=join-only
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=false/bound=join-only (0.10s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=true/bound=join-only
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/message.deleted/batch=true/bound=join-only (0.17s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=false/bound=join-only
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=false/bound=join-only (0.12s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=true/bound=join-only
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.created/batch=true/bound=join-only (0.18s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=false/bound=join-only
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=false/bound=join-only (0.13s)
+=== RUN   TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=true/bound=join-only
+--- PASS: TestHistoryFloorSurvivesRetentionFallback/reaction.deleted/batch=true/bound=join-only (3.97s)
+--- PASS: TestHistoryFloorSurvivesRetentionFallback (7.22s)
+PASS
+ok  	gchat-adapter/internal/catchup	7.405s

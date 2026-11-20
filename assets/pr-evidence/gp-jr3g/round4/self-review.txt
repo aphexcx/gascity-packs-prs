@@ -1,0 +1,12 @@
+# codex-gate exec: prompt .gc/scratch/gp-xuam/self-review-prompt.md (2715 bytes, on stdin) repo <repo>; model gpt-6-astra; 2026-11-13T10:57:17Z
+# codex route: the hub (CODEX_HOME <home> the hub rotates its Codex seats)
+
+Reviewed `a553d22f..73c916165cb641195404d986dc8df016a1f9a27b`. No blocking round-4 findings.
+
+1. **MINOR — READ; pre-existing, outside this delta:** [catchup/history.go:75](<repo>/gchat/adapter/internal/catchup/history.go:75). **Class:** queue migration bypasses timestamp validation. **Sequence:** load a cursorless space containing an otherwise valid queued create with `CreateTime="not-a-time"`, zero event/publish/queue times, and empty `Malformed`. Migration commits it as `history_time_missing` instead of quarantining it. The same sequence applies at the base; this is an observation, not a request to expand scope.
+
+Tests **not run (sandbox)**. Worker transcripts record passing focused tests and race checks. Full Go verification remains incomplete. The Python make run recorded 463 passed, 127 skipped, 250 subtests passed, and the known runner-discovery failure. No full-suite success is inferred.
+
+The only existing test changed is the permitted six-row timestamp test. Checkout unchanged.
+
+VERDICT: CLEAN

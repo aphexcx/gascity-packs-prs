@@ -1,0 +1,43 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 5,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/app",
+    "-run",
+    "^TestFloorFollowsTheFirstSuccessfulConnection$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/503
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/403
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/create
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/reload
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/24h
+FAIL gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection
+FAIL gchat-adapter/internal/app
+
+    history_bound_test.go:290: floor predates successful attempt: floor=2026-11-13 06:20:24.166636 +0000 UTC allowed=2026-11-13 06:20:24.285409 +0000 UTC
+    history_bound_test.go:293: before-connection turns=1
+    history_bound_test.go:290: floor predates successful attempt: floor=2026-11-13 06:20:26.33415 +0000 UTC allowed=2026-11-13 06:20:26.453923 +0000 UTC
+    history_bound_test.go:293: before-connection turns=1
+    history_bound_test.go:287: health did not become ready in 30s: {State:catching-up Reason:subscription reconciliation pending (HTTP 503)}
+    history_bound_test.go:290: floor predates successful attempt: floor=2026-11-13 06:21:00.725043 +0000 UTC allowed=2026-11-13 06:21:00.839425 +0000 UTC
+    history_bound_test.go:293: before-connection turns=1
+    history_bound_test.go:290: floor predates successful attempt: floor=2026-11-12 06:21:02.907531 +0000 UTC allowed=2026-11-12 06:21:03.023145 +0000 UTC
+    history_bound_test.go:293: before-connection turns=1

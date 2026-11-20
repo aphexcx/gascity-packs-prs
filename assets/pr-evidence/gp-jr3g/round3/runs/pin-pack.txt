@@ -1,0 +1,3 @@
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) gchat/tests -q -k status_prints_history_before_never_silent
+.                                                                        [100%]
+1 passed, 50 deselected in 0.62s

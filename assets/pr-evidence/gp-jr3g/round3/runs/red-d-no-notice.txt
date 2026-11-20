@@ -1,0 +1,5 @@
+=== RUN   TestStatusCarriesTheFloorAndTheNotices
+    history_notice_test.go:36: unexpected end of JSON input
+--- FAIL: TestStatusCarriesTheFloorAndTheNotices (0.00s)
+FAIL
+FAIL	gchat-adapter/internal/server	0.254s

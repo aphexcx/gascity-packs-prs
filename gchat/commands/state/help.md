@@ -1,4 +1,4 @@
 Usage: gc gchat state restore FILE | reset
-Calls the running service in recovery-required; offline recovery uses the adapter binary after stopping the service.
+Restore reads FILE locally and sends its ledger to the running service in recovery-required. For offline recovery, stop the service and use the adapter binary.
 
 Use --help or -h to display this help.

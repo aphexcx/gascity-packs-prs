@@ -1,0 +1,12 @@
+=== RUN   TestNoticePostSpaceStartMatchesProcessor
+=== RUN   TestNoticePostSpaceStartMatchesProcessor/inventory
+--- PASS: TestNoticePostSpaceStartMatchesProcessor/inventory (0.18s)
+=== RUN   TestNoticePostSpaceStartMatchesProcessor/floor
+--- PASS: TestNoticePostSpaceStartMatchesProcessor/floor (0.16s)
+=== RUN   TestNoticePostSpaceStartMatchesProcessor/neither
+--- PASS: TestNoticePostSpaceStartMatchesProcessor/neither (0.11s)
+=== RUN   TestNoticePostSpaceStartMatchesProcessor/cursor
+--- PASS: TestNoticePostSpaceStartMatchesProcessor/cursor (0.05s)
+--- PASS: TestNoticePostSpaceStartMatchesProcessor (0.50s)
+PASS
+ok  	gchat-adapter/internal/server	0.666s

@@ -1,0 +1,12 @@
+{"Time":"2026-11-13T05:34:29.078445-06:00","Action":"start","Package":"gchat-adapter/internal/app"}
+{"Time":"2026-11-13T05:34:29.436192-06:00","Action":"run","Package":"gchat-adapter/internal/app","Test":"TestShutdownCheckpointsBeforeDrainingStalledRequestBody"}
+{"Time":"2026-11-13T05:34:29.437869-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestShutdownCheckpointsBeforeDrainingStalledRequestBody","Output":"=== RUN   TestShutdownCheckpointsBeforeDrainingStalledRequestBody","OutputType":"frame"}
+{"Time":"2026-11-13T05:34:29.437991-06:00","Action":"run","Package":"gchat-adapter/internal/app","Test":"TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded"}
+{"Time":"2026-11-13T05:34:29.438008-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded","Output":"=== RUN   TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded","OutputType":"frame"}
+{"Time":"2026-11-13T05:34:31.719025-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded","Output":"--- PASS: TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded (2.28s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:34:31.719076-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Test":"TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded","Elapsed":2.28}
+{"Time":"2026-11-13T05:34:31.719111-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestShutdownCheckpointsBeforeDrainingStalledRequestBody","Output":"--- PASS: TestShutdownCheckpointsBeforeDrainingStalledRequestBody (2.28s)","OutputType":"frame"}
+{"Time":"2026-11-13T05:34:31.719131-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Test":"TestShutdownCheckpointsBeforeDrainingStalledRequestBody","Elapsed":2.28}
+{"Time":"2026-11-13T05:34:31.719138-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"PASS","OutputType":"frame"}
+{"Time":"2026-11-13T05:34:31.720401-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"ok  \tgchat-adapter/internal/app\t2.637s"}
+{"Time":"2026-11-13T05:34:31.726188-06:00","Action":"pass","Package":"gchat-adapter/internal/app","Elapsed":2.648}

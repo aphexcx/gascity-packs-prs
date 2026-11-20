@@ -1,0 +1,9 @@
+{"Time":"2026-11-13T04:53:40.313849-06:00","Action":"start","Package":"gchat-adapter/internal/app"}
+{"Time":"2026-11-13T04:53:40.519122-06:00","Action":"run","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup"}
+{"Time":"2026-11-13T04:53:40.519189-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup","Output":"=== RUN   TestHistoryRetirementNoticeDedup","OutputType":"frame"}
+{"Time":"2026-11-13T04:53:40.519238-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup","Output":"    history_retirement_test.go:143: start notifications=1 want 2","OutputType":"error"}
+{"Time":"2026-11-13T04:53:40.519321-06:00","Action":"output","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup","Output":"--- FAIL: TestHistoryRetirementNoticeDedup (0.00s)","OutputType":"frame"}
+{"Time":"2026-11-13T04:53:40.519337-06:00","Action":"fail","Package":"gchat-adapter/internal/app","Test":"TestHistoryRetirementNoticeDedup","Elapsed":0}
+{"Time":"2026-11-13T04:53:40.519352-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"FAIL","OutputType":"frame"}
+{"Time":"2026-11-13T04:53:40.519952-06:00","Action":"output","Package":"gchat-adapter/internal/app","Output":"FAIL\tgchat-adapter/internal/app\t0.206s","OutputType":"frame"}
+{"Time":"2026-11-13T04:53:40.51998-06:00","Action":"fail","Package":"gchat-adapter/internal/app","Elapsed":0.206}

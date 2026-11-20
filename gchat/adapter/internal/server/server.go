@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"gchat-adapter/internal/catchup"
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/gcclient"
@@ -105,7 +106,7 @@ type Server struct {
 	logMu           sync.Mutex
 	publishFailures map[string]time.Time
 	stateGate       sync.RWMutex
-	pendingState    *stateRequest // protected by stateGate
+	pendingState    *stateRecoveryKey // protected by stateGate
 	keysMu          sync.Mutex
 	keys            map[string]*keyLock
 }
@@ -278,12 +279,20 @@ func problem(w http.ResponseWriter, status int, err error) {
 	respond(w, status, map[string]string{"error": err.Error()})
 }
 func body(w http.ResponseWriter, r *http.Request, v any) error {
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20))
+	return bodyWithLimit(w, r, v, 4<<20)
+}
+
+func bodyWithLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	if err := d.Decode(v); err != nil {
 		return err
 	}
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return err
+		}
 		return errors.New("expected one JSON object")
 	}
 	return nil
@@ -752,6 +761,7 @@ func (s *Server) namedWithClient(ctx context.Context, c *chat.Client, space stri
 					v = &ledger.SpaceState{}
 					l.Spaces[space] = v
 				}
+				l.StartSpace(v, time.Now())
 				v.ChatType = kind
 				v.DisplayName = displayName
 				v.Kind = "room"
@@ -1502,7 +1512,7 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			return saved, false
 		}
 		switch change.Reason {
-		case "local", "own", "wake_policy":
+		case "local", "own", "wake_policy", "before_history_floor":
 			return saved, false
 		}
 		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
@@ -1721,6 +1731,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RUnlock()
 	status["never_silent"] = s.notices().Status()
+	if !l.HistoryFloor.IsZero() {
+		status["history_floor"] = l.HistoryFloor
+	}
 	if s.opts.SubscriptionStatus != nil {
 		failures, next, state, err := s.opts.SubscriptionStatus()
 		kind, code := logCause(err)
@@ -1811,15 +1824,42 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, result)
 }
 
-type stateRequest struct {
-	Action string `json:"action"`
-	File   string `json:"file"`
+// Allow room for the 10,000-ID transport ring, message/change maps and JSON
+// string escaping. The maps have no fixed maximum. Larger backups use offline restore.
+const stateBodyLimit = 32 << 20
+
+type stateRecoveryKey struct {
+	action string
+	digest [sha256.Size]byte
 }
 
+// POST /state accepts {"action":"restore","ledger":"<ledger JSON text>"}
+// or {"action":"reset"}. Only the caller reads the backup file.
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
-	var v stateRequest
-	if err := body(w, r, &v); err != nil || (v.Action != "restore" && v.Action != "reset") {
+	var v struct {
+		Action string `json:"action"`
+		Ledger string `json:"ledger"`
+		File   string `json:"file"` // diagnose requests from older callers
+	}
+	if err := bodyWithLimit(w, r, &v, stateBodyLimit); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			problem(w, http.StatusRequestEntityTooLarge, err)
+		} else {
+			problem(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	if v.File != "" {
+		problem(w, 400, errors.New("restore now sends the ledger itself; remove the file field"))
+		return
+	}
+	if v.Action != "restore" && v.Action != "reset" {
 		problem(w, 400, errors.New("action restore or reset required"))
+		return
+	}
+	if v.Action == "reset" && v.Ledger != "" {
+		problem(w, 400, errors.New("reset takes no ledger"))
 		return
 	}
 	if !s.stateGate.TryLock() {
@@ -1833,19 +1873,24 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		problem(w, 409, errors.New("state restore/reset requires recovery-required health"))
 		return
 	}
-	if v.Action == "reset" {
-		v.File = ""
-	}
-	if s.pendingState != nil && *s.pendingState != v {
+	data := []byte(v.Ledger)
+	key := stateRecoveryKey{action: v.Action, digest: sha256.Sum256(data)}
+	if s.pendingState != nil && *s.pendingState != key {
 		problem(w, 409, errors.New("state reconciliation pending; retry the same restore/reset request"))
 		return
 	}
 	var err error
 	if s.pendingState == nil {
 		l := ledger.New()
+		cfg := s.configuration()
+		l.HistoryFloor = time.Now().UTC().Add(-cfg.FirstStartWindow())
 		if v.Action == "restore" {
-			l, err = ledger.Load(v.File, true)
+			l, err = ledger.Parse(data)
 			if err != nil {
+				problem(w, 400, err)
+				return
+			}
+			if err = catchup.InitializeHistory(l, &cfg, time.Now(), s.opts.Logger); err != nil {
 				problem(w, 400, err)
 				return
 			}
@@ -1855,7 +1900,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			problem(w, 500, err)
 			return
 		}
-		s.pendingState = &v
+		s.pendingState = &key
 	}
 	if err = ledger.MarkEstablished(s.configuration().SecretsDir); err != nil {
 		problem(w, 500, err)
@@ -1872,7 +1917,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	s.pendingState = nil
 	reason := "state restored"
 	if v.Action == "reset" {
-		reason = "state reset; messages from the gap may be lost or duplicated"
+		reason = "state reset; messages written before the reset history bound will not be delivered (gc gchat read still reads them); use state restore to keep them"
 	}
 	respond(w, 200, map[string]string{"state": s.Health().State, "reason": reason})
 }

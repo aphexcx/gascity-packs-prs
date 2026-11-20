@@ -1,0 +1,44 @@
+=== RUN   TestOldActStartsNoNotice
+=== RUN   TestOldActStartsNoNotice/before_history_floor/L
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/before_history_floor/L (1.96s)
+=== RUN   TestOldActStartsNoNotice/before_history_floor/R
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/before_history_floor/R (3.09s)
+=== RUN   TestOldActStartsNoNotice/before_history_floor/C
+    history_notice_test.go:206: turns=0 notices=0 changes=0
+--- PASS: TestOldActStartsNoNotice/before_history_floor/C (3.04s)
+=== RUN   TestOldActStartsNoNotice/before_history_floor/Q
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/before_history_floor/Q (3.31s)
+=== RUN   TestOldActStartsNoNotice/before_history_floor/O
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/before_history_floor/O (1.73s)
+=== RUN   TestOldActStartsNoNotice/before_history_floor/P
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/before_history_floor/P (2.31s)
+=== RUN   TestOldActStartsNoNotice/history_time_missing/L
+2026/11/13 03:12:39 WARN inbound act has no usable history time space=spaces/dm kind=message.created
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/history_time_missing/L (1.89s)
+=== RUN   TestOldActStartsNoNotice/history_time_missing/R
+2026/11/13 03:12:41 WARN inbound act has no usable history time space=spaces/dm kind=message.created
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/history_time_missing/R (2.02s)
+=== RUN   TestOldActStartsNoNotice/history_time_missing/C
+    history_notice_test.go:206: turns=0 notices=0 changes=0
+--- PASS: TestOldActStartsNoNotice/history_time_missing/C (3.01s)
+=== RUN   TestOldActStartsNoNotice/history_time_missing/Q
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/history_time_missing/Q (2.98s)
+=== RUN   TestOldActStartsNoNotice/history_time_missing/O
+2026/11/13 03:12:53 WARN inbound act has no usable history time space=spaces/dm kind=message.created
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/history_time_missing/O (5.68s)
+=== RUN   TestOldActStartsNoNotice/history_time_missing/P
+2026/11/13 03:12:55 WARN inbound act has no usable history time space=spaces/dm kind=message.created
+    history_notice_test.go:206: turns=0 notices=0 changes=1
+--- PASS: TestOldActStartsNoNotice/history_time_missing/P (1.68s)
+--- PASS: TestOldActStartsNoNotice (32.71s)
+PASS
+ok  	gchat-adapter/internal/app	32.916s

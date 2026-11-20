@@ -1,0 +1,33 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 2,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/app",
+    "-run",
+    "^TestReleasedLedgerCursorlessSpacesStartAtLoad$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/app TestReleasedLedgerCursorlessSpacesStartAtLoad/service-restore=false
+FAIL gchat-adapter/internal/app TestReleasedLedgerCursorlessSpacesStartAtLoad/service-restore=true
+FAIL gchat-adapter/internal/app TestReleasedLedgerCursorlessSpacesStartAtLoad
+FAIL gchat-adapter/internal/app
+
+    history_bound_test.go:351: cursorless space did not start at first load
+    history_bound_test.go:351: cursorless space did not start at first load

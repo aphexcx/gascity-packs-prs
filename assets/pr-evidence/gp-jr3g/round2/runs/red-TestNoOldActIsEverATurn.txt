@@ -1,0 +1,180 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 30,
+    "subtests_pass": 30,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/app",
+    "-run",
+    "^TestNoOldActIsEverATurn$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=false/L
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=false/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=false/C
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=false/Q
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=false/O
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=false/P
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=true/L
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=true/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=true/C
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=true/Q
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=true/O
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.created/batch=true/P
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=false/L
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=false/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=false/C
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=false/Q
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=false/O
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=false/P
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=true/L
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=true/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=true/C
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=true/Q
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=true/O
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/message.updated/batch=true/P
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=false/L
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=false/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=false/C
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=false/Q
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=false/O
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=false/P
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=true/L
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=true/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=true/C
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=true/Q
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=true/O
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/message.deleted/batch=true/P
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=false/L
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=false/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=false/C
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=false/Q
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=false/O
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=false/P
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=true/L
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=true/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=true/C
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=true/Q
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=true/O
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.created/batch=true/P
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=false/L
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=false/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=false/C
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=false/Q
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=false/O
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=false/P
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=true/L
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=true/R
+PASS gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=true/C
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=true/Q
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=true/O
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn/reaction.deleted/batch=true/P
+FAIL gchat-adapter/internal/app TestNoOldActIsEverATurn
+FAIL gchat-adapter/internal/app
+
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=1
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=0 notices=0 changes=2
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=1 notices=0 changes=1
+    history_bound_test.go:228: old act escaped: turns=1 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=0 notices=0 changes=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0
+    history_bound_test.go:228: turns=2 notices=0 changes=2
+    history_bound_test.go:228: old act escaped: turns=2 notices=0

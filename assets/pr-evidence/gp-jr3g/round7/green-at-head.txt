@@ -1,0 +1,16 @@
+=== RUN   TestJoinedSpaceHistoryAfterMigration
+=== RUN   TestJoinedSpaceHistoryAfterMigration/offline-dm
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-room-before-join
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-dm-after-join
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-dm-after-join-name-only
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-dm-after-join-no-space
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-room-after-join-name-only
+--- PASS: TestJoinedSpaceHistoryAfterMigration (0.77s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/offline-dm (0.12s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-room-before-join (0.13s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-dm-after-join (0.12s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-dm-after-join-name-only (0.13s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-dm-after-join-no-space (0.13s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-room-after-join-name-only (0.15s)
+PASS
+ok  	gchat-adapter/internal/catchup	0.983s

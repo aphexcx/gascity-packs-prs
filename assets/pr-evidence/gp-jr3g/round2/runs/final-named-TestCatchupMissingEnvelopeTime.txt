@@ -1,0 +1,33 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 4,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/catchup",
+    "-run",
+    "^TestCatchupMissingEnvelopeTime$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "pass",
+  "source_commit": "713351ae9ea6e768788eab7e2e66a984b80a0dd5"
+}
+
+PASS gchat-adapter/internal/catchup TestCatchupMissingEnvelopeTime/message.updated/bounded=false
+PASS gchat-adapter/internal/catchup TestCatchupMissingEnvelopeTime/reaction.created/bounded=false
+PASS gchat-adapter/internal/catchup TestCatchupMissingEnvelopeTime/message.updated/bounded=true
+PASS gchat-adapter/internal/catchup TestCatchupMissingEnvelopeTime/reaction.created/bounded=true
+PASS gchat-adapter/internal/catchup TestCatchupMissingEnvelopeTime
+PASS gchat-adapter/internal/catchup

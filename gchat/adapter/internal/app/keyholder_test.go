@@ -320,6 +320,9 @@ func TestDeletedSpaceDoesNotHoldInterruptedSend(t *testing.T) {
 func TestTheMessageThatAddsTheIdentityIsATurn(t *testing.T) {
 	f := newFixture(t, false)
 	f.replaceIdentityToken(t, fakegoogle.UserID)
+	// A box whose history begins before the join's margin, as a running box's does.
+	window := "1h"
+	f.cfg.Settings.FirstStartHistory = &window
 	f.start(t)
 	f.health(t, "ready", 5*time.Second)
 	joined := time.Now().UTC().Add(-time.Second)
