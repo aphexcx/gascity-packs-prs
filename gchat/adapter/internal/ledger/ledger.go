@@ -111,6 +111,8 @@ func (s *SpaceState) Bare() bool {
 }
 
 func (s *SpaceState) StartFirstRead(joined, seen time.Time, margin time.Duration, foundBy, source string) {
+	// A join supersedes the provisional bound set by a live or cached lookup.
+	s.HistoryStart = time.Time{}
 	s.JoinedAt, s.MessageCursor, s.EventCursor = joined, joined, joined
 	lower := joined.Add(-margin)
 	if lower.Before(time.Unix(0, 0).UTC()) {
@@ -316,8 +318,8 @@ func HistoryBound(s *SpaceState, floor time.Time) time.Time {
 	return floor
 }
 
-// StartSpace leaves every established cursor and observed join untouched.
-// The preceding inventory includes messages from spaces opened during outage.
+// StartSpace bounds acts in a cursorless space until its join or first read.
+// Observing a space does not advance its recovery cursors.
 func (l *Ledger) StartSpace(s *SpaceState, now time.Time) bool {
 	if !s.MessageCursor.IsZero() || !s.JoinedAt.IsZero() || !s.HistoryStart.IsZero() {
 		return false
@@ -330,8 +332,6 @@ func (l *Ledger) StartSpace(s *SpaceState, now time.Time) bool {
 		start = now.UTC()
 	}
 	s.HistoryStart = start
-	bound := HistoryBound(s, l.HistoryFloor)
-	s.MessageCursor, s.EventCursor = bound, bound
 	return true
 }
 

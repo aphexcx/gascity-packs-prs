@@ -53,6 +53,7 @@ func startSpaceWithReport(l *ledger.Ledger, cfg *config.Config, name string, s *
 		return nil, nil
 	}
 	bound := ledger.HistoryBound(s, l.HistoryFloor)
+	s.MessageCursor, s.EventCursor = bound, bound
 	if !s.FrozenUpper.IsZero() {
 		p, err := decodeProgress(s.PageToken)
 		if err != nil {
