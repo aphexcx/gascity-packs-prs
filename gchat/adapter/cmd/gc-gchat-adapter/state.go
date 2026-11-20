@@ -165,10 +165,18 @@ func removeStateSocket(socket string, expected os.FileInfo) error {
 }
 
 func requestState(ctx context.Context, socket, action, backup string) error {
-	data, err := json.Marshal(struct {
+	payload := struct {
 		Action string `json:"action"`
-		File   string `json:"file,omitempty"`
-	}{action, backup})
+		Ledger string `json:"ledger,omitempty"`
+	}{Action: action}
+	if action == "restore" {
+		content, err := os.ReadFile(backup)
+		if err != nil {
+			return fmt.Errorf("read restore backup: %w", err)
+		}
+		payload.Ledger = string(content)
+	}
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}

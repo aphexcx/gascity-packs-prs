@@ -357,8 +357,18 @@ func LoadWithOrigin(path string, established bool) (*Ledger, bool, error) {
 		}
 		return nil, false, &RecoveryError{Path: path, Err: err}
 	}
+	l, err := Parse(data)
+	if err != nil {
+		preserved, copyErr := preserve(path, data)
+		return nil, false, &RecoveryError{Path: path, PreservedPath: preserved, Err: errors.Join(err, copyErr)}
+	}
+	return l, false, nil
+}
+
+// Parse decodes and validates a saved ledger without touching the filesystem.
+func Parse(data []byte) (*Ledger, error) {
 	var l *Ledger
-	err = json.Unmarshal(data, &l)
+	err := json.Unmarshal(data, &l)
 	if err == nil {
 		err = l.validate()
 	}
@@ -368,10 +378,9 @@ func LoadWithOrigin(path string, established bool) (*Ledger, bool, error) {
 		err = errors.New("ledger is missing transport state")
 	}
 	if err != nil {
-		preserved, copyErr := preserve(path, data)
-		return nil, false, &RecoveryError{Path: path, PreservedPath: preserved, Err: errors.Join(err, copyErr)}
+		return nil, err
 	}
-	return l, false, nil
+	return l, nil
 }
 
 func (l *Ledger) validate() error {

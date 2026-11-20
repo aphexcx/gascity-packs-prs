@@ -89,7 +89,10 @@ defaults to `adapter.sock` beside the ledger. Reset takes the same first-start
 bound and warns that earlier messages will not be delivered; restore keeps the
 backup's bounds and saved cursors and initializes its cursorless spaces. The CLI
 replaces the ledger only while holding the lock. Use `gc gchat state` for recovery
-through the running service's proxy.
+through the running service's proxy. Both commands read the backup locally and
+post `{"action":"restore","ledger":"<ledger JSON text>"}` to `/state`. Reset
+posts `{"action":"reset"}`. The encoded request limit is 32 MiB. To restore a
+larger ledger, stop the service and use the offline command.
 
 The OAuth listener requests an ephemeral loopback port; bind failure ends that
 auth attempt with an actionable error. It does not retry another port inside

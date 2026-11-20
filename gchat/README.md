@@ -374,7 +374,7 @@ Operator mail contains only city, adapter, cause, times, aggregate counts and ag
 | `gc gchat spaces [--space spaces/AAAA --wake all\|mentions\|default]` | List spaces, or persist a wake override; `default` clears it. |
 | `gc gchat status [--json]` | Show health, subscription, last event, backlog, counters, and deliveries with their age and cause. |
 | `gc gchat resolve ID --accept\|--replay` | Settle an unresolved delivery. |
-| `gc gchat state restore FILE\|reset` | Request recovery through the running service's `/state` endpoint. |
+| `gc gchat state restore FILE\|reset` | Send the contents of a local backup or request a reset through the running service's `/state` endpoint. |
 
 Text commands accept `--body TEXT` or `--body-file PATH`. File contents retain
 trailing newlines and stream through the wrapper without becoming process
@@ -717,9 +717,11 @@ explicitly choose `gc gchat state reset`. Reset starts at the current time,
 minus the optional `first_start_history` window, and moves that bound to its
 first successful subscription attempt. Acts before the bound will not be delivered;
 `gc gchat read` still reads them. Use restore to retain recovery of the gap.
-These proxy commands are
-accepted only in `recovery-required` and refuse while delivery is in flight.
-If reconciliation fails, retry the same restore/reset request.
+The command reads the backup locally. It posts `{"action":"restore","ledger":"<ledger JSON text>"}`
+to `/state`. Reset posts `{"action":"reset"}`. The service accepts up to 32 MiB
+for the encoded request. Use offline recovery for larger backups. These proxy
+commands require `recovery-required` and refuse while delivery is in flight.
+If reconciliation fails, retry the same request with the same backup contents.
 
 For offline recovery, **stop the service first** (gc users stop the city or
 service), set `GC_GCHAT_ADAPTER_ENV` to its env file, then run the adapter binary's

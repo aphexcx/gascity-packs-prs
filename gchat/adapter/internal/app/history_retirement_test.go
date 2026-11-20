@@ -67,8 +67,7 @@ func TestFirstStartCountsAndToldRetiredDeliveries(t *testing.T) {
 			}})
 			if strings.HasPrefix(mode, "restore") {
 				f.health(t, "recovery-required", 5*time.Second)
-				raw, _ := json.Marshal(map[string]string{"action": "restore", "file": path})
-				resp, err := f.client.Post("http://adapter/state", "application/json", strings.NewReader(string(raw)))
+				resp, err := f.client.Post("http://adapter/state", "application/json", restoreBody(t, path))
 				if err != nil {
 					t.Fatal(err)
 				}

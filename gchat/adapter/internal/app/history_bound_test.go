@@ -376,6 +376,19 @@ func TestFloorFollowsTheFirstSuccessfulConnection(t *testing.T) {
 	}
 }
 
+func restoreBody(t *testing.T, backup string) *strings.Reader {
+	t.Helper()
+	data, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]string{"action": "restore", "ledger": string(data)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.NewReader(string(body))
+}
+
 func TestReleasedLedgerCursorlessSpacesStartAtLoad(t *testing.T) {
 	for _, restore := range []bool{false, true} {
 		t.Run(fmt.Sprintf("service-restore=%t", restore), func(t *testing.T) {
@@ -403,8 +416,7 @@ func TestReleasedLedgerCursorlessSpacesStartAtLoad(t *testing.T) {
 			f.start(t)
 			if restore {
 				f.health(t, "recovery-required", 5*time.Second)
-				body, _ := json.Marshal(map[string]string{"action": "restore", "file": backup})
-				r, err := f.client.Post("http://adapter/state", "application/json", strings.NewReader(string(body)))
+				r, err := f.client.Post("http://adapter/state", "application/json", restoreBody(t, backup))
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -1588,8 +1588,24 @@ func scenariosOperations(t *testing.T) {
 				if b, e = os.ReadFile(f.cfg.Endpoints.StateFile); e != nil || string(b) != "broken ledger" {
 					t.Fatal("service overwrote corrupt state")
 				}
+				pack, err := filepath.Abs("../../..")
+				if err != nil {
+					t.Fatal(err)
+				}
+				args := []string{filepath.Join(pack, "commands/state.sh"), action}
+				if action == "restore" {
+					args = append(args, backup)
+				}
+				cmd := exec.CommandContext(t.Context(), "sh", args...)
+				cmd.Env = append(os.Environ(), "GC_PACK_DIR="+pack, "GC_API_BASE_URL="+f.gateway, "GC_CITY_NAME=examplecity")
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("state %s: %v %s", action, err, out)
+				}
 				var result map[string]string
-				f.request("/state", map[string]string{"action": action, "file": backup}, &result)
+				if err := json.Unmarshal(out, &result); err != nil {
+					t.Fatal(err)
+				}
 				if action == "reset" && !strings.Contains(result["reason"], "will not be delivered") {
 					t.Fatal("reset omitted possible loss")
 				}

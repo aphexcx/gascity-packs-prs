@@ -10,10 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/server"
 )
 
 func TestStateOfflineRestoreAndReset(t *testing.T) {
@@ -321,6 +324,42 @@ func (c stateCancelAtCheck) Err() error {
 	return context.Canceled
 }
 
+func TestForcedRestoreThroughServer(t *testing.T) {
+	env, state, socket := stateFixture(t)
+	cfg := &config.Config{SecretsDir: filepath.Dir(env)}
+	s, err := server.New(server.Options{Config: cfg, Ledger: ledger.New(), LedgerMu: new(sync.Mutex), LedgerPath: state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.SetHealth(server.Health{State: "recovery-required"})
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: s}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	backup := filepath.Join(t.TempDir(), "backup.json")
+	l := ledger.New()
+	l.Counters["restored"] = 7
+	if err := l.Save(backup); err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	if code := run(t.Context(), []string{"state", "restore", backup, "--force"}, &out, &stderr, envAt(env), nil); code != 0 {
+		t.Fatalf("restore: exit=%d %s", code, &stderr)
+	}
+	saved, err := ledger.Load(state, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Counters["restored"] != 7 || saved.Counters["original"] != 0 || !ledger.Established(cfg.SecretsDir) {
+		t.Fatal("live restore did not replace and establish the ledger")
+	}
+}
+
 func TestStateRunningService(t *testing.T) {
 	for _, tc := range []struct {
 		name, action string
@@ -368,12 +407,12 @@ func TestStateRunningService(t *testing.T) {
 				t.Fatal(err)
 			}
 			args := []string{"state", tc.action}
-			backup, err := filepath.Abs("test-backup.json")
-			if err != nil {
-				t.Fatal(err)
-			}
 			if tc.action == "restore" {
-				args = append(args, "test-backup.json")
+				backup := filepath.Join(t.TempDir(), "test-backup.json")
+				if err := os.WriteFile(backup, before, 0600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, backup)
 			}
 			if tc.force {
 				args = append(args, "--force")
@@ -394,7 +433,9 @@ func TestStateRunningService(t *testing.T) {
 			if tc.force {
 				select {
 				case request := <-requests:
-					if request["action"] != tc.action || (tc.action == "restore" && request["file"] != backup) {
+					_, hasFile := request["file"]
+					content, hasLedger := request["ledger"]
+					if request["action"] != tc.action || hasFile || hasLedger != (tc.action == "restore") || (hasLedger && content != string(before)) {
 						t.Fatalf("state request=%v", request)
 					}
 				default:

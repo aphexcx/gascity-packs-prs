@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -134,9 +133,8 @@ func TestHistoryNoticeInterleavings(t *testing.T) {
 			s.SetHealth(server.Health{State: "recovery-required"})
 			restore := func() {
 				t.Helper()
-				raw, _ := json.Marshal(map[string]string{"action": "restore", "file": path})
 				w := httptest.NewRecorder()
-				s.ServeHTTP(w, httptest.NewRequest("POST", "/state", strings.NewReader(string(raw))))
+				s.ServeHTTP(w, httptest.NewRequest("POST", "/state", restoreBody(t, path)))
 				if w.Code != 200 || len(l.Unresolved) != 0 {
 					t.Fatalf("restore=%d", w.Code)
 				}

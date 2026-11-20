@@ -333,9 +333,8 @@ func TestRetiredAttemptEndsItsNotice(t *testing.T) {
 					defer s.Close()
 					s.SetNeverSilent(n.engine)
 					s.SetHealth(server.Health{State: "recovery-required"})
-					raw, _ := json.Marshal(map[string]string{"action": "restore", "file": backup})
 					w := httptest.NewRecorder()
-					s.ServeHTTP(w, httptest.NewRequest("POST", "/state", strings.NewReader(string(raw))))
+					s.ServeHTTP(w, httptest.NewRequest("POST", "/state", restoreBody(t, backup)))
 					if w.Code != 200 {
 						t.Fatalf("restore=%d %s", w.Code, w.Body.String())
 					}
