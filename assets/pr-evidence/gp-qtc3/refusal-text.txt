@@ -1,0 +1,35 @@
+Before, import reachable, conversations 1
+A person has waited 62 seconds for an answer in example/room-a. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-a. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+
+Before, import reachable, conversations 3
+A person has waited 62 seconds for an answer in example/room-a. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-a. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+A person has waited 61 seconds for an answer in example/room-b. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-b. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+A person has waited 60 seconds for an answer in example/room-c. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-c. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+
+Before, import stay, conversations 1
+A person has waited 62 seconds for an answer in example/room-a. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-a. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+
+Before, import stay, conversations 3
+A person has waited 62 seconds for an answer in example/room-a. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-a. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+A person has waited 61 seconds for an answer in example/room-b. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-b. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+A person has waited 60 seconds for an answer in example/room-c. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-c. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+
+After, import reachable, conversations 1
+A person has waited 62 seconds for an answer in example/room-a. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-a. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+Refused because the shell command is not one gc talk command.
+
+After, import reachable, conversations 3
+A person has waited 62 seconds for an answer in example/room-a. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-a. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+A person has waited 61 seconds for an answer in example/room-b. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-b. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+A person has waited 60 seconds for an answer in example/room-c. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-c. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+Refused because the shell command is not one gc talk command.
+
+After, import stay, conversations 1
+A person has waited 62 seconds for an answer in example/room-a. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc stay pass example/room-a. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+Refused because the shell command is not one gc talk command.
+
+After, import stay, conversations 3
+A person has waited 62 seconds for an answer in example/room-a. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc stay pass example/room-a. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+A person has waited 61 seconds for an answer in example/room-b. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc stay pass example/room-b. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+A person has waited 60 seconds for an answer in example/room-c. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc stay pass example/room-c. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.
+Refused because the shell command is not one gc talk command.

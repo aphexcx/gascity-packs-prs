@@ -1,0 +1,58 @@
+gc reachable status (exit 0)
+mode: observe
+hook registered: true
+hook current: true
+caught up: true
+skipped_rows: {"count":1,"last_seq":2,"last_reason":"invalid_message_event","last_at":1795071793866}
+errors: {"measurement_failed":{"count":1,"newest":1795071793867}}
+hook_ok_at: 1795071793866
+history_dropped: 0
+example/room-a: 73 seconds
+{"type":"would_refuse","at":1795071793866,"provider":"example","conversation_id":"room-a","seconds":62}
+
+gc reachable status --json (exit 0)
+{
+  "mode": "observe",
+  "registered": true,
+  "current": true,
+  "caught_up": true,
+  "waiting": [
+    {
+      "provider": "example",
+      "conversation_id": "room-a",
+      "seconds": 73
+    }
+  ],
+  "history": [
+    {
+      "type": "would_refuse",
+      "at": 1795071793866,
+      "provider": "example",
+      "conversation_id": "room-a",
+      "seconds": 62
+    }
+  ],
+  "skipped_rows": {
+    "count": 1,
+    "last_seq": 2,
+    "last_reason": "invalid_message_event",
+    "last_at": 1795071793866
+  },
+  "errors": {
+    "measurement_failed": {
+      "count": 1,
+      "newest": 1795071793867
+    }
+  },
+  "hook_ok_at": 1795071793866,
+  "history_dropped": 0
+}
+
+gc reachable doctor (exit 1)
+hook_failing_open measurement_failed
+rows_skipped 1 last_seq 2
+error records (14 days): measurement_failed 1
+
+gc reachable status with corrupt state (exit 1)
+error records (14 days): measurement_failed 1
+reachable: invalid_state_json

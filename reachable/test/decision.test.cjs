@@ -15,7 +15,8 @@ test('8: exact refusal, one line per conversation in oldest-first order', () => 
   const state = waiting(3);
   const out = decide(state, pre('one'), opts);
   const lines = out.hookSpecificOutput.permissionDecisionReason.split('\n');
-  assert.equal(lines.length, 3);
+  assert.equal(lines.length, 4);
+  assert.equal(lines[3], 'Refused because the shell command is not one gc talk command.');
   assert.equal(lines[0], 'A person has waited 60 seconds for an answer in example/room-0. Answer there now in one line: say what you are doing and when they will hear more. Then go on. If no words are needed, run: gc reachable pass example/room-0. A job that will run past about 30 seconds does not belong in this session: start it as a background subagent, or hand it to a worker as a bead.');
   assert.match(lines[1], /^A person has waited 59 seconds/);
 });
