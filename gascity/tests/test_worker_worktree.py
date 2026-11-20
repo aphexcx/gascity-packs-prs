@@ -795,15 +795,34 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertEqual((aside / "AGENTS.md").read_text(), "after staged deletion\n")
         self.assertEqual(git(aside, "show", f":{new}"), "staged addition")
 
+    def test_dirty_restart_checks_out_tracked_files_in_read_only_start_directory(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        scripts = self.lane / ".gc/scripts"
+        scripts.mkdir(parents=True)
+        commit(self.lane, ".gc/scripts/tracked.sh", "committed\n", "track script")
+        (scripts / "local.sh").write_text("preserve\n")
+        scripts.chmod(0o500)
+        (self.lane / "README.md").write_text("unfinished\n")
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        for tree in (aside, self.lane):
+            self.assertEqual((tree / ".gc/scripts").stat().st_mode & 0o7777, 0o500)
+            self.assertEqual((tree / ".gc/scripts/tracked.sh").read_text(), "committed\n")
+            self.assertEqual((tree / ".gc/scripts/local.sh").read_text(), "preserve\n")
+
     def test_dirty_restart_refuses_target_colliding_with_start_file(self) -> None:
         self.fx.run(self.lane, "gp-old1")
         self.fx.push_branch("gp-next1", "AGENTS.md")
+        scripts = self.lane / ".gc/scripts"
+        scripts.mkdir(parents=True)
+        scripts.chmod(0o500)
         (self.lane / "AGENTS.md").write_text("local instructions\n")
         (self.lane / "README.md").write_text("unfinished\n")
         proc = self.fx.run(self.lane, "gp-next1", check=False)
         self.assertNotEqual(proc.returncode, 0)
         aside, = self.asides()
         self.assertEqual((aside / "AGENTS.md").read_text(), "local instructions\n")
+        self.assertEqual(scripts.stat().st_mode & 0o7777, 0o500)
         self.assertNotIn("WORKTREE ", proc.stdout)
 
     def test_dirty_restart_disables_checkout_hooks_in_the_aside(self) -> None:

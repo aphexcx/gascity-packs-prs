@@ -454,17 +454,10 @@ copy_start_files() (
         done
     ' sh "$2" "$moved_worktree" {} + >/dev/null || return 1
     [ -d "$2" ] || return 0
-    # Finish populating the private staging tree before applying restrictive
-    # modes. Include implicit parents and empty script directories, children first.
+    # Keep the copies private while Git populates tracked siblings. The
+    # replacement restores each directory's source mode before running hooks.
     cd "$2" || return 1
-    find . -depth -type d ! -name . -exec sh -ec '
-        source_dir=$1
-        shift
-        for dir do
-            mode=$(stat -c %a "$source_dir/$dir" 2>/dev/null) || mode=$(stat -f %Lp "$source_dir/$dir")
-            chmod "$mode" "$dir"
-        done
-    ' sh "$1" {} +
+    find . -depth -type d ! -name . -exec chmod 700 {} +
 )
 
 # --- classify the work dir ------------------------------------------------------------------
@@ -550,7 +543,7 @@ replacement_checkout_hook() (
     fi
 )
 
-add_worktree() {
+populate_worktree() {
     [ -d "$WORKDIR" ] || mkdir -p "$WORKDIR"
     add_dir="$WORKDIR"
     set --
@@ -583,13 +576,35 @@ add_worktree() {
         # seeds intact; never reset --hard or force checkout over the payload.
         git -C "$WORKDIR" read-tree HEAD || return 1
         git -C "$WORKDIR" checkout-index --all || return 1
-        if [ -n "$aside" ]; then
-            # Replacement lanes previously used worktree add with checkout.
-            # Run its hook once in the populated lane, with the same arguments.
-            replacement_checkout_hook || return 1
-        fi
     fi
 }
+
+add_worktree() (
+    if [ -z "$aside" ] || [ "$HAS_START_FILES" -eq 0 ]; then
+        populate_worktree
+        return
+    fi
+    cd "$WORKDIR" || return 1
+    dirs=$(mktemp "${TMPDIR:-/tmp}/worker-start-dirs.XXXXXX") || return 1
+    trap 'rm -f -- "$dirs"' EXIT
+    # Record only the directories the copy made, before Git adds any others.
+    find . -depth -type d ! -name . -print0 > "$dirs" || return 1
+    rc=0
+    populate_worktree || rc=$?
+    # Restore the modes even if checkout refused a collision. Apply restrictive
+    # parents last, then run the usual replacement hook in the finished lane.
+    xargs -0 sh -ec '
+        source_dir=$1
+        shift
+        for dir do
+            [ -d "$dir" ] && [ ! -L "$dir" ] || exit 1
+            mode=$(stat -c %a "$source_dir/$dir" 2>/dev/null) || mode=$(stat -f %Lp "$source_dir/$dir")
+            chmod "$mode" "$dir"
+        done
+    ' sh "$aside" < "$dirs" || return 1
+    [ "$rc" -eq 0 ] || return "$rc"
+    replacement_checkout_hook
+)
 
 # A tracked start point (add_worktree and switch_worktree, mode remote) is the
 # FULL remote ref: a `--track` start point is a commit-ish, not a branch lookup,

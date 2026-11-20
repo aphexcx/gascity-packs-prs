@@ -98,3 +98,11 @@ verify env GC_TEST_BIN="$(command -v gc)" python3 -m pytest tests gascity/tests 
   -k 'dirty_lane_is_moved_aside_never_reset or nonempty_non_worktree_dir_is_moved_aside or dirty_restart_logs_the_recovery_path or detached_lane_reports_another or dirty_restart_copies_effective_start_files or role_prompts_render_public_worker_fragment or held_branch_handoff_is_an_exception' \
   -q -p no:cacheprovider
 ```
+
+The worker review of `039ed8fc` identified a tracked script inside a copied directory with mode `0500`. Applying that mode before Git populated the directory prevented checkout. The new fixture failed on that commit and the collision fixture passed. Both now pass. Copied directories stay private and owner-writable through checkout. The helper records their names before Git adds any directories and restores their individual source modes before the checkout hook, including on a refused checkout where the hook never runs.
+
+```sh
+verify -C gascity python3 -m pytest tests \
+  -k 'dirty_restart_checks_out_tracked_files_in_read_only_start_directory or dirty_restart_refuses_target_colliding_with_start_file' \
+  -q -p no:cacheprovider
+```
