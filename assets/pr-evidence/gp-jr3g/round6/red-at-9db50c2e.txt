@@ -1,0 +1,14 @@
+    join_test.go:171: turns = [], want only spaces/joined/messages/m0001
+    join_test.go:180: turns = [spaces/joined/messages/m0002 spaces/joined/messages/m0001], want only spaces/joined/messages/m0002
+    join_test.go:190: turns = [], want only spaces/joined/messages/m0002
+--- FAIL: TestJoinedSpaceHistoryAfterMigration (0.50s)
+    --- FAIL: TestJoinedSpaceHistoryAfterMigration/offline-dm (0.11s)
+    --- FAIL: TestJoinedSpaceHistoryAfterMigration/live-room-before-join (0.28s)
+    --- FAIL: TestJoinedSpaceHistoryAfterMigration/live-dm-after-join (0.11s)
+    first_read_ack_test.go:144: unexpected acknowledgement during live-before-history-floor
+    first_read_ack_test.go:155: acknowledgements = 1, want 0
+    first_read_ack_test.go:179: stopwatch lines = map[inbound:1 reaction:1], want inbound=0 reaction=0
+--- FAIL: TestFirstReadAcknowledgementBoundary (1.02s)
+    --- PASS: TestFirstReadAcknowledgementBoundary/catchup-only (0.48s)
+    --- PASS: TestFirstReadAcknowledgementBoundary/live-before-first-read (0.42s)
+    --- FAIL: TestFirstReadAcknowledgementBoundary/live-before-history-floor (0.12s)

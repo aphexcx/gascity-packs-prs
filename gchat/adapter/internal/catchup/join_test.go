@@ -116,6 +116,82 @@ func TestFirstReadNeverReachesBelowTheInstallationFloor(t *testing.T) {
 	}
 }
 
+func TestJoinedSpaceHistoryAfterMigration(t *testing.T) {
+	const space = "spaces/joined"
+	listed := frozen.Add(-3 * time.Hour)
+	setupMigrated := func(t *testing.T, restart time.Time, dm bool) *fixture {
+		t.Helper()
+		f := setup(t)
+		l := f.opts.Ledger
+		// The released ledger saved last_space_list and had no spaces_listed_at.
+		l.LastSpaceList, l.SpacesListedAt = listed, time.Time{}
+		if err := l.Save(f.opts.LedgerPath); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := ledger.Load(f.opts.LedgerPath, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Replace(loaded)
+		if err := InitializeHistory(l, f.opts.Config, restart, nil); err != nil {
+			t.Fatal(err)
+		}
+		f.addSpace(space, false)
+		if dm {
+			f.google.Spaces[space].SpaceType = "DIRECT_MESSAGE"
+		}
+		return f
+	}
+	live := func(t *testing.T, f *fixture, m *api.Message) {
+		t.Helper()
+		c := puller.Change{Kind: "message.created", Space: space, Message: m}
+		if out, err := f.p.Handle(t.Context(), &puller.Event{Changes: []puller.Change{c}}); err != nil || out != puller.Ack {
+			t.Fatalf("live message: %v %v", out, err)
+		}
+	}
+	checkTurns := func(t *testing.T, f *fixture, want *api.Message) {
+		t.Helper()
+		f.freeze(t)
+		if _, remaining, err := f.r.Pass(t.Context()); err != nil || remaining != 0 {
+			t.Fatalf("first read: remaining=%d err=%v", remaining, err)
+		}
+		var names []string
+		for _, turn := range f.gc.Inbound() {
+			names = append(names, turn.ProviderMessageID)
+		}
+		if len(names) != 1 || names[0] != want.Name {
+			t.Fatalf("turns = %v, want only %s", names, want.Name)
+		}
+	}
+	t.Run("offline-dm", func(t *testing.T) {
+		f := setupMigrated(t, frozen, true)
+		opened := listed.Add(time.Hour)
+		member := &api.Membership{Name: space + "/members/123", State: "JOINED", Member: &api.User{Name: "users/123"}, CreateTime: opened.Format(time.RFC3339Nano)}
+		f.google.Memberships[member.Name] = member
+		checkTurns(t, f, f.addMessage(space, 1, opened.Add(time.Minute)))
+	})
+	t.Run("live-room-before-join", func(t *testing.T) {
+		f := setupMigrated(t, listed, false)
+		joined := listed.Add(45 * time.Minute)
+		f.addMessage(space, 1, joined.Add(-30*time.Minute))
+		current := f.addMessage(space, 2, joined.Add(time.Minute))
+		live(t, f, current)
+		join(t, f, joined)
+		checkTurns(t, f, current)
+	})
+	t.Run("live-dm-after-join", func(t *testing.T) {
+		f := setupMigrated(t, listed, true)
+		joined := listed.Add(time.Minute)
+		f.opts.Ledger.HistoryFloor = listed
+		f.addMessage(space, 1, listed.Add(-time.Second))
+		first := f.addMessage(space, 2, joined.Add(-2*time.Second))
+		join(t, f, joined)
+		live(t, f, first)
+		checkTurns(t, f, first)
+		historyLower(t, f, listed)
+	})
+}
+
 func TestTheReachBackHappensOnce(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/joined", false)

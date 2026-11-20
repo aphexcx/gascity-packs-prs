@@ -21,8 +21,11 @@ func InitializeHistory(l *ledger.Ledger, cfg *config.Config, now time.Time, log 
 // InitializeHistoryWithReport also returns each delivery's message reference
 // for the caller to report only after saving the migrated ledger successfully.
 func InitializeHistoryWithReport(l *ledger.Ledger, cfg *config.Config, now time.Time, log puller.Logger) ([]string, error) {
-	if l.SpacesListedAt.IsZero() && l.HistoryFloor.IsZero() {
-		l.SpacesListedAt = now.UTC()
+	if l.SpacesListedAt.IsZero() {
+		l.SpacesListedAt = l.LastSpaceList
+		if l.SpacesListedAt.IsZero() && l.HistoryFloor.IsZero() {
+			l.SpacesListedAt = now.UTC()
+		}
 	}
 	for _, c := range l.Changes {
 		if c.Reason == "before_history_floor" {
