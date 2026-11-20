@@ -1887,6 +1887,25 @@ class FormulaAssetTests(unittest.TestCase):
                 with self.subTest(formula=path.name):
                     self.assertEqual(variables["max_iterations"]["default"], "3")
 
+    def test_inner_review_loops_cap_at_three(self) -> None:
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        cases = (
+            ("bmad", "bmad-story-development", "implement"),
+            ("bmad", "bmad-story-development-item", "implement-item"),
+            ("superpowers", "superpowers-task-review", "{target}.superpowers-task-review-loop"),
+            ("gstack", "gstack-qa-review", "{target}.gstack-qa-loop"),
+            ("gascity", "github-issue-fix-design-review-work", "{target}.review-loop"),
+        )
+        for pack, formula, node_id in cases:
+            with self.subTest(formula=formula, node=node_id):
+                nodes = {node["id"]: node for node in _walk_formula_nodes(load_formula(repo / pack, formula))}
+                self.assertEqual(nodes[node_id]["check"]["max_attempts"], 3)
+
+        for filename in ("README.md", "REQUIREMENTS.md"):
+            with self.subTest(document=filename):
+                document = (repo / "gstack" / filename).read_text(encoding="utf-8")
+                self.assertIn("QA allows 3 attempts", document)
+
     def test_terminal_review_handoff_matches_the_originating_graph(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         entries = []
