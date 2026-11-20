@@ -481,6 +481,94 @@ func TestInboundRecoveryNoticeUncertainMail(t *testing.T) {
 	}
 }
 
+func TestInboundRecoveryNoticeUncertainThenRefusedAfterRestart(t *testing.T) {
+	r, now := round2Recovery(t)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "gc")
+	t.Setenv("PATH", dir)
+	r.recordNotice = holdNoticeRecorder(dir, r.deadDir)
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'connection reset' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	round2Hold(t, r, "111.2")
+	*now = now.Add(time.Minute)
+	r.updateNotices()
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'connection refused' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	r, err := newInboundRecovery(r.path, r.deadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.recordNotice = holdNoticeRecorder(dir, r.deadDir)
+	r.now = func() time.Time { return now.Add(time.Hour) }
+	r.updateNotices()
+	if _, err := os.Stat(filepath.Join(r.deadDir, "hold-notices")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("later refusal duplicated possibly accepted mail: %v", err)
+	}
+	if len(r.state.Notices["C1"].Reports) != 1 {
+		t.Fatal("lost uncertain mail retry")
+	}
+}
+
+func TestInboundRecoveryNoticeSuccessiveIncidentsDuringEditFailure(t *testing.T) {
+	r, now := round2Recovery(t)
+	var edits, records []string
+	fail := true
+	r.notice = func(_, thread, ts, _ string) (string, error) {
+		if ts != "" && fail {
+			return "", errors.New("rate_limited")
+		}
+		if ts != "" {
+			edits = append(edits, thread)
+		}
+		return "notice-" + thread, nil
+	}
+	r.recordNotice = func(_ string, report holdNoticeReport) error {
+		records = append(records, report.MessageTS+" "+report.Phase)
+		return nil
+	}
+	for _, ts := range []string{"111.1", "111.2"} {
+		round2Hold(t, r, ts)
+		*now = now.Add(time.Minute)
+		r.updateNotices()
+		if _, err := r.acknowledge("C1", ts); err != nil {
+			t.Fatal(err)
+		}
+		r.updateNotices()
+	}
+	fail = false
+	*now = now.Add(5 * time.Minute)
+	r.updateNotices()
+	if !reflect.DeepEqual(records, []string{"111.1 held", "111.1 outcome", "111.2 held", "111.2 outcome"}) ||
+		!reflect.DeepEqual(edits, []string{"111.1", "111.2"}) {
+		t.Fatalf("reports=%v edits=%v", records, edits)
+	}
+}
+
+func TestInboundRecoveryNoticeFallbackPreservesExistingRecord(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	report := holdNoticeReport{ThreadTS: "111.1", MessageTS: "111.2", Phase: "held", Text: "hold text"}
+	id := ingestionDigest(strings.Join([]string{"CROOM", report.Since.UTC().Format(time.RFC3339Nano), report.ThreadTS, report.MessageTS, report.Phase}, "|"))
+	target := filepath.Join(dir, "hold-notices", id+".json")
+	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_FALLBACK", target)
+	// Another writer claims the final name while mail is in flight.
+	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte("#!/bin/sh\necho winner > \"$TEST_FALLBACK\"\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := holdNoticeRecorder(dir, dir)("CROOM", report); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "winner\n" {
+		t.Fatalf("existing fallback replaced: %q %v", got, err)
+	}
+}
+
 func TestInboundRecoveryPendingReceiptPollsWithoutRepost(t *testing.T) {
 	now := time.Now()
 	r, _ := newInboundRecovery("", t.TempDir())

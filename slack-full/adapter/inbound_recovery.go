@@ -338,9 +338,9 @@ type inboundRecoveryEntry struct {
 
 type inboundHoldNotice struct {
 	Reports       []holdNoticeReport `json:"pending_reports,omitempty"`
+	Edits         []holdNoticeEdit   `json:"pending_edits,omitempty"`
 	MessageTS     string             `json:"message_ts,omitempty"`
 	HoldQueued    bool               `json:"hold_queued,omitempty"`
-	OutcomeQueued bool               `json:"outcome_queued,omitempty"`
 	InternalOnly  bool               `json:"internal_only,omitempty"`
 	NextAttemptAt time.Time          `json:"next_attempt_at,omitempty"`
 	Failures      int                `json:"failures,omitempty"`
@@ -355,6 +355,7 @@ type inboundHoldNotice struct {
 }
 
 type holdNoticeReport struct {
+	MailOnly      bool      `json:"mail_only,omitempty"`
 	Since         time.Time `json:"since"`
 	ThreadTS      string    `json:"thread_ts"`
 	MessageTS     string    `json:"message_ts"`
@@ -362,6 +363,16 @@ type holdNoticeReport struct {
 	Text          string    `json:"text"`
 	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
 	Failures      int       `json:"failures,omitempty"`
+}
+
+type holdNoticeEdit struct {
+	TS            string    `json:"ts"`
+	ThreadTS      string    `json:"thread_ts"`
+	Text          string    `json:"text"`
+	Deadline      time.Time `json:"deadline"`
+	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
+	Failures      int       `json:"failures,omitempty"`
+	LoggedErrors  []string  `json:"logged_errors,omitempty"`
 }
 
 type recoveryParts struct {
@@ -1850,13 +1861,15 @@ func (r *inboundRecovery) writeDead(e inboundRecoveryEntry, replayed time.Time) 
 	return err
 }
 
-func (r *inboundRecovery) saveNotice(channel string, n inboundHoldNotice) {
+func (r *inboundRecovery) saveNotice(channel string, n inboundHoldNotice) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.state.Notices[channel] = n
-	if err := r.saveLocked(); err != nil {
+	err := r.saveLocked()
+	if err != nil {
 		log.Printf("inbound HOLD notice persistence: %v", err)
 	}
-	r.mu.Unlock()
+	return err
 }
 
 func permanentNoticeError(err error) bool {
@@ -1899,7 +1912,7 @@ func holdNoticeRecorder(cityPath, deadDir string) func(string, holdNoticeReport)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err := sendOperatorMail(ctx, cityPath, "slack-hold:"+id, "Slack inbound hold "+report.Phase, body)
-		if err == nil || !ingestionNotifyDefinitelyRefused(err) {
+		if err == nil || report.MailOnly || !ingestionNotifyDefinitelyRefused(err) {
 			return err
 		}
 		row, err := json.Marshal(map[string]string{
@@ -1908,7 +1921,8 @@ func holdNoticeRecorder(cityPath, deadDir string) func(string, holdNoticeReport)
 		if err != nil {
 			return err
 		}
-		return companyWriteFileAtomic(path, row)
+		_, err = companyCreateFileOnce(path, row)
+		return err
 	}
 }
 
@@ -1929,7 +1943,22 @@ func (r *inboundRecovery) flushNoticeReports(channel string, n inboundHoldNotice
 	n.Reports = slices.Clone(n.Reports)
 	for len(n.Reports) > 0 {
 		report := &n.Reports[0]
-		if err := r.recordNotice(channel, *report); err != nil {
+		// If the process stops in flight, the mailbox may already have
+		// accepted the key. Replay must then stay with that destination.
+		var err error
+		if !report.MailOnly {
+			intent := n
+			intent.Reports = slices.Clone(n.Reports)
+			intent.Reports[0].MailOnly = true
+			err = r.saveNotice(channel, intent)
+		}
+		if err == nil {
+			err = r.recordNotice(channel, *report)
+			if err != nil && !ingestionNotifyDefinitelyRefused(err) {
+				report.MailOnly = true
+			}
+		}
+		if err != nil {
 			if report.Failures == 0 {
 				log.Printf("inbound HOLD operator report: chan=%s phase=%s: %v", channel, report.Phase, err)
 			}
@@ -1940,6 +1969,38 @@ func (r *inboundRecovery) flushNoticeReports(channel string, n inboundHoldNotice
 		n.Reports = n.Reports[1:]
 	}
 	r.saveNotice(channel, n)
+}
+
+func (r *inboundRecovery) flushNoticeEdits(channel string, n inboundHoldNotice, now time.Time) inboundHoldNotice {
+	var pending []holdNoticeEdit
+	changed := false
+	for _, edit := range n.Edits {
+		if !r.roomNoticeAllowed(channel) {
+			changed = true
+			continue
+		}
+		if now.Before(edit.NextAttemptAt) && now.Before(edit.Deadline) {
+			pending = append(pending, edit)
+			continue
+		}
+		changed = true
+		if _, err := r.notice(channel, edit.ThreadTS, edit.TS, edit.Text); err != nil {
+			if !slices.Contains(edit.LoggedErrors, err.Error()) {
+				log.Printf("inbound HOLD notice: chan=%s: %v", channel, err)
+				edit.LoggedErrors = append(slices.Clone(edit.LoggedErrors), err.Error())
+			}
+			if !permanentNoticeError(err) && now.Before(edit.Deadline) {
+				edit.NextAttemptAt = now.Add(retryLadderDelay(inboundHoldBackoff, edit.Failures, r.ceiling))
+				edit.Failures++
+				pending = append(pending, edit)
+			}
+		}
+	}
+	if changed {
+		n.Edits = pending
+		r.saveNotice(channel, n)
+	}
+	return n
 }
 
 // Older snapshots saved the thread but not the timestamp of the held reply.
@@ -2032,26 +2093,17 @@ func (r *inboundRecovery) updateNotices() {
 		if gateOff {
 			text = "Receipt checking is off; delivery remains unverified and the recorded line needs verification by hand."
 		}
-		if !n.OutcomeQueued && r.recordNotice != nil {
+		if r.recordNotice != nil {
 			n.restoreMessageTS(channel, entries)
 			n.queueReport("outcome", text)
-			n.OutcomeQueued = true
 		}
-		var err error
 		if !n.Ended && !n.InternalOnly && n.TS != "" && r.roomNoticeAllowed(channel) {
-			_, err = r.notice(channel, n.ThreadTS, n.TS, text)
+			n.Edits = append(n.Edits, holdNoticeEdit{TS: n.TS, ThreadTS: n.ThreadTS, Text: text,
+				Deadline: n.Since.Add(r.bound), Failures: n.Failures, LoggedErrors: n.LoggedErrors})
 		}
-		if err != nil {
-			n = r.noticeFailure(channel, n, err)
-			if now.Sub(n.Since) >= r.bound {
-				n.Ended = true
-				n.Resolved = true
-			}
-		} else {
-			n.Resolved = true
-			n.LastError = ""
-			n.NextAttemptAt = time.Time{}
-		}
+		n.Resolved = true
+		n.LastError = ""
+		n.NextAttemptAt = time.Time{}
 		r.saveNotice(channel, n)
 		notices[channel] = n
 	}
@@ -2072,7 +2124,7 @@ func (r *inboundRecovery) updateNotices() {
 			if n.TS != "" {
 				old = append(old, n.TS)
 			}
-			n = inboundHoldNotice{Since: e.HeldAt, PreviousTS: old, MessageTS: e.Inbound.ProviderMessageID, Reports: n.Reports}
+			n = inboundHoldNotice{Since: e.HeldAt, PreviousTS: old, MessageTS: e.Inbound.ProviderMessageID, Reports: n.Reports, Edits: n.Edits}
 			n.ThreadTS = e.Inbound.ReplyToMessageID
 			if n.ThreadTS == "" {
 				n.ThreadTS = e.Inbound.ProviderMessageID
@@ -2109,6 +2161,7 @@ func (r *inboundRecovery) updateNotices() {
 		notices[channel] = n
 	}
 	for channel, n := range notices {
+		n = r.flushNoticeEdits(channel, n, now)
 		r.flushNoticeReports(channel, n, now)
 	}
 }
