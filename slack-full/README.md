@@ -523,7 +523,7 @@ If a returned reaction is permanently refused, both its side-buffer ownership
 and durable mirror become non-replayable; restart also classifies legacy refusal
 history before folding it into an existing mirror.
 
-After a minute, the adapter sends the hold notice and later its outcome to the operator inbox, with the channel, thread and message timestamps, saving each report under `hold-notices/` in the inbound dead-letter directory if mail fails.
+After a minute, the adapter sends the hold notice and later its outcome to the operator inbox, with the channel, thread and message timestamps, saving each report under `hold-notices/` in the inbound dead-letter directory if mail is refused.
 With `SLACK_INBOUND_HOLD_NOTICE` enabled, one-to-one DMs and conversations in `SLACK_INBOUND_HOLD_NOTICE_ROOMS` also get the thread reply and its closing edit.
 Pending-only deliveries wait three minutes before a notice,
 which says it is checking the outstanding receipt. The outcome states

@@ -337,26 +337,31 @@ type inboundRecoveryEntry struct {
 }
 
 type inboundHoldNotice struct {
-	PendingReport   *holdNoticeReport `json:"pending_report,omitempty"`
-	MessageTS       string            `json:"message_ts,omitempty"`
-	HoldRecorded    bool              `json:"hold_recorded,omitempty"`
-	OutcomeRecorded bool              `json:"outcome_recorded,omitempty"`
-	InternalOnly    bool              `json:"internal_only,omitempty"`
-	NextAttemptAt   time.Time         `json:"next_attempt_at,omitempty"`
-	Failures        int               `json:"failures,omitempty"`
-	LastError       string            `json:"last_error,omitempty"`
-	LoggedErrors    []string          `json:"logged_errors,omitempty"`
-	Ended           bool              `json:"ended,omitempty"`
-	PreviousTS      []string          `json:"previous_ts,omitempty"`
-	TS              string            `json:"ts"`
-	ThreadTS        string            `json:"thread_ts"`
-	Since           time.Time         `json:"since"`
-	Resolved        bool              `json:"resolved,omitempty"`
+	Reports       []holdNoticeReport `json:"pending_reports,omitempty"`
+	MessageTS     string             `json:"message_ts,omitempty"`
+	HoldQueued    bool               `json:"hold_queued,omitempty"`
+	OutcomeQueued bool               `json:"outcome_queued,omitempty"`
+	InternalOnly  bool               `json:"internal_only,omitempty"`
+	NextAttemptAt time.Time          `json:"next_attempt_at,omitempty"`
+	Failures      int                `json:"failures,omitempty"`
+	LastError     string             `json:"last_error,omitempty"`
+	LoggedErrors  []string           `json:"logged_errors,omitempty"`
+	Ended         bool               `json:"ended,omitempty"`
+	PreviousTS    []string           `json:"previous_ts,omitempty"`
+	TS            string             `json:"ts"`
+	ThreadTS      string             `json:"thread_ts"`
+	Since         time.Time          `json:"since"`
+	Resolved      bool               `json:"resolved,omitempty"`
 }
 
 type holdNoticeReport struct {
-	Phase string `json:"phase"`
-	Text  string `json:"text"`
+	Since         time.Time `json:"since"`
+	ThreadTS      string    `json:"thread_ts"`
+	MessageTS     string    `json:"message_ts"`
+	Phase         string    `json:"phase"`
+	Text          string    `json:"text"`
+	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
+	Failures      int       `json:"failures,omitempty"`
 }
 
 type recoveryParts struct {
@@ -421,7 +426,7 @@ type inboundRecovery struct {
 	poll             receiptPollFunc
 	notice           func(channel, thread, ts, text string) (string, error)
 	noticeRooms      []string
-	recordNotice     func(channel string, n inboundHoldNotice, phase, text string) error
+	recordNotice     func(channel string, report holdNoticeReport) error
 	journal          func(inboundRecoveryEntry, deliveryReceipt)
 	finished         func(inboundRecoveryEntry)
 	resolveAlias     func(string) (string, bool)
@@ -1881,10 +1886,10 @@ func (r *inboundRecovery) noticeFailure(channel string, n inboundHoldNotice, err
 	return n
 }
 
-func holdNoticeRecorder(cityPath, deadDir string) func(string, inboundHoldNotice, string, string) error {
-	return func(channel string, n inboundHoldNotice, phase, text string) error {
-		id := ingestionDigest(strings.Join([]string{channel, n.Since.UTC().Format(time.RFC3339Nano), n.ThreadTS, phase}, "|"))
-		body := fmt.Sprintf("channel=%s thread_ts=%s message_ts=%s\n%s", channel, n.ThreadTS, n.MessageTS, text)
+func holdNoticeRecorder(cityPath, deadDir string) func(string, holdNoticeReport) error {
+	return func(channel string, report holdNoticeReport) error {
+		id := ingestionDigest(strings.Join([]string{channel, report.Since.UTC().Format(time.RFC3339Nano), report.ThreadTS, report.MessageTS, report.Phase}, "|"))
+		body := fmt.Sprintf("channel=%s thread_ts=%s message_ts=%s\n%s", channel, report.ThreadTS, report.MessageTS, report.Text)
 		// A fallback is a notice, never a payload for the replay scanner.
 		// One atomic file per phase also survives a failed state checkpoint.
 		path := filepath.Join(deadDir, "hold-notices", id+".json")
@@ -1893,11 +1898,12 @@ func holdNoticeRecorder(cityPath, deadDir string) func(string, inboundHoldNotice
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := sendOperatorMail(ctx, cityPath, "slack-hold:"+id, "Slack inbound hold "+phase, body); err == nil {
-			return nil
+		err := sendOperatorMail(ctx, cityPath, "slack-hold:"+id, "Slack inbound hold "+report.Phase, body)
+		if err == nil || !ingestionNotifyDefinitelyRefused(err) {
+			return err
 		}
 		row, err := json.Marshal(map[string]string{
-			"channel": channel, "thread_ts": n.ThreadTS, "message_ts": n.MessageTS, "phase": phase, "text": text,
+			"channel": channel, "thread_ts": report.ThreadTS, "message_ts": report.MessageTS, "phase": report.Phase, "text": report.Text,
 		})
 		if err != nil {
 			return err
@@ -1910,26 +1916,30 @@ func (r *inboundRecovery) roomNoticeAllowed(channel string) bool {
 	return r.notice != nil && (strings.HasPrefix(channel, "D") || slices.Contains(r.noticeRooms, channel))
 }
 
-func (r *inboundRecovery) reportNotice(channel string, n *inboundHoldNotice, phase, text string) bool {
-	if r.recordNotice != nil {
-		if err := r.recordNotice(channel, *n, phase, text); err != nil {
-			// Keep the original report through settlement and restart. A
-			// storage error must not change the Slack destination's state.
-			ended := n.Ended
-			*n = r.noticeFailure(channel, *n, err)
-			n.Ended = ended
-			n.PendingReport = &holdNoticeReport{Phase: phase, Text: text}
-			r.saveNotice(channel, *n)
-			return false
+func (n *inboundHoldNotice) queueReport(phase, text string) {
+	n.Reports = append(n.Reports, holdNoticeReport{Since: n.Since, ThreadTS: n.ThreadTS, MessageTS: n.MessageTS, Phase: phase, Text: text})
+}
+
+func (r *inboundRecovery) flushNoticeReports(channel string, n inboundHoldNotice, now time.Time) {
+	if r.recordNotice == nil || len(n.Reports) == 0 || now.Before(n.Reports[0].NextAttemptAt) {
+		return
+	}
+	// The recovery tick is the sole notice writer. Work on a copy so the
+	// persisted snapshot remains safe to read while mail is in flight.
+	n.Reports = slices.Clone(n.Reports)
+	for len(n.Reports) > 0 {
+		report := &n.Reports[0]
+		if err := r.recordNotice(channel, *report); err != nil {
+			if report.Failures == 0 {
+				log.Printf("inbound HOLD operator report: chan=%s phase=%s: %v", channel, report.Phase, err)
+			}
+			report.NextAttemptAt = now.Add(retryLadderDelay(inboundHoldBackoff, report.Failures, r.ceiling))
+			report.Failures++
+			break
 		}
+		n.Reports = n.Reports[1:]
 	}
-	n.PendingReport = nil
-	if phase == "held" {
-		n.HoldRecorded = true
-	} else {
-		n.OutcomeRecorded = true
-	}
-	return true
+	r.saveNotice(channel, n)
 }
 
 // Older snapshots saved the thread but not the timestamp of the held reply.
@@ -1971,23 +1981,13 @@ func (r *inboundRecovery) updateNotices() {
 	}
 	r.mu.Unlock()
 	for channel, n := range notices {
-		if n.Resolved || (n.PendingReport != nil && now.Before(n.NextAttemptAt)) {
+		if _, ok := active[channel]; ok || n.Resolved {
 			continue
 		}
-		if n.PendingReport != nil && n.PendingReport.Phase == "held" {
-			if !r.reportNotice(channel, &n, "held", n.PendingReport.Text) {
-				notices[channel] = n
-				continue
-			}
-			r.saveNotice(channel, n)
-			notices[channel] = n
-		}
-		if _, ok := active[channel]; ok && n.PendingReport == nil {
-			continue
-		}
-		if !n.HoldRecorded && n.TS == "" {
+		if !n.HoldQueued && n.TS == "" {
 			n.Resolved = true
 			r.saveNotice(channel, n)
+			notices[channel] = n
 			continue
 		}
 		if now.Before(n.NextAttemptAt) && now.Sub(n.Since) < r.bound {
@@ -2032,12 +2032,10 @@ func (r *inboundRecovery) updateNotices() {
 		if gateOff {
 			text = "Receipt checking is off; delivery remains unverified and the recorded line needs verification by hand."
 		}
-		if n.PendingReport != nil {
-			text = n.PendingReport.Text
-		}
-		n.restoreMessageTS(channel, entries)
-		if !n.OutcomeRecorded && !r.reportNotice(channel, &n, "outcome", text) {
-			continue
+		if !n.OutcomeQueued && r.recordNotice != nil {
+			n.restoreMessageTS(channel, entries)
+			n.queueReport("outcome", text)
+			n.OutcomeQueued = true
 		}
 		var err error
 		if !n.Ended && !n.InternalOnly && n.TS != "" && r.roomNoticeAllowed(channel) {
@@ -2059,7 +2057,7 @@ func (r *inboundRecovery) updateNotices() {
 	}
 	for channel, e := range active {
 		n, exists := notices[channel]
-		if exists && !n.Resolved && (n.TS != "" || n.Ended || (n.InternalOnly && n.HoldRecorded)) {
+		if exists && !n.Resolved && (n.TS != "" || n.Ended || n.InternalOnly) {
 			continue
 		}
 		delay := time.Minute
@@ -2074,7 +2072,7 @@ func (r *inboundRecovery) updateNotices() {
 			if n.TS != "" {
 				old = append(old, n.TS)
 			}
-			n = inboundHoldNotice{Since: e.HeldAt, PreviousTS: old, MessageTS: e.Inbound.ProviderMessageID}
+			n = inboundHoldNotice{Since: e.HeldAt, PreviousTS: old, MessageTS: e.Inbound.ProviderMessageID, Reports: n.Reports}
 			n.ThreadTS = e.Inbound.ReplyToMessageID
 			if n.ThreadTS == "" {
 				n.ThreadTS = e.Inbound.ProviderMessageID
@@ -2088,9 +2086,10 @@ func (r *inboundRecovery) updateNotices() {
 			action = "checking the outstanding delivery receipt"
 		}
 		text := fmt.Sprintf("Delivery has been held since %s; %s for up to %s.", n.Since.UTC().Format(time.RFC3339), action, r.bound)
-		n.restoreMessageTS(channel, entries)
-		if !n.HoldRecorded && !r.reportNotice(channel, &n, "held", text) {
-			continue
+		if !n.HoldQueued && r.recordNotice != nil {
+			n.restoreMessageTS(channel, entries)
+			n.queueReport("held", text)
+			n.HoldQueued = true
 		}
 		var ts string
 		var err error
@@ -2107,6 +2106,10 @@ func (r *inboundRecovery) updateNotices() {
 			n.NextAttemptAt = time.Time{}
 		}
 		r.saveNotice(channel, n)
+		notices[channel] = n
+	}
+	for channel, n := range notices {
+		r.flushNoticeReports(channel, n, now)
 	}
 }
 

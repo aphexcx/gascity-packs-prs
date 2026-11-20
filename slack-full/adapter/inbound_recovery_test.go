@@ -345,7 +345,7 @@ func TestInboundRecoveryNoticePolicyAfterRestart(t *testing.T) {
 			if tc.postedBefore {
 				n.TS = "111.3"
 			} else {
-				n.HoldRecorded, n.InternalOnly, n.MessageTS = true, true, "111.2"
+				n.HoldQueued, n.InternalOnly, n.MessageTS = true, true, "111.2"
 			}
 			r.saveNotice("CROOM", n)
 			r, err := newInboundRecovery(r.path, r.deadDir)
@@ -360,10 +360,10 @@ func TestInboundRecoveryNoticePolicyAfterRestart(t *testing.T) {
 				return "", nil
 			}
 			records := 0
-			r.recordNotice = func(channel string, n inboundHoldNotice, phase, text string) error {
+			r.recordNotice = func(channel string, report holdNoticeReport) error {
 				records++
-				if channel != "CROOM" || n.ThreadTS != "111.1" || n.MessageTS != "111.2" || phase != "outcome" {
-					t.Fatalf("wrong outcome coordinates: %s %+v %s", channel, n, phase)
+				if channel != "CROOM" || report.ThreadTS != "111.1" || report.MessageTS != "111.2" || report.Phase != "outcome" {
+					t.Fatalf("wrong outcome coordinates: %s %+v", channel, report)
 				}
 				return nil
 			}
@@ -420,7 +420,7 @@ func TestInboundRecoveryNoticeReportingFailureSurvivesSettlement(t *testing.T) {
 	r, now := round2Recovery(t)
 	round2Hold(t, r, "111.2")
 	*now = now.Add(time.Minute)
-	r.recordNotice = func(string, inboundHoldNotice, string, string) error { return errors.New("storage unavailable") }
+	r.recordNotice = func(string, holdNoticeReport) error { return errors.New("storage unavailable") }
 	r.updateNotices()
 	if _, err := r.acknowledge("C1", "111.2"); err != nil {
 		t.Fatal(err)
@@ -432,14 +432,52 @@ func TestInboundRecoveryNoticeReportingFailureSurvivesSettlement(t *testing.T) {
 	}
 	r.now = func() time.Time { return now.Add(time.Hour) }
 	var recorded []string
-	r.recordNotice = func(_ string, _ inboundHoldNotice, phase, _ string) error {
-		recorded = append(recorded, phase)
+	r.recordNotice = func(_ string, report holdNoticeReport) error {
+		recorded = append(recorded, report.Phase)
 		return nil
 	}
 	r.updateNotices()
 	r.updateNotices()
 	if !reflect.DeepEqual(recorded, []string{"held", "outcome"}) {
 		t.Fatalf("reports after storage recovery = %v", recorded)
+	}
+}
+
+func TestInboundRecoveryNoticeReportingFailurePreservesRoomDelivery(t *testing.T) {
+	r, now := round2Recovery(t)
+	r.recordNotice = func(string, holdNoticeReport) error { return errors.New("mail and disk unavailable") }
+	var requests []string
+	r.notice = func(_, _, ts, _ string) (string, error) {
+		requests = append(requests, ts)
+		return "111.3", nil
+	}
+	round2Hold(t, r, "111.2")
+	*now = now.Add(time.Minute)
+	r.updateNotices()
+	if _, err := r.acknowledge("C1", "111.2"); err != nil {
+		t.Fatal(err)
+	}
+	r.updateNotices()
+	if !reflect.DeepEqual(requests, []string{"", "111.3"}) {
+		t.Fatalf("room post and edit during operator outage = %v", requests)
+	}
+}
+
+func TestInboundRecoveryNoticeUncertainMail(t *testing.T) {
+	dir := t.TempDir()
+	mail := filepath.Join(dir, "gc")
+	t.Setenv("PATH", dir)
+	if err := os.WriteFile(mail, []byte("#!/bin/sh\necho 'connection reset' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	dead := filepath.Join(dir, "dead")
+	report := holdNoticeRecorder(dir, dead)
+	err := report("CROOM", holdNoticeReport{ThreadTS: "111.1", MessageTS: "111.2", Phase: "held", Text: "hold text"})
+	if err == nil {
+		t.Error("uncertain acceptance must retry the same mail key")
+	}
+	if _, err := os.Stat(dead); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("uncertain acceptance wrote a second report: %v", err)
 	}
 }
 
