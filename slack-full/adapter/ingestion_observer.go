@@ -731,10 +731,14 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 	if len(body) > ingestionAlertBatchBudget {
 		return ingestionNotifyRefusal{fmt.Errorf("ingestion alert exceeds %d-byte mail budget", ingestionAlertBatchBudget)}
 	}
+	return sendOperatorMail(ctx, o.cfg.cityPath, "slack-ingestion:"+key, subject, body)
+}
+
+func sendOperatorMail(ctx context.Context, cityPath, key, subject, body string) error {
 	if err := ctx.Err(); err != nil {
 		return ingestionNotifyRefusal{err} // No child process was started.
 	}
-	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", subject, "-m", body)
+	cmd := exec.CommandContext(ctx, "gc", "--city", cityPath, "mail", "send", "mayor", "--dedup", key, "-s", subject, "-m", body)
 	cmd.WaitDelay = time.Second
 	// Do not log CLI output, which may contain mailbox or provider data.
 	// Output retains bounded stderr on ExitError for refusal classification.

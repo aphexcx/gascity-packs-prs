@@ -22,6 +22,12 @@ import (
 func recoveryTestConfig(t *testing.T, url string) config {
 	t.Helper()
 	t.Setenv("SLACK_INBOUND_HOLD_NOTICE", "off")
+	t.Setenv("SLACK_INBOUND_HOLD_NOTICE_ROOMS", "")
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "gc"), []byte("#!/bin/sh\n[ \"$3 $4 $5\" = 'mail send mayor' ]\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	cfg := coalescingTestConfig(url, time.Hour)
 	cfg.cityPath = t.TempDir()
 	cfg.inboundDeadLetterDir = filepath.Join(cfg.cityPath, "dead")
@@ -218,8 +224,8 @@ func TestInboundRecoveryNoticeOnePostAndEdit(t *testing.T) {
 		calls = append(calls, ts+"|"+thread+"|"+text)
 		return "notice.1", nil
 	}
-	r.hold(testPending("C1", "100.0", "first"), recoveryReceipt("r1", "s1", false), false)
-	r.hold(testPending("C1", "101.0", "second"), recoveryReceipt("r2", "s1", false), false)
+	r.hold(testPending("D1", "100.0", "first"), recoveryReceipt("r1", "s1", false), false)
+	r.hold(testPending("D1", "101.0", "second"), recoveryReceipt("r2", "s1", false), false)
 	r.updateNotices()
 	if len(calls) != 0 {
 		t.Fatal("early notice")
@@ -235,6 +241,445 @@ func TestInboundRecoveryNoticeOnePostAndEdit(t *testing.T) {
 	r.updateNotices()
 	if len(calls) != 2 || !strings.HasPrefix(calls[1], "notice.1|") || !strings.Contains(calls[1], "handed to the session's terminal by") {
 		t.Fatalf("edits=%v", calls)
+	}
+}
+
+func TestInboundRecoveryNoticeRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name, channel, rooms, knob string
+		wantRoom                   bool
+	}{
+		{"unlisted channel", "CROOM", "", "", false},
+		{"direct message", "DDIRECT", "", "", true},
+		{"listed conversation", "CLISTED", " COTHER, CLISTED ,", "", true},
+		{"private channel", "GPRIVATE", "COTHER", "", false},
+		{"group direct message", "GGROUPDM", "", "", false},
+		{"unknown conversation", "UNKNOWN", "", "", false},
+		{"disabled direct message", "DDIRECT", "", "off", false},
+		{"disabled listed channel", "CLISTED", "CLISTED", "off", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := recoveryTestConfig(t, "")
+			t.Setenv("SLACK_INBOUND_HOLD_NOTICE", tc.knob)
+			t.Setenv("SLACK_INBOUND_HOLD_NOTICE_ROOMS", tc.rooms)
+			dir := t.TempDir()
+			mailPath := filepath.Join(dir, "mail")
+			t.Setenv("HOLD_TEST_MAIL", mailPath)
+			if err := os.WriteFile(filepath.Join(dir, "gc"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOLD_TEST_MAIL\"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir)
+			var calls []string
+			slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				calls = append(calls, req.URL.Path)
+				fmt.Fprint(w, `{"ok":true,"ts":"111.3"}`)
+			}))
+			t.Cleanup(slack.Close)
+			old := slackAPIBase
+			slackAPIBase = slack.URL
+			t.Cleanup(func() { slackAPIBase = old })
+			cfg.slackBotToken = "example-token"
+			if err := installInboundRecovery(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			r := cfg.inboundRecovery
+			now := time.Now()
+			r.now = func() time.Time { return now }
+			p := testPending(tc.channel, "111.2", "private message body")
+			p.inbound.ReplyToMessageID = "111.1"
+			if err := r.hold(p, recoveryReceipt("r1", "s1", false), false); err != nil {
+				t.Fatal(err)
+			}
+			now = now.Add(time.Minute)
+			check := func(wantCalls []string, phaseText string, rows int) {
+				t.Helper()
+				if !reflect.DeepEqual(calls, wantCalls) {
+					t.Errorf("Slack calls = %v, want %v", calls, wantCalls)
+				}
+				b, err := os.ReadFile(mailPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body := string(b)
+				if strings.Count(body, "mail send mayor --dedup") != rows ||
+					strings.Count(body, "channel="+tc.channel+" thread_ts=111.1 message_ts=111.2") != rows ||
+					!strings.Contains(body, phaseText) || strings.Contains(body, p.inbound.Text) {
+					t.Fatalf("unexpected operator mail: %q", body)
+				}
+			}
+			var wantCalls []string
+			if tc.wantRoom {
+				wantCalls = append(wantCalls, "/chat.postMessage")
+			}
+			r.updateNotices()
+			r.updateNotices()
+			check(wantCalls, "Delivery has been held since", 1)
+			r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) { return recoveryReceipt("ok", "s1", true), nil }
+			r.tick(false)
+			r.updateNotices()
+			if tc.wantRoom {
+				wantCalls = append(wantCalls, "/chat.update")
+			}
+			check(wantCalls, "handed to the session's terminal", 2)
+		})
+	}
+}
+
+func TestInboundRecoveryNoticePolicyAfterRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		postedBefore bool
+		allowAfter   bool
+	}{
+		{"legacy room removed", true, false},
+		{"internal incident stays internal", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, now := round2Recovery(t)
+			p := testPending("CROOM", "111.2", "message")
+			p.inbound.ReplyToMessageID = "111.1"
+			if err := r.hold(p, recoveryReceipt("r1", "s1", false), false); err != nil {
+				t.Fatal(err)
+			}
+			n := inboundHoldNotice{Since: *now, ThreadTS: "111.1"}
+			if tc.postedBefore {
+				n.TS = "111.3"
+			} else {
+				n.HoldQueued, n.InternalOnly, n.MessageTS = true, true, "111.2"
+			}
+			r.saveNotice("CROOM", n)
+			r, err := newInboundRecovery(r.path, r.deadDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.allowAfter {
+				r.noticeRooms = []string{"CROOM"}
+			}
+			r.notice = func(string, string, string, string) (string, error) {
+				t.Fatal("restart published an internal outcome")
+				return "", nil
+			}
+			records := 0
+			r.recordNotice = func(channel string, report holdNoticeReport) error {
+				records++
+				if channel != "CROOM" || report.ThreadTS != "111.1" || report.MessageTS != "111.2" || report.Phase != "outcome" {
+					t.Fatalf("wrong outcome coordinates: %s %+v", channel, report)
+				}
+				return nil
+			}
+			if _, err := r.acknowledge("CROOM", "111.2"); err != nil {
+				t.Fatal(err)
+			}
+			r.updateNotices()
+			r.updateNotices()
+			if records != 1 {
+				t.Fatalf("outcome records = %d", records)
+			}
+		})
+	}
+}
+
+func TestInboundRecoveryNoticeFallback(t *testing.T) {
+	r, now := round2Recovery(t)
+	t.Setenv("PATH", t.TempDir()) // The mail executable is unavailable.
+	r.recordNotice = holdNoticeRecorder(t.TempDir(), r.deadDir)
+	round2Hold(t, r, "111.2")
+	*now = now.Add(time.Minute)
+	r.updateNotices()
+	if _, err := r.acknowledge("C1", "111.2"); err != nil {
+		t.Fatal(err)
+	}
+	r.updateNotices()
+	r.updateNotices()
+	dir := filepath.Join(r.deadDir, "hold-notices")
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) != 2 {
+		t.Fatalf("fallback files = %v, error = %v", files, err)
+	}
+	phases := map[string]string{}
+	for _, file := range files {
+		b, err := os.ReadFile(filepath.Join(dir, file.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var row map[string]string
+		if err := json.Unmarshal(b, &row); err != nil {
+			t.Fatal(err)
+		}
+		if row["channel"] != "C1" || row["thread_ts"] != "111.2" || row["message_ts"] != "111.2" {
+			t.Fatalf("wrong fallback coordinates: %v", row)
+		}
+		phases[row["phase"]] = row["text"]
+	}
+	if !strings.Contains(phases["held"], "Delivery has been held") || !strings.Contains(phases["outcome"], "acknowledged by hand") {
+		t.Fatalf("fallback phases = %v", phases)
+	}
+}
+
+func TestInboundRecoveryNoticeReportingFailureSurvivesSettlement(t *testing.T) {
+	r, now := round2Recovery(t)
+	round2Hold(t, r, "111.2")
+	*now = now.Add(time.Minute)
+	r.recordNotice = func(string, holdNoticeReport) error { return errors.New("storage unavailable") }
+	r.updateNotices()
+	if _, err := r.acknowledge("C1", "111.2"); err != nil {
+		t.Fatal(err)
+	}
+	r.updateNotices()
+	r, err := newInboundRecovery(r.path, r.deadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.now = func() time.Time { return now.Add(time.Hour) }
+	var recorded []string
+	r.recordNotice = func(_ string, report holdNoticeReport) error {
+		recorded = append(recorded, report.Phase)
+		return nil
+	}
+	r.updateNotices()
+	r.updateNotices()
+	if !reflect.DeepEqual(recorded, []string{"held", "outcome"}) {
+		t.Fatalf("reports after storage recovery = %v", recorded)
+	}
+}
+
+func TestInboundRecoveryNoticeReportingFailurePreservesRoomDelivery(t *testing.T) {
+	r, now := round2Recovery(t)
+	r.recordNotice = func(string, holdNoticeReport) error { return errors.New("mail and disk unavailable") }
+	var requests []string
+	r.notice = func(_, _, ts, _ string) (string, error) {
+		requests = append(requests, ts)
+		return "111.3", nil
+	}
+	round2Hold(t, r, "111.2")
+	*now = now.Add(time.Minute)
+	r.updateNotices()
+	if _, err := r.acknowledge("C1", "111.2"); err != nil {
+		t.Fatal(err)
+	}
+	r.updateNotices()
+	if !reflect.DeepEqual(requests, []string{"", "111.3"}) {
+		t.Fatalf("room post and edit during operator outage = %v", requests)
+	}
+}
+
+func TestInboundRecoveryNoticeUncertainMail(t *testing.T) {
+	dir := t.TempDir()
+	mail := filepath.Join(dir, "gc")
+	t.Setenv("PATH", dir)
+	if err := os.WriteFile(mail, []byte("#!/bin/sh\necho 'connection reset' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	dead := filepath.Join(dir, "dead")
+	report := holdNoticeRecorder(dir, dead)
+	err := report("CROOM", holdNoticeReport{ThreadTS: "111.1", MessageTS: "111.2", Phase: "held", Text: "hold text"})
+	if err == nil {
+		t.Error("uncertain acceptance must retry the same mail key")
+	}
+	if _, err := os.Stat(dead); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("uncertain acceptance wrote a second report: %v", err)
+	}
+}
+
+func TestInboundRecoveryNoticeUncertainThenRefusedAfterRestart(t *testing.T) {
+	r, now := round2Recovery(t)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "gc")
+	t.Setenv("PATH", dir)
+	r.recordNotice = holdNoticeRecorder(dir, r.deadDir)
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'connection reset' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	round2Hold(t, r, "111.2")
+	*now = now.Add(time.Minute)
+	r.updateNotices()
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'connection refused' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	r, err := newInboundRecovery(r.path, r.deadDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.recordNotice = holdNoticeRecorder(dir, r.deadDir)
+	r.now = func() time.Time { return now.Add(time.Hour) }
+	r.updateNotices()
+	if _, err := os.Stat(filepath.Join(r.deadDir, "hold-notices")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("later refusal duplicated possibly accepted mail: %v", err)
+	}
+	if len(r.state.Notices["C1"].Reports) != 1 {
+		t.Fatal("lost uncertain mail retry")
+	}
+}
+
+func TestInboundRecoveryNoticeSuccessiveIncidentsDuringEditFailure(t *testing.T) {
+	r, now := round2Recovery(t)
+	var edits, records []string
+	fail := true
+	r.notice = func(_, thread, ts, _ string) (string, error) {
+		if ts != "" && fail {
+			return "", errors.New("rate_limited")
+		}
+		if ts != "" {
+			edits = append(edits, thread)
+		}
+		return "notice-" + thread, nil
+	}
+	r.recordNotice = func(_ string, report holdNoticeReport) error {
+		records = append(records, report.MessageTS+" "+report.Phase)
+		return nil
+	}
+	for _, ts := range []string{"111.1", "111.2"} {
+		round2Hold(t, r, ts)
+		*now = now.Add(time.Minute)
+		r.updateNotices()
+		if _, err := r.acknowledge("C1", ts); err != nil {
+			t.Fatal(err)
+		}
+		r.updateNotices()
+	}
+	fail = false
+	*now = now.Add(5 * time.Minute)
+	r.updateNotices()
+	if !reflect.DeepEqual(records, []string{"111.1 held", "111.1 outcome", "111.2 held", "111.2 outcome"}) ||
+		!reflect.DeepEqual(edits, []string{"111.1", "111.2"}) {
+		t.Fatalf("reports=%v edits=%v", records, edits)
+	}
+}
+
+func TestInboundRecoveryNoticeSuccessiveIncidents(t *testing.T) {
+	type scenario struct{ channel, failure, placement, replyTo string }
+	cases := []scenario{{"CUNLISTED", "none", "top", ""}}
+	for _, channel := range []string{"DDIRECT", "CLISTED"} {
+		for _, failure := range []string{"retryable-post", "permanent-post", "closing-edit"} {
+			cases = append(cases,
+				scenario{channel, failure, "same", "110.0"},
+				scenario{channel, failure, "other", "120.0"},
+				scenario{channel, failure, "top", ""})
+		}
+	}
+	for _, tc := range cases {
+		t.Run(tc.channel+"/"+tc.failure+"/"+tc.placement, func(t *testing.T) {
+			r, now := round2Recovery(t)
+			r.noticeRooms = []string{"CLISTED"}
+			type request struct{ thread, ts string }
+			var posts, edits []request
+			r.notice = func(channel, thread, ts, text string) (string, error) {
+				if channel != tc.channel {
+					t.Errorf("Slack channel = %q, want %q", channel, tc.channel)
+				}
+				if ts != "" {
+					edits = append(edits, request{thread, ts})
+					if len(edits) == 1 && tc.failure == "closing-edit" {
+						return "", errors.New("rate_limited")
+					}
+					return ts, nil
+				}
+				posts = append(posts, request{thread, ts})
+				if len(posts) == 1 {
+					switch tc.failure {
+					case "retryable-post":
+						return "", errors.New("rate_limited")
+					case "permanent-post":
+						return "", errors.New("thread_not_found")
+					}
+				}
+				return fmt.Sprintf("notice-%d", len(posts)), nil
+			}
+			var reports []holdNoticeReport
+			r.recordNotice = func(channel string, report holdNoticeReport) error {
+				if channel != tc.channel {
+					t.Errorf("operator channel = %q, want %q", channel, tc.channel)
+				}
+				reports = append(reports, report)
+				return nil
+			}
+			hold := func(ts, replyTo string) time.Time {
+				t.Helper()
+				p := testPending(tc.channel, ts, "held line")
+				p.inbound.ReplyToMessageID = replyTo
+				if err := r.hold(p, recoveryReceipt("r"+ts, "s1", false), false); err != nil {
+					t.Fatal(err)
+				}
+				return *now
+			}
+			first := hold("111.1", "110.0")
+			*now = now.Add(time.Minute)
+			r.updateNotices()
+			*now = now.Add(time.Second)
+			if _, err := r.acknowledge(tc.channel, "111.1"); err != nil {
+				t.Fatal(err)
+			}
+			r.updateNotices()
+			if len(reports) != 2 || reports[1].Phase != "outcome" {
+				t.Errorf("first settlement tick: got %d reports, want held and outcome", len(reports))
+			}
+
+			*now = now.Add(time.Second) // Admit the next hold before the first retry.
+			second := hold("121.1", tc.replyTo)
+			thread := tc.replyTo
+			if thread == "" {
+				thread = "121.1"
+			}
+			r.updateNotices()
+			*now = now.Add(time.Minute)
+			r.updateNotices()
+			r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) { return recoveryReceipt("ok", "s1", true), nil }
+			*now = now.Add(time.Second)
+			r.tick(false)
+			r.updateNotices()
+
+			opening := func(start time.Time) string {
+				return fmt.Sprintf("Delivery has been held since %s; retrying for up to %s.", start.Format(time.RFC3339), r.bound)
+			}
+			wantReports := []holdNoticeReport{
+				{Since: first, ThreadTS: "110.0", MessageTS: "111.1", Phase: "held", Text: opening(first)},
+				{Since: first, ThreadTS: "110.0", MessageTS: "111.1", Phase: "outcome", Text: "The held incident was acknowledged by hand; this does not confirm terminal delivery or reading."},
+				{Since: second, ThreadTS: thread, MessageTS: "121.1", Phase: "held", Text: opening(second)},
+				{Since: second, ThreadTS: thread, MessageTS: "121.1", Phase: "outcome", Text: fmt.Sprintf("Held since %s; handed to the session's terminal by %s, with reading unconfirmed.", second.Format(time.RFC3339), now.Format(time.RFC3339))},
+			}
+			if len(reports) != len(wantReports) {
+				t.Errorf("operator reports = %d, want %d", len(reports), len(wantReports))
+			}
+			for i := 0; i < min(len(reports), len(wantReports)); i++ {
+				if reports[i] != wantReports[i] {
+					t.Errorf("report %d = %+v, want %+v", i, reports[i], wantReports[i])
+				}
+			}
+			var wantPosts, wantEdits []request
+			if tc.channel != "CUNLISTED" {
+				wantPosts = []request{{"110.0", ""}, {thread, ""}}
+				if tc.failure == "closing-edit" {
+					wantEdits = append(wantEdits, request{"110.0", "notice-1"}, request{"110.0", "notice-1"})
+				}
+				wantEdits = append(wantEdits, request{thread, "notice-2"})
+			}
+			if !reflect.DeepEqual(posts, wantPosts) || !reflect.DeepEqual(edits, wantEdits) {
+				t.Errorf("Slack posts = %v, edits = %v; want %v, %v", posts, edits, wantPosts, wantEdits)
+			}
+		})
+	}
+}
+
+func TestInboundRecoveryNoticeFallbackPreservesExistingRecord(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	report := holdNoticeReport{ThreadTS: "111.1", MessageTS: "111.2", Phase: "held", Text: "hold text"}
+	id := ingestionDigest(strings.Join([]string{"CROOM", report.Since.UTC().Format(time.RFC3339Nano), report.ThreadTS, report.MessageTS, report.Phase}, "|"))
+	target := filepath.Join(dir, "hold-notices", id+".json")
+	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_FALLBACK", target)
+	// Another writer claims the final name while mail is in flight.
+	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte("#!/bin/sh\necho winner > \"$TEST_FALLBACK\"\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := holdNoticeRecorder(dir, dir)("CROOM", report); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "winner\n" {
+		t.Fatalf("existing fallback replaced: %q %v", got, err)
 	}
 }
 
@@ -304,6 +749,7 @@ func TestInboundRecoveryExplicitHeldContract(t *testing.T) {
 		return receiptPollUnknown, deliveryReceipt{}, nil
 	}
 	var notice string
+	r.noticeRooms = []string{"C1"}
 	r.notice = func(_, _, _, text string) (string, error) { notice = text; return "notice", nil }
 	if err := r.hold(testPending("C1", "100.0", "held"), receipt, false); err != nil {
 		t.Fatal(err)
@@ -627,6 +1073,7 @@ func TestInboundRecoveryRestartKeepsDeadlineAndNotice(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.notice = func(string, string, string, string) (string, error) { return "notice.1", nil }
+	r.noticeRooms = []string{"C1"}
 	now = now.Add(time.Minute)
 	r.updateNotices()
 	stored := r.state.Entries["C1|100.0"]
@@ -642,6 +1089,7 @@ func TestInboundRecoveryRestartKeepsDeadlineAndNotice(t *testing.T) {
 		t.Error("restart duplicated notice")
 		return "", nil
 	}
+	r2.noticeRooms = []string{"C1"}
 	r2.updateNotices()
 	// A refused write reports lost durability but keeps recovery ownership.
 	r2.path = dir
@@ -867,6 +1315,7 @@ func TestInboundRecoveryDelayedNoticeEditKeepsDeliveryTime(t *testing.T) {
 	r.hold(testPending("C1", "100.0", "held"), recoveryReceipt("original", "s1", false), false)
 	failEdit := true
 	var edited string
+	r.noticeRooms = []string{"C1"}
 	r.notice = func(_, _, ts, text string) (string, error) {
 		if ts != "" {
 			if failEdit {
