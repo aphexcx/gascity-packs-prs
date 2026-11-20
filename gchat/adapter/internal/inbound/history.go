@@ -260,9 +260,13 @@ func firstReadAdmits(l *ledger.Ledger, c puller.Change, identity string) bool {
 	if s == nil || s.FirstRead == nil || s.FirstRead.Complete || !s.HistoryStart.IsZero() || c.Kind != "message.created" || c.Message == nil {
 		return false
 	}
+	kind := s.Kind
+	if kind == "" && c.Message.Space != nil {
+		kind = spaceKind(c.Message.Space)
+	}
 	at := c.ActTime()
 	return at.After(s.FirstRead.Lower) && at.After(l.HistoryFloor) && at.Before(s.JoinedAt) &&
-		(s.Kind == "dm" || mentions(c.Message, identity))
+		(kind == "dm" || mentions(c.Message, identity))
 }
 
 func (p *Processor) history(ctx context.Context, c puller.Change, catchUp bool) (bool, error) {
