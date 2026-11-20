@@ -80,3 +80,21 @@ The DEEP review of `5200b0a4` returned BLOCK. Its three findings reproduced at t
 After these corrections the focused command above returned 34 passes, 1,181 deselections and 99 passing subtests. The seeded-hook check also passed with the Git hook builtin withheld, exercising the executable-hook fallback.
 
 The full Gas City rerun returned 1,087 passes, 128 skips and 10,698 passing subtests. The PR verification table records the full Python run for the handoff commit.
+
+## Third round
+
+The regression selection ran against `f14928569e60bf0ecc994b7229243115e924a5b0` with only the test changes applied. Pytest reported 18 failures, one pass and 20 passing subtests. On the revised helper and role, the same selection returned 14 passes and 25 passing subtests. Both runs deselected 1,202 tests.
+
+| Case | Red at the comparison commit | Green after the change |
+| --- | --- | --- |
+| Recovery ownership | In four fixtures the helper omitted the aside's ownership and branch. Eight rendered roles allowed recovery without checking ownership. | The same-ticket restart names the original branch after detaching the aside. The cross-ticket restart names the previous ticket's branch. Plain directories and already-detached worktrees report an unknown branch and take the other-ticket path. All eight roles restrict copying to the own-ticket sentence and direct the worker to report the other aside to the mayor. |
+| Directory permissions | Five directory-mode subtests failed while all 20 file checks passed. | All 25 subtests passed, including a private configuration directory, implicit parent directories and an empty read-only scripts directory. |
+| Held-branch handoff | The fragment check found different wording in Claim and Continue. | Claim quotes the instruction to “end this turn” in Continue. The fragment and all eight rendered roles check it. |
+
+The regression command used the installed gc for the isolated prompt fixtures.
+
+```sh
+verify env GC_TEST_BIN="$(command -v gc)" python3 -m pytest tests gascity/tests \
+  -k 'dirty_lane_is_moved_aside_never_reset or nonempty_non_worktree_dir_is_moved_aside or dirty_restart_logs_the_recovery_path or detached_lane_reports_another or dirty_restart_copies_effective_start_files or role_prompts_render_public_worker_fragment or held_branch_handoff_is_an_exception' \
+  -q -p no:cacheprovider
+```

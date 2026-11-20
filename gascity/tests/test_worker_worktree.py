@@ -551,6 +551,7 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertEqual((asides[0] / "README.md").read_text(encoding="utf-8"), "uncommitted edit\n")
         self.assertEqual(self.branch_of(asides[0]), "gp-old1")
         self.assertEqual(self.branch_of(self.lane), "gp-new2")
+        self.assertIn(f"Recovery: another ticket's work at {asides[0]} (branch: gp-old1)", proc.stderr)
         self.assertEqual((self.lane / "README.md").read_text(encoding="utf-8"), "hello\n")
         # git still knows both worktrees.
         listing = git(self.fx.rig, "worktree", "list", "--porcelain")
@@ -609,6 +610,7 @@ class WorkerWorktreeTests(unittest.TestCase):
         asides = self.asides()
         self.assertEqual(len(asides), 1)
         self.assertEqual((asides[0] / "junk.txt").read_text(encoding="utf-8"), "keep me\n")
+        self.assertIn(f"Recovery: another ticket's work at {asides[0]} (branch: unknown)", proc.stderr)
         self.assert_is_worktree(self.lane)
         self.assertEqual(self.branch_of(self.lane), "gp-abc1")
 
@@ -717,7 +719,15 @@ class WorkerWorktreeTests(unittest.TestCase):
         proc = self.fx.run(self.lane, "gp-old1")
         aside, = self.asides()
         self.assertGreater(len(proc.stderr), 4096)
-        self.assertIn(f"Recovery: inspect {aside} for staged, unstaged and untracked work", proc.stderr[-4096:])
+        self.assertIn(f"Recovery: own ticket's work at {aside} (branch: gp-old1)", proc.stderr[-4096:])
+
+    def test_detached_lane_reports_another_tickets_work_even_at_target_tip(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        git(self.lane, "switch", "--detach")
+        (self.lane / "README.md").write_text("unfinished\n")
+        proc = self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertIn(f"Recovery: another ticket's work at {aside} (branch: unknown)", proc.stderr)
 
     def test_dirty_restart_copies_effective_start_files(self) -> None:
         self.fx.run(self.lane, "gp-old1")
@@ -725,6 +735,10 @@ class WorkerWorktreeTests(unittest.TestCase):
         (self.lane / ".codex/hooks.json").write_bytes(b'{"worker_key": true, "hooks": {}}\n')
         (self.lane / ".gc/scripts/local helper").write_bytes(b"worker script\n")
         (self.lane / ".gc/scripts/empty").mkdir()
+        directory_modes = {".codex": 0o700, ".gc": 0o750, ".gc/scripts": 0o710,
+                           ".gc/scripts/nested": 0o750, ".gc/scripts/empty": 0o500}
+        for name, mode in directory_modes.items():
+            (self.lane / name).chmod(mode)
         (self.lane / ".gc/tmp/notes").write_bytes(b"private notes\n")
         (self.lane / "README.md").write_text("unfinished\n")
         seeds = self.start_file_snapshot(self.lane)
@@ -738,6 +752,10 @@ class WorkerWorktreeTests(unittest.TestCase):
                 self.assertEqual(copy.read_bytes(), data)
                 self.assertEqual(copy.stat().st_mode, mode)
                 self.assertNotEqual(copy.stat().st_ino, inode)
+        for name, mode in directory_modes.items():
+            with self.subTest(directory=name):
+                self.assertEqual((aside / name).stat().st_mode & 0o7777, mode)
+                self.assertEqual((self.lane / name).stat().st_mode, (aside / name).stat().st_mode)
         self.assertEqual((self.lane / ".gc/scripts/local helper").read_bytes(), b"worker script\n")
         self.assertTrue((self.lane / ".gc/scripts/empty").is_dir())
         self.assertFalse((self.lane / ".gc/tmp/notes").exists())

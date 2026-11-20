@@ -191,6 +191,7 @@ def test_held_branch_handoff_is_an_exception_in_claim_and_continue() -> None:
     claim, rest = fragment().split("## Claim", 1)[1].split("## Workspace", 1)
     workspace, continuation = rest.split("## Continue", 1)
     assert "The held-branch handoff is an exception to this end-of-turn rule" in " ".join(claim.split())
+    assert 'the “end this turn” instruction in Continue' in " ".join(claim.split())
     assert "a held one closed above" not in " ".join(workspace.split())
     handoff = " ".join(continuation.strip().split("\n\n", 1)[0].split())
     assert "end this turn with the claim still assigned" in handoff

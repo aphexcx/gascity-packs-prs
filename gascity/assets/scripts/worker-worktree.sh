@@ -356,6 +356,11 @@ move_aside() {
         fi
         if [ -d "$pending/files" ]; then mv "$pending/files" "$1" || exit 1; fi
     ) || exit 1
+    # A same-ticket restart may detach this aside during branch resolution.
+    # Only a registered worktree can identify the branch it was preserving.
+    if [ -n "$moved_worktree" ] && ref=$(git -C "$aside" symbolic-ref --quiet HEAD 2>/dev/null); then
+        case "$ref" in refs/heads/*) aside_branch=${ref#refs/heads/} ;; esac
+    fi
     if [ -d "$1" ]; then HAS_START_FILES=1; fi
     warn "moved aside $1 -> $aside ($2); nothing was deleted"
 }
@@ -428,7 +433,7 @@ only_staged_start_files() {
     [ -z "$unexpected" ]
 }
 
-copy_start_files() {
+copy_start_files() (
     walk_start_files "$1" -exec sh -ec '
         destination=$1
         worktree=$2
@@ -447,13 +452,26 @@ copy_start_files() {
             mkdir -p "$destination/${file%/*}"
             cp -p "$file" "$destination/$file"
         done
-    ' sh "$2" "$moved_worktree" {} + >/dev/null
-}
+    ' sh "$2" "$moved_worktree" {} + >/dev/null || return 1
+    [ -d "$2" ] || return 0
+    # Finish populating the private staging tree before applying restrictive
+    # modes. Include implicit parents and empty script directories, children first.
+    cd "$2" || return 1
+    find . -depth -type d ! -name . -exec sh -ec '
+        source_dir=$1
+        shift
+        for dir do
+            mode=$(stat -c %a "$source_dir/$dir" 2>/dev/null) || mode=$(stat -f %Lp "$source_dir/$dir")
+            chmod "$mode" "$dir"
+        done
+    ' sh "$1" {} +
+)
 
 # --- classify the work dir ------------------------------------------------------------------
 IS_WORKTREE=0
 HAS_START_FILES=0
 aside=""
+aside_branch=""
 moved_worktree=""
 if [ -d "$WORKDIR" ]; then
     if is_our_worktree "$WORKDIR"; then
@@ -622,6 +640,10 @@ esac
 sha="$(git -C "$WORKDIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 if [ -n "$aside" ]; then
     # gc retains a tail of pre_start output. Keep this after the tracked-edit list.
-    warn "Recovery: inspect $aside for staged, unstaged and untracked work before writing in $WORKDIR."
+    ownership="another ticket's work"
+    if [ -n "$aside_branch" ] && [ "$aside_branch" = "$TARGET" ]; then
+        ownership="own ticket's work"
+    fi
+    warn "Recovery: $ownership at $aside (branch: ${aside_branch:-unknown})"
 fi
 printf 'WORKTREE %s %s %s\n' "$WORKDIR" "$branch" "$sha"

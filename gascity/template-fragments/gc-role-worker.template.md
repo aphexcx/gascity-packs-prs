@@ -80,7 +80,7 @@ yourself. End the turn only when the claimed bead is closed (or its failure
 recorded) and you have followed the Continue section below.
 The held-branch handoff is an exception to this end-of-turn rule. When a
 held branch has an open PR or inconclusive PR records, follow the Workspace
-handoff and its exit instruction in Continue.
+handoff and the “end this turn” instruction in Continue.
 
 This check applies to a bead returned by `action=work`. A failed bead is still
 closed, with its failure metadata set first (see Close). After `action=drain`
@@ -120,10 +120,13 @@ before committing anything.
 
 Before your first write, read this start's entries in `$GC_PRESTART_LOG`
 (default `$GC_DIR/.gc/pre-start.log`), including when the lane is on its branch.
-If there is a `Recovery:` notice, inspect the aside it names for staged,
-unstaged and untracked work. Once the checks below establish that you own the
-lane and hold the bead's branch, carry its unfinished work into the lane, or
-explain in your READY which changes you left in the aside and why.
+If the `Recovery:` notice says `own ticket's work`, first verify that you own
+the lane and hold the bead's branch, then carry staged, unstaged and untracked
+work from the aside into the lane or explain in your READY which changes you
+left there and why.
+If it says `another ticket's work`, leave the aside untouched, copy nothing
+from it, and name its directory and branch in one sentence in your READY (or
+your close note if the contract has no READY) so the mayor can route it.
 
 When the WARN says the bead's branch is checked out in another worktree, do not
 create a second branch naming the bead (two would make the next `pre_start`
