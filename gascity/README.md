@@ -314,6 +314,7 @@ the role (the `[[patches.agent]]` entry below). No prompt-side path makes a
 workspace for an unconfigured role.
 
 This pack ships `assets/scripts/worker-worktree.sh` for the `pre_start` half.
+Update the pack's worker role and the city's copy of `worker-worktree.sh` together to enable dirty-lane recovery.
 Copy it into the city's scripts directory, `.gc/scripts` (gc does not sync a
 pack's `assets/scripts` there), and reference it through `{{.CityRoot}}`:
 
@@ -409,6 +410,11 @@ Only regular files and their listed directory containers qualify; symlinks,
 unexpected empty directories, incomplete catalog `*.tmp` files, and arbitrary
 custom overlay paths retain the aside safety. Skill trees and MCP configuration
 are materialized by later `pre_start` commands and are not on this allowlist.
+When replacing a lane, the helper copies regular untracked files at the
+listed destinations, including merged hook settings and the scripts tree,
+into the fresh lane before checkout. It skips nested Git checkouts. Edits to paths in the
+aside's HEAD or index and untracked files outside those destinations stay in
+the aside.
 
 Git refuses a nonempty destination even with `worktree add --no-checkout`.
 For a staged lane the script registers a temporary worktree without checkout,

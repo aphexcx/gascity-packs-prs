@@ -46,6 +46,8 @@
 #     checkout of ANOTHER repository at the work dir is refused, not moved.
 #     Untracked files (staged skills, hooks, node_modules) do not count as
 #     modifications and ride along on a branch switch.
+#     After an aside, copy regular, untracked files at gc's managed startup
+#     destinations into the fresh lane before the checkout collision check.
 #   * Bead branch: exactly one branch (local or on the remote) whose name
 #     contains the bead id as a whole token — `gp-abc1`, `fix/gp-abc1-x`, never
 #     `gp-abc10` — is reused. None: a new branch named <bead id> is created
@@ -335,16 +337,28 @@ move_aside() {
     n=0
     while [ -e "$aside" ]; do n=$((n + 1)); aside="$1.aside-$stamp-$n"; done
     if is_our_worktree "$1"; then
-        if ! out="$(git_rig worktree move "$1" "$aside" 2>&1)"; then
-            die "git refused to move the worktree $1 aside ($2): $out"
-        fi
         moved_worktree="$aside"
     elif [ -e "$1/.git" ]; then
         die "$1 is a git checkout of another repository; refusing to move or replace it ($2)"
-    else
-        mv "$1" "$aside"
     fi
+    (
+        # Finish copying before moving the original. A read or copy failure
+        # leaves a complete lane for the next start to retry.
+        pending="$(mktemp -d "$1.prepare-XXXXXX")" || exit 1
+        trap 'rm -rf -- "$pending"' EXIT
+        copy_start_files "$1" "$pending/files" || die "cannot copy staged start files from $1"
+        if [ -n "$moved_worktree" ]; then
+            if ! out="$(git_rig worktree move "$1" "$aside" 2>&1)"; then
+                die "git refused to move the worktree $1 aside ($2): $out"
+            fi
+        else
+            mv "$1" "$aside" || exit 1
+        fi
+        if [ -d "$pending/files" ]; then mv "$pending/files" "$1" || exit 1; fi
+    ) || exit 1
+    if [ -d "$1" ]; then HAS_START_FILES=1; fi
     warn "moved aside $1 -> $aside ($2); nothing was deleted"
+    warn "Recovery: inspect $aside for staged, unstaged and untracked work before writing in $1."
 }
 
 # Release only the registered holder moved by this invocation. A directory
@@ -364,7 +378,8 @@ detach_moved_holder() (
 $edits"
 )
 
-# only_staged_start_files: a narrow path AND type allowlist, not all dotfiles.
+# gc does not pass the per-start CopyFiles or overlay manifest to pre_start.
+# Use the same managed destinations for initial staging and aside recovery.
 # Enumerated from gc 72aeaaffa (the installed build): cmd/gc/template_resolve.go
 # (settings/scripts), cmd_start.go (stageHookFiles/claudeSettingsSource),
 # skill_integration.go (skillSnapshotFilePath), and the core pack's
@@ -374,22 +389,29 @@ $edits"
 # user/pack overlays are not identifiable here and retain the aside safety.
 # Do not follow symlinks or accept unexpected empty directories. Relative
 # find patterns keep glob characters in the lane's path literal.
-only_staged_start_files() {
-    unexpected="$(
-        cd "$WORKDIR" && find . -mindepth 1 ! \( \
-            -type d \( \
-                -path './.gc' -o -path './.gc/scripts' -o -path './.gc/scripts/*' -o \
-                -path './.gc/tmp' -o -path './hooks' -o \
-                -path './.gemini' -o -path './.codex' -o -path './.agents' -o \
-                -path './.opencode' -o -path './.opencode/plugins' -o \
-                -path './.mimocode' -o -path './.mimocode/plugin' -o \
-                -path './.github' -o -path './.github/hooks' -o -path './.cursor' -o \
-                -path './.pi' -o -path './.pi/extensions' -o \
-                -path './.omp' -o -path './.omp/hooks' -o \
-                -path './.kimi' -o -path './.kimi/hooks' -o \
-                -path './.kiro' -o -path './.kiro/agents' \
-            \) -o -type f \( \
-                -path './.gc/settings.json' -o -path './.gc/scripts/*' -o \
+walk_start_files() (
+    cd "$1" || exit 1
+    shift
+    # Descend through containers. Apply the caller's find action to the
+    # scripts tree and managed files. Print and prune unexpected entries.
+    find . -mindepth 1 \
+        -name .git -prune -print -o \
+        -type d -exec sh -c 'test -e "$1/.git"' sh {} \; -prune -print -o \
+        -type d \( \
+            -path './.gc' -o -path './.gc/tmp' -o -path './hooks' -o \
+            -path './.gemini' -o -path './.codex' -o -path './.agents' -o \
+            -path './.opencode' -o -path './.opencode/plugins' -o \
+            -path './.mimocode' -o -path './.mimocode/plugin' -o \
+            -path './.github' -o -path './.github/hooks' -o -path './.cursor' -o \
+            -path './.pi' -o -path './.pi/extensions' -o \
+            -path './.omp' -o -path './.omp/hooks' -o \
+            -path './.kimi' -o -path './.kimi/hooks' -o \
+            -path './.kiro' -o -path './.kiro/agents' \
+        \) -o \
+        \( -type d -path './.gc/scripts' -o \
+            \( -type d -o -type f \) -path './.gc/scripts/*' -o \
+            -type f \( \
+                -path './.gc/settings.json' -o \
                 -path './.gc/tmp/skill-catalog-?*.b64' -o -path './hooks/claude.json' -o \
                 -path './.gemini/settings.json' -o -path './.codex/hooks.json' -o \
                 -path './.agents/hooks.json' -o -path './.opencode/plugins/gascity.js' -o \
@@ -399,9 +421,34 @@ only_staged_start_files() {
                 -path './.kimi/config.toml' -o -path './.kimi/hooks/gascity-session-start.py' -o \
                 -path './.kiro/agents/gascity.json' -o -path './AGENTS.md' \
             \) \
-        \) -print
-    )" || die "cannot inspect staged start files in $WORKDIR"
+        \) "$@" -o -prune -print
+)
+
+only_staged_start_files() {
+    unexpected="$(walk_start_files "$WORKDIR")" || die "cannot inspect staged start files in $WORKDIR"
     [ -z "$unexpected" ]
+}
+
+copy_start_files() {
+    walk_start_files "$1" -exec sh -ec '
+        destination=$1
+        worktree=$2
+        shift 2
+        for file do
+            if [ -d "$file" ]; then
+                mkdir -p "$destination/$file"
+                continue
+            fi
+            if [ -n "$worktree" ]; then
+                # Include ignored startup files, exclude paths in either the
+                # index or HEAD (also covers a staged deletion with new bytes).
+                other=$(git --literal-pathspecs ls-files --others --with-tree=HEAD -- "$file")
+                [ -n "$other" ] || continue
+            fi
+            mkdir -p "$destination/${file%/*}"
+            cp -p "$file" "$destination/$file"
+        done
+    ' sh "$2" "$moved_worktree" {} + >/dev/null
 }
 
 # --- classify the work dir ------------------------------------------------------------------

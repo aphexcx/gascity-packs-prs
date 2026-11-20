@@ -78,6 +78,9 @@ next steps, or a promise about work not yet done, do that work now with tool
 calls — including retrying after errors and gathering missing information
 yourself. End the turn only when the claimed bead is closed (or its failure
 recorded) and you have followed the Continue section below.
+The held-branch handoff is an exception to this end-of-turn rule. When a
+held branch has an open PR or inconclusive PR records, follow the Workspace
+handoff and its exit instruction in Continue.
 
 This check applies to a bead returned by `action=work`. A failed bead is still
 closed, with its failure metadata set first (see Close). After `action=drain`
@@ -113,8 +116,16 @@ bead, or detached (no trigger bead, or that branch is checked out in another
 worktree; WARN in the pre_start log): if `git branch --show-current` prints
 nothing, read that log first. With no trigger bead the lane is detached at
 the base: take the claimed bead's branch after the claim, by the rule below,
-before committing anything. When
-the WARN says the bead's branch is checked out in another worktree, do not
+before committing anything.
+
+Before your first write, read this start's entries in `$GC_PRESTART_LOG`
+(default `$GC_DIR/.gc/pre-start.log`), including when the lane is on its branch.
+If there is a `Recovery:` notice, inspect the aside it names for staged,
+unstaged and untracked work. Once the checks below establish that you own the
+lane and hold the bead's branch, carry its unfinished work into the lane, or
+explain in your READY which changes you left in the aside and why.
+
+When the WARN says the bead's branch is checked out in another worktree, do not
 create a second branch naming the bead (two would make the next `pre_start`
 fail closed). For an in_progress bead with an open PR for the held branch,
 mail the mayor the holder path, PR URL and branch head, then stop with the bead open.
@@ -166,9 +177,9 @@ restamp it when they differ (older `gc` builds stamp the rig root's branch).
 The bead's branch is the one whose name contains the claimed bead id as a
 whole token, the branch `pre_start` reused or created for it, so a record
 naming anything else is a claim-time stamp and your branch wins, and a record
-that names the bead is the branch you are on already (a held one closed
-above). A lane `pre_start` left detached because it had no trigger bead
-takes that branch itself, after the boundary test, the way `pre_start`
+that names the bead is the branch you are on already. A lane `pre_start` left
+detached because it had no trigger bead takes that branch itself, after the
+boundary test, the way `pre_start`
 would: list every branch naming `$CLAIMED_BEAD_ID` as a whole token by full
 ref name (`git -C "$GC_DIR" for-each-ref --format='%(refname)' refs/heads`
 with `refs/heads/` removed, and `refs/remotes/origin` with
@@ -346,6 +357,8 @@ and do not idle: record the failure contract (default `gc.outcome=fail`,
 `gc.failure_class=pr_handoff_failed`, PR URL in the reason) and close.
 
 ## Continue
+
+After the held-branch handoff, leave the bead open, run `gc runtime drain-ack` and exit.
 
 After close, inspect `CLAIMED_CONTINUATION_GROUP` before another claim:
 

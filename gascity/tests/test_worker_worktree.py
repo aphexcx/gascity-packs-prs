@@ -223,6 +223,8 @@ class WorkerWorktreeTests(unittest.TestCase):
                 self.assertRegex(asides[0].name, rf"^{lane.name}\.aside-\d{{8}}T\d{{6}}Z(?:-\d+)?$")
                 self.assertEqual(self.start_file_snapshot(asides[0]), seeds)
                 self.assertEqual((asides[0] / stray).read_text(), "keep stray\n")
+                self.assertEqual((lane / ".gc/settings.json").read_bytes(), seeds[".gc/settings.json"][0])
+                self.assertFalse((lane / stray).exists())
                 self.assert_is_worktree(lane)
 
     def test_staged_start_file_symlink_is_not_treated_as_empty(self) -> None:
@@ -233,7 +235,19 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.fx.run(self.lane, "gp-link1")
         self.assertEqual(len(self.asides()), 1)
         self.assertTrue((self.asides()[0] / ".gc/settings.json").is_symlink())
+        self.assertFalse((self.lane / ".gc/settings.json").is_symlink())
+        self.assertFalse((self.lane / ".gc/settings.json").exists())
         self.assertEqual(external.read_text(), "keep external\n")
+
+    def test_staged_start_files_do_not_copy_a_nested_checkout(self) -> None:
+        nested = self.lane / ".gc/scripts/project"
+        nested.mkdir(parents=True)
+        git(nested, "init", "--quiet")
+        commit(nested, "source", "repository content\n", "local work")
+        self.fx.run(self.lane, "gp-nested1")
+        aside, = self.asides()
+        self.assertEqual((aside / ".gc/scripts/project/source").read_text(), "repository content\n")
+        self.assertFalse(nested.exists())
 
     def test_staged_start_files_survive_detached_and_local_branch_creation(self) -> None:
         for index, bead in enumerate((None, "gp-local1")):
@@ -559,7 +573,9 @@ class WorkerWorktreeTests(unittest.TestCase):
         if not exclude.is_absolute():
             exclude = self.lane / exclude
         exclude.parent.mkdir(parents=True, exist_ok=True)
-        exclude.write_text("build/\n", encoding="utf-8")
+        exclude.write_text("build/\n.gc/\n", encoding="utf-8")
+        (self.lane / ".gc").mkdir()
+        (self.lane / ".gc/settings.json").write_bytes(b"ignored settings\n")
         (self.lane / "build").mkdir()
         (self.lane / "build" / "out.txt").write_text("local artifact, ignored\n", encoding="utf-8")
         self.assertEqual(git(self.lane, "status", "--porcelain"), "")
@@ -568,6 +584,8 @@ class WorkerWorktreeTests(unittest.TestCase):
         asides = self.asides()
         self.assertEqual(len(asides), 1)
         self.assertEqual((asides[0] / "build" / "out.txt").read_text(encoding="utf-8"), "local artifact, ignored\n")
+        for tree in (self.lane, asides[0]):
+            self.assertEqual((tree / ".gc/settings.json").read_bytes(), b"ignored settings\n")
         self.assertEqual(self.branch_of(self.lane), "gp-ign2-tracks-build")
         self.assertEqual((self.lane / "build" / "out.txt").read_text(encoding="utf-8"), "tracked\n")
         self.assertNotEqual(sha, "")
@@ -690,6 +708,97 @@ class WorkerWorktreeTests(unittest.TestCase):
 
     def test_dirty_restart_preserves_and_reports_both_tracked_edits(self) -> None:
         self.check_dirty_restart(second_edit=True)
+
+    def test_dirty_restart_logs_the_recovery_path(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        (self.lane / "README.md").write_text("unfinished\n")
+        proc = self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertIn(f"Recovery: inspect {aside} for staged, unstaged and untracked work", proc.stderr)
+
+    def test_dirty_restart_copies_effective_start_files(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        self.seed_start_files(self.lane)
+        (self.lane / ".codex/hooks.json").write_bytes(b'{"worker_key": true, "hooks": {}}\n')
+        (self.lane / ".gc/scripts/local helper").write_bytes(b"worker script\n")
+        (self.lane / ".gc/scripts/empty").mkdir()
+        (self.lane / ".gc/tmp/notes").write_bytes(b"private notes\n")
+        (self.lane / "README.md").write_text("unfinished\n")
+        seeds = self.start_file_snapshot(self.lane)
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.branch_of(self.lane), "gp-old1")
+        self.assertEqual(self.start_file_snapshot(aside), seeds)
+        for name, (data, mode, inode) in seeds.items():
+            with self.subTest(name=name):
+                copy = self.lane / name
+                self.assertEqual(copy.read_bytes(), data)
+                self.assertEqual(copy.stat().st_mode, mode)
+                self.assertNotEqual(copy.stat().st_ino, inode)
+        self.assertEqual((self.lane / ".gc/scripts/local helper").read_bytes(), b"worker script\n")
+        self.assertTrue((self.lane / ".gc/scripts/empty").is_dir())
+        self.assertFalse((self.lane / ".gc/tmp/notes").exists())
+        self.assertEqual((aside / ".gc/tmp/notes").read_bytes(), b"private notes\n")
+
+    def test_dirty_restart_can_retry_a_failed_start_file_copy(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        seeds = self.seed_start_files(self.lane)
+        (self.lane / "README.md").write_text("unfinished\n")
+        tools = self.fx.root / "tools"
+        tools.mkdir()
+        copy = tools / "cp"
+        copy.write_text("#!/bin/sh\nexit 1\n")
+        copy.chmod(0o755)
+        failed = self.fx.run(self.lane, "gp-old1", check=False, env_extra={"PATH": f"{tools}:{os.environ['PATH']}"})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.start_file_snapshot(self.lane), seeds)
+        self.assertEqual(self.asides(), [])
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.start_file_snapshot(aside), seeds)
+        self.assertEqual((self.lane / ".gc/settings.json").read_bytes(), seeds[".gc/settings.json"][0])
+
+    def test_dirty_restart_keeps_tracked_start_file_changes_only_in_aside(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        commit(self.lane, "AGENTS.md", "committed\n", "track instructions")
+        git(self.lane, "rm", "--cached", "AGENTS.md")
+        (self.lane / "AGENTS.md").write_text("after staged deletion\n")
+        new = ".github/copilot-instructions.md"
+        (self.lane / ".github").mkdir()
+        (self.lane / new).write_text("staged addition\n")
+        git(self.lane, "add", new)
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual((self.lane / "AGENTS.md").read_text(), "committed\n")
+        self.assertFalse((self.lane / new).exists())
+        self.assertEqual((aside / "AGENTS.md").read_text(), "after staged deletion\n")
+        self.assertEqual(git(aside, "show", f":{new}"), "staged addition")
+
+    def test_dirty_restart_refuses_target_colliding_with_start_file(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        self.fx.push_branch("gp-next1", "AGENTS.md")
+        (self.lane / "AGENTS.md").write_text("local instructions\n")
+        (self.lane / "README.md").write_text("unfinished\n")
+        proc = self.fx.run(self.lane, "gp-next1", check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        aside, = self.asides()
+        self.assertEqual((aside / "AGENTS.md").read_text(), "local instructions\n")
+        self.assertNotIn("WORKTREE ", proc.stdout)
+
+    def test_dirty_restart_disables_checkout_hooks_in_the_aside(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        (self.lane / "README.md").write_text("unfinished\n")
+        hooks = self.fx.root / "checkout-hooks"
+        hooks.mkdir()
+        hook = hooks / "post-checkout"
+        hook.write_text("#!/bin/sh\nprintf 'ran\\n' >> hook-ran\n")
+        hook.chmod(0o755)
+        git(self.fx.rig, "config", "core.hooksPath", str(hooks))
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.branch_of(aside), "HEAD")
+        self.assertFalse((aside / "hook-ran").exists())
+        self.assertTrue((self.lane / "hook-ran").is_file())
 
     def check_dirty_restart(self, *, second_edit: bool) -> None:
         self.fx.run(self.lane, "gp-old1")

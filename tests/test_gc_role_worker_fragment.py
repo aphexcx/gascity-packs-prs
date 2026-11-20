@@ -136,7 +136,7 @@ def test_workspace_restamp_never_writes_over_a_recorded_item_branch() -> None:
         "The bead's branch is the one whose name contains the claimed bead id as a whole token",
         "the branch `pre_start` reused or created for it",
         "a record naming anything else is a claim-time stamp and your branch wins",
-        "a record that names the bead is the branch you are on already (a held one closed above)",
+        "a record that names the bead is the branch you are on already",
         "Never write a fresh base branch over a recorded item branch",
         "never stamp an empty value",
         "name any branch you create for the claimed bead (`$CLAIMED_BEAD_ID` as a whole token) so the next `pre_start` finds it",
@@ -185,6 +185,20 @@ def test_held_branch_keeps_in_progress_work_with_an_open_pr() -> None:
         assert clause in before_claim
     assert "If another worktree holds the branch, apply the held-branch rule above" in after_claim
     assert "never `--force`" in after_claim
+
+
+def test_held_branch_handoff_is_an_exception_in_claim_and_continue() -> None:
+    claim, rest = fragment().split("## Claim", 1)[1].split("## Workspace", 1)
+    workspace, continuation = rest.split("## Continue", 1)
+    assert "The held-branch handoff is an exception to this end-of-turn rule" in " ".join(claim.split())
+    assert "a held one closed above" not in " ".join(workspace.split())
+    assert "After the held-branch handoff, leave the bead open" in " ".join(continuation.split())
+
+
+def test_worker_restart_documents_the_coordinated_update() -> None:
+    for path in (README, README.with_name("CHANGELOG.md")):
+        text = " ".join(path.read_text(encoding="utf-8").split())
+        assert "Update the pack's worker role and the city's copy of `worker-worktree.sh` together" in text
 
 
 def test_workspace_section_never_names_the_rig_root_as_a_place_to_work() -> None:
