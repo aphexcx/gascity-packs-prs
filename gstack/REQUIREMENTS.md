@@ -29,7 +29,7 @@ for every derived pack.
   review anchor (`needs = ["review"]`) and `release-readiness` after QA
   (`needs = ["qa"]`); `finalize` is rewired to need `release-readiness`, and
   `publish` still needs `finalize`. Each anchor expands a check-gated loop
-  (`implementation-review-approved.sh`; QA allows 6 attempts,
+  (`implementation-review-approved.sh`; QA allows 3 attempts,
   release-readiness 4) whose final lane owns `code_review.verdict=done|iterate`
   for the loop: `synthesize-qa` for QA and `synthesize-release-readiness` for
   release readiness. Their outputs are the approved QA summary recorded on the

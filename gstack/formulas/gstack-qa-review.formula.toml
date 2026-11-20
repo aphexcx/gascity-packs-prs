@@ -32,7 +32,7 @@ metadata = { "gc.run_target" = "gc.run-operator" }
 description_file = "../assets/workflows/gstack-qa-review/{target}.gstack-qa-loop.md"
 
 [template.check]
-max_attempts = 6
+max_attempts = 3
 
 [template.check.check]
 mode = "exec"

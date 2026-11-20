@@ -134,7 +134,7 @@ anchor is renamed, skipped, or reordered; `prepare` stays inherited.
 `review` and before `finalize`: `qa` needs `review`, `release-readiness` needs
 `qa`, `finalize` is rewired to need `release-readiness`, and `publish` still
 needs `finalize`. Each expands a check-gated loop
-(`implementation-review-approved.sh`; QA allows 6 attempts, release-readiness
+(`implementation-review-approved.sh`; QA allows 3 attempts, release-readiness
 4) whose final lane (`synthesize-qa`, `synthesize-release-readiness`) owns the
 `code_review.verdict=done|iterate` loop verdict. Their outputs are the
 approved QA summary recorded on the workflow root at
