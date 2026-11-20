@@ -51,11 +51,11 @@
 #     `gp-abc10` — is reused. None: a new branch named <bead id> is created
 #     from --base. Several: keep a clean lane's current candidate, else use
 #     the exact bead name, else fail closed and list them. Log the chosen rule.
-#   * A bead branch already checked out in another worktree is not stolen: the
-#     work dir is left detached at that branch's tip and a WARN line names the
-#     holder. Do not create a second branch naming the bead (two candidates
-#     fail the next run closed); the role prompt fails closed (branch-held)
-#     until the holder releases the branch.
+#   * If this run just moved the lane aside on its bead branch, detach that
+#     aside at the same commit and list its tracked edits for recovery. The
+#     restarted lane takes the branch. For any other holder, or if the aside
+#     cannot detach safely, leave the lane detached at the tip and name the
+#     holder so the worker can follow the role's held-branch rule.
 #   * No bead: the work dir is detached at --base, whatever branch it was on
 #     (the branch itself is kept; nothing is deleted).
 #   * Idempotent for a clean work dir already on the requested branch (or
@@ -338,6 +338,7 @@ move_aside() {
         if ! out="$(git_rig worktree move "$1" "$aside" 2>&1)"; then
             die "git refused to move the worktree $1 aside ($2): $out"
         fi
+        moved_worktree="$aside"
     elif [ -e "$1/.git" ]; then
         die "$1 is a git checkout of another repository; refusing to move or replace it ($2)"
     else
@@ -345,6 +346,23 @@ move_aside() {
     fi
     warn "moved aside $1 -> $aside ($2); nothing was deleted"
 }
+
+# Release only the registered holder moved by this invocation. A directory
+# name resembling an aside is insufficient authority to change its HEAD.
+detach_moved_holder() (
+    [ -n "$moved_worktree" ] && [ "$moved_worktree" = "$elsewhere" ] || return 1
+    [ "$(abs "$elsewhere")" = "$moved_worktree" ] || return 1
+    ref="refs/heads/$TARGET"
+    [ "$(git -C "$elsewhere" symbolic-ref --quiet HEAD)" = "$ref" ] || return 1
+    tip="$(git_rig rev-parse --verify "$ref^{commit}")" || return 1
+    [ "$(git -C "$elsewhere" rev-parse --verify HEAD)" = "$tip" ] || return 1
+    edits="$(git --no-optional-locks -C "$elsewhere" status --porcelain --untracked-files=no)" || return 1
+    # A post-checkout hook must not rewrite files in the preserved worktree.
+    git -C "$elsewhere" -c core.hooksPath=/dev/null switch --quiet \
+        --no-overwrite-ignore --no-recurse-submodules --detach || return 1
+    warn "detached $elsewhere at $tip; preserved tracked edits:
+$edits"
+)
 
 # only_staged_start_files: a narrow path AND type allowlist, not all dotfiles.
 # Enumerated from gc 72aeaaffa (the installed build): cmd/gc/template_resolve.go
@@ -389,6 +407,7 @@ only_staged_start_files() {
 # --- classify the work dir ------------------------------------------------------------------
 IS_WORKTREE=0
 HAS_START_FILES=0
+moved_worktree=""
 if [ -d "$WORKDIR" ]; then
     if is_our_worktree "$WORKDIR"; then
         IS_WORKTREE=1
@@ -406,9 +425,8 @@ if [ -d "$WORKDIR" ]; then
 fi
 
 # --- resolve what the work dir should have checked out --------------------------------------
-# Runs AFTER classification so a worktree just moved aside (which still holds
-# its branch) is seen as "checked out elsewhere" and the detached fallback
-# applies instead of a failing worktree add.
+# Resolve holders after classification, when the exact path of any worktree
+# moved by this invocation is known. Older asides may still be in use.
 # MODE: local (check out TARGET), remote (track TARGET from the remote),
 # new (create TARGET from BASE_SHA), detached (detach at DETACH_AT, a commit).
 MODE=""
@@ -440,10 +458,10 @@ else
         TARGET="$candidates"
         if git_rig show-ref --verify --quiet "refs/heads/$TARGET"; then
             elsewhere="$(checked_out_at "$TARGET" | grep -v -x -F -- "$WORKDIR" || true)"
-            if [ -n "$elsewhere" ]; then
+            if [ -n "$elsewhere" ] && ! detach_moved_holder; then
                 MODE="detached"
                 DETACH_AT="$(git_rig rev-parse --verify "refs/heads/$TARGET^{commit}")"
-                warn "branch $TARGET is checked out at $elsewhere; leaving $WORKDIR detached at its tip. Do not create a second branch naming the bead; fail closed (branch-held) until that holder releases it."
+                warn "branch $TARGET is checked out at $elsewhere; leaving $WORKDIR detached at its tip. Do not create a second branch naming the bead. Follow the worker role's held-branch rule."
             else
                 MODE="local"
             fi

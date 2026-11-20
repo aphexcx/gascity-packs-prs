@@ -116,7 +116,15 @@ the base: take the claimed bead's branch after the claim, by the rule below,
 before committing anything. When
 the WARN says the bead's branch is checked out in another worktree, do not
 create a second branch naming the bead (two would make the next `pre_start`
-fail closed): close with `gc.outcome=fail` and `gc.failure_class=branch-held`
+fail closed). For an in_progress bead with an open PR for the held branch,
+mail the mayor the holder path, PR URL and branch head, then stop with the bead open.
+Read the holder from `git worktree list`, the head from `refs/heads/<branch>`,
+and the PR from the claimed bead's metadata (`gc.pr`) and recorded handoff.
+Treat a recorded PR for that branch as open unless the record shows it closed
+or merged. A missing URL alone cannot establish that a PR was never opened.
+If the records are inconclusive, mail the mayor the holder and head, and stop
+with the bead open for a ruling. Use the local records without a network lookup.
+If the branch has no PR open, close with `gc.outcome=fail` and `gc.failure_class=branch-held`
 naming that holder from `git worktree list`, and mail the mayor, who releases
 it from that checkout; the next session's `pre_start` then reuses the branch
 and its commits.
@@ -169,8 +177,9 @@ with `refs/heads/` removed, and `refs/remotes/origin` with
 refs/remotes/origin/<branch>` when it is only on `origin`: the start point by
 full ref, since a tag named `origin/<branch>` makes the bare form fail);
 none: `git -C "$GC_DIR"
-switch -c "$CLAIMED_BEAD_ID"`; several, or a refusal (another worktree holds
-it: `branch-held`, holder named from `git worktree list`): close the bead
+switch -c "$CLAIMED_BEAD_ID"`; several: close the bead `gc.outcome=fail` and mail the mayor.
+If another worktree holds the branch, apply the held-branch rule above,
+including the open PR handoff. For any other switch refusal, close the bead
 `gc.outcome=fail` and mail the mayor, never `--force`. Never write a fresh
 base branch over a recorded item branch, never stamp an empty value, and
 name any branch you create for the claimed bead (`$CLAIMED_BEAD_ID` as a

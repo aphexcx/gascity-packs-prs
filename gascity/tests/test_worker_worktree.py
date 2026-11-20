@@ -685,19 +685,76 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertIn("clearing stale lock", proc.stderr)
         self.assertEqual(self.branch_of(self.lane), "gp-abc1")
 
-    def test_dirty_lane_on_the_same_bead_restarts_detached_at_its_tip(self) -> None:
+    def test_dirty_lane_on_the_same_bead_reclaims_its_branch_at_the_tip(self) -> None:
+        self.check_dirty_restart(second_edit=False)
+
+    def test_dirty_restart_preserves_and_reports_both_tracked_edits(self) -> None:
+        self.check_dirty_restart(second_edit=True)
+
+    def check_dirty_restart(self, *, second_edit: bool) -> None:
         self.fx.run(self.lane, "gp-old1")
-        sha = commit(self.lane, "work.txt", "committed\n", "bead work")
-        (self.lane / "README.md").write_text("uncommitted edit\n", encoding="utf-8")
+        sha = commit(self.lane, "build.lock", "initial\n", "bead work")
+        (self.lane / "build.lock").write_text("regenerated\n")
+        if second_edit:
+            (self.lane / "README.md").write_text("staged edit\n")
+            git(self.lane, "add", "README.md")
+            (self.lane / "README.md").write_text("further edit\n")
+        (self.lane / "notes").write_text("untracked\n")
         proc = self.fx.run(self.lane, "gp-old1")
-        asides = self.asides()
-        self.assertEqual(len(asides), 1)
-        self.assertEqual(self.branch_of(asides[0]), "gp-old1")
-        self.assertEqual((asides[0] / "README.md").read_text(encoding="utf-8"), "uncommitted edit\n")
-        self.assertEqual(self.branch_of(self.lane), "HEAD")
+        aside, = self.asides()
+        self.assertEqual(self.branch_of(self.lane), "gp-old1")
         self.assertEqual(git(self.lane, "rev-parse", "HEAD"), sha)
+        self.assertEqual((self.lane / "build.lock").read_text(), "initial\n")
+        self.assertEqual(self.branch_of(aside), "HEAD")
+        self.assertEqual(git(aside, "rev-parse", "HEAD"), sha)
+        self.assertEqual((aside / "build.lock").read_text(), "regenerated\n")
+        self.assertEqual((aside / "notes").read_text(), "untracked\n")
+        self.assertIn(f"detached {aside}", proc.stderr)
+        self.assertIn("build.lock", proc.stderr)
+        if second_edit:
+            self.assertEqual(git(aside, "show", ":README.md"), "staged edit")
+            self.assertEqual((aside / "README.md").read_text(), "further edit\n")
+            self.assertIn("README.md", proc.stderr)
+
+    def test_preexisting_asides_holding_the_branch_are_left_alone(self) -> None:
+        for name in ("other-lane.aside-old", f"{self.lane.name}.aside-old"):
+            with self.subTest(name=name):
+                holder = self.lane.parent / name
+                self.fx.run(holder, "gp-old1")
+                proc = self.fx.run(self.lane, "gp-old1")
+                self.assertEqual(self.branch_of(self.lane), "HEAD")
+                self.assertEqual(self.branch_of(holder), "gp-old1")
+                self.assertIn(f"checked out at {holder}", proc.stderr)
+                git(holder, "switch", "--detach")
+
+    def test_dirty_restart_preserves_a_merge_that_refuses_to_detach(self) -> None:
+        feature = self.fx.push_branch("feature")
+        self.fx.run(self.lane, "gp-old1")
+        git(self.lane, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+            "merge", "--no-commit", "--no-ff", feature)
+        proc = self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.branch_of(self.lane), "HEAD")
+        self.assertEqual(self.branch_of(aside), "gp-old1")
+        self.assertEqual(git(aside, "rev-parse", "MERGE_HEAD"), feature)
+        self.assertEqual(git(aside, "show", ":feature.txt"), "feature")
+        self.assertIn(f"checked out at {aside}", proc.stderr)
+
+    def test_detached_commit_in_an_older_aside_is_left_alone(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        tip = git(self.lane, "rev-parse", "HEAD")
+        aside = self.lane.with_name(f"{self.lane.name}.aside-old")
+        git(self.fx.rig, "worktree", "add", "--detach", str(aside), tip)
+        ahead = commit(aside, "notes", "aside only\n", "detached work")
+        holder = self.lane.parent / "other-lane"
+        git(self.fx.rig, "worktree", "move", str(self.lane), str(holder))
+        proc = self.fx.run(self.lane, "gp-old1")
         self.assertIn("checked out at", proc.stderr)
-        self.assertEqual(proc.stdout.split()[2], "detached")
+        self.assertEqual(self.branch_of(self.lane), "HEAD")
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), tip)
+        self.assertEqual(self.branch_of(holder), "gp-old1")
+        self.assertEqual(self.branch_of(aside), "HEAD")
+        self.assertEqual(git(aside, "rev-parse", "HEAD"), ahead)
 
     def test_base_head_fallback_means_the_rig_head_not_the_lane_head(self) -> None:
         # No usable remote: BASE falls back to HEAD, which must be the rig's.

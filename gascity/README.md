@@ -476,11 +476,16 @@ decides nothing, because a claim-time stamp can name anything. The same
 name rule binds a directly claimed bead: its branch is the one naming the
 bead id, a worker whose `pre_start` had no trigger bead takes that branch
 itself after the claim by the same listing (full ref names, one namespace
-prefix removed), a worker whose `pre_start` found that branch held elsewhere
-closes `gc.failure_class=branch-held` naming the holder instead of creating a
-second candidate, and a branch recorded before this rule under a name
-without the id is renamed by the operator before the rule is rolled out on a
-city.
+prefix removed). If the current start moved its own lane aside on the bead
+branch, it detaches that aside at the branch tip, reports its tracked edits,
+and checks the branch out in the lane. Older asides and other holders stay
+in place. For an in_progress bead with an open PR for a held branch, the
+worker mails the mayor the holder path, PR URL and branch head, then stops
+with the bead open. The worker uses the bead's recorded PR and handoff and
+leaves an uncertain PR state for the mayor to resolve. If the branch has no PR open,
+the worker closes `gc.failure_class=branch-held` naming the holder.
+A branch recorded before this rule under a name without the id is renamed by the operator
+before the rule is rolled out on a city.
 
 Two related core behaviors complete the picture:
 
