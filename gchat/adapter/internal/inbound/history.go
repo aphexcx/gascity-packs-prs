@@ -255,14 +255,10 @@ func HistorySpeaker(l *ledger.Ledger, cfg *config.Config, c puller.Change) prove
 }
 
 // firstReadAdmits lifts only the join part of the bound for an adding message.
-func firstReadAdmits(l *ledger.Ledger, c puller.Change, identity string) bool {
+func firstReadAdmits(l *ledger.Ledger, c puller.Change, identity, kind string) bool {
 	s := l.Spaces[c.Space]
 	if s == nil || s.FirstRead == nil || s.FirstRead.Complete || !s.HistoryStart.IsZero() || c.Kind != "message.created" || c.Message == nil {
 		return false
-	}
-	kind := s.Kind
-	if kind == "" && c.Message.Space != nil {
-		kind = spaceKind(c.Message.Space)
 	}
 	at := c.ActTime()
 	return at.After(s.FirstRead.Lower) && at.After(l.HistoryFloor) && at.Before(s.JoinedAt) &&
@@ -297,8 +293,13 @@ func (p *Processor) history(ctx context.Context, c puller.Change, catchUp bool) 
 		}
 	}
 	cause := HistorySkipCause(l, c)
-	if cause == "before_history_floor" && firstReadAdmits(l, c, p.identity()) {
-		cause = ""
+	if cause == "before_history_floor" && firstReadAdmits(l, c, p.identity(), "dm") {
+		// Only the space's kind can still refuse it: look it up as message()
+		// does. A failed lookup records nothing; message() repeats it, as on main.
+		space, err := p.resolveSpace(ctx, c.Space, c.Message.Space, true)
+		if err != nil || firstReadAdmits(l, c, p.identity(), space.Kind) {
+			cause = ""
+		}
 	}
 	if cause == "" {
 		return false, nil

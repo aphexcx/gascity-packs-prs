@@ -1,0 +1,26 @@
+go version go1.27.3 darwin/arm64
+ok  	gchat-adapter/cmd/gc-gchat-adapter	5.114s
+ok  	gchat-adapter/internal/ack	0.330s
+ok  	gchat-adapter/internal/app	561.023s
+ok  	gchat-adapter/internal/catchup	67.721s
+ok  	gchat-adapter/internal/chat	2.023s
+ok  	gchat-adapter/internal/config	0.351s
+ok  	gchat-adapter/internal/events	2.270s
+ok  	gchat-adapter/internal/fakes/fakegc	0.271s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.570s
+ok  	gchat-adapter/internal/gcclient	0.252s
+ok  	gchat-adapter/internal/inbound	52.290s
+ok  	gchat-adapter/internal/ledger	1.027s
+ok  	gchat-adapter/internal/markdown	0.257s
+ok  	gchat-adapter/internal/media	0.202s
+ok  	gchat-adapter/internal/neversilent	7.181s
+ok  	gchat-adapter/internal/principal	30.231s
+ok  	gchat-adapter/internal/provenance	0.183s
+ok  	gchat-adapter/internal/puller	19.339s
+ok  	gchat-adapter/internal/redact	0.179s
+ok  	gchat-adapter/internal/server	73.910s
+ok  	gchat-adapter/internal/stopwatch	0.312s
+ok  	gchat-adapter/internal/token	1.433s
+ok  	gchat-adapter/internal/wire	0.155s
+ok  	gchat-adapter/test/contract	0.282s
+ok  	gchat-adapter/test/e2e	483.503s

@@ -190,6 +190,37 @@ func TestJoinedSpaceHistoryAfterMigration(t *testing.T) {
 		checkTurns(t, f, first)
 		historyLower(t, f, listed)
 	})
+	for _, tc := range []struct {
+		name  string
+		space *api.Space
+	}{
+		{"live-dm-after-join-name-only", &api.Space{Name: space}},
+		{"live-dm-after-join-no-space", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setupMigrated(t, listed, true)
+			joined := listed.Add(time.Minute)
+			f.opts.Ledger.HistoryFloor = listed
+			first := f.addMessage(space, 2, joined.Add(-2*time.Second))
+			join(t, f, joined)
+			event := *first
+			event.Space = tc.space
+			live(t, f, &event)
+			checkTurns(t, f, first)
+		})
+	}
+	t.Run("live-room-after-join-name-only", func(t *testing.T) {
+		f := setupMigrated(t, listed, false)
+		joined := listed.Add(time.Minute)
+		f.opts.Ledger.HistoryFloor = listed
+		early := f.addMessage(space, 1, joined.Add(-2*time.Second))
+		current := f.addMessage(space, 2, joined.Add(time.Minute))
+		join(t, f, joined)
+		event := *early
+		event.Space = &api.Space{Name: space}
+		live(t, f, &event)
+		checkTurns(t, f, current)
+	})
 }
 
 func TestTheReachBackHappensOnce(t *testing.T) {

@@ -1,0 +1,19 @@
+=== RUN   TestJoinedSpaceHistoryAfterMigration
+=== RUN   TestJoinedSpaceHistoryAfterMigration/offline-dm
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-room-before-join
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-dm-after-join
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-dm-after-join-name-only
+    join_test.go:209: turns = [], want only spaces/joined/messages/m0002
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-dm-after-join-no-space
+    join_test.go:209: turns = [], want only spaces/joined/messages/m0002
+=== RUN   TestJoinedSpaceHistoryAfterMigration/live-room-after-join-name-only
+--- FAIL: TestJoinedSpaceHistoryAfterMigration (0.79s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/offline-dm (0.12s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-room-before-join (0.15s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-dm-after-join (0.15s)
+    --- FAIL: TestJoinedSpaceHistoryAfterMigration/live-dm-after-join-name-only (0.12s)
+    --- FAIL: TestJoinedSpaceHistoryAfterMigration/live-dm-after-join-no-space (0.11s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-room-after-join-name-only (0.14s)
+FAIL
+FAIL	gchat-adapter/internal/catchup	1.038s
+FAIL
