@@ -1,0 +1,56 @@
+Node v24.21.0. Each row runs env -u GC_BIN make test-reachable on implementation 567f0c781599163726ff119dcba9d683bcddcb67.
+Loads are the one-minute average at start and finish. The final two runs used low-priority CPU workers.
+run 1, load 19.89 to 21.44, exit 0 | all collection caps, 100 warm decisions: p95 CPU=17.83 ms | extra work=false, median CPU delta=11.85 ms, wall p95 hook=55.84 ms bare=44.52 ms | extra work=true, median CPU delta=162.05 ms, wall p95 hook=218.84 ms bare=37.71 ms | pass 175 | fail 0 | skipped 1
+run 2, load 21.44 to 19.20, exit 0 | all collection caps, 100 warm decisions: p95 CPU=18.67 ms | extra work=false, median CPU delta=12.18 ms, wall p95 hook=63.02 ms bare=40.21 ms | extra work=true, median CPU delta=162.02 ms, wall p95 hook=212.93 ms bare=38.84 ms | pass 175 | fail 0 | skipped 1
+run 3, load 19.20 to 17.60, exit 0 | all collection caps, 100 warm decisions: p95 CPU=17.53 ms | extra work=false, median CPU delta=10.34 ms, wall p95 hook=56.13 ms bare=38.83 ms | extra work=true, median CPU delta=161.31 ms, wall p95 hook=205.86 ms bare=41.12 ms | pass 175 | fail 0 | skipped 1
+run 4, load 17.60 to 15.99, exit 0 | all collection caps, 100 warm decisions: p95 CPU=20.72 ms | extra work=false, median CPU delta=13.18 ms, wall p95 hook=106.16 ms bare=41.32 ms | extra work=true, median CPU delta=162.34 ms, wall p95 hook=229.88 ms bare=45.22 ms | pass 175 | fail 0 | skipped 1
+run 5, load 24.96 to 62.04, exit 2 | all collection caps, 100 warm decisions: p95 CPU=20.33 ms | extra work=false, median CPU delta=13.04 ms, wall p95 hook=100.13 ms bare=63.38 ms | extra work=true, median CPU delta=164.36 ms, wall p95 hook=522.22 ms bare=66.92 ms | pass 174 | fail 1 | skipped 1 | not ok 115 - review 4: archive replay advances in bounded chunks without dropping rows
+run 6, load 62.04 to 74.11, exit 2 | all collection caps, 100 warm decisions: p95 CPU=20.86 ms | extra work=false, median CPU delta=11.01 ms, wall p95 hook=129.51 ms bare=87.33 ms | extra work=true, median CPU delta=161.76 ms, wall p95 hook=523.06 ms bare=60.98 ms | pass 174 | fail 1 | skipped 1 | not ok 115 - review 4: archive replay advances in bounded chunks without dropping rows
+
+Dispatch module in the isolated archive replay case: starting load 45.84 after the load workers exited, pass (6.93 s).
+That same case failed with ETIMEDOUT during the new assertions on the unchanged dispatch hook.
+
+Repeat on the reviewed fixes at f00ccd433641cb13ca9b345378d027f165e8fcdf. All six starting loads were above 20.
+run 1, load 23.03 to 26.52, exit 0 | all collection caps, 100 warm decisions: p95 CPU=17.23 ms | extra work=false, median CPU delta=19.23 ms, wall p95 hook=364.13 ms bare=174.57 ms | extra work=true, median CPU delta=161.86 ms, wall p95 hook=544.83 ms bare=75.15 ms | pass 186 | fail 0 | skipped 1
+run 2, load 26.52 to 25.82, exit 0 | all collection caps, 100 warm decisions: p95 CPU=18.14 ms | extra work=false, median CPU delta=12.21 ms, wall p95 hook=80.57 ms bare=42.89 ms | extra work=true, median CPU delta=163.04 ms, wall p95 hook=745.51 ms bare=259.98 ms | pass 186 | fail 0 | skipped 1
+run 3, load 25.82 to 25.17, exit 0 | all collection caps, 100 warm decisions: p95 CPU=17.42 ms | extra work=false, median CPU delta=10.65 ms, wall p95 hook=55.71 ms bare=38.15 ms | extra work=true, median CPU delta=161.35 ms, wall p95 hook=213.77 ms bare=37.39 ms | pass 186 | fail 0 | skipped 1
+run 4, load 25.17 to 25.51, exit 2 | all collection caps, 100 warm decisions: p95 CPU=18.85 ms | extra work=false, median CPU delta=12.51 ms, wall p95 hook=148.41 ms bare=67.75 ms | extra work=true, median CPU delta=161.97 ms, wall p95 hook=239.52 ms bare=41.02 ms | pass 185 | fail 1 | skipped 1 | not ok 126 - review 4: archive replay advances in bounded chunks without dropping rows
+run 5, load 25.51 to 22.70, exit 0 | all collection caps, 100 warm decisions: p95 CPU=19.55 ms | extra work=false, median CPU delta=14.55 ms, wall p95 hook=269.99 ms bare=310.47 ms | extra work=true, median CPU delta=161.37 ms, wall p95 hook=204.34 ms bare=37.98 ms | pass 186 | fail 0 | skipped 1
+run 6, load 22.70 to 20.49, exit 2 | all collection caps, 100 warm decisions: p95 CPU=17.37 ms | extra work=false, median CPU delta=10.11 ms, wall p95 hook=59.36 ms bare=35.28 ms | extra work=true, median CPU delta=160.90 ms, wall p95 hook=198.76 ms bare=36.19 ms | pass 185 | fail 1 | skipped 1 | not ok 147 - review 7: installed outer deadline leaves time to persist fail-open rollback
+
+The existing outer-deadline test returned a null child exit status in run six. Four subsequent interleaved isolates each at base and final head passed, at starting loads 28.21 to 29.59.
+
+Final cursor fix b44e04a9200662f0ea8bef1e948d5cd1ba52005f. All six default suites passed under the existing host load.
+run 1, load 37.40 to 35.63, exit 0 | all collection caps, 100 warm decisions: p95 CPU=18.29 ms | extra work=false, median CPU delta=10.70 ms, wall p95 hook=58.91 ms bare=41.97 ms | extra work=true, median CPU delta=161.04 ms, wall p95 hook=197.80 ms bare=39.02 ms | pass 187 | fail 0 | skipped 1
+run 2, load 35.63 to 36.59, exit 0 | all collection caps, 100 warm decisions: p95 CPU=17.29 ms | extra work=false, median CPU delta=9.87 ms, wall p95 hook=54.73 ms bare=36.86 ms | extra work=true, median CPU delta=161.33 ms, wall p95 hook=196.08 ms bare=34.89 ms | pass 187 | fail 0 | skipped 1
+run 3, load 36.59 to 35.36, exit 0 | all collection caps, 100 warm decisions: p95 CPU=16.78 ms | extra work=false, median CPU delta=10.93 ms, wall p95 hook=46.48 ms bare=35.78 ms | extra work=true, median CPU delta=160.19 ms, wall p95 hook=192.24 ms bare=33.44 ms | pass 187 | fail 0 | skipped 1
+run 4, load 35.36 to 31.41, exit 0 | all collection caps, 100 warm decisions: p95 CPU=17.60 ms | extra work=false, median CPU delta=11.67 ms, wall p95 hook=71.10 ms bare=75.17 ms | extra work=true, median CPU delta=160.86 ms, wall p95 hook=208.86 ms bare=37.77 ms | pass 187 | fail 0 | skipped 1
+run 5, load 31.41 to 27.58, exit 0 | all collection caps, 100 warm decisions: p95 CPU=16.54 ms | extra work=false, median CPU delta=10.51 ms, wall p95 hook=49.36 ms bare=35.07 ms | extra work=true, median CPU delta=160.75 ms, wall p95 hook=196.48 ms bare=35.49 ms | pass 187 | fail 0 | skipped 1
+run 6, load 27.58 to 25.52, exit 0 | all collection caps, 100 warm decisions: p95 CPU=16.59 ms | extra work=false, median CPU delta=11.14 ms, wall p95 hook=50.21 ms bare=34.65 ms | extra work=true, median CPU delta=161.24 ms, wall p95 hook=196.75 ms bare=35.99 ms | pass 187 | fail 0 | skipped 1
+
+Round 2. Every row ran env -u GC_BIN make test-reachable with Node v26.12.1. Normal CPU must be below 100 ms. Adding 150 ms must be detected. All CPU checks and warm at-cap checks met their assertions in every row.
+
+Preliminary candidate 48bd4a6f62b8fc15e88a6a4e86ecb814915d7ca3.
+Row | starting one-minute load | median added CPU ms | injected median CPU ms | at-cap p95 CPU ms | pass/fail/skip | target exit
+run 1 | 15.73 | 14.81 | 160.72 | 19.50 | 210/0/1 | 0
+run 2 | 16.43 | 10.02 | 160.87 | 19.75 | 210/0/1 | 0
+run 3 | 15.53 | 9.81 | 159.27 | 18.25 | 210/0/1 | 0
+run 4 | 14.18 | 10.77 | 163.05 | 19.42 | 210/0/1 | 0
+run 5 | 21.05 | 15.08 | 163.25 | 25.50 | 210/0/1 | 0
+run 6 | 39.17 | 16.43 | 164.47 | 26.21 | 207/3/1 | 2
+Run 6 failed in three existing tests:
+R4: paired hook processes for one call leave no error record
+R5: complete hook CPU above bare Node is under 100 ms and detects 150 ms of added work
+review 4: archive replay advances in bounded chunks without dropping rows
+The paired hook recorded state_busy, the CPU test counted 39 of 40 receipts, and the archive child returned ETIMEDOUT.
+
+Comparison and final implementation 97ad7056d9b41b1b02f0673c1a10f8ca25faff9e. The compare-base row used the unchanged 060bc2aa75add7e91cacf01cbd06dd4bb04aa39f Make target and fixtures.
+Row | starting one-minute load | median added CPU ms | injected median CPU ms | at-cap p95 CPU ms | pass/fail/skip | target exit
+compare-base | 35.12 | 10.95 | 165.46 | 20.13 | 187/0/1 | 0
+compare-head | 40.37 | 10.12 | 161.27 | 18.08 | 219/0/1 | 0
+compare-moderate | 29.29 | 12.43 | 161.49 | 19.04 | 219/0/1 | 0
+compare-head-matched | 35.15 | 13.70 | 159.05 | 23.18 | 218/1/1 | 2
+final-moderate | 29.33 | 11.57 | 160.00 | 18.31 | 219/0/1 | 0
+final-default-5 | 23.67 | 10.17 | 160.58 | 17.49 | 219/0/1 | 0
+final-default-6 | 19.96 | 9.25 | 160.96 | 18.68 | 219/0/1 | 0
+The paired-hook test passed in both matched runs (35.12 and 35.15, same 24 low-priority load workers active). The earlier 40.37 row began as load fell after the workers stopped. The 29.29 and 29.33 rows cover the requested moderate window. The only final failure was review 4: archive replay advances in bounded chunks without dropping rows (ETIMEDOUT) at 35.15.

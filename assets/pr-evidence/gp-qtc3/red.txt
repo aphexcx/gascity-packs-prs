@@ -1,0 +1,129 @@
+New fixture assertions on Node v24.21.0 ran against dispatch hook 7876f9768281dc85036160c9dddd71173401b5e3.
+cd reachable/test && env -u GC_BIN node --test --test-reporter=tap
+Exit 1. tests 174, pass 98, fail 75, skipped 1.
+74 assertion failures. The additional timeout came from the pre-existing archive replay case.
+Already accepted replies, the default-alias conversation line, and the two-space layout are guards.
+
+ERR_ASSERTION  R6: stay gives its own pass command with the dictated conversation line
+ERR_ASSERTION  R4: paired hook processes for one call leave no error record
+ERR_ASSERTION  R4: lasting faults leave at most 100 error records
+ERR_ASSERTION  R4: an old lock held by a live pid is removed
+ERR_ASSERTION  R4: a held lock is waited for
+ERR_ASSERTION  R4: forty thousand hook events in a day keep state.json bounded
+ERR_ASSERTION  R4: a version 1 state.json from PR 96 loads and converts
+ERR_ASSERTION  R8: a conversation not routed for 14 days leaves known
+ERR_ASSERTION  R8: five settings changes leave three dated backups
+ERR_ASSERTION  8: exact refusal, one line per conversation in oldest-first order
+ERR_ASSERTION  11: a malformed row is counted and an unexplained sequence gap fails measurement
+ERR_ASSERTION  19: README documents both prompt options, modes, limitations and verification
+ERR_ASSERTION  R2: permitted reply 0
+ERR_ASSERTION  R2: permitted reply 2
+ERR_ASSERTION  R2: permitted reply 3
+ERR_ASSERTION  R2: permitted reply 4
+ERR_ASSERTION  R2: permitted reply 5
+ERR_ASSERTION  R2: refused shell form 0 gives chained
+ERR_ASSERTION  R2: refused shell form 1 gives chained
+ERR_ASSERTION  R2: refused shell form 2 gives chained
+ERR_ASSERTION  R2: refused shell form 3 gives chained
+ERR_ASSERTION  R2: refused shell form 4 gives chained
+ERR_ASSERTION  R2: refused shell form 5 gives glob
+ERR_ASSERTION  R2: refused shell form 6 gives expansion
+ERR_ASSERTION  R2: refused shell form 7 gives expansion
+ERR_ASSERTION  R2: refused shell form 8 gives line_break
+ERR_ASSERTION  R2: refused shell form 9 gives line_break
+ERR_ASSERTION  R2: refused shell form 10 gives line_break
+ERR_ASSERTION  R2: refused shell form 11 gives chained
+ERR_ASSERTION  R2: refused shell form 12 gives chained
+ERR_ASSERTION  R2: refused shell form 13 gives chained
+ERR_ASSERTION  R2: refused shell form 14 gives chained
+ERR_ASSERTION  R2: refused shell form 15 gives chained
+ERR_ASSERTION  R2: refused shell form 16 gives expansion
+ERR_ASSERTION  R2: refused shell form 17 gives expansion
+ERR_ASSERTION  R2: refused shell form 18 gives expansion
+ERR_ASSERTION  R2: refused shell form 19 gives expansion
+ERR_ASSERTION  R2: refused shell form 20 gives expansion
+ERR_ASSERTION  R2: refused shell form 21 gives glob
+ERR_ASSERTION  R2: refused shell form 22 gives glob
+ERR_ASSERTION  R2: refused shell form 23 gives glob
+ERR_ASSERTION  R2: refused shell form 24 gives glob
+ERR_ASSERTION  R2: refused shell form 25 gives glob
+ERR_ASSERTION  R2: refused shell form 26 gives glob
+ERR_ASSERTION  R2: refused shell form 27 gives unclosed
+ERR_ASSERTION  R2: refused shell form 28 gives unclosed
+ERR_ASSERTION  R2: refused shell form 29 gives not_talk
+ERR_ASSERTION  R2: refused shell form 30 gives not_talk
+ERR_ASSERTION  R2: refused shell form 31 gives not_talk
+ERR_ASSERTION  R2: refused shell form 32 gives not_talk
+ERR_ASSERTION  R2: refused shell form 33 gives not_talk
+ERR_ASSERTION  R2: refused shell form 34 gives cd_form
+ERR_ASSERTION  R2: refused shell form 35 gives cd_form
+ERR_ASSERTION  R2: refused shell form 36 gives cd_form
+ERR_ASSERTION  R2: refused shell form 37 gives cd_form
+ERR_ASSERTION  R2: refused shell form 38 gives chained
+ERR_ASSERTION  R2: a reply-shaped refusal never consumes an attempt in either mode
+ERR_ASSERTION  R2: only a bounded Write inside a real temp directory prepares a reply
+ETIMEDOUT  review 4: archive replay advances in bounded chunks without dropping rows
+ERR_ASSERTION  R7: uninstall restores the settings bytes and mode, four spaces
+ERR_ASSERTION  R7: uninstall restores the settings bytes and mode, compact
+ERR_ASSERTION  R7: uninstall restores the settings bytes and mode, mode 0644
+ERR_ASSERTION  R7: uninstall restores the settings bytes and mode, no file
+ERR_ASSERTION  R7: uninstall restores the settings bytes and mode, no directory
+ERR_ASSERTION  R7: uninstall keeps edits and the current mode when it restores the JSON value
+ERR_ASSERTION  R3: after invalid_event_json (last seq 1) a later message is still refused
+ERR_ASSERTION  R3: after invalid_event_row (last seq 1) a later message is still refused
+ERR_ASSERTION  R3: after invalid_event_row (last seq 2) a later message is still refused
+ERR_ASSERTION  R3: after invalid_message_event (last seq 2) a later message is still refused
+ERR_ASSERTION  R3: after invalid_target_agent (last seq 2) a later message is still refused
+ERR_ASSERTION  R3: after invalid_outbound_session (last seq 2) a later message is still refused
+ERR_ASSERTION  R3: after event_in_future (last seq 2) a later message is still refused
+ERR_ASSERTION  R3: after an unrelated row (last seq null) a later message is still refused
+ERR_ASSERTION  R3: a skipped outbound row releases the waits it could have ended
+ERR_ASSERTION  R3: a gap right after an unreadable line is accepted, and any other gap still fails open
+
+messages=720, hook events=40000, receipts=40000, cap=1000. The dispatch hook failed the receipt-cap assertion.
+The full-state CPU fixture also fails its cap assertion against the dispatch module.
+The later rotation regression first failed on the implementation with 2 skipped rows where 1 was expected.
+At the initial implementation commit the 11 class-level self-review fixtures failed by assertion.
+
+The first Linux Reachable job failed three existing rotation and archive-backpressure tests. The added fixture "rotation: a reused inode and matching trailing bytes cannot conceal a new sequence" failed its assertion on f00ccd433641cb13ca9b345378d027f165e8fcdf. On b44e04a9200662f0ea8bef1e948d5cd1ba52005f the regression and all three hosted cases passed.
+
+Round 2. Implementation 060bc2aa75add7e91cacf01cbd06dd4bb04aa39f, test-only commit fa1038386bc64ef80a1ecd424a9fd46125adc6de.
+From reachable/test with Node v26.12.1:
+env -u GC_BIN node --test --test-reporter=tap --test-name-pattern='^(R2-[1-7]|M9:|M10:)'
+Exit 1. Of the 23 new assertions, 21 failed and two existing-order controls passed.
+not ok 4 - R2-1: outdated copy preserves v1 state on status
+not ok 5 - R2-1: outdated copy preserves v1 state on exempt --list
+not ok 6 - R2-1: outdated copy preserves v1 state on pass example/room-a
+not ok 7 - R2-1: outdated copy preserves v1 state on exempt example/room-a --on
+not ok 8 - R2-2: displaced status cannot restore a passed wait
+not ok 9 - R2-2: displaced hook cannot restore a passed wait
+not ok 10 - R2-5: moved install recovers a failed settings.json via retry and uninstall
+not ok 11 - R2-5: moved install recovers a failed settings.json via uninstall
+ok 12 - R2-5: moved install recovers a failed install.json via retry and uninstall
+ok 13 - R2-5: moved install recovers a failed install.json via uninstall
+not ok 14 - R2-5: failed first install still selects observe on retry
+not ok 15 - R2-6: a listed exemption can be removed after age eviction
+not ok 16 - R2-6: a listed exemption can be removed after cap eviction
+not ok 17 - M9: uninstall preserves user settings with a missing snapshot
+not ok 18 - M9: uninstall preserves user settings with a changed snapshot
+not ok 19 - M10: status and doctor retain diagnostics beside an unreadable record
+not ok 25 - R2-3: cursor advances past a maximum-size complete row
+not ok 26 - R2-3: Stop includes a maximum-size complete row in its fence
+not ok 27 - R2-4: an inferred gap releases older waits after other inbound
+not ok 28 - R2-4: an inferred gap releases older waits after mayor inbound
+not ok 29 - R2-4: an inferred gap releases older waits after archive tail
+not ok 30 - R2-7: recent wake survives replay eviction with different timestamps
+not ok 31 - R2-7: recent wake survives replay eviction with equal timestamps
+
+Native review of 48bd4a6f62b8fc15e88a6a4e86ecb814915d7ca3. Test-only commit 66bd42240d34da59d4ae93a7da49e8fe1dbbae08.
+From reachable/test, env -u GC_BIN node --test --test-reporter=tap --test-name-pattern='^R2-R' exited 1. All eight review cases failed.
+The additional version-two compatibility test was run separately with the prefix '^R2-R8: v2 state' and exited 1 on the same implementation.
+not ok 16 - R2-R8: v2 state without last_readable_seq resumes from its cursor
+not ok 10 - R2-R1: a displaced mirror writer returns its committed receipt
+not ok 11 - R2-R2: interrupted manifest removal preserves a successor install
+not ok 12 - R2-R3: a revoked zero ticket cannot promote itself
+not ok 13 - R2-R4: unfinished bytes after the longest row do not lower the Stop fence
+not ok 14 - R2-R5: recovery replaces a stale ticket without opening it for writes
+not ok 15 - R2-R6: unreadable settings allow pass with a matching hook copy
+not ok 16 - R2-R7: revocation observed after stat is recoverable
+not ok 17 - R2-R8: consecutive archive and active gaps retain the last readable sequence
