@@ -183,7 +183,7 @@ launch or pin them in a rig's `formula_vars`:
 | `drain_policy` | `separate` | `separate` runs implementation beads in parallel worker sessions; `same-session` runs them serially in one shared session. |
 | `implementation_target` | `gc.implementation-worker` | The rig role that implements each work item. |
 | `push` / `open_pr` | `false` | Allow the publish stage to push and open a PR after all checks pass. |
-| `max_iterations` | `10` | Bound on implementation/review fix attempts. |
+| `max_iterations` | `3` | Maximum attempts in continuation repair and fix-loop workflows. A launch override changes that limit. The full-build review check has a fixed cap of three attempts. |
 
 When variables are not enough, every stage prompt can be replaced by dropping
 a Markdown file at the same relative path in a higher-priority layer, and

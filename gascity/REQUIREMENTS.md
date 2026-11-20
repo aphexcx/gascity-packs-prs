@@ -423,6 +423,12 @@ exhausted, the workflow must preserve the failure as a healable restart state.
 It records `gc.build.repair_status`, `gc.restart.entrypoint`,
 `gc.restart.reason`, relevant artifact paths, and a failing workflow outcome
 rather than converting the run to pass during finalization or no-op publish.
+On `family_stop` or `exhausted`, the producer records one terminal handoff
+in `gc.restart.handoff_path`. Callers preserve that pointer and stop before
+dispatching any further fix. The handoff names both findings, their rounds
+and their preserved reports on a family stop. The five full builds and the
+four standalone methodology reviews record `gc.restart.entrypoint=manual`.
+The review continuation records `build-from-review` for a person's decision.
 
 `fix-loop-base` owns the default implementation shape:
 
@@ -789,7 +795,7 @@ Proof expectation: validation requires `workflow.formula`, `producer.formula`,
 | GC-METH-BR-014 | GC-METH-US-001 | WHEN the workflow finalizes, THE final report SHALL summarize requirements, plan, decomposition, implementation, review attempts, fixes, drift, risk, publish status, and next action. |
 | GC-METH-BR-015 | GC-METH-US-001 | WHEN publish is not explicitly authorized, THE publish stage SHALL no-op and record `not_published`. |
 | GC-METH-BR-016 | GC-METH-US-001 | WHEN publish is authorized, THE publish stage SHALL record push status, PR status, or a blocked publish reason. |
-| GC-METH-BR-051 | GC-METH-US-001 | IF review/fix cannot reach approval because evidence is missing, a drain failed, review is blocked, report mode forbids mutation, or maximum iterations are exhausted, THEN finalization SHALL record a failing blocked outcome plus `gc.build.repair_status` and `gc.restart.*` metadata rather than closing the workflow as pass; publish no-op SHALL preserve that outcome. |
+| GC-METH-BR-051 | GC-METH-US-001 | IF review/fix cannot reach approval because evidence is missing, a drain failed, review is blocked, report mode forbids mutation, maximum iterations are exhausted, or a blocking finding repeats a family from round 3 onward, THEN finalization and publish no-op SHALL preserve the failure and its `gc.build.repair_status` and `gc.restart.*` metadata. On `family_stop` or `exhausted`, callers SHALL stop with the original `gc.restart.handoff_path` and reason. The recorded `gc.restart.entrypoint` SHALL be `manual` unless an existing review continuation preserves exactly the required stages. |
 | GC-METH-BR-017 | GC-METH-TS-003 | WHEN a downstream artifact consumes an upstream artifact, THE downstream artifact SHALL record the upstream path and content hash or revision ID. |
 | GC-METH-BR-018 | GC-METH-TS-003 | IF upstream artifacts drift after downstream work starts, THEN review and finalization SHALL surface drift and SHALL NOT silently proceed. |
 | GC-METH-BR-019 | GC-METH-US-006 | WHEN `interaction_mode=interactive`, THE workflow MAY ask one material question at a time and SHALL include a recommendation. |

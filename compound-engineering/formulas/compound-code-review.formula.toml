@@ -46,7 +46,7 @@ metadata = { "gc.run_target" = "gc.run-operator" }
 description_file = "../assets/workflows/compound-code-review/{target}.compound-code-review-loop.md"
 
 [template.check]
-max_attempts = 8
+max_attempts = 3
 
 [template.check.check]
 mode = "exec"

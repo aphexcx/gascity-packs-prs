@@ -641,6 +641,20 @@ def node_description(root: pathlib.Path, node: dict) -> str:
     return node["description"]
 
 
+def stages_after_review(formula: dict, review_id: str) -> dict:
+    reachable = {review_id}
+    while True:
+        downstream = {step["id"] for step in formula["steps"]
+                      if reachable.intersection(step.get("needs", []))}
+        if downstream <= reachable:
+            break
+        reachable.update(downstream)
+    # Compare the actual implementations, expansions and dependency edges.
+    # Only the incoming edge from the already completed review disappears.
+    return {step["id"]: {**step, "needs": [dep for dep in step.get("needs", []) if dep != review_id]}
+            for step in formula["steps"] if step["id"] in reachable - {review_id}}
+
+
 def route_target_default(target: str, vars: dict) -> str:
     if target.startswith("{{") and target.endswith("}}"):
         var_name = target.removeprefix("{{").removesuffix("}}").strip()
@@ -1690,7 +1704,8 @@ class FormulaAssetTests(unittest.TestCase):
             "--metadata",
             "--set-metadata 'key=value'",
             "Do not write",
-            'values like `"false"` or `"10"`',
+            '"gc.var.max_iterations":"3"',
+            'values like `"false"` or `"3"`',
         ):
             with self.subTest(step="prepare", fragment=fragment):
                 self.assertIn(fragment, prepare_description)
@@ -1730,7 +1745,7 @@ class FormulaAssetTests(unittest.TestCase):
             "implementation_item_formula": "do-work-item",
             "code_review_formula": "review",
             "review_fix_formula": "fix-loop-base",
-            "max_iterations": "10",
+            "max_iterations": "3",
             "push": "false",
             "open_pr": "false",
         }
@@ -1864,6 +1879,90 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertEqual(steps["finalize"]["needs"], ["repair-review"])
         self.assertEqual(steps["publish"]["needs"], ["finalize"])
 
+    def test_declared_review_iteration_limits_default_to_three(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        for path in sorted((root / "formulas").glob("*.formula.toml")):
+            variables = tomllib.loads(path.read_text(encoding="utf-8")).get("vars", {})
+            if "max_iterations" in variables:
+                with self.subTest(formula=path.name):
+                    self.assertEqual(variables["max_iterations"]["default"], "3")
+
+    def test_terminal_review_handoff_matches_the_originating_graph(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        entries = []
+        for path in sorted(root.parent.glob("*/formulas/*.formula.toml")):
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            declares_review = any(
+                step["id"] == "review" and step.get("expand") for step in data.get("steps", [])
+            )
+            if "build-base" in data.get("extends", []) or declares_review:
+                entries.append((path.parent, data["formula"], "review"))
+            elif "code-review-base" in data.get("extends", []) and any(
+                step["id"] == "write-report" and step.get("expand") for step in data.get("steps", [])
+            ):
+                entries.append((path.parent, data["formula"], "write-report"))
+        self.assertEqual({stage for _, _, stage in entries}, {"review", "write-report"})
+
+        for formula_dir, name, review_id in entries:
+            with self.subTest(origin=name):
+                dirs = [root / "formulas", formula_dir]
+                origin = resolve_formula_from_dirs(dirs, name)
+                review = next(step for step in origin["steps"] if step["id"] == review_id)
+                expansion_name = review["expand"]
+                expansion_root = next(directory.parent for directory in reversed(dirs)
+                                      if (directory / f"{expansion_name}.formula.toml").is_file())
+                expansion = load_formula(expansion_root, expansion_name)
+                loops = [node for node in expansion["template"] if node.get("children") and "check" in node]
+                self.assertEqual(len(loops), 1)
+                loop = loops[0]
+                self.assertEqual(pathlib.Path(loop["check"]["check"]["path"]).name,
+                                 "implementation-review-approved.sh")
+                if review_id == "review":
+                    with self.subTest(contract="review attempt limit"):
+                        self.assertEqual(loop["check"]["max_attempts"], int(origin["vars"]["max_iterations"]["default"]))
+                apply_step = loop["children"][-1]
+                text = node_description(expansion_root, apply_step)
+                for fragment in (
+                    "gc.attempt", "round 3", "class-level fix",
+                    "gc.build.repair_status=family_stop", "gc.failure_class=review_family_stop",
+                    "gc.restart.reason=review_family_stop",
+                    "gc.outcome=fail", "code_review.verdict=iterate",
+                    "gc.build.repair_status=exhausted", "gc.restart.reason=review_repair_exhausted",
+                ):
+                    with self.subTest(contract=fragment):
+                        self.assertIn(fragment, text)
+
+                terminal = " ".join(text.split("This terminal close", 1)[0].split())
+                with self.subTest(contract="root handoff"):
+                    self.assertIn("gc.restart.handoff_path=<handoff path>", terminal)
+                    self.assertIn("code_review.report_path=<handoff path>", terminal)
+                    self.assertIn("on the workflow root", terminal)
+                with self.subTest(contract="stop dispatch"):
+                    self.assertNotRegex(terminal, r"(?i)(?<!\.)\b(?:re-?run|re-?launch|restart|gc sling)\b")
+
+                # Internal methodology formulas can also be invoked by name.
+                candidates = {}
+                for directory in dict.fromkeys(dirs):
+                    for path in directory.glob("*.formula.toml"):
+                        entry = tomllib.loads(path.read_text(encoding="utf-8"))
+                        if entry.get("steps") or entry.get("extends"):
+                            graph = resolve_formula_from_dirs(dirs, entry["formula"])
+                            candidates[entry["formula"]] = {
+                                s["id"]: {**s, "needs": s.get("needs", [])} for s in graph["steps"]
+                            }
+                with self.subTest(contract="exact restart"):
+                    suffix = stages_after_review(origin, review_id)
+                    exact = {n for n, steps in candidates.items() if suffix and steps == suffix}
+                    recorded = re.findall(r"`gc\.restart\.entrypoint=([\w-]+)`", terminal)
+                    self.assertEqual(len(recorded), 1, recorded)
+                    self.assertIn(recorded[0], exact or {"manual"})
+
+                if expansion_name == "build-basic-review":
+                    with self.subTest(contract="release on terminal close"):
+                        flat = " ".join(text.split())
+                        self.assertIn("before any close after taking the item branch", flat)
+                        self.assertIn('verify `git -C "$GC_DIR" branch --show-current` prints nothing', flat)
+
     def test_build_from_review_blocked_results_are_healable_not_passed(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         resolved = resolve_formula(root, "build-from-review-base")
@@ -1884,6 +1983,59 @@ class FormulaAssetTests(unittest.TestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, text)
+
+        repair = " ".join(node_description(root, steps["repair-review"]).split())
+        for fragment in (
+            "round 3 onward",
+            "class-level fix",
+            "round, report path and finding",
+            "gc.build.repair_status=family_stop",
+            "gc.outcome=fail",
+            "gc.failure_class=review_family_stop",
+            "gc.restart.entrypoint=build-from-review",
+            "gc.restart.reason=review_family_stop",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, repair)
+
+    def test_fix_loop_and_every_caller_propagate_terminal_review_handoffs(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        steps = resolve_formula(root, "fix-loop-base")["steps"]
+        re_review = next(step for step in steps if step["id"] == "re-review")
+        text = node_description(root, re_review)
+        self.assertIn("{{max_iterations}}", text)
+        self.assertIn("family_stop", text)
+        self.assertIn("round 3 onward", text)
+        self.assertIn("class-level fix", text)
+        dispatch = re.compile(
+            r"\b(?:run|dispatch|launch|invoke|sling)\s+(?:(?:or|dispatch|the|selected)\s+)*"
+            r"[`{]*(?:review_fix_formula|fix-loop-base|[\w-]+-fix-loop)\b", re.I)
+        callers = set()
+        for path in root.parent.glob("*/formulas/*.formula.toml"):
+            formula = tomllib.loads(path.read_text(encoding="utf-8"))
+            for node in formula_nodes(formula):
+                if not (node.get("description_file") or node.get("description")):
+                    continue
+                description = node_description(path.parent.parent, node)
+                prompt = " ".join(description.split())
+                caller = (formula["formula"], node["id"])
+                first_fix = dispatch.search(prompt)
+                if first_fix or caller == ("fix-loop-base", "re-review"):
+                    callers.add(caller)
+                    with self.subTest(caller=caller):
+                        guard = next((" ".join(p.split()) for p in description.split("\n\n")
+                                      if "Read `gc.build.repair_status`" in p), "")
+                        self.assertIn("If it is `family_stop` or `exhausted`", guard)
+                        for clause in ("no further fix attempt", "gc.restart.handoff_path",
+                                       "gc.restart.reason", "gc.failure_class", "gc.outcome=fail"):
+                            self.assertIn(clause, guard)
+                        expected_entry = "build-from-review" if caller[0] == "build-from-review-base" else "manual"
+                        self.assertIn(f"`gc.restart.entrypoint={expected_entry}`", guard)
+                        self.assertNotRegex(guard, r"(?i)(?<!\.)\b(?:re-?run|re-?launch|restart|gc sling)\b")
+                        if first_fix:
+                            self.assertLess(prompt.index(guard), first_fix.start())
+        self.assertTrue({("build-from-review-base", "repair-review"),
+                         ("github-issue-fix-base", "build"), ("fix-loop-base", "re-review")} <= callers)
 
     def test_default_continuation_entrypoints_extend_suffix_bases(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
@@ -1975,6 +2127,7 @@ class FormulaAssetTests(unittest.TestCase):
 
         templates = {template["id"]: template for template in review["template"]}
         loop = templates["{target}.build-basic-review-loop"]
+        self.assertEqual(loop["check"]["max_attempts"], 3)
         self.assertEqual(
             [child["id"] for child in loop["children"]],
             [
@@ -2976,10 +3129,7 @@ class FormulaAssetTests(unittest.TestCase):
         def flat(relative_path: str) -> str:
             return " ".join((workflows / relative_path).read_text(encoding="utf-8").split())
 
-        release_clause = (
-            "After the final commit and BEFORE closing this step with `gc.outcome=pass`, "
-            'release the branch from your lane: `git -C "$GC_DIR" switch --detach`'
-        )
+        release_clause = 'release the branch from your lane: `git -C "$GC_DIR" switch --detach`'
         verify_clause = '`git -C "$GC_DIR" branch --show-current` prints nothing'
 
         # The contract, stated once.
@@ -3008,6 +3158,10 @@ class FormulaAssetTests(unittest.TestCase):
             text = flat(relative_path)
             with self.subTest(writer=relative_path):
                 self.assertIn(release_clause, text)
+                if relative_path.startswith("build-basic-review/"):
+                    self.assertIn("before any close after taking the item branch (including exhaustion), " + release_clause, text)
+                else:
+                    self.assertIn("After the final commit and BEFORE closing this step with `gc.outcome=pass`, " + release_clause, text)
                 self.assertIn(verify_clause, text)
                 self.assertIn("name the commit id in this step's close reason", text)
                 self.assertIn("HOLDS the item's branch only while it is writing to it", text)
@@ -3166,7 +3320,7 @@ class FormulaAssetTests(unittest.TestCase):
         refresh_at = fix.index("Refresh the review context after the fix commit")
         key_at = fix.index(f"--set-metadata '{key}=<sha>'")
         release_at = fix.index(
-            "After the final commit and BEFORE closing this step with `gc.outcome=pass`, release the branch"
+            "before any close after taking the item branch"
         )
         self.assertLess(commit_at, refresh_at, "the refresh comes after the fix commit")
         self.assertLess(refresh_at, key_at)
