@@ -194,33 +194,38 @@ func New(opts Options) (*Processor, error) {
 // Network requests never hold LedgerMu. Handle and Poll serialize their work,
 // including live and catch-up callers, and waiting callers honor cancellation.
 func (p *Processor) Handle(ctx context.Context, ev *puller.Event) (puller.Outcome, error) {
-	p.observeArrivals(ev)
-	return p.handle(ctx, ev, false)
+	return p.handle(ctx, ev, false, p.observeArrivals(ev))
 }
 
-// Observe before the serialized delivery gate, principal lookup and attachment
-// downloads. Only this live entry point participates; catch-up never does.
-func (p *Processor) observeArrivals(ev *puller.Event) {
+// Observe established, in-bounds arrivals before the delivery gate. For a
+// provisional space or a first-read exception, wait for that change's actual
+// history decision. An earlier change in the same batch may establish the join.
+func (p *Processor) observeArrivals(ev *puller.Event) map[int]func() {
 	if p.opts.Ack == nil || ev == nil {
-		return
+		return nil
 	}
 	seen := p.opts.Now()
 	for _, c := range ev.Changes {
 		if validate(c) != nil {
-			return
+			return nil
 		}
 	}
 	id := p.identity()
 	if id == "" {
-		return
+		return nil
 	}
-	for _, c := range ev.Changes {
+	var deferred map[int]func()
+	for i, c := range ev.Changes {
 		m := c.Message
 		if c.Kind != "message.created" || m == nil || m.Sender == nil || m.Sender.Type == "BOT" || m.Sender.Name == id {
 			continue
 		}
 		p.opts.LedgerMu.Lock()
-		known := p.opts.Ledger.Changes[m.Name] != nil
+		l := p.opts.Ledger
+		known := l.Changes[m.Name] != nil
+		s := l.Spaces[c.Space]
+		established := s != nil && (!s.JoinedAt.IsZero() || !s.MessageCursor.IsZero())
+		admitted := established && HistorySkipCause(l, c) == ""
 		p.opts.LedgerMu.Unlock()
 		if known {
 			continue
@@ -237,11 +242,10 @@ func (p *Processor) observeArrivals(ev *puller.Event) {
 		// With the acknowledgement off it makes no call the base does not make:
 		// the kind comes from the ledger or the event, or the message gets no
 		// stopwatch inbound line.
-		lookup := p.opts.Ack.Choice.Enabled()
-		go func(c puller.Change, in ack.Input) {
+		observe := func() {
 			ctx, cancel := context.WithTimeout(context.Background(), ack.ReactionBudget)
 			defer cancel()
-			s, err := p.resolveSpace(ctx, c.Space, c.Message.Space, lookup)
+			s, err := p.resolveSpace(ctx, c.Space, c.Message.Space, p.opts.Ack.Choice.Enabled())
 			if err != nil {
 				return
 			}
@@ -250,8 +254,17 @@ func (p *Processor) observeArrivals(ev *puller.Event) {
 				return
 			}
 			p.opts.Ack.Observe(in)
-		}(c, in)
+		}
+		if admitted {
+			go observe()
+		} else {
+			if deferred == nil {
+				deferred = make(map[int]func())
+			}
+			deferred[i] = observe
+		}
 	}
+	return deferred
 }
 
 // HandleChange feeds one catch-up change through the same validation, wake
@@ -259,10 +272,10 @@ func (p *Processor) observeArrivals(ev *puller.Event) {
 // [catch-up] header; no synthetic transport ID is needed. As with Handle, Ack
 // can include a durable pending receipt, whose resolution belongs to Poll.
 func (p *Processor) HandleChange(ctx context.Context, c puller.Change) (puller.Outcome, error) {
-	return p.handle(ctx, &puller.Event{Changes: []puller.Change{c}}, true)
+	return p.handle(ctx, &puller.Event{Changes: []puller.Change{c}}, true, nil)
 }
 
-func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) (puller.Outcome, error) {
+func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool, arrivals map[int]func()) (puller.Outcome, error) {
 	if err := p.enter(ctx); err != nil {
 		return puller.Nack, err
 	}
@@ -294,11 +307,11 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 	if len(ev.Changes) > 0 && p.identity() == "" {
 		return puller.Nack, errors.New("inbound: identity user ID unavailable")
 	}
-	for _, c := range changes {
+	for i, c := range changes {
 		if err := ctx.Err(); err != nil {
 			return puller.Nack, err
 		}
-		if err := p.change(ctx, c, catchUp); err != nil {
+		if err := p.change(ctx, c, catchUp, arrivals[i]); err != nil {
 			return puller.Nack, err
 		}
 	}
@@ -704,7 +717,7 @@ func validate(c puller.Change) error {
 	return nil
 }
 
-func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) error {
+func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool, observe func()) error {
 	if !strings.HasPrefix(c.Kind, "membership.") {
 		if handled, err := p.history(ctx, c, catchUp); handled || err != nil {
 			return err
@@ -749,7 +762,7 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 	case strings.HasPrefix(c.Kind, "reaction."):
 		return p.reaction(ctx, c, catchUp)
 	default:
-		return p.message(ctx, c, catchUp)
+		return p.message(ctx, c, catchUp, observe)
 	}
 }
 
@@ -858,7 +871,7 @@ func spaceKind(s *api.Space) string {
 	return ""
 }
 
-func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) error {
+func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, observe func()) error {
 	m := c.Message
 	id := m.Name
 	l, err := p.snapshot()
@@ -887,6 +900,9 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	if previous != nil && (previous.Deleted || (base != nil && c.Kind != "message.deleted" && (c.Kind == "message.created" || !updated.After(previous.Revision)))) {
 		return nil
+	}
+	if observe != nil {
+		go observe()
 	}
 	state := ledger.MessageState{Revision: updated}
 	if previous != nil {
