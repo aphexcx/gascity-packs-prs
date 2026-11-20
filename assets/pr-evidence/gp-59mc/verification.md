@@ -51,13 +51,13 @@ The comparison starts at `7ca4519b08d079d0e2eb71e98d0ad8a729455628`. The worker-
 | Checkout collision | The replacement checkout refused a target that tracked the untracked instructions. The aside retained the original bytes. |
 | Copy failure | An injected copy error exposed a partially populated replacement in the first implementation. Preparing the copies before moving the original let a retry recover all files. |
 | Recovery notice | The helper names the aside in the current start's log. Each rendered role directs the worker there before writing and accounts for staged, unstaged and untracked work. |
-| Held branch | Claim names the open or inconclusive PR handoff as an exception. Continue leaves the bead open and drains the session. |
+| Held branch | Claim names the open or inconclusive PR handoff as an exception. Continue ends the turn with the claim still assigned for the mayor's ruling. |
 | Rollout | The Worker workspaces section and Unreleased entry both require updating the city's helper copy with the role import. |
-| Checkout hook | A real post-checkout hook writes a marker in the fresh lane. The detached aside has no marker. |
+| Checkout hook | A real post-checkout hook records the null object ID, new HEAD and branch-checkout flag in the fresh lane, with and without startup files. The detached aside has no marker. |
 
 With the final file fixtures against the round-one helper, the startup-file and collision selection recorded 32 failures, 2 passes and 61 deselections, including individual destination subtests. The worker-role, rollout, recovery-notice and checkout-hook selection recorded 11 failures and one pass. The hook row was the pass.
 
-The final focused command returned 33 passes, 1,181 deselections and 99 passing subtests. `GC_TEST_BIN` pointed to the installed gc for the isolated render fixtures.
+The focused command uses the installed gc for the isolated render fixtures.
 
 ```sh
 verify env GC_TEST_BIN="$(command -v gc)" python3 -m pytest tests gascity/tests \
@@ -67,4 +67,16 @@ verify env GC_TEST_BIN="$(command -v gc)" python3 -m pytest tests gascity/tests 
 
 `verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider'` returned 1,086 passes, 128 skips and 10,698 passing subtests. The verify skill's Reachable command returned 218 passes and its one documented archive-replay skip. The runs used Python 3.12.13 and Node 24.21.0.
 
-The verify skill's full Python command across fourteen test directories returned 3,125 passes, 132 skips, two warnings and 10,927 passing subtests.
+The verify skill's full Python command across fourteen test directories returned 3,125 passes, 132 skips, two warnings and 10,927 passing subtests at `5200b0a4`.
+
+### Worker review follow-up
+
+The DEEP review of `5200b0a4` returned BLOCK. Its three findings reproduced at that commit in 11 failing checks, with the unseeded checkout-hook control passing.
+
+- An unfinished claim is released by drain acknowledgement. The held-branch handoff now ends the turn with the bead still assigned. The render fixtures check that draining applies after close.
+- A seeded replacement uses `checkout-index`, which omits the checkout hook. After a successful replacement checkout the helper runs the hook in the fresh lane with Git's worktree-add arguments. Git versions predating the hook command resolve the executable through `git rev-parse --git-path`.
+- A long tracked-edit listing displaced the recovery path from the recorded stderr tail. With 80 staged files the notice now appears in the last 4 KiB.
+
+After these corrections the focused command above returned 34 passes, 1,181 deselections and 99 passing subtests. The seeded-hook check also passed with the Git hook builtin withheld, exercising the executable-hook fallback.
+
+The full Gas City rerun returned 1,087 passes, 128 skips and 10,698 passing subtests. The PR verification table records the full Python run for the handoff commit.

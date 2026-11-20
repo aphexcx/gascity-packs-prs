@@ -711,10 +711,13 @@ class WorkerWorktreeTests(unittest.TestCase):
 
     def test_dirty_restart_logs_the_recovery_path(self) -> None:
         self.fx.run(self.lane, "gp-old1")
-        (self.lane / "README.md").write_text("unfinished\n")
+        for i in range(80):
+            (self.lane / f"{i:02d}-{'x' * 64}").write_text("unfinished\n")
+        git(self.lane, "add", ".")
         proc = self.fx.run(self.lane, "gp-old1")
         aside, = self.asides()
-        self.assertIn(f"Recovery: inspect {aside} for staged, unstaged and untracked work", proc.stderr)
+        self.assertGreater(len(proc.stderr), 4096)
+        self.assertIn(f"Recovery: inspect {aside} for staged, unstaged and untracked work", proc.stderr[-4096:])
 
     def test_dirty_restart_copies_effective_start_files(self) -> None:
         self.fx.run(self.lane, "gp-old1")
@@ -786,19 +789,29 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertNotIn("WORKTREE ", proc.stdout)
 
     def test_dirty_restart_disables_checkout_hooks_in_the_aside(self) -> None:
+        self.check_dirty_restart_hooks(seeded=False)
+
+    def test_dirty_restart_with_start_files_runs_the_fresh_checkout_hook(self) -> None:
+        self.check_dirty_restart_hooks(seeded=True)
+
+    def check_dirty_restart_hooks(self, *, seeded: bool) -> None:
         self.fx.run(self.lane, "gp-old1")
         (self.lane / "README.md").write_text("unfinished\n")
+        if seeded:
+            (self.lane / ".gc").mkdir()
+            (self.lane / ".gc/settings.json").write_text("{}\n")
         hooks = self.fx.root / "checkout-hooks"
         hooks.mkdir()
         hook = hooks / "post-checkout"
-        hook.write_text("#!/bin/sh\nprintf 'ran\\n' >> hook-ran\n")
+        hook.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> hook-ran\n')
         hook.chmod(0o755)
         git(self.fx.rig, "config", "core.hooksPath", str(hooks))
         self.fx.run(self.lane, "gp-old1")
         aside, = self.asides()
         self.assertEqual(self.branch_of(aside), "HEAD")
         self.assertFalse((aside / "hook-ran").exists())
-        self.assertTrue((self.lane / "hook-ran").is_file())
+        head = git(self.lane, "rev-parse", "HEAD")
+        self.assertEqual((self.lane / "hook-ran").read_text().splitlines(), ["0" * len(head), head, "1"])
 
     def check_dirty_restart(self, *, second_edit: bool) -> None:
         self.fx.run(self.lane, "gp-old1")

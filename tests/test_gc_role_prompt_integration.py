@@ -368,7 +368,10 @@ def test_role_prompts_render_public_worker_fragment(
     assert "The held-branch handoff is an exception to this end-of-turn rule" in claim
     assert "open PR or inconclusive PR records" in claim
     assert "a held one closed above" not in workspace_text
-    assert "After the held-branch handoff, leave the bead open, run `gc runtime drain-ack` and exit" in continuation
+    handoff, after_close = continuation.split("After close,", 1)
+    assert "end this turn with the claim still assigned" in handoff
+    assert "gc runtime drain-ack" not in handoff
+    assert "gc runtime drain-ack" in after_close
 
     # The city command binding may differ from the rig role binding. Exercise
     # the command actually rendered, without claiming work in the fixture.

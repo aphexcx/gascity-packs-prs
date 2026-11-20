@@ -358,7 +358,6 @@ move_aside() {
     ) || exit 1
     if [ -d "$1" ]; then HAS_START_FILES=1; fi
     warn "moved aside $1 -> $aside ($2); nothing was deleted"
-    warn "Recovery: inspect $aside for staged, unstaged and untracked work before writing in $1."
 }
 
 # Release only the registered holder moved by this invocation. A directory
@@ -454,6 +453,7 @@ copy_start_files() {
 # --- classify the work dir ------------------------------------------------------------------
 IS_WORKTREE=0
 HAS_START_FILES=0
+aside=""
 moved_worktree=""
 if [ -d "$WORKDIR" ]; then
     if is_our_worktree "$WORKDIR"; then
@@ -519,6 +519,19 @@ else
 fi
 
 # --- act --------------------------------------------------------------------------------------
+replacement_checkout_hook() (
+    cd "$WORKDIR" || exit 1
+    head="$(git rev-parse --verify HEAD)" || exit 1
+    null_oid="$(printf '%s' "$head" | tr '0-9a-f' '0')" || exit 1
+    if git --list-cmds=builtins | grep -qx hook; then
+        git hook run --ignore-missing post-checkout -- "$null_oid" "$head" 1
+    else
+        # Before git hook run, hooks were executables in the resolved hooks directory.
+        hook="$(git rev-parse --git-path hooks/post-checkout)" || exit 1
+        [ ! -x "$hook" ] || "$hook" "$null_oid" "$head" 1
+    fi
+)
+
 add_worktree() {
     [ -d "$WORKDIR" ] || mkdir -p "$WORKDIR"
     add_dir="$WORKDIR"
@@ -552,6 +565,11 @@ add_worktree() {
         # seeds intact; never reset --hard or force checkout over the payload.
         git -C "$WORKDIR" read-tree HEAD || return 1
         git -C "$WORKDIR" checkout-index --all || return 1
+        if [ -n "$aside" ]; then
+            # Replacement lanes previously used worktree add with checkout.
+            # Run its hook once in the populated lane, with the same arguments.
+            replacement_checkout_hook || return 1
+        fi
     fi
 }
 
@@ -602,4 +620,8 @@ case "$MODE" in
 esac
 [ "$branch" != "HEAD" ] || branch="detached"
 sha="$(git -C "$WORKDIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if [ -n "$aside" ]; then
+    # gc retains a tail of pre_start output. Keep this after the tracked-edit list.
+    warn "Recovery: inspect $aside for staged, unstaged and untracked work before writing in $WORKDIR."
+fi
 printf 'WORKTREE %s %s %s\n' "$WORKDIR" "$branch" "$sha"

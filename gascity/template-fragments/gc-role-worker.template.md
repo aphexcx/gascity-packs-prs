@@ -358,7 +358,9 @@ and do not idle: record the failure contract (default `gc.outcome=fail`,
 
 ## Continue
 
-After the held-branch handoff, leave the bead open, run `gc runtime drain-ack` and exit.
+After the held-branch handoff, leave the bead in progress and end this turn
+with the claim still assigned for the mayor's ruling. The drain and claim
+instructions below apply after close.
 
 After close, inspect `CLAIMED_CONTINUATION_GROUP` before another claim:
 

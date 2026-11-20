@@ -192,7 +192,9 @@ def test_held_branch_handoff_is_an_exception_in_claim_and_continue() -> None:
     workspace, continuation = rest.split("## Continue", 1)
     assert "The held-branch handoff is an exception to this end-of-turn rule" in " ".join(claim.split())
     assert "a held one closed above" not in " ".join(workspace.split())
-    assert "After the held-branch handoff, leave the bead open" in " ".join(continuation.split())
+    handoff = " ".join(continuation.strip().split("\n\n", 1)[0].split())
+    assert "end this turn with the claim still assigned" in handoff
+    assert "gc runtime drain-ack" not in handoff
 
 
 def test_worker_restart_documents_the_coordinated_update() -> None:
