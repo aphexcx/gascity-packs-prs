@@ -314,6 +314,7 @@ the role (the `[[patches.agent]]` entry below). No prompt-side path makes a
 workspace for an unconfigured role.
 
 This pack ships `assets/scripts/worker-worktree.sh` for the `pre_start` half.
+Update the pack's worker role and the city's copy of `worker-worktree.sh` together to enable dirty-lane recovery.
 Copy it into the city's scripts directory, `.gc/scripts` (gc does not sync a
 pack's `assets/scripts` there), and reference it through `{{.CityRoot}}`:
 
@@ -409,6 +410,11 @@ Only regular files and their listed directory containers qualify; symlinks,
 unexpected empty directories, incomplete catalog `*.tmp` files, and arbitrary
 custom overlay paths retain the aside safety. Skill trees and MCP configuration
 are materialized by later `pre_start` commands and are not on this allowlist.
+When replacing a lane, the helper copies regular untracked files at the
+listed destinations, including merged hook settings and the scripts tree,
+into the fresh lane before checkout. It skips nested Git checkouts. Edits to paths in the
+aside's HEAD or index and untracked files outside those destinations stay in
+the aside.
 
 Git refuses a nonempty destination even with `worktree add --no-checkout`.
 For a staged lane the script registers a temporary worktree without checkout,
@@ -476,11 +482,16 @@ decides nothing, because a claim-time stamp can name anything. The same
 name rule binds a directly claimed bead: its branch is the one naming the
 bead id, a worker whose `pre_start` had no trigger bead takes that branch
 itself after the claim by the same listing (full ref names, one namespace
-prefix removed), a worker whose `pre_start` found that branch held elsewhere
-closes `gc.failure_class=branch-held` naming the holder instead of creating a
-second candidate, and a branch recorded before this rule under a name
-without the id is renamed by the operator before the rule is rolled out on a
-city.
+prefix removed). If the current start moved its own lane aside on the bead
+branch, it detaches that aside at the branch tip, reports its tracked edits,
+and checks the branch out in the lane. Older asides and other holders stay
+in place. For an in_progress bead with an open PR for a held branch, the
+worker mails the mayor the holder path, PR URL and branch head, then stops
+with the bead open. The worker uses the bead's recorded PR and handoff and
+leaves an uncertain PR state for the mayor to resolve. If the branch has no PR open,
+the worker closes `gc.failure_class=branch-held` naming the holder.
+A branch recorded before this rule under a name without the id is renamed by the operator
+before the rule is rolled out on a city.
 
 Two related core behaviors complete the picture:
 

@@ -129,15 +129,14 @@ def test_workspace_restamp_never_writes_over_a_recorded_item_branch() -> None:
     the bead is the branch the lane is on already, a branch the worker
     creates is named for the bead so the next `pre_start` finds it, and an
     empty value is never stamped. The fragment's one switch is the no-trigger
-    take (codex r3), after the boundary test; a held branch closes
-    `branch-held` instead of creating a second candidate."""
+    take (codex r3), after the boundary test."""
     workspace = " ".join(workspace_section().split())
     for clause in (
         "restamp it when they differ (older `gc` builds stamp the rig root's branch)",
         "The bead's branch is the one whose name contains the claimed bead id as a whole token",
         "the branch `pre_start` reused or created for it",
         "a record naming anything else is a claim-time stamp and your branch wins",
-        "a record that names the bead is the branch you are on already (a held one closed above)",
+        "a record that names the bead is the branch you are on already",
         "Never write a fresh base branch over a recorded item branch",
         "never stamp an empty value",
         "name any branch you create for the claimed bead (`$CLAIMED_BEAD_ID` as a whole token) so the next `pre_start` finds it",
@@ -156,7 +155,7 @@ def test_workspace_restamp_never_writes_over_a_recorded_item_branch() -> None:
         "(`-c <branch> --track refs/remotes/origin/<branch>` when it is only on `origin`",
         "the start point by full ref, since a tag named `origin/<branch>` makes the bare form fail",
         'none: `git -C "$GC_DIR" switch -c "$CLAIMED_BEAD_ID"`',
-        "several, or a refusal (another worktree holds it: `branch-held`, holder named from `git worktree list`): close the bead `gc.outcome=fail` and mail the mayor, never `--force`",
+        "several: close the bead `gc.outcome=fail` and mail the mayor",
         "When the WARN says the bead's branch is checked out in another worktree, do not create a second branch naming the bead",
         "(two would make the next `pre_start` fail closed)",
         "close with `gc.outcome=fail` and `gc.failure_class=branch-held` naming that holder from `git worktree list`",
@@ -173,6 +172,36 @@ def test_workspace_restamp_never_writes_over_a_recorded_item_branch() -> None:
         assert gone not in restamp, f"the restamp rule consults checkout state: {gone!r}"
     assert workspace.index("Prove the lane before you write") < workspace.index("switch --no-overwrite-ignore <branch>")
     assert "create your branch in this directory" not in workspace
+
+
+def test_held_branch_keeps_in_progress_work_with_an_open_pr() -> None:
+    workspace = " ".join(workspace_section().split())
+    before_claim, after_claim = workspace.split("After the claim, compare", 1)
+    for clause in (
+        "in_progress", "open PR", "`gc.pr`", "mail the mayor",
+        "holder path, PR URL and branch head", "stop with the bead open",
+        "If the branch has no PR", "`gc.failure_class=branch-held`",
+    ):
+        assert clause in before_claim
+    assert "If another worktree holds the branch, apply the held-branch rule above" in after_claim
+    assert "never `--force`" in after_claim
+
+
+def test_held_branch_handoff_is_an_exception_in_claim_and_continue() -> None:
+    claim, rest = fragment().split("## Claim", 1)[1].split("## Workspace", 1)
+    workspace, continuation = rest.split("## Continue", 1)
+    assert "The held-branch handoff is an exception to this end-of-turn rule" in " ".join(claim.split())
+    assert 'the “end this turn” instruction in Continue' in " ".join(claim.split())
+    assert "a held one closed above" not in " ".join(workspace.split())
+    handoff = " ".join(continuation.strip().split("\n\n", 1)[0].split())
+    assert "end this turn with the claim still assigned" in handoff
+    assert "gc runtime drain-ack" not in handoff
+
+
+def test_worker_restart_documents_the_coordinated_update() -> None:
+    for path in (README, README.with_name("CHANGELOG.md")):
+        text = " ".join(path.read_text(encoding="utf-8").split())
+        assert "Update the pack's worker role and the city's copy of `worker-worktree.sh` together" in text
 
 
 def test_workspace_section_never_names_the_rig_root_as_a_place_to_work() -> None:
