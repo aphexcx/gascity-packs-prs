@@ -475,6 +475,7 @@ run in order in the same tick.
 | `SLACK_INBOUND_HOLD_CEILING` | `15m` | Maximum interval between reposts |
 | `SLACK_INBOUND_HOLD_BOUND` | `30m` | Hold bound, including a final send or receipt poll |
 | `SLACK_INBOUND_HOLD_NOTICE` | `on` | `off/0/false/no` disable; `on/1/true/yes` or empty enable; trimmed and case-insensitive; other values fail startup |
+| `SLACK_INBOUND_HOLD_NOTICE_ROOMS` | empty | Comma-separated conversation IDs allowed to receive hold notices alongside one-to-one DMs when room notices are enabled. |
 | `SLACK_INBOUND_REPLAY_MAX_AGE` | `24h` | Positive duration limiting automatic and bare-command replay; `0` or `off` disables those paths |
 
 The queue persists in `.gc/slack/inbound-holds/state.json`, retaining original
@@ -522,9 +523,10 @@ If a returned reaction is permanently refused, both its side-buffer ownership
 and durable mirror become non-replayable; restart also classifies legacy refusal
 history before folding it into an existing mirror.
 
-After a minute, one bot-authored thread reply per channel incident says delivery
-is held and retrying. Pending-only deliveries wait three minutes before a notice,
-which says it is checking the outstanding receipt. The closing edit states
+After a minute, the adapter sends the hold notice and later its outcome to the operator inbox, with the channel, thread and message timestamps, saving each report under `hold-notices/` in the inbound dead-letter directory if mail fails.
+With `SLACK_INBOUND_HOLD_NOTICE` enabled, one-to-one DMs and conversations in `SLACK_INBOUND_HOLD_NOTICE_ROOMS` also get the thread reply and its closing edit.
+Pending-only deliveries wait three minutes before a notice,
+which says it is checking the outstanding receipt. The outcome states
 terminal handoff by the latest confirmed time, distinguishes an unconfirmed
 submission, and never asserts reading. Unknown or gate-off outcomes explicitly
 require verification by hand. At the bound, the notice says delivery was not

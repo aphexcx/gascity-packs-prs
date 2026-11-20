@@ -267,6 +267,7 @@ func testNeverSilentHoldLadder(t *testing.T, bound bool) {
 			slackAPIBase = slack.URL
 			defer func() { slackAPIBase = old }()
 			f.cfg.inboundRecovery.notice = inboundHoldPoster("example-token")
+			f.cfg.inboundRecovery.noticeRooms = []string{p.inbound.Conversation.ConversationID}
 			f.hold(p, true)
 			for minute := 1; minute <= 29; minute++ {
 				f.now = start.Add(time.Duration(minute) * time.Minute)

@@ -27,6 +27,7 @@ func round2Recovery(t *testing.T) (*inboundRecovery, *time.Time) {
 		t.Fatal(err)
 	}
 	r.now = func() time.Time { return now }
+	r.noticeRooms = []string{"C1"}
 	r.send = func(e inboundRecoveryEntry) (deliveryReceipt, error) {
 		return recoveryReceipt("failed", "s1", false), nil
 	}
