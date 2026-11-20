@@ -2051,9 +2051,6 @@ func (r *inboundRecovery) updateNotices() {
 			notices[channel] = n
 			continue
 		}
-		if now.Before(n.NextAttemptAt) && now.Sub(n.Since) < r.bound {
-			continue
-		}
 		var latest time.Time
 		dead, unknown, gateOff, paste, acknowledged := false, false, false, false, false
 		unconfirmed := false

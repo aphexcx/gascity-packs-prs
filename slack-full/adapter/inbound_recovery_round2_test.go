@@ -484,13 +484,19 @@ func TestRound2ReactionsReturnToSideLane(t *testing.T) {
 	}
 	round2Hold(t, r, "100.2")
 	now = now.Add(time.Minute)
+	r.noticeRooms = []string{"C1"}
+	calls := 0
 	r.notice = func(_, thread, _, _ string) (string, error) {
+		calls++
 		if thread != "100.2" {
 			t.Fatalf("anchor=%s", thread)
 		}
 		return "n", nil
 	}
 	r.updateNotices()
+	if calls != 1 {
+		t.Fatalf("notice calls = %d, want 1", calls)
+	}
 }
 
 func TestRound2NoticeConfig(t *testing.T) {

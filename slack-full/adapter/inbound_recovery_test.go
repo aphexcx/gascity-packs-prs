@@ -546,6 +546,120 @@ func TestInboundRecoveryNoticeSuccessiveIncidentsDuringEditFailure(t *testing.T)
 	}
 }
 
+func TestInboundRecoveryNoticeSuccessiveIncidents(t *testing.T) {
+	type scenario struct{ channel, failure, placement, replyTo string }
+	cases := []scenario{{"CUNLISTED", "none", "top", ""}}
+	for _, channel := range []string{"DDIRECT", "CLISTED"} {
+		for _, failure := range []string{"retryable-post", "permanent-post", "closing-edit"} {
+			cases = append(cases,
+				scenario{channel, failure, "same", "110.0"},
+				scenario{channel, failure, "other", "120.0"},
+				scenario{channel, failure, "top", ""})
+		}
+	}
+	for _, tc := range cases {
+		t.Run(tc.channel+"/"+tc.failure+"/"+tc.placement, func(t *testing.T) {
+			r, now := round2Recovery(t)
+			r.noticeRooms = []string{"CLISTED"}
+			type request struct{ thread, ts string }
+			var posts, edits []request
+			r.notice = func(channel, thread, ts, text string) (string, error) {
+				if channel != tc.channel {
+					t.Errorf("Slack channel = %q, want %q", channel, tc.channel)
+				}
+				if ts != "" {
+					edits = append(edits, request{thread, ts})
+					if len(edits) == 1 && tc.failure == "closing-edit" {
+						return "", errors.New("rate_limited")
+					}
+					return ts, nil
+				}
+				posts = append(posts, request{thread, ts})
+				if len(posts) == 1 {
+					switch tc.failure {
+					case "retryable-post":
+						return "", errors.New("rate_limited")
+					case "permanent-post":
+						return "", errors.New("thread_not_found")
+					}
+				}
+				return fmt.Sprintf("notice-%d", len(posts)), nil
+			}
+			var reports []holdNoticeReport
+			r.recordNotice = func(channel string, report holdNoticeReport) error {
+				if channel != tc.channel {
+					t.Errorf("operator channel = %q, want %q", channel, tc.channel)
+				}
+				reports = append(reports, report)
+				return nil
+			}
+			hold := func(ts, replyTo string) time.Time {
+				t.Helper()
+				p := testPending(tc.channel, ts, "held line")
+				p.inbound.ReplyToMessageID = replyTo
+				if err := r.hold(p, recoveryReceipt("r"+ts, "s1", false), false); err != nil {
+					t.Fatal(err)
+				}
+				return *now
+			}
+			first := hold("111.1", "110.0")
+			*now = now.Add(time.Minute)
+			r.updateNotices()
+			*now = now.Add(time.Second)
+			if _, err := r.acknowledge(tc.channel, "111.1"); err != nil {
+				t.Fatal(err)
+			}
+			r.updateNotices()
+			if len(reports) != 2 || reports[1].Phase != "outcome" {
+				t.Errorf("first settlement tick: got %d reports, want held and outcome", len(reports))
+			}
+
+			*now = now.Add(time.Second) // Admit the next hold before the first retry.
+			second := hold("121.1", tc.replyTo)
+			thread := tc.replyTo
+			if thread == "" {
+				thread = "121.1"
+			}
+			r.updateNotices()
+			*now = now.Add(time.Minute)
+			r.updateNotices()
+			r.send = func(inboundRecoveryEntry) (deliveryReceipt, error) { return recoveryReceipt("ok", "s1", true), nil }
+			*now = now.Add(time.Second)
+			r.tick(false)
+			r.updateNotices()
+
+			opening := func(start time.Time) string {
+				return fmt.Sprintf("Delivery has been held since %s; retrying for up to %s.", start.Format(time.RFC3339), r.bound)
+			}
+			wantReports := []holdNoticeReport{
+				{Since: first, ThreadTS: "110.0", MessageTS: "111.1", Phase: "held", Text: opening(first)},
+				{Since: first, ThreadTS: "110.0", MessageTS: "111.1", Phase: "outcome", Text: "The held incident was acknowledged by hand; this does not confirm terminal delivery or reading."},
+				{Since: second, ThreadTS: thread, MessageTS: "121.1", Phase: "held", Text: opening(second)},
+				{Since: second, ThreadTS: thread, MessageTS: "121.1", Phase: "outcome", Text: fmt.Sprintf("Held since %s; handed to the session's terminal by %s, with reading unconfirmed.", second.Format(time.RFC3339), now.Format(time.RFC3339))},
+			}
+			if len(reports) != len(wantReports) {
+				t.Errorf("operator reports = %d, want %d", len(reports), len(wantReports))
+			}
+			for i := 0; i < min(len(reports), len(wantReports)); i++ {
+				if reports[i] != wantReports[i] {
+					t.Errorf("report %d = %+v, want %+v", i, reports[i], wantReports[i])
+				}
+			}
+			var wantPosts, wantEdits []request
+			if tc.channel != "CUNLISTED" {
+				wantPosts = []request{{"110.0", ""}, {thread, ""}}
+				if tc.failure == "closing-edit" {
+					wantEdits = append(wantEdits, request{"110.0", "notice-1"}, request{"110.0", "notice-1"})
+				}
+				wantEdits = append(wantEdits, request{thread, "notice-2"})
+			}
+			if !reflect.DeepEqual(posts, wantPosts) || !reflect.DeepEqual(edits, wantEdits) {
+				t.Errorf("Slack posts = %v, edits = %v; want %v, %v", posts, edits, wantPosts, wantEdits)
+			}
+		})
+	}
+}
+
 func TestInboundRecoveryNoticeFallbackPreservesExistingRecord(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
