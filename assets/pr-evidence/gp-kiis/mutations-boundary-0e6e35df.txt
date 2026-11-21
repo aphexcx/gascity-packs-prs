@@ -1,0 +1,3 @@
+SURVIVED m33 a sentence between the heading and the marker (gate NOTE 9) (exit 0; 18 of 18 ran; red: none)
+SURVIVED m42 a new heading and text after the last rule (the note's end boundary) (exit 0; 18 of 18 ran; red: none)
+2 mutations: 0 killed, 2 survived, 0 broken, 0 setup-error

@@ -1,0 +1,43 @@
+ gascity/template-fragments/gc-standing-notes.template.md | 2 +-
+ tests/test_gc_standing_notes_fragment.py                 | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+......................F                                                  [100%]
+=================================== FAILURES ===================================
+_ test_review_rules_keep_open_a_shown_finding_whose_state_at_the_reviewed_head_nobody_can_tell _
+
+    def test_review_rules_keep_open_a_shown_finding_whose_state_at_the_reviewed_head_nobody_can_tell() -> None:
+        """The gate's sequence: head one shows a fault, head two changes the
+        code, and in a later round whose changes are docs only a reviewer sends
+        head one's proof; nobody can tell whether the fault still happens at the
+        reviewed head. It was shown, so it is not NOT SHOWN; it is not shown
+        gone, so it is not FIXED; the branch that ends in OPEN, with what shows
+        it and its grade, must reach it, so a proven blocker keeps its ruling
+        before any merge."""
+        sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+        governing = [sentence for sentence in sentences
+                     if sentence.startswith("Past round three, in a round that does not stop the PR,")]
+        assert len(governing) == 1
+        clause = governing[0].split("a finding shown any other way", 1)[1]
+        clause = clause.split("; list the rest, which nobody showed", 1)[0]
+        after_fixed = clause.split("FIXED, with the head that fixed it, and ", 1)[1]
+        # The branch that leads to OPEN is the whole rest, not only what is
+        # known to still happen, and OPEN is an order, not a choice: the whole
+        # fallback is pinned here, apart from the whole-note pin, so a rewording
+        # that makes it optional fails this test even when that pin moves with it.
+>       assert after_fixed == ("otherwise it takes the outcome or PRECONDITION it can have without "
+                               "a fix, or else is listed as OPEN with what shows it and its grade, "
+                               "for the mayor"), after_fixed
+E       AssertionError: otherwise it takes the outcome or PRECONDITION it can have without a fix, or else may be listed as OPEN with what shows it and its grade, for the mayor
+E       assert 'otherwise it...for the mayor' == 'otherwise it...for the mayor'
+E
+E         Skipping 72 identical leading characters in diff, use -v to show
+E         - , or else is listed as OPEN with what shows it and its grade, for the mayor
+E         ?           ^^
+E         + , or else may be listed as OPEN with what shows it and its grade, for the mayor
+E         ?           ^^^^^^
+
+tests/test_gc_standing_notes_fragment.py:562: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_keep_open_a_shown_finding_whose_state_at_the_reviewed_head_nobody_can_tell
+1 failed, 22 passed in 0.05s
+exit 1
