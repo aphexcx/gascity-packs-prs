@@ -1,0 +1,496 @@
+# PR 109 round 3 (gp-2mn1 on gp-yhd5), red runs and mutations
+# Section 1: this round's test files on the code of 6a6e7ed7 (round 2's head), in a scratch copy.
+# Section 2: mutations of the code tip 2486bb00, each in a scratch copy (git archive, never committed).
+# Paths: <clone> is the lane's clone; <scratch-NAME> a git archive.
+
+# ===== Section 1: red
+the code of 6a6e7ed7, the round 3 test files of 2486bb00
+
+== slack: the new tests on the code of 6a6e7ed7
+$ (cd <scratch-6a6e7ed7>/slack-full/adapter) env -u GC_BIN go test . -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/' | grep -E -- '^(--- |    --- |ok|FAIL|PASS)|_test.go:[0-9]+:|build failed|undefined'
+start 2026-11-15T04:07:53Z load { 12.66 10.50 10.27 }
+    stamp_message_before_waiting_call_test.go:25: stamp/message-before-the-waiting-call: the call s2 has not returned after 500ms; the row goes on
+    stamp_message_before_waiting_call_test.go:26: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    stamp_message_before_waiting_call_test.go:27: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (1.51s)
+    stopwatch_waited_reaction_test.go:118: from the ask: released +700ms, returned +899ms; stopwatch +72ms, journal +72ms, never-silent +72ms
+    stopwatch_waited_reaction_test.go:122: the stopwatch line is at +72ms from the ask, want the reaction's real completion, between the release (+700ms) and the return (+899ms)
+--- FAIL: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (1.13s)
+    --- FAIL: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (0.93s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.20s)
+    waiter_gives_up_test.go:252: cancelled: the waiting call had not returned 2s after its caller gave up, with the holder's answer still held
+    waiter_gives_up_test.go:253: without the waiter: slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session]
+    waiter_gives_up_test.go:254: waiter cancelled:                         slack=add:ok | remove:ok | add:ok | add:already_reacted | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session] ; its caller got {"delivered":true}
+    waiter_gives_up_test.go:259: the holder and the calls around the given-up waiter differ from the same steps without it:
+    waiter_gives_up_test.go:262: the waiter's caller got {"delivered":true}, want {"delivered":false,"failure_kind":"transient"}
+    waiter_gives_up_test.go:252: deadline: the waiting call had not returned 2s after its caller gave up, with the holder's answer still held
+    waiter_gives_up_test.go:253: without the waiter: slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session]
+    waiter_gives_up_test.go:254: waiter deadline:                          slack=add:ok | remove:ok | add:ok | add:already_reacted | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session] ; its caller got {"delivered":true}
+    waiter_gives_up_test.go:259: the holder and the calls around the given-up waiter differ from the same steps without it:
+    waiter_gives_up_test.go:262: the waiter's caller got {"delivered":true}, want {"delivered":false,"failure_kind":"transient"}
+    waiter_gives_up_test.go:252: client-gives-up-through-the-proxy: the waiting call had not returned 2s after its caller gave up, with the holder's answer still held
+    waiter_gives_up_test.go:253: without the waiter: slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session]
+    waiter_gives_up_test.go:254: waiter client-gives-up-through-the-proxy: slack=add:ok | remove:ok | add:ok | add:already_reacted | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session] ; its caller got client timed out
+    waiter_gives_up_test.go:259: the holder and the calls around the given-up waiter differ from the same steps without it:
+--- FAIL: TestReactVerbWaiterEndsWithItsCaller (9.23s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/cancelled (2.94s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/deadline (3.26s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (3.03s)
+    waiter_gives_up_test.go:318: ACK_REACTION="eyes": the waiting call had not returned 2s after its caller gave up
+    waiter_gives_up_test.go:319: ACK_REACTION unset: slack=add:ok | remove:ok | add:ok ; acts=2 ; journal=[eyes:counted,eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; w={"delivered":true} ; owner lines=0
+    waiter_gives_up_test.go:320: ACK_REACTION=eyes:  slack=add:ok | remove:ok | add:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; w={"delivered":true} ; owner lines=0
+    waiter_gives_up_test.go:331: ACK_REACTION=eyes:
+--- FAIL: TestReactVerbWaiterGivenUpIsAMissedCount (2.92s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	15.168s
+FAIL
+exit=1 (24s)
+
+== gchat: the new tests on the code of 6a6e7ed7
+$ (cd <scratch-6a6e7ed7>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL|PASS)|_test.go:[0-9]+:|build failed|undefined'
+start 2026-11-15T04:08:16Z load { 15.86 11.44 10.62 }
+    stamp_message_before_waiting_call_test.go:24: stamp/message-before-the-waiting-call: the call s2 has not returned after 750ms; the row goes on
+    stamp_message_before_waiting_call_test.go:25: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    stamp_message_before_waiting_call_test.go:26: ACK_REACTION=eyes:  acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (1.90s)
+    stopwatch_waited_reaction_test.go:103: from the ask: released +901ms, returned +929ms; stopwatch +908ms, never-silent +7ms
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.94s)
+    waiter_gives_up_test.go:234: cancelled: the waiting call had not returned 2s after its caller gave up, with the holder's answer still held
+    waiter_gives_up_test.go:235: without the waiter: google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session]
+    waiter_gives_up_test.go:236: waiter cancelled:                         google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session] ; its caller got 502
+    waiter_gives_up_test.go:234: deadline: the waiting call had not returned 2s after its caller gave up, with the holder's answer still held
+    waiter_gives_up_test.go:235: without the waiter: google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session]
+    waiter_gives_up_test.go:236: waiter deadline:                          google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session] ; its caller got 502
+    waiter_gives_up_test.go:234: client-gives-up-through-the-proxy: the waiting call had not returned 2s after its caller gave up, with the holder's answer still held
+    waiter_gives_up_test.go:235: without the waiter: google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session]
+    waiter_gives_up_test.go:236: waiter client-gives-up-through-the-proxy: google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session] ; its caller got client timed out
+--- FAIL: TestReactVerbWaiterEndsWithItsCaller (10.68s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/cancelled (3.35s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/deadline (3.66s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (3.67s)
+    waiter_gives_up_test.go:306: ACK_REACTION="eyes": the waiting call had not returned 2s after its caller gave up
+    waiter_gives_up_test.go:307: ACK_REACTION unset: google=create:200 | delete:200 | create:200 ; acts=2 ; s1=200 ; r1=200 ; w=200 ; owner lines=0
+    waiter_gives_up_test.go:308: ACK_REACTION=eyes:  google=create:200 | delete:200 | create:200 | create:200 ; acts=1 ; s1=200 ; r1=200 ; w=502 ; owner lines=1
+--- FAIL: TestReactVerbWaiterGivenUpIsAMissedCount (3.94s)
+FAIL
+FAIL	gchat-adapter/internal/app	17.696s
+FAIL
+exit=1 (20s)
+
+== slack-full: the ack unit test on the code of 6a6e7ed7 (HoldReactionContext is new: it does not build)
+$ (cd <scratch-6a6e7ed7>/slack-full/adapter) env -u GC_BIN go vet ./internal/ack/ 2>&1 | head -5
+start 2026-11-15T04:08:36Z load { 12.73 11.01 10.48 }
+# github.com/sjarmak/gc-slack-adapter/internal/ack
+# [github.com/sjarmak/gc-slack-adapter/internal/ack]
+vet: internal/ack/hold_context_test.go:36:30: s.HoldReactionContext undefined (type *Service has no field or method HoldReactionContext)
+exit=1 (0s)
+
+== gchat: the ack unit test on the code of 6a6e7ed7 (HoldReactionContext is new: it does not build)
+$ (cd <scratch-6a6e7ed7>/gchat/adapter) env -u GC_BIN go vet ./internal/ack/ 2>&1 | head -5
+start 2026-11-15T04:08:37Z load { 12.73 11.01 10.48 }
+# gchat-adapter/internal/ack
+# [gchat-adapter/internal/ack]
+vet: internal/ack/hold_context_test.go:36:30: s.HoldReactionContext undefined (type *Service has no field or method HoldReactionContext)
+exit=1 (0s)
+
+# ===== Section 2: mutations
+
+== mutation r3m1-wait-ignores-the-caller of 2486bb00: slack
+$ (cd <scratch-r3m1-wait-ignores-the-caller>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:08:37Z load { 12.73 11.01 10.48 }
+--- PASS: TestHeldAnswerParityWithAckOff (7.80s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (0.78s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.79s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.84s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.76s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.90s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.02s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.62s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.09s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.61s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (1.76s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.99s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (0.86s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.13s)
+--- FAIL: TestReactVerbWaiterEndsWithItsCaller (8.87s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/cancelled (2.95s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/deadline (2.97s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (2.95s)
+--- FAIL: TestReactVerbWaiterGivenUpIsAMissedCount (3.11s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	23.386s
+--- FAIL: TestHoldReactionContextEndsWithItsCaller (2.31s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.32s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	2.777s
+FAIL
+exit=1 (28s)
+
+== mutation r3m1-wait-ignores-the-caller of 2486bb00: gchat
+$ (cd <scratch-r3m1-wait-ignores-the-caller>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:09:05Z load { 9.30 10.34 10.25 }
+--- PASS: TestHeldAnswerParityWithAckOff (16.43s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.75s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.95s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.89s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (2.27s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.71s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.64s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (1.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.98s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.48s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (2.77s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.96s)
+--- FAIL: TestReactVerbWaiterEndsWithItsCaller (10.77s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/cancelled (3.36s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/deadline (3.65s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (3.75s)
+--- FAIL: TestReactVerbWaiterGivenUpIsAMissedCount (4.14s)
+FAIL
+FAIL	gchat-adapter/internal/app	35.785s
+--- FAIL: TestHoldReactionContextEndsWithItsCaller (2.34s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+FAIL
+FAIL	gchat-adapter/internal/ack	2.779s
+FAIL
+exit=1 (38s)
+
+== mutation r3m2-no-check-after-the-turn of 2486bb00: slack
+$ (cd <scratch-r3m2-no-check-after-the-turn>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:09:43Z load { 11.35 10.67 10.37 }
+--- PASS: TestHeldAnswerParityWithAckOff (9.09s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.42s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.29s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (1.20s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.01s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.00s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (1.56s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.46s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.15s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.45s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (2.10s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.94s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (0.87s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.06s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (3.66s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (0.93s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.59s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.14s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (1.79s)
+ok  	github.com/sjarmak/gc-slack-adapter	18.295s
+--- FAIL: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	1.172s
+FAIL
+exit=1 (22s)
+
+== mutation r3m2-no-check-after-the-turn of 2486bb00: gchat
+$ (cd <scratch-r3m2-no-check-after-the-turn>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:10:05Z load { 9.69 10.33 10.26 }
+--- PASS: TestHeldAnswerParityWithAckOff (17.10s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (2.17s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (2.24s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.55s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (2.04s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.64s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (3.21s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (1.12s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (2.13s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.47s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (3.24s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (1.11s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (4.72s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.36s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.70s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.66s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (3.57s)
+ok  	gchat-adapter/internal/app	30.477s
+--- FAIL: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+FAIL
+FAIL	gchat-adapter/internal/ack	1.188s
+FAIL
+exit=1 (32s)
+
+== mutation r3m3-a-waiter-that-gives-up-keeps-its-place of 2486bb00: slack
+$ (cd <scratch-r3m3-a-waiter-that-gives-up-keeps-its-place>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:10:38Z load { 7.14 9.65 10.01 }
+--- PASS: TestHeldAnswerParityWithAckOff (10.67s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.27s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.54s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (1.38s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.27s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.39s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.20s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.54s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.10s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.58s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (1.08s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.83s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (0.80s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.03s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (3.66s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.00s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.21s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.44s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (1.31s)
+ok  	github.com/sjarmak/gc-slack-adapter	18.472s
+--- FAIL: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.36s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	1.295s
+FAIL
+exit=1 (22s)
+
+== mutation r3m3-a-waiter-that-gives-up-keeps-its-place of 2486bb00: gchat
+$ (cd <scratch-r3m3-a-waiter-that-gives-up-keeps-its-place>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:11:00Z load { 7.94 9.70 10.02 }
+--- PASS: TestHeldAnswerParityWithAckOff (17.99s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (2.30s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (2.49s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.43s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (2.38s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (2.17s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.90s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (1.40s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.89s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.48s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (2.60s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (1.33s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (5.98s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.91s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.88s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (2.19s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (2.42s)
+ok  	gchat-adapter/internal/app	31.117s
+--- FAIL: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.34s)
+FAIL
+FAIL	gchat-adapter/internal/ack	1.274s
+FAIL
+exit=1 (33s)
+
+== mutation r3m4-slack-verb-sends-anyway of 2486bb00: slack
+$ (cd <scratch-r3m4-slack-verb-sends-anyway>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:11:34Z load { 7.54 9.48 9.93 }
+--- PASS: TestHeldAnswerParityWithAckOff (7.15s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.31s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.91s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.93s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.94s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.95s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (1.29s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.39s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.43s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.48s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (1.50s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.92s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (0.87s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.05s)
+--- FAIL: TestReactVerbWaiterEndsWithItsCaller (3.55s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/cancelled (0.81s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/deadline (1.50s)
+    --- FAIL: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.24s)
+--- FAIL: TestReactVerbWaiterGivenUpIsAMissedCount (1.30s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	15.201s
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	1.193s
+FAIL
+exit=1 (20s)
+
+== mutation r3m4-slack-verb-sends-anyway of 2486bb00: gchat
+$ (cd <scratch-r3m4-slack-verb-sends-anyway>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:11:54Z load { 8.90 9.71 10.01 }
+--- PASS: TestHeldAnswerParityWithAckOff (15.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (2.00s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (2.09s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.60s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.83s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.56s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.26s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (1.07s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.83s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.64s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (2.31s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (1.02s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (4.78s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.44s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.65s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.69s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (2.00s)
+ok  	gchat-adapter/internal/app	26.345s
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.33s)
+ok  	gchat-adapter/internal/ack	1.391s
+exit=0 (29s)
+
+== mutation r3m5-gchat-verb-sends-anyway of 2486bb00: slack
+$ (cd <scratch-r3m5-gchat-verb-sends-anyway>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:12:23Z load { 10.05 9.99 10.10 }
+--- PASS: TestHeldAnswerParityWithAckOff (6.14s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (0.95s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.89s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.92s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.75s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.84s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (1.05s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.50s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.39s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (0.93s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.90s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (0.84s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.06s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (2.74s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (0.76s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (0.98s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.00s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (0.98s)
+ok  	github.com/sjarmak/gc-slack-adapter	12.343s
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.73s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	1.181s
+exit=0 (17s)
+
+== mutation r3m5-gchat-verb-sends-anyway of 2486bb00: gchat
+$ (cd <scratch-r3m5-gchat-verb-sends-anyway>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:12:40Z load { 9.44 9.86 10.05 }
+--- PASS: TestHeldAnswerParityWithAckOff (13.69s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.95s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.77s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.16s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.73s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.37s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.16s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.82s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.72s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.50s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (2.07s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.94s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (4.71s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.36s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.71s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.65s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (1.99s)
+ok  	gchat-adapter/internal/app	24.135s
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.72s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.32s)
+ok  	gchat-adapter/internal/ack	1.178s
+exit=0 (26s)
+
+== mutation r3m6-stopwatch-dated-back of 2486bb00: slack
+$ (cd <scratch-r3m6-stopwatch-dated-back>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:13:06Z load { 9.33 9.80 10.03 }
+--- PASS: TestHeldAnswerParityWithAckOff (6.36s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.06s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.88s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.87s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.89s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.75s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (1.12s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.56s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.48s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (1.06s)
+--- FAIL: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.81s)
+    --- FAIL: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (0.77s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.04s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (2.91s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (0.84s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.00s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.08s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (1.04s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	12.908s
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.75s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.33s)
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	1.221s
+FAIL
+exit=1 (18s)
+
+== mutation r3m6-stopwatch-dated-back of 2486bb00: gchat
+$ (cd <scratch-r3m6-stopwatch-dated-back>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:13:24Z load { 9.79 9.90 10.06 }
+--- PASS: TestHeldAnswerParityWithAckOff (14.09s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.95s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.87s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.28s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.73s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.44s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.28s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.87s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.69s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.50s)
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (2.07s)
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (1.05s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (4.77s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.38s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.69s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.69s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (2.11s)
+ok  	gchat-adapter/internal/app	24.829s
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+ok  	gchat-adapter/internal/ack	1.158s
+exit=0 (27s)
+
+== mutation r3m7-act-dated-back-twice of 2486bb00: slack
+$ (cd <scratch-r3m7-act-dated-back-twice>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:13:51Z load { 9.77 9.97 10.08 }
+--- FAIL: TestHeldAnswerParityWithAckOff (6.15s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.19s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.02s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.95s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.72s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.74s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (0.95s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.36s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.38s)
+--- FAIL: TestHeldAnswerParityMessageBeforeTheWaitingCall (0.91s)
+--- FAIL: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.78s)
+    --- FAIL: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (0.74s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.04s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (2.54s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (0.67s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (0.96s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (0.91s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (0.89s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	11.894s
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.38s)
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	1.225s
+FAIL
+exit=1 (16s)
+
+== mutation r3m7-act-dated-back-twice of 2486bb00: gchat
+$ (cd <scratch-r3m7-act-dated-back-twice>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout|TestHoldReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|\[build failed\]|undefined|declared and not used'
+start 2026-11-15T04:14:07Z load { 8.85 9.76 10.00 }
+--- PASS: TestHeldAnswerParityWithAckOff (13.08s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.75s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.73s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.08s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.64s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.36s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.09s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.80s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.64s)
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.44s)
+--- FAIL: TestHeldAnswerParityMessageBeforeTheWaitingCall (1.96s)
+--- FAIL: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (0.96s)
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (4.65s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.36s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (1.65s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.65s)
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (2.17s)
+FAIL
+FAIL	gchat-adapter/internal/app	23.522s
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.71s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+ok  	gchat-adapter/internal/ack	1.154s
+FAIL
+exit=1 (26s)

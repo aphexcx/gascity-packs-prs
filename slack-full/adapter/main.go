@@ -3289,6 +3289,26 @@ func handleReact(cfg config) http.HandlerFunc {
 		}
 		log.Printf("react: op=%s conv=%s ts=%s emoji=%s", method, req.Conversation.ConversationID, req.MessageID, emoji)
 
+		// With ACK_REACTION on, the session's calls on one reaction reach
+		// Slack one at a time, each with its bookkeeping below, so the
+		// session's mark follows the order in which Slack applied them
+		// (ack.Service.HoldReaction). slackAPIClient's timeout bounds a turn.
+		// A call that waited is dated back by its wait: the session acted
+		// when it asked, so a message that arrived meanwhile is not answered.
+		// The wait ends with r's context, which ends when the session's
+		// command stops waiting (through gc's proxy, the connection closes):
+		// a call whose caller has given up by the time it has its turn never
+		// reaches Slack and records nothing. A call that holds the turn runs
+		// on as before.
+		release, waited, err := cfg.arrival.HoldReactionContext(r.Context(), req.Conversation.ConversationID, req.MessageID, emoji)
+		if err != nil {
+			log.Printf("react: op=%s conv=%s ts=%s emoji=%s: not sent, its caller had given up by the time it had its turn: %v", method, req.Conversation.ConversationID, req.MessageID, emoji, err)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(reactReceipt{FailureKind: "transient"})
+			return
+		}
+		defer release()
+
 		slackResp, err := callSlackReactions(cfg.slackBotToken, method, slackReactionsAddReq{
 			Channel:   req.Conversation.ConversationID,
 			Name:      emoji,
@@ -3324,9 +3344,12 @@ func handleReact(cfg config) http.HandlerFunc {
 			fresh := err == nil && slackResp.OK
 			// With ACK_REACTION on, the reaction already there may be the
 			// acknowledgement's own (arrival.go): the session's then counts as
-			// it would with the acknowledgement off. Slack's ok meets that
-			// placement too, so a later already_reacted is the session's repeat.
-			if err == nil && cfg.arrival.TakePlaced(req.Conversation.ConversationID, req.MessageID, emoji) {
+			// it would with the acknowledgement off. Slack's ok marks the
+			// session's own reaction, so a later already_reacted is its repeat
+			// even when the acknowledgement's record was written after it.
+			if fresh {
+				cfg.arrival.SessionPlaced(req.Conversation.ConversationID, req.MessageID, emoji)
+			} else if err == nil && cfg.arrival.TakePlaced(req.Conversation.ConversationID, req.MessageID, emoji) {
 				fresh = true
 			}
 			act := ingestionSessionAct{
@@ -3334,13 +3357,22 @@ func handleReact(cfg config) http.HandlerFunc {
 				MessageTS: req.MessageID, Emoji: emoji, SessionID: strings.TrimSpace(req.SessionID),
 			}
 			if cfg.neverSilent.Enabled() {
-				act.Timestamp = time.Now()
+				// never-silent judges by the moment the session asked; the
+				// stopwatch keeps when the reaction landed.
+				act.landed = time.Now()
+				act.Timestamp = act.landed.Add(-waited)
 				act.NoticeNoActivity = !fresh
 				if !act.NoticeNoActivity {
 					cfg.noticeError(cfg.neverSilent.Act(act.Channel, "", act.SessionID, act.Timestamp))
 				}
 			}
 			cfg.inboundJournal.recordSessionAct(act)
+		}
+		// A definite removal (ok or no_reaction): the session's own reaction
+		// is no longer there, so its next one counts as it would with the
+		// acknowledgement off.
+		if receipt.Delivered && req.Remove {
+			cfg.arrival.SessionRemoved(req.Conversation.ConversationID, req.MessageID, emoji)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(receipt)

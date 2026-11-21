@@ -1367,17 +1367,47 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, _ := s.clients()
-	var name string
+	// With ACK_REACTION on, the session's calls on one reaction reach Google
+	// one at a time, each with its bookkeeping below, so the session's mark
+	// follows the order in which Google applied them (arrival.Wire). The
+	// call's own bound (CreateReaction's retry bound, RemoveReaction's
+	// timeout) bounds a turn. A call that waited is dated back by its wait:
+	// the session acted when it asked, so a message that arrived meanwhile is
+	// not answered. The wait ends with r's context, which ends when the
+	// session's command stops waiting (through gc's proxy, the connection
+	// closes): a call whose caller has given up by the time it has its turn
+	// never reaches Google and records nothing. A call that holds the turn
+	// runs on as before.
+	var waited time.Duration
 	var err error
+	if c.ArrivalHold != nil {
+		var release func()
+		release, waited, err = c.ArrivalHold(r.Context(), v.Message, v.Emoji)
+		if err != nil {
+			problem(w, 502, err)
+			return
+		}
+		defer release()
+	}
+	var name string
 	if v.Remove {
-		err = c.DeleteReaction(r.Context(), v.Message, v.Emoji)
+		var removed bool
+		removed, err = c.RemoveReaction(r.Context(), v.Message, v.Emoji)
+		// The session's own reaction was there and is gone: its next one
+		// counts as it would with the acknowledgement off. Nothing found
+		// proves nothing (Google may hold the emoji in another form), so the
+		// mark stays.
+		if err == nil && removed && c.ArrivalRemoved != nil {
+			c.ArrivalRemoved(v.Message, v.Emoji)
+		}
 	} else {
 		name, err = c.CreateReaction(r.Context(), v.Message, v.Emoji)
 		// With ACK_REACTION on, the reaction already there may be the
 		// acknowledgement's own (arrival.Wire): the session's then counts as
-		// it would with the acknowledgement off. Google's created answer meets
-		// that placement too, so a later 409 is the session's repeat.
-		if (err == nil || chat.AlreadyThere(err)) && c.ArrivalPlaced != nil && c.ArrivalPlaced(v.Message, v.Emoji) {
+		// it would with the acknowledgement off. Google's created answer marks
+		// the session's own reaction, so a later 409 is its repeat even when
+		// the acknowledgement's record was written after it.
+		if (err == nil || chat.AlreadyThere(err)) && c.ArrivalPlaced != nil && c.ArrivalPlaced(v.Message, v.Emoji, err == nil) {
 			err = nil
 		}
 	}
@@ -1391,7 +1421,7 @@ func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	if !v.Remove && v.SessionID != "" {
 		space, _, valid := strings.Cut(v.Message, "/messages/")
 		if valid {
-			if err := s.notices().Act(space, "", v.SessionID, time.Now()); err != nil {
+			if err := s.notices().Act(space, "", v.SessionID, time.Now().Add(-waited)); err != nil {
 				s.opts.Logger.Warn("never-silent: could not record session reaction")
 			}
 		}

@@ -27,6 +27,11 @@ type ingestionSessionAct struct {
 	// NoticeNoActivity keeps a provider no-op as ingestion proof without
 	// importing it as fresh notice-engine activity. Omitted with the switch off.
 	NoticeNoActivity bool `json:"notice_no_activity,omitempty"`
+	// landed is when a session reaction really completed, for the stopwatch
+	// only, when Timestamp is the time never-silent judges by (a react call
+	// dated back by its wait for its turn). Never persisted: the journal
+	// keeps the time a restart replays into never-silent.
+	landed time.Time
 }
 
 const ingestionActCacheLimit = 4096
@@ -42,7 +47,11 @@ func (j *inboundJournal) recordSessionAct(act ingestionSessionAct) {
 		}
 	}
 	if act.Kind == "reaction" {
-		j.watch.Record(stopwatch.Event{Event: "reaction", Conversation: act.Channel, Message: act.MessageTS, At: act.Timestamp, Actor: "agent"})
+		at := act.Timestamp
+		if !act.landed.IsZero() {
+			at = act.landed
+		}
+		j.watch.Record(stopwatch.Event{Event: "reaction", Conversation: act.Channel, Message: act.MessageTS, At: at, Actor: "agent"})
 	}
 	if act.Kind == "reply" {
 		j.watch.Record(stopwatch.Event{Event: "words", Conversation: act.Channel, Message: act.MessageTS, Thread: act.ThreadTS, At: act.Timestamp})

@@ -80,8 +80,8 @@ func New(o Options) (*ack.Service, *stopwatch.Writer, error) {
 
 // Wire prepares a new client before it is shared: the words hook always (the
 // stopwatch runs on or off, item 15); the shared arrival pace and the react
-// verb's placement lookup only while the acknowledgement is on, so the switch
-// unset keeps the base's gate and the base's react verb.
+// verb's placement lookup and turn only while the acknowledgement is on, so
+// the switch unset keeps the base's gate and the base's react verb.
 func Wire(c *chat.Client, service *ack.Service, watch *stopwatch.Writer) {
 	c.MessageCreated = func(space, message, thread, stamp string) {
 		if at, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
@@ -90,10 +90,22 @@ func Wire(c *chat.Client, service *ack.Service, watch *stopwatch.Writer) {
 	}
 	if service != nil && service.Choice.Enabled() {
 		c.EnableArrivalPace()
-		c.ArrivalPlaced = func(message, emoji string) bool {
+		c.ArrivalPlaced = func(message, emoji string, created bool) bool {
 			// The acknowledgement keys the message by its space (inbound.go).
 			space, _, _ := strings.Cut(message, "/messages/")
+			if created {
+				service.SessionPlaced(space, message, emoji)
+				return true
+			}
 			return service.TakePlaced(space, message, emoji)
+		}
+		c.ArrivalRemoved = func(message, emoji string) {
+			space, _, _ := strings.Cut(message, "/messages/")
+			service.SessionRemoved(space, message, emoji)
+		}
+		c.ArrivalHold = func(ctx context.Context, message, emoji string) (func(), time.Duration, error) {
+			space, _, _ := strings.Cut(message, "/messages/")
+			return service.HoldReactionContext(ctx, space, message, emoji)
 		}
 	}
 }

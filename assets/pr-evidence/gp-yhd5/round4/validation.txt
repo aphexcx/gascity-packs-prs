@@ -1,0 +1,120 @@
+Go toolchain: go version go1.27.3 darwin/arm64
+Final code/test head: 300f28b3dbfe571c3aa315edfa1d2f95cdb8e148
+Ancestry merge: de95f930f9ce74bce8e4539b57db1a2fafca7ec9
+Ancestry-merge tree: ababeeb189e86b3bf55d55e30c71b6614c924add
+
+MERGED TREE, gchat/adapter
+env -u GC_BIN go test -json ./... -count=1 -timeout=30m
+exit=1
+top-level: pass=783 fail=1 skip=2
+packages: pass=24 fail=1 no-test-files=1
+=== RUN   TestRevokedTokenReplacementResumes
+    app_test.go:346: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
+--- FAIL: TestRevokedTokenReplacementResumes (5.37s)
+The 3,000-message end-to-end test passed.
+
+MAIN 920830934bf7d60e3ac15e5691e5f52d17db06c6, gchat/adapter
+env -u GC_BIN go test -json ./internal/app -run '^TestRevokedTokenReplacementResumes$' -count=10 -timeout=2m
+exit=0
+top-level: pass=10 fail=0 skip=0
+packages: pass=1
+Last two repetitions:
+--- PASS: TestRevokedTokenReplacementResumes (3.13s)
+=== RUN   TestRevokedTokenReplacementResumes
+--- PASS: TestRevokedTokenReplacementResumes (3.11s)
+
+MAIN 920830934bf7d60e3ac15e5691e5f52d17db06c6, gchat/adapter
+env -u GC_BIN go test -json ./... -count=1 -timeout=30m
+comparison deliberately terminated by SIGTERM, exit=143
+No claim of a complete passing main suite.
+=== RUN   TestRevokedTokenReplacementResumes
+--- PASS: TestRevokedTokenReplacementResumes (3.52s)
+
+COMPLETION MANIFEST
+merged/gchat/adapter | env -u GC_BIN go test -json ./... -count=1 -timeout=30m | exit=1
+main/gchat/adapter | env -u GC_BIN go test -json ./internal/app -run '^TestRevokedTokenReplacementResumes$' -count=10 -timeout=2m | exit=0
+main/gchat/adapter | env -u GC_BIN go test -json ./... -count=1 -timeout=30m | exit=143 (deliberately stopped)
+
+MEASURED FOLLOW-UP, merged gchat/adapter
+env -u GC_BIN go test -json ./internal/app -run '^TestRevokedTokenReplacementResumes$' -count=20 -timeout=30m
+exit=0; pass=20 fail=0
+load before=9.74/9.27/10.75; after=11.85/9.77/10.82
+env -u GC_BIN go test -json ./... -count=1 -timeout=30m
+exit=0; pass=784 fail=0 skip=2; packages=25 passed, 1 no tests
+load before=11.43/10.02/10.86; after=7.46/7.80/9.20
+
+SLACK OFF-PARITY, merged slack-full/adapter
+env -u GC_BIN go test -json ./... -count=1 -timeout=30m
+initial exit=1; pass=1684 fail=1 skip=3
+TestOffParityWithTheBase: offparity_test.go:475
+Extra output: one-entry isolation pause, two-entry isolation pause, isolation resume.
+Missing expected output: none.
+env -u GC_BIN go test -json . -run '^TestOffParityWithTheBase$' -count=20 -timeout=30m
+exit=0; pass=20 fail=0
+load before=6.58/6.23/7.55; after=4.60/5.78/7.32
+env -u GC_BIN go test -json ./... -count=1 -timeout=30m
+authorized rerun exit=0; pass=1685 fail=0 skip=3; packages=5 passed
+load before=12.38/7.63/7.91; after=5.75/6.30/7.23
+The initial load averages were not recorded.
+
+MAIN SLACK BASELINE
+env -u GC_BIN go test -json ./... -count=1 -timeout=30m
+complete-pack snapshot: exit=0; pass=1674 fail=0 skip=3; packages=5 passed
+load before=6.27/7.72/8.64; after=4.70/5.99/7.65
+An earlier incomplete snapshot lacked sibling fixtures and was stopped (143).
+That invalid attempt is not a source-regression result.
+
+RACE RUNS
+gchat/adapter: env -u GC_BIN go test -race -json ./internal/ack ./internal/app ./internal/arrival ./internal/chat ./internal/server -count=1 -timeout=30m
+exit=0; pass=247 fail=0 skip=0; packages=4 passed, 1 no tests
+slack-full/adapter: env -u GC_BIN go test -race -json . ./internal/ack -count=1 -timeout=30m
+exit=1; pass=1659 fail=2 skip=3; packages=1 passed, 1 failed
+Failure 1: TestArrivalCoversLegacyThreadRoutes/sticky
+  WARNING: DATA RACE
+  write: withSlackAPIStub cleanup, thread_context_test.go:40
+  read: postReactionMethodContext, main.go:3512
+  legacy reaction goroutine spawned by processSlackEvent, main.go:5164
+Failure 2: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-jev
+  session_first_reaction_counts_test.go:306: after the session's first eyes: acts=-1, want 1
+
+SAME STUB-RACE COMMAND ON BOTH TREES
+env -u GC_BIN go test -race -json -run '^TestArrivalCoversLegacyThreadRoutes$' -count=20 -timeout=30m
+main: exit=0; pass=20; iterations reporting a race=0/20
+load before=9.50/6.85/6.81; after=9.28/6.89/6.82
+head: exit=1; pass=19 fail=1; iterations reporting a race=1/20
+load before=12.15/8.16/7.30; after=12.77/8.35/7.37
+No runtime production path writes slackAPIBase; only package initialization does.
+The legacy dispatch/read path is unchanged from main; causation of the sample difference is not established.
+
+AUTHORIZED TEST-HELPER EDIT
+env -u GC_BIN go test -race -json -run '^TestSessionFirstReactionCountsAsWithAckOff$' -count=20 -timeout=30m
+before: exit=0; pass=20 fail=0; no failing acts value in this isolated run
+load before=3.95/5.64/6.60; after=3.78/5.48/6.51
+after: exit=0; pass=20 fail=0
+load before=6.28/5.71/6.47; after=6.57/5.88/6.51
+Only firstEyes changed: 9 added lines wait for callback completion with the rig's 10-second bound.
+The original sample point, assertions, expected values and journal checks are unchanged.
+
+FINAL FULL SLACK RUN AFTER THE HELPER EDIT
+env -u GC_BIN go test -json ./... -count=1 -timeout=30m
+exit=1; pass=1684 fail=1 skip=3
+Same TestOffParityWithTheBase failure: same three extra coalescer lines, zero missing expected lines.
+No fifth distinct failure; no further retry and no claim of a green final full suite.
+
+FORMATTING AND VET
+gchat/adapter: gofmt -l . | command exit=0; no files listed
+slack-full/adapter: gofmt -l . | command exit=0; company_thread_ambient.go listed
+main/slack-full/adapter: gofmt -l . | command exit=0; identical file listed
+The wrapper reported validation exit=1 for that existing formatting deviation.
+slack-full/adapter: gofmt -l session_first_reaction_counts_test.go | exit=0; no files listed
+gchat/adapter: go vet ./... | exit=0; no diagnostics
+slack-full/adapter: go vet ./... | exit=0; no diagnostics, including after the helper edit
+
+DIRECT PYTHON SUITES, EACH FROM ITS PACK
+env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q
+gchat: exit=0; 52 passed, 101 subtests passed in 20.83s
+slack-full: exit=0; 986 passed, 3 skipped, 2 warnings, 10 subtests passed in 53.37s
+Warnings: DeprecationWarning about fork from a multithreaded test process.
+No make test or Node test invocation was used.
+
+The full structured command/exit/count manifest is suite-results.json.
