@@ -91,7 +91,7 @@ func TestHistoryReadSavesAreRemovedToo(t *testing.T) {
 				m.LastUpdateTime = "2026-10-22T10:01:00Z"
 				m.Attachment = nil
 			}
-			out, err := p.HandleChange(context.Background(), puller.Change{Kind: kind, Space: "spaces/room", Message: m})
+			out, err := p.HandleChange(context.Background(), puller.Change{Kind: kind, Space: "spaces/room", Message: m, EventTime: time.Now()})
 			if err != nil || out != puller.Ack {
 				t.Fatal("change failed")
 			}
@@ -276,7 +276,7 @@ func TestSaveRacingADeletionLeavesNoFile(t *testing.T) {
 	}
 	deleteDone := make(chan error, 1)
 	go func() {
-		_, err := p.HandleChange(context.Background(), puller.Change{Kind: "message.deleted", Space: "spaces/room", Message: &api.Message{Name: m.Name}})
+		_, err := p.HandleChange(context.Background(), puller.Change{Kind: "message.deleted", Space: "spaces/room", Message: &api.Message{Name: m.Name}, EventTime: time.Now()})
 		deleteDone <- err
 	}()
 	// Observe the durable tombstone while the download is held open.

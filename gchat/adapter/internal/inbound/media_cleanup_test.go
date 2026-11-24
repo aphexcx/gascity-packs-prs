@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/fakes/fakegoogle"
@@ -254,7 +255,7 @@ func TestDeletionRemovesEveryCopy(t *testing.T) {
 func TestDeletionLearnedAfterAnOutageRemovesFiles(t *testing.T) {
 	f := setup(t)
 	path := writeCleanupFile(t, filepath.Join(f.opts.Config.Endpoints.MediaDir, "room", "one"), "saved.txt")
-	out, err := f.p.HandleChange(context.Background(), puller.Change{Kind: "message.deleted", Space: space, Message: &api.Message{Name: messageName}})
+	out, err := f.p.HandleChange(context.Background(), puller.Change{Kind: "message.deleted", Space: space, Message: &api.Message{Name: messageName}, EventTime: time.Now()})
 	if err != nil || out != puller.Ack {
 		t.Fatal("catch-up deletion failed")
 	}
