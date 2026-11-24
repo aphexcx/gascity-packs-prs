@@ -1,0 +1,8 @@
+--- PASS: TestJoinedSpaceHistoryAfterMigration (0.63s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/offline-dm (0.13s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-room-before-join (0.33s)
+    --- PASS: TestJoinedSpaceHistoryAfterMigration/live-dm-after-join (0.16s)
+--- PASS: TestFirstReadAcknowledgementBoundary (1.31s)
+    --- PASS: TestFirstReadAcknowledgementBoundary/catchup-only (0.50s)
+    --- PASS: TestFirstReadAcknowledgementBoundary/live-before-first-read (0.44s)
+    --- PASS: TestFirstReadAcknowledgementBoundary/live-before-history-floor (0.37s)

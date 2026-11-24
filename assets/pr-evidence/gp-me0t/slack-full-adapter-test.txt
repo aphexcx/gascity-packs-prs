@@ -1,0 +1,8 @@
+$ verify -C slack-full/adapter go test -count=1 -json ./...
+Package completion events and counts of named test completion events (including subtests):
+.  pass  passed=13379 skipped=3 failed=0
+internal/ack  pass  passed=14 skipped=0 failed=0
+internal/neversilent  pass  passed=38 skipped=0 failed=0
+internal/stopwatch  pass  passed=4 skipped=0 failed=0
+redact  pass  passed=102 skipped=0 failed=0
+exit=0 elapsed_seconds=252.95

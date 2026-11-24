@@ -1,0 +1,12 @@
+=== RUN   TestHistoryNoticeInterleavings
+=== RUN   TestHistoryNoticeInterleavings/snapshot-before-admission
+--- PASS: TestHistoryNoticeInterleavings/snapshot-before-admission (0.46s)
+=== RUN   TestHistoryNoticeInterleavings/track-before-record
+--- PASS: TestHistoryNoticeInterleavings/track-before-record (0.42s)
+=== RUN   TestHistoryNoticeInterleavings/restore-before-poll
+--- PASS: TestHistoryNoticeInterleavings/restore-before-poll (0.25s)
+=== RUN   TestHistoryNoticeInterleavings/restore-during-poll
+--- PASS: TestHistoryNoticeInterleavings/restore-during-poll (0.51s)
+--- PASS: TestHistoryNoticeInterleavings (1.64s)
+PASS
+ok  	gchat-adapter/internal/app	1.902s

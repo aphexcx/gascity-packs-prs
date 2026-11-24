@@ -1,0 +1,68 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 2,
+    "packages_pass": 1,
+    "subtests_fail": 2,
+    "subtests_pass": 33,
+    "top_level_fail": 2,
+    "top_level_pass": 6
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.created
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.updated
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.deleted
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.created
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.deleted
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.created-message.updated
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/reaction.created-reaction.deleted
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns/message.updated-message.deleted
+PASS gchat-adapter/internal/inbound TestLiveActsBeforeTheFloorAreNotTurns
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/message.created
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/message.updated
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/message.deleted
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/reaction.created
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback/reaction.deleted
+PASS gchat-adapter/internal/inbound TestSkippedActReadsAsNotDeliveredAfterRollback
+FAIL gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/message.updated
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/message.deleted
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/reaction.created
+PASS gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame/reaction.deleted
+FAIL gchat-adapter/internal/inbound TestNewActsOnOldMessagesKeepTheirFrame
+PASS gchat-adapter/internal/inbound TestBoundedActWithoutTimeUsesPublishTime/old
+PASS gchat-adapter/internal/inbound TestBoundedActWithoutTimeUsesPublishTime/new
+PASS gchat-adapter/internal/inbound TestBoundedActWithoutTimeUsesPublishTime/none
+PASS gchat-adapter/internal/inbound TestBoundedActWithoutTimeUsesPublishTime
+FAIL gchat-adapter/internal/inbound
+PASS gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/unreadable
+PASS gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/no-interval
+PASS gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/next-listing
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/queued
+PASS gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/old-floor
+PASS gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen/outage-dm
+FAIL gchat-adapter/internal/catchup TestCursorlessSpaceStartsWhereItWasFirstSeen
+PASS gchat-adapter/internal/catchup TestNeverReadSpaceReportsNoLoss/start=false
+PASS gchat-adapter/internal/catchup TestNeverReadSpaceReportsNoLoss/start=true
+PASS gchat-adapter/internal/catchup TestNeverReadSpaceReportsNoLoss
+FAIL gchat-adapter/internal/catchup
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/503
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/403
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/create
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/reload
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/24h
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection
+PASS gchat-adapter/internal/app TestReleasedLedgerCursorlessSpacesStartAtLoad/service-restore=false
+PASS gchat-adapter/internal/app TestReleasedLedgerCursorlessSpacesStartAtLoad/service-restore=true
+PASS gchat-adapter/internal/app TestReleasedLedgerCursorlessSpacesStartAtLoad
+PASS gchat-adapter/internal/app
+
+    history_bound_test.go:134: new act turns=0 want 1
+    history_bound_test.go:86: turns=1
+    history_bound_test.go:86: turns=1
+    history_bound_test.go:86: turns=1
+    history_bound_test.go:82: catchup: list messages for spaces/dm: chat: both frozen bounds must define a nonempty interval
+    history_bound_test.go:86: turns=1
+    history_bound_test.go:86: turns=1

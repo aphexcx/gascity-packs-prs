@@ -1,5 +1,41 @@
 Process Superpowers code-review feedback.
 
+Before applying fixes, read the review findings for this round. Use this
+child's `gc.attempt` as the round number (the first review is round 1).
+Keep a copy of each input report under the build artifact root.
+For a standalone review, use the directory containing the requested report
+(`gc.var.report_path`).
+Key the copies by workflow, review loop and round. Reuse them on retry.
+
+From round 3 onward, compare each blocking finding with the blocking findings
+in all earlier rounds of this loop. A pair belongs to the same family if it
+concerns the same class of fault and the earlier class-level fix, stated in
+one sentence, would close both findings. Treat an uncertain comparison as a
+match. On a match, apply no fix. In the handoff identify both findings, their
+rounds and the preserved report paths. Set `gc.build.repair_status=family_stop`,
+`gc.failure_class=review_family_stop` and `gc.restart.reason=review_family_stop`.
+
+Otherwise process this pass normally. If its verdict would be `iterate` on
+the controller's last allowed attempt, record the last report, fixes, tests
+and outstanding review in the handoff. Set `gc.build.repair_status=exhausted`,
+`gc.failure_class=review_repair_failed` and `gc.restart.reason=review_repair_exhausted`.
+
+For either exit, write one terminal handoff alongside the preserved reports,
+keyed by workflow, loop and round. Reuse its path on retry. Include the reason,
+outstanding findings and preserved report paths. After writing it, record
+these values on the workflow root along with the status, reason and failure class.
+
+- `gc.outcome=fail` and `gc.build.code_review_status=failed`
+- `gc.restart.review_report_path=<preserved review report path>`
+- `gc.restart.handoff_path=<handoff path>`
+- `gc.restart.entrypoint=manual`
+
+Stop here. A person decides what happens next.
+
+Close this child with `gc.outcome=fail`, the same failure class,
+`code_review.verdict=iterate` and `code_review.report_path=<handoff path>`.
+This terminal close takes precedence over the ordinary verdict instructions below.
+
 Use the installed `receiving-code-review` skill as guidance for triaging review
 and gap-analysis findings. Resolve required findings in this single lane and
 preserve traceability to the reviewer, finding id, file anchors, and acceptance
@@ -46,7 +82,7 @@ a required code finding remain open. Set `iterate` only for unresolved findings
 in the reviewed implementation, a required artifact that is missing or invalid,
 or a claimed resolution that cannot be verified.
 
-Always close with `gc.outcome=pass`, `code_review.verdict=done|iterate`,
+For ordinary approval or iteration, close with `gc.outcome=pass`, `code_review.verdict=done|iterate`,
 `code_review.report_path=<review fix summary path>`, and
 `code_review.output_path=<review fix summary path>`.
 

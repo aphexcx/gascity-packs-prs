@@ -1,0 +1,16 @@
+$ verify bash -ec 'if [[ $(uname -s) == Darwin ]]; then PATH="$(brew --prefix coreutils)/libexec/gnubin:$(brew --prefix gnu-sed)/libexec/gnubin:$PATH"; fi; for script in gastown/tests/test_*.sh; do bash "$script"; done'
+Expanded CI glob:
+test_gastown_pack_assets.sh
+test_gastown_theme_scripts.sh
+test_mol_refinery_patrol_rebase_guard.sh
+test_mol_witness_patrol_orphan_recovery.sh
+test_polecat_artifact_dir.sh
+test_polecat_churn_watcher.sh
+test_polecat_push_gate.sh
+test_pr_artifact_lifecycle.sh
+test_pr_merge_reconcile.sh
+test_witness_heartbeat_check.sh
+test_worktree_setup_sync.sh
+Last output line:
+worktree-setup sync tests passed
+exit=0 elapsed_seconds=231.85

@@ -1,0 +1,34 @@
+Break 7, docs/ops/citadel-codex-gates.md:68, replacement line:
+codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$REVIEW_OUTPUT" --model gpt-6.2-astra#old
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+E       AssertionError: citadel-codex-gates.md: the exec example must pass --model gpt-6.2-astra
+1 failed, 1 passed in 0.57s
+Exit 1
+
+Break 8, gascity/template-fragments/gc-role-worker.template.md:94, replacement line:
+  --model gpt-6.2-astra#old
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+E       AssertionError: gc-role-worker.template.md: the review command must pass --model gpt-6.2-astra
+1 failed, 1 passed in 0.93s
+Exit 1
+
+Break 9, docs/ops/citadel-codex-gates.md:67, replacement line:
+codex-gate.sh review --base origin/main -C "$REPO" --output "$REVIEW_OUTPUT" --class "$REVIEW_CLASS" --model gpt-6-astra
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+E       AssertionError: citadel-codex-gates.md: the review example must pass --model gpt-6.2-astra
+1 failed, 1 passed in 33.65s
+Exit 1
+
+Break 10, docs/ops/citadel-codex-gates.md:68, replacement line:
+codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$REVIEW_OUTPUT"
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+E       AssertionError: citadel-codex-gates.md: the exec example must pass --model gpt-6.2-astra
+1 failed, 1 passed in 4.40s
+Exit 1
+
+Break 11, gascity/template-fragments/gc-role-worker.template.md:94, replacement line:
+  --model "$NEW_MODEL"
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default -q
+E       AssertionError: gc-role-worker.template.md: the review command must pass --model gpt-6.2-astra
+1 failed, 1 passed in 21.65s
+Exit 1

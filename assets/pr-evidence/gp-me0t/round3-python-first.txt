@@ -1,0 +1,6 @@
+verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q
+Python 3.12.13, unchanged PR head ad1f45c3, initial one-minute load 15.34.
+FAILED oversight-rig/tests/test_optional_executive_status_skill.py::test_pack_ships_complete_executive_status_skill
+Extra files in the packaged skill: tests/.pytest_cache/README.md, tests/.pytest_cache/v/cache/nodeids, tests/.pytest_cache/CACHEDIR.TAG and tests/.pytest_cache/.gitignore.
+1 failed, 3044 passed, 131 skipped, 2 warnings, 10746 subtests passed in 581.72 s.
+Elapsed including setup 590.53 s, exit 1.

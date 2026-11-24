@@ -1,0 +1,33 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 5,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/app",
+    "-run",
+    "^TestFloorFollowsTheFirstSuccessfulConnection$",
+    "-count=1",
+    "-p=1",
+    "-timeout=10m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/503
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/403
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/create
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/reload
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection/24h
+PASS gchat-adapter/internal/app TestFloorFollowsTheFirstSuccessfulConnection
+PASS gchat-adapter/internal/app

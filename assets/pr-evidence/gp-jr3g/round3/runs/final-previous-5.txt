@@ -1,0 +1,14 @@
+=== RUN   TestSkippedActReadsAsNotDeliveredAfterRollback
+=== RUN   TestSkippedActReadsAsNotDeliveredAfterRollback/message.created
+--- PASS: TestSkippedActReadsAsNotDeliveredAfterRollback/message.created (0.04s)
+=== RUN   TestSkippedActReadsAsNotDeliveredAfterRollback/message.updated
+--- PASS: TestSkippedActReadsAsNotDeliveredAfterRollback/message.updated (0.04s)
+=== RUN   TestSkippedActReadsAsNotDeliveredAfterRollback/message.deleted
+--- PASS: TestSkippedActReadsAsNotDeliveredAfterRollback/message.deleted (0.04s)
+=== RUN   TestSkippedActReadsAsNotDeliveredAfterRollback/reaction.created
+--- PASS: TestSkippedActReadsAsNotDeliveredAfterRollback/reaction.created (0.04s)
+=== RUN   TestSkippedActReadsAsNotDeliveredAfterRollback/reaction.deleted
+--- PASS: TestSkippedActReadsAsNotDeliveredAfterRollback/reaction.deleted (0.04s)
+--- PASS: TestSkippedActReadsAsNotDeliveredAfterRollback (0.20s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.470s

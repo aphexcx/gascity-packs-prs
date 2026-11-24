@@ -1,0 +1,8 @@
+=== RUN   TestHistoryBatchUsesEachResourceTime
+=== RUN   TestHistoryBatchUsesEachResourceTime/created
+--- PASS: TestHistoryBatchUsesEachResourceTime/created (0.09s)
+=== RUN   TestHistoryBatchUsesEachResourceTime/updated
+--- PASS: TestHistoryBatchUsesEachResourceTime/updated (0.08s)
+--- PASS: TestHistoryBatchUsesEachResourceTime (0.17s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.426s

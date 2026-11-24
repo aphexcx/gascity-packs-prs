@@ -1,0 +1,4 @@
+=== RUN   TestSavedCursorStillDeliversItsOutage
+--- PASS: TestSavedCursorStillDeliversItsOutage (1.58s)
+PASS
+ok  	gchat-adapter/internal/catchup	1.767s

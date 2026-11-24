@@ -183,7 +183,7 @@ launch or pin them in a rig's `formula_vars`:
 | `drain_policy` | `separate` | `separate` runs implementation beads in parallel worker sessions; `same-session` runs them serially in one shared session. |
 | `implementation_target` | `gc.implementation-worker` | The rig role that implements each work item. |
 | `push` / `open_pr` | `false` | Allow the publish stage to push and open a PR after all checks pass. |
-| `max_iterations` | `10` | Bound on implementation/review fix attempts. |
+| `max_iterations` | `3` | Maximum attempts in continuation repair and fix-loop workflows. A launch override changes that limit. The full-build review check has a fixed cap of three attempts. |
 
 When variables are not enough, every stage prompt can be replaced by dropping
 a Markdown file at the same relative path in a higher-priority layer, and
@@ -251,7 +251,10 @@ pack's version, so every city that opts a lane in renders the same notes at
 the same pin. Its first note is THE DEEPENING NOTE: once per PR, at the
 worker's self-review and before the push, a deepening read of the modules the
 diff touched (the codebase-design skill), written as a `Deepening note`
-section of the PR body.
+section of the PR body. Its second note is THE PR BODY LINES: every PR body a
+worker writes or updates ends with three labelled lines, `Testing:`, `Risk:`
+and `How to revert:`, after every other section, with only trailer or sign-off
+lines below them.
 
 The role fragment does not call it. A city opts a lane in with one line in
 that lane's `prompt.template.md`, right after its
@@ -939,7 +942,7 @@ install -m 0755 path/to/gascity/assets/scripts/codex-infisical-shim.sh \
   "$CITY/.gc/shims/codex-astra/codex"
 cat > "$CITY/.gc/shims/codex-astra/codex.env" <<'EOT'
 CODEX_SHIM_PATH_PREPEND=/abs/path/to/city/.gc/shims/toolchain
-CODEX_SHIM_EXEC=npx -y @openai/codex@0.153.3
+CODEX_SHIM_EXEC=npx -y @openai/codex@0.167.0
 EOT
 ```
 

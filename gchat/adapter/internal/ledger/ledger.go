@@ -46,18 +46,24 @@ type Ledger struct {
 	LastSpaceList  time.Time `json:"last_space_list,omitzero"`
 	// IdentityDomainID is the Workspace domain the identity belongs to, as Chat
 	// reports it on the identity's own messages; senders in it are the organization.
-	IdentityDomainID string                   `json:"identity_domain_id,omitempty"`
-	Subscription     SubscriptionState        `json:"subscription"`
-	Spaces           map[string]*SpaceState   `json:"spaces"`
-	Transport        TransportDedup           `json:"transport"`
-	Messages         map[string]*MessageState `json:"messages"`
-	Changes          map[string]*ChangeState  `json:"changes"`
-	Sends            map[string]*SendState    `json:"sends"`
-	Unresolved       map[string]*ChangeState  `json:"unresolved"`
-	Quarantine       []QuarantinedEvent       `json:"quarantine"`
-	Counters         map[string]int64         `json:"counters"`
-	JoinRequests     map[string]*JoinRequest  `json:"join_requests,omitempty"`
-	JoinAttempts     []JoinAttempt            `json:"join_attempts,omitempty"`
+	IdentityDomainID string `json:"identity_domain_id,omitempty"`
+	// HistoryFloor bounds automatic history on a new installation or reset.
+	// Old ledgers omit it; spaces with saved cursors retain their outage.
+	HistoryFloor time.Time `json:"history_floor,omitzero"`
+	// SpacesListedAt is the last completed inventory boundary. On upgrade,
+	// the saved local inventory establishes its first boundary at load time.
+	SpacesListedAt time.Time                `json:"spaces_listed_at,omitzero"`
+	Subscription   SubscriptionState        `json:"subscription"`
+	Spaces         map[string]*SpaceState   `json:"spaces"`
+	Transport      TransportDedup           `json:"transport"`
+	Messages       map[string]*MessageState `json:"messages"`
+	Changes        map[string]*ChangeState  `json:"changes"`
+	Sends          map[string]*SendState    `json:"sends"`
+	Unresolved     map[string]*ChangeState  `json:"unresolved"`
+	Quarantine     []QuarantinedEvent       `json:"quarantine"`
+	Counters       map[string]int64         `json:"counters"`
+	JoinRequests   map[string]*JoinRequest  `json:"join_requests,omitempty"`
+	JoinAttempts   []JoinAttempt            `json:"join_attempts,omitempty"`
 	// Media holds attachment links and cleanup obligations introduced after
 	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
 	Media map[string]*MediaState `json:"media,omitempty"`
@@ -91,6 +97,8 @@ type SpaceState struct {
 	// permits a bounded message reach-back. Never infer a join from a cursor.
 	JoinedAt  time.Time       `json:"joined_at,omitzero"`
 	FirstRead *FirstReadState `json:"first_read,omitempty"`
+	// HistoryStart bounds a space first encountered without a cursor or join.
+	HistoryStart time.Time `json:"history_start,omitzero"`
 	// ChatType distinguishes named SPACE from GROUP_CHAT; both have gc kind room.
 	ChatType      string    `json:"chat_type,omitempty"`
 	Wake          string    `json:"wake"`
@@ -120,6 +128,8 @@ func (s *SpaceState) Bare() bool {
 }
 
 func (s *SpaceState) StartFirstRead(joined, seen time.Time, margin time.Duration, foundBy, source string) {
+	// A join supersedes the provisional bound set by a live or cached lookup.
+	s.HistoryStart = time.Time{}
 	s.JoinedAt, s.MessageCursor, s.EventCursor = joined, joined, joined
 	lower := joined.Add(-margin)
 	if lower.Before(time.Unix(0, 0).UTC()) {
@@ -312,18 +322,70 @@ func New() *Ledger {
 	}
 }
 
+// HistoryBound is shared by live delivery, history queries and queue recovery.
+func HistoryBound(s *SpaceState, floor time.Time) time.Time {
+	if s != nil {
+		if s.JoinedAt.After(floor) {
+			floor = s.JoinedAt
+		}
+		if s.HistoryStart.After(floor) {
+			floor = s.HistoryStart
+		}
+	}
+	return floor
+}
+
+// StartSpace bounds acts in a cursorless space until its join or first read.
+// Observing a space does not advance its recovery cursors.
+func (l *Ledger) StartSpace(s *SpaceState, now time.Time) bool {
+	if !s.MessageCursor.IsZero() || !s.JoinedAt.IsZero() || !s.HistoryStart.IsZero() {
+		return false
+	}
+	start := l.SpacesListedAt
+	if start.IsZero() {
+		start = l.HistoryFloor
+	}
+	if start.IsZero() {
+		start = now.UTC()
+	}
+	s.HistoryStart = start
+	return true
+}
+
+// HistoryRead distinguishes a recovery cursor from its initial lower bound.
+func (s *SpaceState) HistoryRead(floor time.Time) bool {
+	return !s.EventCursor.IsZero() && s.EventCursor.After(HistoryBound(s, floor))
+}
+
 // Load never repairs or overwrites the source file. A leftover .tmp file is
 // uncommitted and ignored. Only an absent file on a fresh install starts empty.
 func Load(path string, established bool) (*Ledger, error) {
+	l, _, err := LoadWithOrigin(path, established)
+	return l, err
+}
+
+// LoadWithOrigin also reports whether neither a file nor an established marker
+// existed. Existing callers of Load retain the same ledger value and contract.
+func LoadWithOrigin(path string, established bool) (*Ledger, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && !established {
-			return New(), nil
+			return New(), true, nil
 		}
-		return nil, &RecoveryError{Path: path, Err: err}
+		return nil, false, &RecoveryError{Path: path, Err: err}
 	}
+	l, err := Parse(data)
+	if err != nil {
+		preserved, copyErr := preserve(path, data)
+		return nil, false, &RecoveryError{Path: path, PreservedPath: preserved, Err: errors.Join(err, copyErr)}
+	}
+	return l, false, nil
+}
+
+// Parse decodes and validates a saved ledger without touching the filesystem.
+func Parse(data []byte) (*Ledger, error) {
 	var l *Ledger
-	err = json.Unmarshal(data, &l)
+	err := json.Unmarshal(data, &l)
 	if err == nil {
 		err = l.validate()
 	}
@@ -333,8 +395,7 @@ func Load(path string, established bool) (*Ledger, error) {
 		err = errors.New("ledger is missing transport state")
 	}
 	if err != nil {
-		preserved, copyErr := preserve(path, data)
-		return nil, &RecoveryError{Path: path, PreservedPath: preserved, Err: errors.Join(err, copyErr)}
+		return nil, err
 	}
 	return l, nil
 }

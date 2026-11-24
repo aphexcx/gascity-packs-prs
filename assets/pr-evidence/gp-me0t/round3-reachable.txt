@@ -1,0 +1,5 @@
+verify -C reachable/test node --test --test-skip-pattern '^review 4: archive replay advances in bounded chunks without dropping rows$'
+Node v24.21.0, unchanged PR head ad1f45c3, initial one-minute load 16.03.
+tests 92, pass 91, fail 0, cancelled 0, skipped 1, todo 0.
+Existing opt-in skip: 13: 256 MiB fixture decision p95 stays below 100 ms after cursor catch-up.
+Archive replay was filtered by name. Elapsed 28.54 s, exit 0.

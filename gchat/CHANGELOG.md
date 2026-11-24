@@ -10,6 +10,7 @@
   outside membership or event retention cannot be learned. A merge changes
   no box (gp-s7oh).
 
+- Bound a newly listed room's first read by the installation floor while allowing its adding message within the join margin.
 - Add `gc gchat join` for one invited room, with a one-time code checked in
   the owner's direct-message reply. The membership write permission is asked
   for only by join, separately from standing credentials. Until the admin adds
@@ -93,6 +94,15 @@
   rows first.
 - Docs only: the README's sample owners line uses an invented given name. No
   code change.
+
+- First start and state reset begin history at the first successful subscription
+  attempt, with an optional `first_start_history` window of up to 168 hours.
+  Every older act stays out of turns on live delivery, redelivery and recovery;
+  new acts on old messages still arrive, and `gc gchat read` keeps reading history.
+  Cursorless spaces start at the preceding inventory, or first load on a released
+  ledger without that boundary. Old queued acts leave those spaces as non-turn
+  records. Saved cursors retain their outage, and never-read spaces report no
+  false history loss. Rollback keeps cursors and recognizes the skipped records.
 
 ## 0.5.0 — 2026-11-09
 

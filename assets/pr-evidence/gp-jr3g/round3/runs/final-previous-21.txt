@@ -1,0 +1,34 @@
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.created/intent
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.created/intent (0.02s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.created/pending
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.created/pending (0.02s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.created/unresolved
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.created/unresolved (0.02s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.updated/intent
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.updated/intent (0.01s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.updated/pending
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.updated/pending (0.01s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.updated/unresolved
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.updated/unresolved (0.02s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/intent
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/intent (0.01s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/pending
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/pending (0.01s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/unresolved
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/message.deleted/unresolved (0.01s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/intent
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/intent (0.02s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/pending
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/pending (0.01s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/unresolved
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/reaction.created/unresolved (0.01s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/intent
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/intent (0.01s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/pending
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/pending (0.02s)
+=== RUN   TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/unresolved
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts/reaction.deleted/unresolved (0.01s)
+--- PASS: TestCursorlessMigrationRetiresDetachedAttempts (0.23s)
+PASS
+ok  	gchat-adapter/internal/catchup	0.418s

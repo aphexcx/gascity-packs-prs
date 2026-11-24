@@ -1,0 +1,3 @@
+$ verify bash -ec 'for script in gastown/tests/test_*.sh; do bash "$script"; done'
+11 shell scripts passed
+exit=0 elapsed_seconds=85.51 one_minute_load=12.96

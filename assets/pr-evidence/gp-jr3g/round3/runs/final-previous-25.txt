@@ -1,0 +1,34 @@
+=== RUN   TestBoundedQueueRetiresSavedDelivery
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.created/intent
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.created/intent (0.02s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.created/pending
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.created/pending (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.created/unresolved
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.created/unresolved (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.updated/intent
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.updated/intent (0.02s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.updated/pending
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.updated/pending (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.updated/unresolved
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.updated/unresolved (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.deleted/intent
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.deleted/intent (0.02s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.deleted/pending
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.deleted/pending (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/message.deleted/unresolved
+--- PASS: TestBoundedQueueRetiresSavedDelivery/message.deleted/unresolved (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/reaction.created/intent
+--- PASS: TestBoundedQueueRetiresSavedDelivery/reaction.created/intent (0.02s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/reaction.created/pending
+--- PASS: TestBoundedQueueRetiresSavedDelivery/reaction.created/pending (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/reaction.created/unresolved
+--- PASS: TestBoundedQueueRetiresSavedDelivery/reaction.created/unresolved (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/reaction.deleted/intent
+--- PASS: TestBoundedQueueRetiresSavedDelivery/reaction.deleted/intent (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/reaction.deleted/pending
+--- PASS: TestBoundedQueueRetiresSavedDelivery/reaction.deleted/pending (0.01s)
+=== RUN   TestBoundedQueueRetiresSavedDelivery/reaction.deleted/unresolved
+--- PASS: TestBoundedQueueRetiresSavedDelivery/reaction.deleted/unresolved (0.01s)
+--- PASS: TestBoundedQueueRetiresSavedDelivery (0.21s)
+PASS
+ok  	gchat-adapter/internal/catchup	0.449s

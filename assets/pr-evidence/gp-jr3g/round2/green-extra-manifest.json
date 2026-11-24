@@ -1,0 +1,173 @@
+[
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryBatchUsesEachResourceTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestMessageWithoutActTimeUsesPublishTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestNewReactionRemovalKeepsSkippedAttribution$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestOldActNeverDownloadsAttachments$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/inbound",
+      "-run",
+      "^TestHistoryRollbackExchange$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/app",
+      "-run",
+      "^TestReleasedCursorlessHistoryCannotReplayAfterHold$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 1
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCatchupMissingEnvelopeTime$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestHistoryFloorSurvivesRetentionFallback$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/ledger",
+      "-run",
+      "^TestHistoryFloorLedgerCompatibility$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  }
+]

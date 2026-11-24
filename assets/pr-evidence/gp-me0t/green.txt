@@ -1,0 +1,3 @@
+$ env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN python3 -m pytest tests -q -k verify_skill_make_targets_exist --tb=short
+1 passed, 551 deselected in 2.68s
+exit=0 elapsed_seconds=2.81

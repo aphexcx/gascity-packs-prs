@@ -1,0 +1,46 @@
+=== RUN   TestRetiredAttemptEndsItsNotice
+=== RUN   TestRetiredAttemptEndsItsNotice/unresolved/noticed=false
+    history_notice_test.go:384: posts=0 mail=0 local=0 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/unresolved/noticed=false (0.25s)
+=== RUN   TestRetiredAttemptEndsItsNotice/unresolved/noticed=true
+    history_notice_test.go:384: posts=1 mail=2 local=1 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/unresolved/noticed=true (0.48s)
+=== RUN   TestRetiredAttemptEndsItsNotice/intent/noticed=false
+    history_notice_test.go:384: posts=0 mail=0 local=0 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/intent/noticed=false (0.27s)
+=== RUN   TestRetiredAttemptEndsItsNotice/intent/noticed=true
+    history_notice_test.go:384: posts=1 mail=2 local=1 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/intent/noticed=true (0.45s)
+=== RUN   TestRetiredAttemptEndsItsNotice/delivered/noticed=false
+    history_notice_test.go:384: posts=0 mail=0 local=0 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/delivered/noticed=false (0.33s)
+=== RUN   TestRetiredAttemptEndsItsNotice/delivered/noticed=true
+    history_notice_test.go:384: posts=1 mail=2 local=1 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/delivered/noticed=true (0.51s)
+=== RUN   TestRetiredAttemptEndsItsNotice/queued/noticed=false
+    history_notice_test.go:384: posts=0 mail=0 local=0 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/queued/noticed=false (0.26s)
+=== RUN   TestRetiredAttemptEndsItsNotice/queued/noticed=true
+    history_notice_test.go:384: posts=1 mail=2 local=1 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/queued/noticed=true (0.52s)
+=== RUN   TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=false
+    history_notice_test.go:384: posts=0 mail=0 local=0 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=false (0.19s)
+=== RUN   TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=true
+    history_notice_test.go:384: posts=1 mail=2 local=1 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/queued-missing-time/noticed=true (0.25s)
+=== RUN   TestRetiredAttemptEndsItsNotice/restore/noticed=false
+    history_notice_test.go:384: posts=0 mail=0 local=0 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/restore/noticed=false (0.18s)
+=== RUN   TestRetiredAttemptEndsItsNotice/restore/noticed=true
+    history_notice_test.go:384: posts=1 mail=2 local=1 open=0 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/restore/noticed=true (0.51s)
+=== RUN   TestRetiredAttemptEndsItsNotice/cursor/noticed=false
+    history_notice_test.go:384: posts=1 mail=1 local=1 open=1 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/cursor/noticed=false (0.41s)
+=== RUN   TestRetiredAttemptEndsItsNotice/cursor/noticed=true
+    history_notice_test.go:384: posts=1 mail=1 local=1 open=1 tracked=1
+--- PASS: TestRetiredAttemptEndsItsNotice/cursor/noticed=true (0.54s)
+--- PASS: TestRetiredAttemptEndsItsNotice (5.15s)
+PASS
+ok  	gchat-adapter/internal/app	5.377s

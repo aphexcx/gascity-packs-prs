@@ -1,0 +1,30 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "top_level_fail": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "GOFLAGS=-overlay=<evidence>/round1/overlay.json",
+    "go",
+    "test",
+    "./internal/app",
+    "-run",
+    "^TestReleasedCursorlessHistoryCannotReplayAfterHold$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/app TestReleasedCursorlessHistoryCannotReplayAfterHold
+FAIL gchat-adapter/internal/app
+
+    history_upgrade_test.go:109: migration start=0001-01-01 00:00:00 +0000 UTC skipped=0 backlog=0

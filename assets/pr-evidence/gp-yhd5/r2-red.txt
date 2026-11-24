@@ -1,0 +1,511 @@
+# PR 109 round 2 (gp-yhd5), red runs and mutations
+# Section 1: the held-answer parity table on the code of 3dc345a1 (with the final test file) and at 53971345 (the code of f9a078fd).
+# Section 2: mutations of the tip 4d2099b5, each in a scratch copy (git archive, never committed).
+# Paths: <clone> is the lane's clone; <scratch-NAME> a git archive.
+
+# ===== Section 1: red
+
+== slack held-answer parity: the code of 3dc345a1, the test file of 53971345
+$ (cd <scratch-3dc345a1>/slack-full/adapter) env -u GC_BIN go test . -run 'TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/'
+start 2026-11-15T02:31:26Z load { 7.88 17.37 17.53 }
+=== RUN   TestHeldAnswerParityWithAckOff
+=== RUN   TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; acts=1 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=1 journal=[eyes:counted,eyes:not counted] ; acts=1 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+        off: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted] ; acts=2 journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted] ; acts=1 journal=[eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=1 journal=[eyes:counted] ; acts=1 journal=[eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+        off: acts=1 journal=[eyes:counted] ; acts=2 journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; s3={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; acts=2 journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; s3={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=1 journal=[eyes:counted,eyes:not counted] ; acts=2 journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; s3={"delivered":true} ; owner lines=0
+        off: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; s3={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; r0={"delivered":true} ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; r0={"delivered":true} ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=2 journal=[eyes:counted,eyes:counted] ; r0={"delivered":true} ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+        off: acts=1 journal=[eyes:counted,eyes:not counted] ; r0={"delivered":true} ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=2 journal=[eyes:counted,eyes:counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+        off: acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits
+    held_answer_parity_test.go:415: stamp/message-arrives-while-a-call-waits (ACK_REACTION="eyes"): Slack applied add:ok | remove:ok | add:ok | add:already_reacted | add:ok, want add:ok | remove:ok | add:ok | add:ok | add:already_reacted: the row did not reach its order
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; acts=1 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=1 journal=[eyes:counted,eyes:not counted] ; acts=1 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+        off: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+=== RUN   TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=3 journal=[eyes:counted,eyes:counted,thumbsup:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; t1={"delivered":true} ; b1={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=3 journal=[eyes:counted,eyes:counted,thumbsup:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; t1={"delivered":true} ; b1={"delivered":true} ; owner lines=1
+--- FAIL: TestHeldAnswerParityWithAckOff (4.26s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.41s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.90s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.43s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.27s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.29s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (0.37s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.35s)
+=== RUN   TestReactVerbHoldEndsWithTheCallsTimeout
+    held_answer_parity_test.go:459: removal {"delivered":false,"failure_kind":"transient"}; next eyes {"delivered":true} after 27ms; Slack applied add:ok | remove:ok | add:ok
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.33s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	4.803s
+FAIL
+exit=1 (9s)
+
+== gchat held-answer parity: the code of 3dc345a1, the test file of 53971345
+$ (cd <scratch-3dc345a1>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout' -count=1 -v 2>&1
+start 2026-11-15T02:31:35Z load { 8.15 17.11 17.43 }
+=== RUN   TestHeldAnswerParityWithAckOff
+=== RUN   TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; acts=1 ; s1=200 ; r1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=1 ; acts=1 ; s1=200 ; r1=200 ; s2=502 ; owner lines=0
+        off: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; acts=1 ; s1=200 ; r1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=1 ; acts=1 ; s1=200 ; r1=200 ; s2=502 ; owner lines=0
+        off: acts=1 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; s3=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; acts=2 ; s1=200 ; r1=200 ; s2=502 ; s3=200 ; owner lines=0
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=1 ; acts=2 ; s1=200 ; r1=200 ; s2=502 ; s3=200 ; owner lines=0
+        off: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; s3=502 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; r0=200 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=2 ; r0=200 ; s1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=2 ; r0=200 ; s1=200 ; s2=200 ; owner lines=0
+        off: acts=1 ; r0=200 ; s1=200 ; s2=502 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=2 ; s1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=2 ; s1=200 ; s2=200 ; owner lines=0
+        off: acts=1 ; s1=200 ; s2=502 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits
+2026/11/14 20:31:44 never-silent: operator context unset; no operator mail will be sent
+2026/11/14 20:31:45 never-silent: operator context unset; no operator mail will be sent
+    held_answer_parity_test.go:431: stamp/message-arrives-while-a-call-waits (ACK_REACTION="eyes"): Google applied create:200 | delete:200 | create:200 | create:409 | create:200, want create:200 | delete:200 | create:200 | create:200 | create:409: the row did not reach its order
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=1
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; acts=1 ; s1=200 ; r1=200 ; s2=502 ; owner lines=1
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=1 ; acts=1 ; s1=200 ; r1=200 ; s2=502 ; owner lines=1
+        off: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=1
+=== RUN   TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; s1=200 ; s2=502 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=3 ; s1=200 ; r1=200 ; t1=200 ; b1=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=3 ; s1=200 ; r1=200 ; t1=200 ; b1=200 ; owner lines=0
+--- FAIL: TestHeldAnswerParityWithAckOff (9.89s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.42s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.17s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (1.53s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.08s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.78s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (1.46s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.82s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.63s)
+=== RUN   TestReactVerbHoldEndsWithTheCallsTimeout
+    held_answer_parity_test.go:474: removal 502; next eyes 200 after 231ms; Google applied create:200 | delete:200 | create:200
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.45s)
+FAIL
+FAIL	gchat-adapter/internal/app	10.582s
+FAIL
+exit=1 (13s)
+
+== slack held-answer parity at 53971345 (the code of f9a078fd)
+$ (cd <scratch-53971345>/slack-full/adapter) env -u GC_BIN go test . -run 'TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/'
+start 2026-11-15T02:31:48Z load { 7.73 16.73 17.29 }
+=== RUN   TestHeldAnswerParityWithAckOff
+=== RUN   TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending
+    held_answer_parity_test.go:415: case1/removal-applied-answer-pending: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order
+    held_answer_parity_test.go:415: case3/add-and-removal-answered-in-the-other-order: the call r1 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted] ; acts=2 journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted] ; acts=2 journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands
+    held_answer_parity_test.go:415: case4/repeat-after-the-held-removal-lands: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; s3={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; s3={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order
+    held_answer_parity_test.go:415: overlap/identical-adds-answered-in-the-other-order: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; r0={"delivered":true} ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; r0={"delivered":true} ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending
+    held_answer_parity_test.go:415: overlap/session-add-pending-while-ack-answer-pending: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits
+    held_answer_parity_test.go:415: stamp/message-arrives-while-a-call-waits: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+        off: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+=== RUN   TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=3 journal=[eyes:counted,eyes:counted,thumbsup:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; t1={"delivered":true} ; b1={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=3 journal=[eyes:counted,eyes:counted,thumbsup:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; t1={"delivered":true} ; b1={"delivered":true} ; owner lines=1
+--- FAIL: TestHeldAnswerParityWithAckOff (5.20s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (0.79s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.77s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.79s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.72s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.68s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (0.87s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.34s)
+=== RUN   TestReactVerbHoldEndsWithTheCallsTimeout
+    held_answer_parity_test.go:459: removal {"delivered":false,"failure_kind":"transient"}; next eyes {"delivered":true} after 327ms; Slack applied add:ok | remove:ok | add:ok
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.36s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	5.766s
+FAIL
+exit=1 (9s)
+
+== gchat held-answer parity at 53971345 (the code of f9a078fd)
+$ (cd <scratch-53971345>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout' -count=1 -v 2>&1
+start 2026-11-15T02:31:57Z load { 7.40 16.36 17.15 }
+=== RUN   TestHeldAnswerParityWithAckOff
+=== RUN   TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending
+    held_answer_parity_test.go:431: case1/removal-applied-answer-pending: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order
+    held_answer_parity_test.go:431: case3/add-and-removal-answered-in-the-other-order: the call r1 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands
+    held_answer_parity_test.go:431: case4/repeat-after-the-held-removal-lands: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; s3=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; s3=502 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order
+    held_answer_parity_test.go:431: overlap/identical-adds-answered-in-the-other-order: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; r0=200 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; r0=200 ; s1=200 ; s2=502 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending
+    held_answer_parity_test.go:431: overlap/session-add-pending-while-ack-answer-pending: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; s1=200 ; s2=502 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits
+2026/11/14 20:32:08 never-silent: operator context unset; no operator mail will be sent
+    held_answer_parity_test.go:431: stamp/message-arrives-while-a-call-waits: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=1
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+         on: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+        off: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=1
+=== RUN   TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; s1=200 ; s2=502 ; owner lines=0
+=== RUN   TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=3 ; s1=200 ; r1=200 ; t1=200 ; b1=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=3 ; s1=200 ; r1=200 ; t1=200 ; b1=200 ; owner lines=0
+--- FAIL: TestHeldAnswerParityWithAckOff (12.75s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.71s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.70s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.06s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.57s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.28s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.04s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.78s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.61s)
+=== RUN   TestReactVerbHoldEndsWithTheCallsTimeout
+    held_answer_parity_test.go:474: removal 502; next eyes 200 after 218ms; Google applied create:200 | delete:200 | create:200
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (0.43s)
+FAIL
+FAIL	gchat-adapter/internal/app	13.395s
+FAIL
+exit=1 (15s)
+
+# ===== Section 2: mutations
+
+== mutation m1-no-turn of 4d2099b5: slack
+$ (cd <scratch-m1-no-turn>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:32:21Z load { 7.47 15.67 16.88 }
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+--- FAIL: TestHeldAnswerParityWithAckOff (2.10s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (0.25s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.23s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.25s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.24s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.22s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (0.33s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.24s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.34s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	2.400s
+    hold_test.go:67: the same reaction with colons did not wait for the turn held on its reaction
+--- FAIL: TestHoldReactionIsOneTurnPerReaction (0.00s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	0.206s
+FAIL
+exit=1 (6s)
+
+== mutation m1-no-turn of 4d2099b5: gchat
+$ (cd <scratch-m1-no-turn>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:32:27Z load { 7.44 15.52 16.82 }
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+--- FAIL: TestHeldAnswerParityWithAckOff (9.35s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.10s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.09s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (1.52s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.05s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.75s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (1.47s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.77s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.59s)
+FAIL
+FAIL	gchat-adapter/internal/app	9.629s
+    hold_test.go:67: the same reaction with colons did not wait for the turn held on its reaction
+--- FAIL: TestHoldReactionIsOneTurnPerReaction (0.00s)
+FAIL
+FAIL	gchat-adapter/internal/ack	0.185s
+FAIL
+exit=1 (11s)
+
+== mutation m2-turn-ignores-emoji of 4d2099b5: slack
+$ (cd <scratch-m2-turn-ignores-emoji>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:32:38Z load { 7.38 15.24 16.71 }
+    held_answer_parity_test.go:415: guard/other-emoji-and-message-not-held: the call t1 waited behind another reaction's call
+--- FAIL: TestHeldAnswerParityWithAckOff (15.13s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (0.78s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.76s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.77s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.71s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.70s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (0.87s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.21s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (10.32s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	15.359s
+    hold_test.go:62: another emoji waited behind another reaction's turn
+--- FAIL: TestHoldReactionIsOneTurnPerReaction (5.01s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	5.143s
+FAIL
+exit=1 (19s)
+
+== mutation m2-turn-ignores-emoji of 4d2099b5: gchat
+$ (cd <scratch-m2-turn-ignores-emoji>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:32:57Z load { 6.90 14.62 16.45 }
+    held_answer_parity_test.go:431: guard/other-emoji-and-message-not-held: the call t1 waited behind another reaction's call
+--- FAIL: TestHeldAnswerParityWithAckOff (22.53s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.72s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.69s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.05s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.55s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.29s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.05s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.77s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (11.42s)
+FAIL
+FAIL	gchat-adapter/internal/app	22.774s
+    hold_test.go:62: another emoji waited behind another reaction's turn
+--- FAIL: TestHoldReactionIsOneTurnPerReaction (5.00s)
+FAIL
+FAIL	gchat-adapter/internal/ack	5.143s
+FAIL
+exit=1 (27s)
+
+== mutation m3-ack-takes-a-turn of 4d2099b5: slack
+$ (cd <scratch-m3-ack-takes-a-turn>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:33:25Z load { 5.77 13.74 16.08 }
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:415: guard/session-add-while-ack-answer-held: the call s1 waited behind another reaction's call
+--- FAIL: TestHeldAnswerParityWithAckOff (112.92s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (30.22s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.75s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (30.20s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.71s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (10.11s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (30.34s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (10.21s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.38s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	113.153s
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	0.451s
+FAIL
+exit=1 (117s)
+
+== mutation m3-ack-takes-a-turn of 4d2099b5: gchat
+$ (cd <scratch-m3-ack-takes-a-turn>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:35:21Z load { 6.03 11.17 14.75 }
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+    held_answer_parity_test.go:431: guard/session-add-while-ack-answer-held: the call s1 waited behind another reaction's call
+--- FAIL: TestHeldAnswerParityWithAckOff (103.73s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (25.74s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.70s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (26.12s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.57s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (10.27s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (26.10s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (10.60s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.62s)
+FAIL
+FAIL	gchat-adapter/internal/app	104.010s
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+ok  	gchat-adapter/internal/ack	0.468s
+FAIL
+exit=1 (106s)
+
+== mutation m4-turn-kept of 4d2099b5: slack
+$ (cd <scratch-m4-turn-kept>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:37:08Z load { 6.70 9.78 13.78 }
+--- PASS: TestHeldAnswerParityWithAckOff (5.08s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (0.76s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.75s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.77s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.71s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.69s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (0.87s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.21s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.32s)
+ok  	github.com/sjarmak/gc-slack-adapter	5.312s
+    hold_test.go:100: 4 turns kept after every caller released, want 0
+--- FAIL: TestHoldReactionIsOneTurnPerReaction (0.31s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	0.448s
+FAIL
+exit=1 (9s)
+
+== mutation m4-turn-kept of 4d2099b5: gchat
+$ (cd <scratch-m4-turn-kept>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:37:17Z load { 9.18 10.21 13.89 }
+--- PASS: TestHeldAnswerParityWithAckOff (16.11s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.70s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.70s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.06s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.57s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.29s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.06s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.79s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (4.94s)
+ok  	gchat-adapter/internal/app	16.378s
+    hold_test.go:100: 4 turns kept after every caller released, want 0
+--- FAIL: TestHoldReactionIsOneTurnPerReaction (0.30s)
+FAIL
+FAIL	gchat-adapter/internal/ack	0.480s
+FAIL
+exit=1 (19s)
+
+== mutation m5-turn-with-the-switch-off of 4d2099b5: slack
+$ (cd <scratch-m5-turn-with-the-switch-off>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:37:36Z load { 9.21 10.16 13.79 }
+--- PASS: TestHeldAnswerParityWithAckOff (8.16s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.30s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.24s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (1.29s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.21s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (1.36s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.21s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.31s)
+ok  	github.com/sjarmak/gc-slack-adapter	8.396s
+    hold_test.go:105: with the acknowledgement off, the same reaction waited behind another reaction's turn
+--- FAIL: TestHoldReactionIsOneTurnPerReaction (5.31s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	5.451s
+FAIL
+exit=1 (12s)
+
+== mutation m5-turn-with-the-switch-off of 4d2099b5: gchat
+$ (cd <scratch-m5-turn-with-the-switch-off>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:37:48Z load { 8.64 10.01 13.69 }
+--- PASS: TestHeldAnswerParityWithAckOff (12.74s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.70s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.72s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.05s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.57s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.29s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.02s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.78s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.60s)
+ok  	gchat-adapter/internal/app	13.048s
+    hold_test.go:105: with the acknowledgement off, the same reaction waited behind another reaction's turn
+--- FAIL: TestHoldReactionIsOneTurnPerReaction (5.31s)
+FAIL
+FAIL	gchat-adapter/internal/ack	5.531s
+FAIL
+exit=1 (15s)
+
+== mutation m6-act-not-dated-back of 4d2099b5: slack
+$ (cd <scratch-m6-act-not-dated-back>/slack-full/adapter) env -u GC_BIN go test . ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:38:03Z load { 7.62 9.72 13.52 }
+    held_answer_parity_test.go:419: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+--- FAIL: TestHeldAnswerParityWithAckOff (5.22s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (0.81s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (0.76s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (0.79s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (0.74s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (0.70s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (0.87s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.21s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.33s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	5.446s
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	0.448s
+FAIL
+exit=1 (9s)
+
+== mutation m6-act-not-dated-back of 4d2099b5: gchat
+$ (cd <scratch-m6-act-not-dated-back>/gchat/adapter) env -u GC_BIN go test ./internal/app/ ./internal/ack/ -run 'TestHeldAnswerParityWithAckOff|TestHoldReactionIsOneTurnPerReaction' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|build failed|waited behind|did not wait|turns kept|trace differs'
+start 2026-11-15T02:38:12Z load { 10.46 10.28 13.68 }
+    held_answer_parity_test.go:435: with ACK_REACTION=eyes the row's trace differs from the same row with it unset:
+--- FAIL: TestHeldAnswerParityWithAckOff (12.72s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.69s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.70s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.05s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.58s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.29s)
+    --- FAIL: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.02s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.79s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (1.61s)
+FAIL
+FAIL	gchat-adapter/internal/app	12.981s
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+ok  	gchat-adapter/internal/ack	0.470s
+FAIL
+exit=1 (15s)

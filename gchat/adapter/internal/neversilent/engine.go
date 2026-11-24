@@ -110,10 +110,11 @@ type Options struct {
 }
 
 type Engine struct {
-	pollMu sync.Mutex
-	mu     sync.Mutex
-	opts   Options
-	state  state
+	historyMu sync.Mutex
+	pollMu    sync.Mutex
+	mu        sync.Mutex
+	opts      Options
+	state     state
 }
 
 type Status struct {
@@ -347,14 +348,48 @@ func (e *Engine) StopAt(id string, definite bool, at time.Time) error {
 
 func (e *Engine) Enabled() bool { return e != nil && e.opts.Enabled }
 
+// WithHistory orders local admission (Track plus its ledger record) against
+// taking and reconciling a ledger snapshot. Callers release it before network
+// delivery or notice effects; neither can hold the independent watch hostage.
+func (e *Engine) WithHistory(fn func() error) error {
+	if !e.Enabled() {
+		return fn()
+	}
+	e.historyMu.Lock()
+	defer e.historyMu.Unlock()
+	return fn()
+}
+
 func (e *Engine) Forget(id string) error {
+	return e.forget(id, true, time.Time{})
+}
+
+// ForgetTracked retires an already enrolled message without creating a
+// tombstone for historical acts that were never eligible for notices.
+func (e *Engine) ForgetTracked(id string) error {
+	return e.forget(id, false, time.Time{})
+}
+
+// ForgetTrackedBefore retires an alias's older enrollment. An enrollment
+// created after that history record can be a partly saved current admission.
+func (e *Engine) ForgetTrackedBefore(id string, before time.Time) error {
+	if before.IsZero() {
+		return nil
+	}
+	return e.forget(id, false, before)
+}
+
+func (e *Engine) forget(id string, tombstone bool, before time.Time) error {
 	if e == nil || !e.opts.Enabled || id == "" {
 		return nil
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	m := e.state.Messages[id]
-	if m.Removed {
+	m, exists := e.state.Messages[id]
+	if m.Removed || (!exists && !tombstone) {
+		return nil
+	}
+	if !before.IsZero() && !m.Created.Before(before) {
 		return nil
 	}
 	// Deletion can precede asynchronous target resolution and admission. Keep

@@ -1,0 +1,59 @@
+[
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresDetachedAttempts$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "env",
+      "-u",
+      "GC_BIN",
+      "-u",
+      "NEVER_SILENT",
+      "go",
+      "test",
+      "./internal/catchup",
+      "-run",
+      "^TestRetainedHistoryKeepsReleasedEventIdentity$",
+      "-count=1",
+      "-p=1",
+      "-timeout=5m",
+      "-json"
+    ],
+    "exit": 0
+  }
+]

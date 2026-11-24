@@ -1,0 +1,124 @@
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:19: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:32: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:40: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:42: space before tab in indent.
++ 	"context"
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:44: space before tab in indent.
++ 	"crypto/sha256"
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:45: space before tab in indent.
++ 	"fmt"
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:46: space before tab in indent.
++ 	"os"
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:47: space before tab in indent.
++ 	"os/exec"
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:50: space before tab in indent.
++ 	"sync/atomic"
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:51: space before tab in indent.
++ 	"time"
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:52: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:54: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:56: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:68: space before tab in indent.
++ 	a.noticeMu.Lock()
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:69: space before tab in indent.
++ 	defer a.noticeMu.Unlock()
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:71: space before tab in indent.
++ 	if len(details) > 0 {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:72: space before tab in indent.
++ 		key += fmt.Sprintf(":%x", sha256.Sum256([]byte(details[0])))
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:73: space before tab in indent.
++ 	}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:77: space before tab in indent.
++ 	if a.notified[key] {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:78: space before tab in indent.
++ 		return
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:79: space before tab in indent.
++ 	}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:81: space before tab in indent.
++ 		message = "Google Chat credentials are missing or revoked; run gc gchat auth. Events remain at Google."
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:82: space before tab in indent.
++ 	} else if kind == "chat-access" {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:83: space before tab in indent.
++ 		message = "Google Chat refuses the Workspace user's token (HTTP 401/403) although the key holder mints it. Check that the Chat API is configured for the project and Chat is on for the user, or send the user a first direct message; the adapter keeps retrying. Events remain at Google."
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:86: space before tab in indent.
++ 	} else if len(details) > 0 {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:87: space before tab in indent.
++ 		message = details[0] + ". " + message
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:88: space before tab in indent.
++ 	}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:94: space before tab in indent.
++ 	return name + "#history#" + c.Kind + "#" + c.ActTime().UTC().Format(time.RFC3339Nano)
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:96: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:102: space before tab in indent.
++ 	if c.Message == nil || c.ActTime().IsZero() {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:103: space before tab in indent.
++ 		return c
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:105: space before tab in indent.
++ 	if c.Kind == "message.updated" {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:106: space before tab in indent.
++ 		raw = c.Message.LastUpdateTime
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:107: space before tab in indent.
++ 	}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:110: space before tab in indent.
++ 		return c
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:111: space before tab in indent.
++ 	}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:112: space before tab in indent.
++ 	m := *c.Message
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:119: space before tab in indent.
++ 	bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:120: space before tab in indent.
++ 	if bound.IsZero() {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:123: space before tab in indent.
++ 	}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:125: space before tab in indent.
++ 	for id, old := range l.Changes {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:126: space before tab in indent.
++ 		if old.Space != space || old.Status == "committed" || (!old.Created.IsZero() && !old.Created.Before(bound)) ||
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:127: space before tab in indent.
++ 			(!strings.HasPrefix(old.Kind, "message.") && !strings.HasPrefix(old.Kind, "reaction.")) {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:129: space before tab in indent.
++ 		delete(l.Changes, id)
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:130: space before tab in indent.
++ 		delete(l.Unresolved, id)
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:131: space before tab in indent.
++ 		l.Changes[retained.ID] = &retained
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:134: space before tab in indent.
++ 		if old.Kind == "message.deleted" {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:135: space before tab in indent.
++ 			if state := l.Messages[old.Message]; state != nil {
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:136: space before tab in indent.
++ 				state.Deleted = false
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:137: space before tab in indent.
++ 			}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:138: space before tab in indent.
++ 		}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:139: space before tab in indent.
++ 	}
+assets/pr-evidence/gp-jr3g/round4/operator-strings.diff:142: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:4: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:15: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:21: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:57: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:68: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:83: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:95: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:101: trailing whitespace.
++
+assets/pr-evidence/gp-jr3g/round4/pr-body.diff:110: trailing whitespace.
++

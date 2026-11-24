@@ -1,0 +1,4 @@
+$ verify -C whatsapp/adapter node --test --test-concurrency=2 'test/*.test.js'
+tests 477, pass 471, fail 5, cancelled 1, skipped 0
+exit=1 elapsed_seconds=540.88 one_minute_load=14.61
+The parent runner reported four assertion failures before its pipeline worker stopped producing output. Its fixture process was terminated after checking ancestry. The terminal report also identified a fifth assertion in slow flush and a cancelled pipeline worker.

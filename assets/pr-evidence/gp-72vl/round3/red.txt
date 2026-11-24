@@ -1,0 +1,35 @@
+citadel-codex-gates.md: expected a bash block under ## Moving a city to a new gate model
+
+Commit 6f8347647adb29429959c1eb30c2a3d05ea7ee96
+$ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest 'gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output' 'gascity/tests/test_codex_gate.py::test_worker_prompt_gate_command_follows_the_gate_default' 'gascity/tests/test_codex_gate.py::test_doc_examples_and_cli_pins_follow_the_gate_default' -q
+Exit 1
+
+F..                                                                      [100%]
+=================================== FAILURES ===================================
+_________________ test_doc_stub_run_writes_only_a_fresh_output _________________
+
+tmp_path = PosixPath('<tmp>')
+
+    @pytest.mark.usefixtures('gate')
+    def test_doc_stub_run_writes_only_a_fresh_output(tmp_path):
+>       commands = bash_commands(DOC, '## Moving a city to a new gate model')
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+gascity/tests/test_codex_gate.py:69:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = PosixPath('<clone>/docs/ops/citadel-codex-gates.md')
+heading = '## Moving a city to a new gate model'
+
+    def bash_commands(path, heading):
+        """The first bash fence under HEADING in PATH, one string per command as bash joins it."""
+        section = path.read_text(encoding='utf-8').partition(f'\n{heading}\n')[2].partition('\n## ')[0]
+        block = re.search(r'^( *)```bash\n(.*?)^\1```$', section, re.M | re.S)
+>       assert block, f'{path.name}: expected a bash block under {heading}'
+E       AssertionError: citadel-codex-gates.md: expected a bash block under ## Moving a city to a new gate model
+E       assert None
+
+gascity/tests/test_codex_gate.py:28: AssertionError
+=========================== short test summary info ============================
+FAILED gascity/tests/test_codex_gate.py::test_doc_stub_run_writes_only_a_fresh_output
+1 failed, 2 passed in 0.22s

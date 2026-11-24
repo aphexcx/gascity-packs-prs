@@ -1,0 +1,5 @@
+Working directory: temporary fixture root
+$ env -u GC_TEMPLATE -u GC_BIN -u NEVER_SILENT -u GC_TEST_BIN python3 -m pytest tests -q --tb=short
+E   AssertionError: Missing credential guard: make existing
+1 failed in 8.06s
+exit=1 elapsed_seconds=8.44

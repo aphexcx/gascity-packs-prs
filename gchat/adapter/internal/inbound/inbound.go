@@ -194,33 +194,38 @@ func New(opts Options) (*Processor, error) {
 // Network requests never hold LedgerMu. Handle and Poll serialize their work,
 // including live and catch-up callers, and waiting callers honor cancellation.
 func (p *Processor) Handle(ctx context.Context, ev *puller.Event) (puller.Outcome, error) {
-	p.observeArrivals(ev)
-	return p.handle(ctx, ev, false)
+	return p.handle(ctx, ev, false, p.observeArrivals(ev))
 }
 
-// Observe before the serialized delivery gate, principal lookup and attachment
-// downloads. Only this live entry point participates; catch-up never does.
-func (p *Processor) observeArrivals(ev *puller.Event) {
+// Observe established, in-bounds arrivals before the delivery gate. For a
+// provisional space or a first-read exception, wait for that change's actual
+// history decision. An earlier change in the same batch may establish the join.
+func (p *Processor) observeArrivals(ev *puller.Event) map[int]func() {
 	if p.opts.Ack == nil || ev == nil {
-		return
+		return nil
 	}
 	seen := p.opts.Now()
 	for _, c := range ev.Changes {
 		if validate(c) != nil {
-			return
+			return nil
 		}
 	}
 	id := p.identity()
 	if id == "" {
-		return
+		return nil
 	}
-	for _, c := range ev.Changes {
+	var deferred map[int]func()
+	for i, c := range ev.Changes {
 		m := c.Message
 		if c.Kind != "message.created" || m == nil || m.Sender == nil || m.Sender.Type == "BOT" || m.Sender.Name == id {
 			continue
 		}
 		p.opts.LedgerMu.Lock()
-		known := p.opts.Ledger.Changes[m.Name] != nil
+		l := p.opts.Ledger
+		known := l.Changes[m.Name] != nil
+		s := l.Spaces[c.Space]
+		established := s != nil && (!s.JoinedAt.IsZero() || !s.MessageCursor.IsZero())
+		admitted := established && HistorySkipCause(l, c) == ""
 		p.opts.LedgerMu.Unlock()
 		if known {
 			continue
@@ -237,11 +242,10 @@ func (p *Processor) observeArrivals(ev *puller.Event) {
 		// With the acknowledgement off it makes no call the base does not make:
 		// the kind comes from the ledger or the event, or the message gets no
 		// stopwatch inbound line.
-		lookup := p.opts.Ack.Choice.Enabled()
-		go func(c puller.Change, in ack.Input) {
+		observe := func() {
 			ctx, cancel := context.WithTimeout(context.Background(), ack.ReactionBudget)
 			defer cancel()
-			s, err := p.resolveSpace(ctx, c.Space, c.Message.Space, lookup)
+			s, err := p.resolveSpace(ctx, c.Space, c.Message.Space, p.opts.Ack.Choice.Enabled())
 			if err != nil {
 				return
 			}
@@ -250,8 +254,17 @@ func (p *Processor) observeArrivals(ev *puller.Event) {
 				return
 			}
 			p.opts.Ack.Observe(in)
-		}(c, in)
+		}
+		if admitted {
+			go observe()
+		} else {
+			if deferred == nil {
+				deferred = make(map[int]func())
+			}
+			deferred[i] = observe
+		}
 	}
+	return deferred
 }
 
 // HandleChange feeds one catch-up change through the same validation, wake
@@ -259,10 +272,10 @@ func (p *Processor) observeArrivals(ev *puller.Event) {
 // [catch-up] header; no synthetic transport ID is needed. As with Handle, Ack
 // can include a durable pending receipt, whose resolution belongs to Poll.
 func (p *Processor) HandleChange(ctx context.Context, c puller.Change) (puller.Outcome, error) {
-	return p.handle(ctx, &puller.Event{Changes: []puller.Change{c}}, true)
+	return p.handle(ctx, &puller.Event{Changes: []puller.Change{c}}, true, nil)
 }
 
-func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) (puller.Outcome, error) {
+func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool, arrivals map[int]func()) (puller.Outcome, error) {
 	if err := p.enter(ctx); err != nil {
 		return puller.Nack, err
 	}
@@ -279,19 +292,26 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 	}
 	// Validate the whole batch before accepting any changes. The puller preserves
 	// the raw event when Quarantine is returned.
-	for _, c := range ev.Changes {
+	changes := make([]puller.Change, len(ev.Changes))
+	for i, c := range ev.Changes {
+		s := l.Spaces[c.Space]
+		bounded := !ledger.HistoryBound(s, l.HistoryFloor).IsZero() || s == nil || (s.MessageCursor.IsZero() && s.JoinedAt.IsZero())
+		if bounded {
+			c = historyTime(c)
+		}
 		if err := validate(c); err != nil {
 			return puller.Quarantine, err
 		}
+		changes[i] = c
 	}
 	if len(ev.Changes) > 0 && p.identity() == "" {
 		return puller.Nack, errors.New("inbound: identity user ID unavailable")
 	}
-	for _, c := range ev.Changes {
+	for i, c := range changes {
 		if err := ctx.Err(); err != nil {
 			return puller.Nack, err
 		}
-		if err := p.change(ctx, c, catchUp); err != nil {
+		if err := p.change(ctx, c, catchUp, arrivals[i]); err != nil {
 			return puller.Nack, err
 		}
 	}
@@ -332,11 +352,15 @@ func (p *Processor) Pass(ctx context.Context) error {
 		return err
 	}
 	defer p.leave()
-	l, err := p.snapshot()
-	if err != nil {
-		return err
-	}
-	if err := ReconcileNeverSilent(l, p.opts.NeverSilent); err != nil {
+	var l *ledger.Ledger
+	if err := p.opts.NeverSilent.WithHistory(func() error {
+		var err error
+		l, err = p.snapshot()
+		if err != nil {
+			return err
+		}
+		return ReconcileNeverSilent(l, p.opts.NeverSilent)
+	}); err != nil {
 		return err
 	}
 	p.cleanupMediaPass(ctx, l)
@@ -694,7 +718,12 @@ func validate(c puller.Change) error {
 	return nil
 }
 
-func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) error {
+func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool, observe func()) error {
+	if !strings.HasPrefix(c.Kind, "membership.") {
+		if handled, err := p.history(ctx, c, catchUp); handled || err != nil {
+			return err
+		}
+	}
 	switch {
 	case strings.HasPrefix(c.Kind, "membership."):
 		m := c.Membership
@@ -734,7 +763,7 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 	case strings.HasPrefix(c.Kind, "reaction."):
 		return p.reaction(ctx, c, catchUp)
 	default:
-		return p.message(ctx, c, catchUp)
+		return p.message(ctx, c, catchUp, observe)
 	}
 }
 
@@ -843,7 +872,7 @@ func spaceKind(s *api.Space) string {
 	return ""
 }
 
-func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) error {
+func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, observe func()) error {
 	m := c.Message
 	if c.Kind == "message.updated" || c.Kind == "message.deleted" {
 		defer p.cleanupMedia(ctx, m.Name)
@@ -894,6 +923,9 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if previous != nil && (previous.Deleted || (base != nil && c.Kind != "message.deleted" && (c.Kind == "message.created" || !updated.After(previous.Revision)))) {
 		return nil
 	}
+	if observe != nil {
+		go observe()
+	}
 	if c.Kind == "message.updated" {
 		if err := p.editMedia(ctx, m); err != nil {
 			return err
@@ -938,7 +970,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	forwarded := false
 	for _, change := range l.Changes {
-		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && !strings.HasPrefix(change.Reason, "space unavailable") {
+		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "before_history_floor" && !strings.HasPrefix(change.Reason, "space unavailable") {
 			forwarded = true
 			break
 		}
@@ -993,12 +1025,14 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
-		if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
-			return err
+	if err := p.opts.NeverSilent.WithHistory(func() error {
+		if local == "" && c.Kind == "message.created" && !catchUp && m.Sender != nil && m.Sender.Type == "HUMAN" && (s.Kind == "dm" || mentions(m, p.identity())) {
+			if err := p.opts.NeverSilent.Track(neversilent.Message{ID: id, Conversation: c.Space, Thread: state.Thread, Created: p.opts.Now()}); err != nil {
+				return err
+			}
 		}
-	}
-	if err := p.record(c, id, w, &state, s, local, catchUp, learnedDomain); err != nil {
+		return p.record(c, id, w, &state, s, local, catchUp, learnedDomain)
+	}); err != nil {
 		return err
 	}
 	return p.resume(ctx, id)
@@ -1049,12 +1083,25 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	w := p.envelope(id, c.Space, s.Kind, r.User, state.Thread)
 	w.Text = provenance.Render(speaker, reactionText(r, action, parent))
 	if action == "deleted" && r.User == nil {
-		if created := l.Changes[r.Name+"#created"]; created != nil {
+		created := l.Changes[r.Name+"#created"]
+		if created == nil {
+			for _, old := range l.Changes {
+				if strings.HasPrefix(old.ID, r.Name+"#history#reaction.created#") && (created == nil || earlier(created, old)) {
+					created = old
+				}
+			}
+		}
+		if created != nil {
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(created.Event), &original) == nil {
 				w.Actor = original.Actor
 				if created.ProvenanceFramed {
 					w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
+					if created.Cause == "before_history_floor" || created.Cause == "history_time_missing" {
+						if frame, ok := provenance.FrameOf(original.Text); ok {
+							w.Text = frame + "\n" + reactionText(r, action, parent)
+						}
+					}
 				}
 			}
 		}
@@ -1326,7 +1373,7 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 		return err == nil && state.Revision.After(revision)
 	}
 	for _, other := range l.Changes {
-		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID {
+		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID && other.Cause != "before_history_floor" && other.Cause != "history_time_missing" {
 			return true
 		}
 	}

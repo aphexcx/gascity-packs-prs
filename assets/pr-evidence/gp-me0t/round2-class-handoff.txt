@@ -1,0 +1,3 @@
+$ verify python3 -m pytest -q tests -k verify_skill
+48 passed, 551 deselected in 23.08s
+exit=0 elapsed_seconds=29.75 one_minute_load=11.97

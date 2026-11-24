@@ -67,6 +67,8 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	l := ledger.New()
+	// These delivery fixtures model an existing inventory, before their acts.
+	l.SpacesListedAt = time.Unix(0, 0).UTC()
 	g.Configure(func(s *fakegoogle.Server) { s.Spaces[space] = &api.Space{Name: space, SpaceType: "SPACE"} })
 	opts := Options{Config: cfg, Ledger: l, LedgerMu: &sync.Mutex{}, LedgerPath: cfg.Endpoints.StateFile,
 		GC: gcclient.New(f.URL(), "examplecity"), Chat: c, IdentityUserID: identity,
@@ -91,11 +93,20 @@ func message() *api.Message {
 }
 
 func event(id, kind string, m *api.Message) *puller.Event {
-	return &puller.Event{PubSubID: id, Changes: []puller.Change{{Kind: kind, Message: m, Space: space}}}
+	return &puller.Event{PubSubID: id, Changes: []puller.Change{{Kind: kind, Message: m, Space: space, PublishTime: time.Now().UTC()}}}
 }
 
 func handle(t *testing.T, f *fixture, ev *puller.Event) {
 	t.Helper()
+	// Hand-built live fixtures have the publish time the real puller supplies.
+	// Decoded wire fixtures retain their actual metadata, including its absence.
+	if ev.Raw == nil {
+		for i := range ev.Changes {
+			if ev.Changes[i].PublishTime.IsZero() {
+				ev.Changes[i].PublishTime = time.Now().UTC()
+			}
+		}
+	}
 	out, err := f.p.Handle(context.Background(), ev)
 	if out != puller.Ack || err != nil {
 		t.Fatalf("Handle = %v, %v", out, err)
@@ -1160,8 +1171,8 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 			missing := space + "/messages/missing/reactions/first"
 			second := messageName + "/reactions/second"
 			ev := &puller.Event{PubSubID: "parents", Changes: []puller.Change{
-				{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: missing}},
-				{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: second}},
+				{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: missing}, EventTime: time.Now().UTC()},
+				{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: second}, EventTime: time.Now().UTC()},
 			}}
 			timeout := 5 * time.Second
 			if status == 503 {
@@ -1286,7 +1297,7 @@ func TestRetainedUnavailableChangesAreCountedAndLoggedOnce(t *testing.T) {
 			id, reason := messageName, "space unavailable"
 			if kind != "message_space" {
 				r := &api.Reaction{Name: messageName + "/reactions/one"}
-				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: r}}
+				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: r, EventTime: time.Now().UTC()}}
 				id = r.Name + "#created"
 				if kind == "reaction_parent" {
 					reason = "parent unavailable"
@@ -1729,6 +1740,8 @@ func TestLiveDeliveryThenCatchUpDoesNotRecordOrPostAgain(t *testing.T) {
 
 func TestCatchUpSavesOnlyDeliveryState(t *testing.T) {
 	f := setup(t)
+	// Freeze has already persisted the space before handing over catch-up.
+	f.l.Spaces[space] = &ledger.SpaceState{Kind: "room", Wake: "all", MessageCursor: time.Unix(0, 0).UTC(), EventCursor: time.Unix(0, 0).UTC()}
 	saves := 0
 	f.opts.Save = func(l *ledger.Ledger) error {
 		saves++
@@ -1800,7 +1813,7 @@ func TestCatchUpReactionMarkerBelongsToCurrentChange(t *testing.T) {
 			f := setup(t)
 			f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
 			r := &api.Reaction{Name: messageName + "/reactions/first", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}
-			c := puller.Change{Kind: "reaction.created", Space: space, Reaction: r}
+			c := puller.Change{Kind: "reaction.created", Space: space, Reaction: r, EventTime: time.Now().UTC()}
 			if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
 				t.Fatalf("create: %v %v", out, err)
 			}
@@ -1916,7 +1929,7 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 				m.Space = nil
 				ev := event("credential-hold", "message.created", m)
 				if path != "message_space" {
-					ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/one"}}}
+					ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/one"}, EventTime: time.Now().UTC()}}
 					if path == "reaction_space" {
 						f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
 					}
@@ -1966,7 +1979,7 @@ func TestLookupHoldPreservesTokenError(t *testing.T) {
 			ev := event("token-hold", "message.created", m)
 			lookup := "space"
 			if path != "message_space" {
-				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/one"}}}
+				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/one"}, EventTime: time.Now().UTC()}}
 				if path == "reaction_space" {
 					f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
 				} else {
@@ -2414,7 +2427,7 @@ func TestLiveReactionThenCatchUpDoesNotRecordOrPostAgain(t *testing.T) {
 	f := setup(t)
 	f.l.Messages[messageName] = &ledger.MessageState{Mine: true, Thread: space + "/threads/topic"}
 	r := &api.Reaction{Name: messageName + "/reactions/one", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}
-	c := puller.Change{Kind: "reaction.created", Space: space, Reaction: r}
+	c := puller.Change{Kind: "reaction.created", Space: space, Reaction: r, EventTime: time.Now().UTC()}
 	handle(t, f, &puller.Event{PubSubID: "live-reaction", Changes: []puller.Change{c}})
 	before, err := json.Marshal(f.l)
 	if err != nil {

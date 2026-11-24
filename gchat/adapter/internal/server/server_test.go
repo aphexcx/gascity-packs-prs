@@ -67,6 +67,8 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	l := ledger.New()
+	// Content fixtures belong to an inventory preceding their messages.
+	l.SpacesListedAt = time.Unix(0, 0).UTC()
 	mu := new(sync.Mutex)
 	opts := Options{Config: cfg, Ledger: l, LedgerMu: mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: filepath.Join(dir, "config.toml"), Chat: c, GC: gcclient.New(gc.URL(), "examplecity")}
 	s, err := New(opts)
@@ -815,14 +817,22 @@ func TestReadReactStatusAndState(t *testing.T) {
 	if err := f.l.Save(backup); err != nil {
 		t.Fatal(err)
 	}
+	content, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, action := range []string{"reset", "restore"} {
 		f.s.SetHealth(Health{State: "recovery-required", Reason: "corrupt ledger"})
-		code, raw, _ = f.call(t, "/state", map[string]string{"action": action, "file": backup})
+		request := map[string]string{"action": action}
+		if action == "restore" {
+			request["ledger"] = string(content)
+		}
+		code, raw, _ = f.call(t, "/state", request)
 		if code != 200 || f.s.Health().State != "initializing" {
 			t.Fatalf("%d %s", code, raw)
 		}
 		if action == "reset" {
-			if len(f.l.Sends) != 0 || !bytes.Contains(raw, []byte("lost or duplicated")) {
+			if len(f.l.Sends) != 0 || !bytes.Contains(raw, []byte("will not be delivered")) {
 				t.Fatalf("%s", raw)
 			}
 		} else {
@@ -830,6 +840,41 @@ func TestReadReactStatusAndState(t *testing.T) {
 				t.Fatal("restore lost sends")
 			}
 		}
+	}
+}
+
+func TestStateRefusesInvalidRestoreWithoutWriting(t *testing.T) {
+	f := setup(t)
+	f.s.SetHealth(Health{State: "recovery-required"})
+	path := f.cfg.Endpoints.StateFile
+	before := []byte("existing state awaiting recovery")
+	if err := os.WriteFile(path, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, body, detail string
+		status             int
+	}{
+		{"legacy path", `{"action":"restore","file":"backup.json"}`, "restore now sends the ledger itself", 400},
+		{"malformed ledger", `{"action":"restore","ledger":"broken"}`, "invalid character", 400},
+		{"missing state maps", `{"action":"restore","ledger":"{\"version\":1}"}`, "missing required state maps", 400},
+		{"oversized", `{"action":"reset"}` + strings.Repeat(" ", stateBodyLimit), "request body too large", 413},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			f.s.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/state", strings.NewReader(tc.body)))
+			if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.detail) {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) || ledger.Established(f.cfg.SecretsDir) || f.s.Health().State != "recovery-required" {
+				t.Fatalf("refused request changed recovery state: %v", err)
+			}
+			copies, err := filepath.Glob(path + ".corrupt-*")
+			if err != nil || len(copies) != 0 {
+				t.Fatalf("unexpected preserved copies %v: %v", copies, err)
+			}
+		})
 	}
 }
 
@@ -2255,7 +2300,7 @@ func TestStateReconciliationCanRetryWithoutReplacingStateAgain(t *testing.T) {
 	if code != 503 || f.s.Health().State != "recovery-required" {
 		t.Fatalf("failed reconcile cannot be retried: %d %s, health=%+v", code, raw, f.s.Health())
 	}
-	code, _, _ = f.call(t, "/state", map[string]string{"action": "restore", "file": "different"})
+	code, _, _ = f.call(t, "/state", map[string]string{"action": "restore", "ledger": "different"})
 	if code != 409 || calls != 1 {
 		t.Fatal("pending recovery accepted a different state replacement")
 	}

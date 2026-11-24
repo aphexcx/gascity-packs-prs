@@ -30,7 +30,7 @@ description_file = "../assets/workflows/github-issue-fix-design-review-work/{tar
 metadata = { "gc.run_target" = "gc.run-operator" }
 
 [template.check]
-max_attempts = 8
+max_attempts = 3
 
 [template.check.check]
 mode = "exec"

@@ -1,0 +1,31 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "subtests_pass": 3,
+    "top_level_pass": 1
+  },
+  "command": [
+    "env",
+    "-u",
+    "GC_BIN",
+    "-u",
+    "NEVER_SILENT",
+    "go",
+    "test",
+    "./internal/catchup",
+    "-run",
+    "^TestCursorlessMigrationRetiresEveryUpdateRevision$",
+    "-count=1",
+    "-p=1",
+    "-timeout=5m",
+    "-json"
+  ],
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresEveryUpdateRevision/intent
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresEveryUpdateRevision/pending
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresEveryUpdateRevision/unresolved
+PASS gchat-adapter/internal/catchup TestCursorlessMigrationRetiresEveryUpdateRevision
+PASS gchat-adapter/internal/catchup

@@ -1,0 +1,9 @@
+=== RUN   TestReleasedLedgerCursorlessSpacesStartAtLoad
+=== RUN   TestReleasedLedgerCursorlessSpacesStartAtLoad/service-restore=false
+2026/11/13 02:49:32 http: proxy error: context canceled
+--- PASS: TestReleasedLedgerCursorlessSpacesStartAtLoad/service-restore=false (0.10s)
+=== RUN   TestReleasedLedgerCursorlessSpacesStartAtLoad/service-restore=true
+--- PASS: TestReleasedLedgerCursorlessSpacesStartAtLoad/service-restore=true (0.09s)
+--- PASS: TestReleasedLedgerCursorlessSpacesStartAtLoad (0.19s)
+PASS
+ok  	gchat-adapter/internal/app	0.412s

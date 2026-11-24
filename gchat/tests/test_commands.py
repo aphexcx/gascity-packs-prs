@@ -336,12 +336,15 @@ class ProxyCommandsTest(ProxyFixture):
         self.assertEqual(args[args.index("--max-time") + 1], "53")
 
     def test_react_read_spaces_resolve_and_state_routes(self):
+        backup = self.root / "backup file.json"
+        backup.write_text(json.dumps({"note": "quoted \"text\"", "value": "a" * 180000}) + "\n")
         cases = [
             ("react", ["--message", "spaces/AAAA/messages/1", "--emoji", "👍", "--remove"], "/react", {"message": "spaces/AAAA/messages/1", "emoji": "👍", "remove": True}),
             ("spaces", ["--space", "spaces/AAAA", "--wake", "mentions"], "/spaces", {"id": "spaces/AAAA", "wake": "mentions"}),
             ("resolve", ["spaces/AAAA/messages/1#updated#time", "--accept"], "/resolve", {"id": "spaces/AAAA/messages/1#updated#time", "action": "accept"}),
             ("resolve", ["example-id", "--replay"], "/resolve", {"id": "example-id", "action": "replay"}),
-            ("state", ["reset"], "/state", {"action": "reset", "file": ""}),
+            ("state", ["reset"], "/state", {"action": "reset"}),
+            ("state", ["restore", str(backup)], "/state", {"action": "restore", "ledger": backup.read_text()}),
         ]
         for verb, args, route, payload in cases:
             with self.subTest(verb=verb, args=args):
@@ -400,6 +403,44 @@ class ProxyCommandsTest(ProxyFixture):
         self.assertNotIn("stuck", result.stdout)
         self.assertNotIn("age", result.stdout)
 
+    def test_status_prints_history_before_never_silent(self):
+        value = {"health": {"state": "ready"},
+                 "history_floor": "2030-01-02T03:04:05Z",
+                 "never_silent": {"enabled": True, "outages": []}}
+        self.respond("/status", value)
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        index = lines.index("Last event: none")
+        self.assertEqual(lines[index + 1],
+            "History: first start skipped messages written before 2030-01-02T03:04:05Z; gc gchat read still reads them")
+        self.assertTrue(lines[index + 2].startswith("Never silent: "))
+        self.assertEqual(json.loads(lines[index + 2].removeprefix("Never silent: ")),
+                         value["never_silent"])
+        self.assertTrue(lines[index + 3].startswith("Backlog: "))
+        result = self.run_command("status", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), value)
+        self.respond("/status", {"health": {"state": "ready"}})
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("History:", result.stdout)
+        self.assertNotIn("Never silent:", result.stdout)
+
+    def test_status_text_names_the_history_floor(self):
+        value = {"health": {"state": "ready"}, "history_floor": "2030-01-02T03:04:05Z"}
+        self.respond("/status", value)
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[lines.index("Last event: none") + 1],
+            "History: first start skipped messages written before 2030-01-02T03:04:05Z; gc gchat read still reads them")
+        del value["history_floor"]
+        self.respond("/status", value)
+        result = self.run_command("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("History: first start", result.stdout)
+
     def test_status_text_shows_age_cause_and_next_attempt(self):
         self.respond("/status", {"health": {"state": "ready", "reason": ""}, "subscription": {"state": "ACTIVE", "name": "subscriptions/example"},
             "backlog": 0, "unresolved": 1, "pending": 2, "stuck": 1, "unrecorded": 0, "quarantine": 0, "counters": {},
@@ -437,11 +478,11 @@ class DoctorTest(ProxyFixture):
         gc.chmod(0o755)
         env = self.root / "secrets/env"
         env.parent.mkdir()
-        self.secrets = {"GCHAT_PROJECT_ID": "example", "GCHAT_PUBSUB_TOPIC": "projects/example/topics/chat",
+        self.env_values = {"GCHAT_PROJECT_ID": "example", "GCHAT_PUBSUB_TOPIC": "projects/example/topics/chat",
                         "GCHAT_PUBSUB_SUBSCRIPTION": "projects/example/subscriptions/chat", "GCHAT_OAUTH_CLIENT_FILE": "/example/client.json",
                         "GC_CITY_NAME": "examplecity", "GC_API_BASE_URL": self.env["GC_API_BASE_URL"]}
         self.env_file = env
-        env.write_text("".join(f"{key}={value}\n" for key, value in self.secrets.items()))
+        env.write_text("".join(f"{key}={value}\n" for key, value in self.env_values.items()))
         self.env.update(GC_PACK_DIR=str(self.pack), GC_GCHAT_ADAPTER_ENV=str(env), GC_BIN=str(gc),
                         CONFIG_JSON=json.dumps({"config": {"ExtMsg": {"DefaultRoutes": [{"Provider": "gchat", "Agent": "mayor"}]}}}))
         self.respond("/status", {"subscription": {"state": "ACTIVE"}})
@@ -451,12 +492,12 @@ class DoctorTest(ProxyFixture):
                               text=True, capture_output=True, timeout=10)
 
     def test_doctor_stops_at_first_failure_and_checks_route_section(self):
-        self.env_file.write_text("".join(f"{key}={value}\n" for key, value in self.secrets.items() if key != "GCHAT_PUBSUB_TOPIC"))
+        self.env_file.write_text("".join(f"{key}={value}\n" for key, value in self.env_values.items() if key != "GCHAT_PUBSUB_TOPIC"))
         result = self.run_doctor()
         self.assertEqual(result.returncode, 2, result)
         self.assertIn("GCHAT_PUBSUB_TOPIC", result.stderr)
         self.assertEqual(self.requests, [])
-        self.env_file.write_text("".join(f"{key}={value}\n" for key, value in self.secrets.items()))
+        self.env_file.write_text("".join(f"{key}={value}\n" for key, value in self.env_values.items()))
         self.env.update(CHECK_EXIT="1", CHECK_OUTPUT="needs-sign-in")
         result = self.run_doctor()
         self.assertEqual(result.returncode, 2, result)

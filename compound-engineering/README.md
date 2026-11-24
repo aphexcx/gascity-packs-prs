@@ -117,7 +117,7 @@ reordered.
 | `plan-review` | Expands `compound-plan-review`: coherence, feasibility, scope-guardian, and architecture-strategist lanes fan out, a synthesizer fans in, `ce-plan` applies findings, and the loop repeats (up to 6 passes) until approved. |
 | `decompose` | Inherited `build-base` task-graph decomposition. |
 | `implement` / `implement-same-session` | Gas City drain. `separate` drains `compound-work` item formulas in parallel with exclusive member access; `same-session` drains `compound-work-item` in one shared single-lane session with `on_item_failure = "skip_remaining"`. Both run the vendored `ce-work` role per item. |
-| `review` | Expands `compound-code-review`: the full reviewer-persona fanout, synthesis, and an apply-fix lane, looping (up to 8 passes) until approved. |
+| `review` | Expands `compound-code-review`: the full reviewer-persona fanout, synthesis, and an apply-fix lane, with up to 3 passes and a family stop for repeated blocking findings. |
 | `finalize` | Expands `compound-resolution`: `inventory-artifacts -> review-resolution` (`ce-pr-comment-resolver`) `-> synthesize-resolution` (`ce-compound` learnings distillation). |
 | `publish` | Inherited from `build-base`; gated by `push` and `open_pr`. |
 
@@ -264,7 +264,7 @@ All knobs are launch vars on `compound-build` (most are inherited from
 | `implementation_target` | `compound-engineering.ce-work` | Role that implements each drained item and the apply-fix lanes. |
 | `push` | `false` | Allow publish to push after all checks pass. |
 | `open_pr` | `false` | Allow publish to open a PR after all checks pass. |
-| `max_iterations` | `10` | Maximum implementation/review fix attempts. |
+| `max_iterations` | `3` | Maximum attempts in continuation repair and fix-loop workflows. A launch override changes that limit. The full-build review check has a fixed cap of three attempts. |
 | `planning_formula` | `compound-planning` | Methodology selector adapters use to delegate planning. |
 | `decomposition_formula` | `compound-decomposition` | Methodology selector for task creation. |
 | `implementation_formula` | `compound-implementation` | Methodology selector for the implementation entry. |

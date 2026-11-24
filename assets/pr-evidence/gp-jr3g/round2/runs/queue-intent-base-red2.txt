@@ -1,0 +1,54 @@
+{
+  "exit": 1,
+  "counts": {
+    "packages_fail": 1,
+    "subtests_fail": 15,
+    "top_level_fail": 1
+  },
+  "command": null,
+  "last_event": "fail"
+}
+
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.created/intent
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.created/pending
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.created/unresolved
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.updated/intent
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.updated/pending
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.updated/unresolved
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.deleted/intent
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.deleted/pending
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/message.deleted/unresolved
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/reaction.created/intent
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/reaction.created/pending
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/reaction.created/unresolved
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/reaction.deleted/intent
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/reaction.deleted/pending
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery/reaction.deleted/unresolved
+FAIL gchat-adapter/internal/catchup TestBoundedQueueRetiresSavedDelivery
+FAIL gchat-adapter/internal/catchup
+
+    history_bound_test.go:141: turns=1 unresolved=0
+    history_bound_test.go:145: saved delivery survived: status=committed reason=delivered
+    history_bound_test.go:138: inbound: receipt lookup failed
+    history_bound_test.go:141: turns=0 unresolved=1
+    history_bound_test.go:145: saved delivery survived: status=unresolved reason=
+    history_bound_test.go:141: turns=1 unresolved=0
+    history_bound_test.go:145: saved delivery survived: status=committed reason=delivered
+    history_bound_test.go:138: inbound: receipt lookup failed
+    history_bound_test.go:141: turns=0 unresolved=1
+    history_bound_test.go:145: saved delivery survived: status=unresolved reason=
+    history_bound_test.go:141: turns=1 unresolved=0
+    history_bound_test.go:145: saved delivery survived: status=committed reason=delivered
+    history_bound_test.go:138: inbound: receipt lookup failed
+    history_bound_test.go:141: turns=0 unresolved=1
+    history_bound_test.go:145: saved delivery survived: status=unresolved reason=
+    history_bound_test.go:141: turns=1 unresolved=0
+    history_bound_test.go:145: saved delivery survived: status=committed reason=delivered
+    history_bound_test.go:138: inbound: receipt lookup failed
+    history_bound_test.go:141: turns=0 unresolved=1
+    history_bound_test.go:145: saved delivery survived: status=unresolved reason=
+    history_bound_test.go:141: turns=1 unresolved=0
+    history_bound_test.go:145: saved delivery survived: status=committed reason=delivered
+    history_bound_test.go:138: inbound: receipt lookup failed
+    history_bound_test.go:141: turns=0 unresolved=1
+    history_bound_test.go:145: saved delivery survived: status=unresolved reason=

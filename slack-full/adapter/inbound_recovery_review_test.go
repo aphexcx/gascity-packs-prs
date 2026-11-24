@@ -215,14 +215,19 @@ func TestInboundRecoveryIncompleteLivenessHistoryStaysMissed(t *testing.T) {
 		}
 		return recoveryReceipt("done", "s1", true), nil
 	}
+	r.noticeRooms = []string{"C1"}
+	noticeCalls := 0
 	r.notice = func(string, string, string, string) (string, error) {
-		t.Error("manual recovery record advertised automatic retries")
+		noticeCalls++
 		return "notice", nil
 	}
 	r.tick(true)
 	r.manual["C1"] = true
 	r.observe(recoveryReceipt("trigger", "s1", true))
 	r.tick(false)
+	if noticeCalls != 0 {
+		t.Errorf("manual recovery advertised automatic retries in %d notices", noticeCalls)
+	}
 	if posts != 1 || r.counts()["C1"].ByHand != 5 || r.known("C1", "100.1") {
 		t.Fatalf("incomplete payload was settled or blocked full backfill: posts=%d counts=%v", posts, r.counts())
 	}

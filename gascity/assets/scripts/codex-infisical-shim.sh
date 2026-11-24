@@ -14,7 +14,7 @@
 #   # optional per-city settings, beside the shim, named <shim>.env:
 #   cat > "$CITY/.gc/shims/codex-astra/codex.env" <<'EOF'
 #   CODEX_SHIM_PATH_PREPEND=/abs/path/to/city/.gc/shims/toolchain
-#   CODEX_SHIM_EXEC=npx -y @openai/codex@0.153.3
+#   CODEX_SHIM_EXEC=npx -y @openai/codex@0.167.0
 #   EOF
 #
 #   # city.toml — the provider runs the shim; the role agents select it.
@@ -43,7 +43,7 @@
 #                            resolve the city's toolchain wrappers.
 #   CODEX_SHIM_EXEC          the command line that runs the real codex (split on
 #                            whitespace, no quoting), for a pinned build such as
-#                            `npx -y @openai/codex@0.153.3`. Default: `codex`
+#                            `npx -y @openai/codex@0.167.0`. Default: `codex`
 #                            resolved from PATH with the shim's own directory
 #                            removed.
 #   HOME                     token.sh is read from $HOME/.config/infisical-agent/.

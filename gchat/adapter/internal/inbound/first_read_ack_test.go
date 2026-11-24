@@ -26,8 +26,15 @@ import (
 )
 
 func TestFirstReadAcknowledgementBoundary(t *testing.T) {
-	for _, liveFirst := range []bool{false, true} {
-		t.Run(map[bool]string{false: "catchup-only", true: "live-before-first-read"}[liveFirst], func(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		live, belowFloor bool
+	}{
+		{name: "catchup-only"},
+		{name: "live-before-first-read", live: true},
+		{name: "live-before-history-floor", live: true, belowFloor: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ACK_REACTION", "eyes")
 			ctx := t.Context()
 			now := time.Now().UTC()
@@ -71,6 +78,9 @@ func TestFirstReadAcknowledgementBoundary(t *testing.T) {
 				reacted <- struct{}{}
 			}
 			l, mu := ledger.New(), &sync.Mutex{}
+			if tc.belowFloor {
+				l.HistoryFloor = joined.Add(-time.Second)
+			}
 			processor, err := inbound.New(inbound.Options{
 				Config: cfg, Ledger: l, LedgerMu: mu, LedgerPath: cfg.Endpoints.StateFile,
 				GC: gcclient.New(gc.URL(), "examplecity"), Chat: client, IdentityUserID: "users/123",
@@ -90,8 +100,10 @@ func TestFirstReadAcknowledgementBoundary(t *testing.T) {
 				Name: space.Name + "/members/123", State: "JOINED", CreateTime: joined.Format(time.RFC3339Nano),
 				Member: &api.User{Name: "users/123", Type: "HUMAN"},
 			}}}})
-			if liveFirst {
+			if tc.live {
 				handle(&puller.Event{PubSubID: "adding-live", Changes: []puller.Change{{Kind: "message.created", Space: space.Name, Message: message}}})
+			}
+			if tc.live && !tc.belowFloor {
 				select {
 				case <-reacted:
 				case <-time.After(5 * time.Second):
@@ -112,8 +124,15 @@ func TestFirstReadAcknowledgementBoundary(t *testing.T) {
 			if _, remaining, err := runner.Pass(ctx); err != nil || remaining != 0 {
 				t.Fatalf("first read: remaining=%d err=%v", remaining, err)
 			}
-			if got := len(gc.Inbound()); got != 1 {
-				t.Fatalf("turns across live and first read = %d, want 1", got)
+			wantTurns := 1
+			if tc.belowFloor {
+				wantTurns = 0
+				if c := l.Changes[message.Name]; c == nil || c.Cause != "before_history_floor" {
+					t.Fatal("missing history-floor skip")
+				}
+			}
+			if got := len(gc.Inbound()); got != wantTurns {
+				t.Fatalf("turns across live and first read = %d, want %d", got, wantTurns)
 			}
 			if !l.Spaces[space.Name].JoinedAt.Equal(joined) {
 				t.Fatal("membership join time lost")
@@ -122,13 +141,13 @@ func TestFirstReadAcknowledgementBoundary(t *testing.T) {
 			// negative observation, then drain the service and stopwatch writer.
 			select {
 			case <-reacted:
-				t.Fatal("first read acknowledged a catch-up delivery")
+				t.Errorf("unexpected acknowledgement during %s", tc.name)
 			case <-time.After(250 * time.Millisecond):
 			}
 			service.Wait()
 			watch.Flush()
 			want := 0
-			if liveFirst {
+			if tc.live && !tc.belowFloor {
 				want = 1
 			}
 			google.Configure(func(s *fakegoogle.Server) {
@@ -156,7 +175,7 @@ func TestFirstReadAcknowledgementBoundary(t *testing.T) {
 					}
 				}
 			}
-			if counts["inbound"] != want || counts["reaction"] != want {
+			if counts["inbound"] != want || counts["reaction"] != want || (want == 0 && len(counts) != 0) {
 				t.Fatalf("stopwatch lines = %v, want inbound=%d reaction=%d", counts, want, want)
 			}
 		})

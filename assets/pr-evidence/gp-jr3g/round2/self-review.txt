@@ -1,0 +1,60 @@
+# codex-gate review: base ebd7f446b875c85d84f0bef9194de2cc2c5cfcce (merge base of --base ebd7f446b875c85d84f0bef9194de2cc2c5cfcce = ebd7f446b875c85d84f0bef9194de2cc2c5cfcce and the head) head ea20a6fc05fc3af89b5971b0cf243a564396321d; 27 file(s); class DEEP; model gpt-6-astra; 2026-11-13T07:08:55Z
+# codex route: the hub (CODEX_HOME <local-path>; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (HEAD of <local-path>; 71 untracked entr(ies) there ignored)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+#  gchat/CHANGELOG.md                                      |  13 +-
+#  gchat/README.md                                         |  49 +++++--
+#  gchat/adapter/README.md                                 |  18 ++-
+#  gchat/adapter/internal/app/app.go                       |   4 +
+#  gchat/adapter/internal/app/catchup_test.go              |   1 +
+#  gchat/adapter/internal/app/history_bound_test.go        | 429 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  gchat/adapter/internal/app/history_floor_test.go        |   2 +-
+#  gchat/adapter/internal/app/history_upgrade_test.go      | 157 +++++++++++++++++++++
+#  gchat/adapter/internal/app/workers.go                   |  10 +-
+#  gchat/adapter/internal/catchup/catchup.go               |  51 +++----
+#  gchat/adapter/internal/catchup/catchup_test.go          |   4 +-
+#  gchat/adapter/internal/catchup/history.go               |  73 ++++++++++
+#  gchat/adapter/internal/catchup/history_bound_test.go    | 238 +++++++++++++++++++++++++++++++
+#  gchat/adapter/internal/catchup/history_floor_test.go    |  13 +-
+#  gchat/adapter/internal/inbound/history.go               | 240 +++++++++++++++++++++++++++++++
+#  gchat/adapter/internal/inbound/history_bound_test.go    | 352 ++++++++++++++++++++++++++++++++++++++++++++++
+#  gchat/adapter/internal/inbound/history_exchange_test.go |  94 +++++++++++++
+#  gchat/adapter/internal/inbound/history_floor_test.go    |   2 +-
+#  gchat/adapter/internal/inbound/inbound.go               |  62 ++++----
+#  gchat/adapter/internal/inbound/inbound_test.go          |  27 +++-
+#  gchat/adapter/internal/ledger/history_floor_test.go     |  47 ++++++-
+#  gchat/adapter/internal/ledger/ledger.go                 |  64 +++++++--
+#  gchat/adapter/internal/puller/puller.go                 |  31 ++++
+#  gchat/adapter/internal/server/history_floor_test.go     |   2 +-
+#  gchat/adapter/internal/server/server.go                 |   6 +
+#  gchat/adapter/internal/server/server_test.go            |   2 +
+#  gchat/adapter/test/e2e/e2e_test.go                      |  33 ++++-
+#  27 files changed, 1912 insertions(+), 112 deletions(-)
+
+1. **MAJOR — Migration misses deliveries that already left the backlog.** [catchup/history.go:51](<local-path>)
+
+   **CLASS:** Incomplete migration of durable delivery state. Only `Backlog` is scanned, but `Changes` and `Unresolved` retain obligations independently: retries and `behind_earlier` intents handed to Poll, settled unresolved records, and live deliveries without backlog rows.
+
+   **SEQUENCE:** At the base, use a legacy ledger with no history floor, a cursorless space, two historical messages, and catch-up budget 1. Return `failed` for the first message’s four delivery attempts. Catch-up removes its row because `settled` accepts retry intents, while the second row keeps the cursors zero. Restart at head after `NextAttempt`, within `RetryBound`. Migration removes the second row and establishes a new bound, but preserves the first intent. A healthy Poll then delivers that older message.
+
+   **NEW:** The new bound’s migration omits existing delivery obligations. Reconcile the canonical delivery records before starting Poll, including records absent from the backlog.
+
+2. **MAJOR — Retirement identifies update revisions using mutable message state.** [inbound/history.go:95](<local-path>)
+
+   **CLASS:** Incorrect association between queued revisions and durable change IDs. An earlier update can be missed, and a later update can retire the earlier update’s base ID instead of its own.
+
+   **SEQUENCE:** Save a cursorless interval containing two handled updates of one message, A then B, with no observed creation. Let both deliveries return `pending`. A occupies the message’s base ID; B occupies `#updated#B`; `MessageState.Revision` is B. Upgrade with both updates before the new bound. Retiring A looks for nonexistent `#updated#A`; retiring B deletes base-ID A. B’s actual pending record survives. Conclude B’s receipt as `failed` and call Poll: it reposts B despite the bound.
+
+   **NEW:** This faulty retirement path is introduced here. Match the actual stored revision identities; extend the migration test beyond one revision per message.
+
+3. **MAJOR — Changing ordering timestamps invalidates persisted history deduplication keys.** [catchup/catchup.go:677](<local-path>)
+
+   **CLASS:** Changing a persisted identity without compatibility handling. `At` now uses resource act time, but `unavailableID` hashes that field. Single and batch updates whose resource timestamp differs from the event timestamp acquire different keys.
+
+   **SEQUENCE:** At base, enumerate an update with `LastUpdateTime=T1` and envelope `EventTime=T2`, where T1 differs from T2, in a space with saved cursors. Return a resource-level 403 on the next page; `holdAccess` commits the enumerated update as `catchup.unavailable` using T2. Upgrade, restore access, and reject the saved page token as expired. Re-enumeration now hashes T1. `drain` misses the committed marker and delivers history previously retained as terminal and local.
+
+   **NEW:** Base preserves the envelope-time key across this recovery. Keep durable identity separate from sorting time, or recognize existing keys during migration and replay.
+
+Tests: **not run (sandbox)**. Committed evidence reports 670 top-level tests passing at earlier revision `b412ffe1`; no test evidence was found for this delta.
+
+VERDICT: BLOCK

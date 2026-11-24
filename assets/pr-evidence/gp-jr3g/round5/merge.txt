@@ -1,0 +1,273 @@
+Auto-merging gchat/CHANGELOG.md
+Auto-merging gchat/README.md
+Auto-merging gchat/adapter/internal/app/app.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/app/app.go
+Auto-merging gchat/adapter/internal/app/catchup_test.go
+Auto-merging gchat/adapter/internal/app/operations.go
+Auto-merging gchat/adapter/internal/app/workers.go
+Auto-merging gchat/adapter/internal/catchup/catchup.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/catchup/catchup.go
+Auto-merging gchat/adapter/internal/catchup/catchup_test.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/catchup/catchup_test.go
+Auto-merging gchat/adapter/internal/config/config.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/config/config.go
+Auto-merging gchat/adapter/internal/inbound/inbound.go
+Auto-merging gchat/adapter/internal/ledger/ledger.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/ledger/ledger.go
+Auto-merging gchat/adapter/internal/server/server.go
+Auto-merging gchat/adapter/test/e2e/e2e_test.go
+Auto-merging gchat/tests/test_commands.py
+Automatic merge failed; fix conflicts and then commit the result.
+
+gchat/adapter/internal/app/app.go
+><<<<<<< ours
+>	"gchat-adapter/internal/catchup"
+>||||||| base
+>=======
+>	"gchat-adapter/internal/ack"
+>	"gchat-adapter/internal/arrival"
+>>>>>>>> theirs
+><<<<<<< ours
+>	cfg                *config.Config
+>	opts               Options
+>	log                *slog.Logger
+>	l                  *ledger.Ledger
+>	mu                 sync.Mutex
+>	stateMu            sync.Mutex // excludes app health transitions during POST /state
+>	noticeStateMu      sync.Mutex // orders notice passes with state replacement
+>	s                  *server.Server
+>	manager            atomic.Pointer[events.Manager]
+>	chatClient         atomic.Pointer[chat.Client]
+>	noticeProvider     atomic.Pointer[noticeProvider]
+>	credentialHold     atomic.Bool
+>	neverSilent        *neversilent.Engine
+>	loaded             atomic.Bool
+>	lastEvent          atomic.Int64
+>	gcDown             atomic.Bool
+>	registrationMu     sync.Mutex
+>	registrationNeeded atomic.Bool
+>	healthyGeneration  atomic.Bool
+>	restartDelay       time.Duration // owned by the run loop
+>	resume             chan struct{}
+>	spaceJoined        chan struct{}
+>	notices            chan notification
+>	noticeMu           sync.Mutex
+>	notified           map[string]bool
+>	legacyWarning      sync.Once
+>	stateLock          *StateLock
+>	lockWarning        sync.Once
+>||||||| base
+>	cfg                *config.Config
+>	opts               Options
+>	log                *slog.Logger
+>	l                  *ledger.Ledger
+>	mu                 sync.Mutex
+>	stateMu            sync.Mutex // excludes app health transitions during POST /state
+>	s                  *server.Server
+>	manager            atomic.Pointer[events.Manager]
+>	chatClient         atomic.Pointer[chat.Client]
+>	noticeProvider     atomic.Pointer[noticeProvider]
+>	credentialHold     atomic.Bool
+>	neverSilent        *neversilent.Engine
+>	loaded             atomic.Bool
+>	lastEvent          atomic.Int64
+>	gcDown             atomic.Bool
+>	registrationMu     sync.Mutex
+>	registrationNeeded atomic.Bool
+>	healthyGeneration  atomic.Bool
+>	restartDelay       time.Duration // owned by the run loop
+>	resume             chan struct{}
+>	spaceJoined        chan struct{}
+>	notices            chan notification
+>	noticeMu           sync.Mutex
+>	notified           map[string]bool
+>	legacyWarning      sync.Once
+>	stateLock          *StateLock
+>	lockWarning        sync.Once
+>=======
+>	arrival               *ack.Service
+>	watch                 *stopwatch.Writer
+>	stateDir              string
+>	cfg                   *config.Config
+>	opts                  Options
+>	log                   *slog.Logger
+>	l                     *ledger.Ledger
+>	mu                    sync.Mutex
+>	stateMu               sync.Mutex // excludes app health transitions during POST /state
+>	s                     *server.Server
+>	manager               atomic.Pointer[events.Manager]
+>	chatClient            atomic.Pointer[chat.Client]
+>	noticeProvider        atomic.Pointer[noticeProvider]
+>	credentialHold        atomic.Bool
+>	identityDiscoveryHeld atomic.Bool
+>	neverSilent           *neversilent.Engine
+>	loaded                atomic.Bool
+>	lastEvent             atomic.Int64
+>	gcDown                atomic.Bool
+>	registrationMu        sync.Mutex
+>	registrationNeeded    atomic.Bool
+>	healthyGeneration     atomic.Bool
+>	restartDelay          time.Duration // owned by the run loop
+>	resume                chan struct{}
+>	spaceJoined           chan struct{}
+>	notices               chan notification
+>	noticeMu              sync.Mutex
+>	notified              map[string]bool
+>	legacyWarning         sync.Once
+>	stateLock             *StateLock
+>	lockWarning           sync.Once
+>>>>>>>> theirs
+
+gchat/adapter/internal/catchup/catchup.go
+><<<<<<< ours
+>		l.SpacesListedAt = now.UTC()
+>||||||| base
+>=======
+>		if now.After(l.LastSpaceList) {
+>			l.LastSpaceList = now.UTC()
+>		}
+>>>>>>>> theirs
+><<<<<<< ours
+>	if p.EventLower.Before(floor) {
+>		p.EventLower = floor
+>||||||| base
+>	if p.EventLower.Before(s.JoinedAt) {
+>		p.EventLower = s.JoinedAt
+>=======
+>	if s.FirstRead != nil && !s.FirstRead.Complete {
+>		p.MessageLower = s.FirstRead.Lower
+>	}
+>	if p.EventLower.Before(s.JoinedAt) {
+>		p.EventLower = s.JoinedAt
+>>>>>>>> theirs
+
+gchat/adapter/internal/catchup/catchup_test.go
+><<<<<<< ours
+>	if s == nil || s.Wake != "mentions" || !s.MessageCursor.Equal(time.Unix(0, 0)) || !s.EventCursor.Equal(time.Unix(0, 0)) {
+>||||||| base
+>	if s == nil || s.Wake != "mentions" || !s.MessageCursor.IsZero() || !s.EventCursor.IsZero() {
+>=======
+>	if s == nil || s.Wake != "mentions" || !s.MessageCursor.Equal(frozen) || !s.EventCursor.Equal(frozen) {
+>>>>>>>> theirs
+
+gchat/adapter/internal/config/config.go
+><<<<<<< ours
+>	Identities        []Identity `toml:"identity"`
+>	Spaces            []Space    `toml:"space"`
+>	Media             Media      `toml:"media,omitempty"`               // as decoded; effective values are in Endpoints
+>	CatchupBudget     int        `toml:"catchup_budget,omitzero"`       // per space per pass, default 50
+>	FirstStartHistory *string    `toml:"first_start_history,omitempty"` // optional history window, at most one week
+>||||||| base
+>	Identities    []Identity `toml:"identity"`
+>	Spaces        []Space    `toml:"space"`
+>	Media         Media      `toml:"media,omitempty"`         // as decoded; effective values are in Endpoints
+>	CatchupBudget int        `toml:"catchup_budget,omitzero"` // per space per pass, default 50
+>=======
+>	Identities    []Identity `toml:"identity"`
+>	Spaces        []Space    `toml:"space"`
+>	Media         Media      `toml:"media,omitempty"`          // as decoded; effective values are in Endpoints
+>	CatchupBudget int        `toml:"catchup_budget,omitzero"`  // per space per pass, default 50
+>	JoinReachback string     `toml:"join_reachback,omitempty"` // duration, default 5m, maximum 60m
+>>>>>>>> theirs
+><<<<<<< ours
+>// FirstStartWindow is used only when creating or moving a history floor.
+>// Load validates the duration before a Config is used by the service or CLI.
+>func (c *Config) FirstStartWindow() time.Duration {
+>	if c.Settings.FirstStartHistory == nil {
+>		return 0
+>	}
+>	d, _ := time.ParseDuration(*c.Settings.FirstStartHistory)
+>	return d
+>}
+>
+>||||||| base
+>=======
+>// JoinReachback applies only to the first message read of a newly bounded room.
+>func (c *Config) JoinReachback() time.Duration {
+>	if c.Settings.JoinReachback == "" {
+>		return 5 * time.Minute
+>	}
+>	d, _ := time.ParseDuration(c.Settings.JoinReachback) // validated at load
+>	return d
+>}
+>
+>>>>>>>> theirs
+><<<<<<< ours
+>	if c.Settings.FirstStartHistory != nil {
+>		d, err := time.ParseDuration(*c.Settings.FirstStartHistory)
+>		if err != nil {
+>			return fmt.Errorf("first_start_history must be a Go duration; write 24h for one day: %w", err)
+>		}
+>		if d < 0 || d > 168*time.Hour {
+>			return fmt.Errorf("first_start_history must be between 0s and 168h")
+>		}
+>	}
+>||||||| base
+>=======
+>	if c.Settings.JoinReachback != "" {
+>		d, err := time.ParseDuration(c.Settings.JoinReachback)
+>		if err != nil || d < 0 || d > time.Hour {
+>			return fmt.Errorf("join_reachback must be a duration between 0s and 60m")
+>		}
+>	}
+>>>>>>>> theirs
+
+gchat/adapter/internal/ledger/ledger.go
+><<<<<<< ours
+>	IdentityDomainID string `json:"identity_domain_id,omitempty"`
+>	// HistoryFloor bounds automatic history on a new installation or reset.
+>	// Old ledgers omit it; spaces with saved cursors retain their outage.
+>	HistoryFloor time.Time `json:"history_floor,omitzero"`
+>	// SpacesListedAt is the last completed inventory boundary. On upgrade,
+>	// the saved local inventory establishes its first boundary at load time.
+>	SpacesListedAt time.Time                `json:"spaces_listed_at,omitzero"`
+>	Subscription   SubscriptionState        `json:"subscription"`
+>	Spaces         map[string]*SpaceState   `json:"spaces"`
+>	Transport      TransportDedup           `json:"transport"`
+>	Messages       map[string]*MessageState `json:"messages"`
+>	Changes        map[string]*ChangeState  `json:"changes"`
+>	Sends          map[string]*SendState    `json:"sends"`
+>	Unresolved     map[string]*ChangeState  `json:"unresolved"`
+>	Quarantine     []QuarantinedEvent       `json:"quarantine"`
+>	Counters       map[string]int64         `json:"counters"`
+>||||||| base
+>	IdentityDomainID string                   `json:"identity_domain_id,omitempty"`
+>	Subscription     SubscriptionState        `json:"subscription"`
+>	Spaces           map[string]*SpaceState   `json:"spaces"`
+>	Transport        TransportDedup           `json:"transport"`
+>	Messages         map[string]*MessageState `json:"messages"`
+>	Changes          map[string]*ChangeState  `json:"changes"`
+>	Sends            map[string]*SendState    `json:"sends"`
+>	Unresolved       map[string]*ChangeState  `json:"unresolved"`
+>	Quarantine       []QuarantinedEvent       `json:"quarantine"`
+>	Counters         map[string]int64         `json:"counters"`
+>=======
+>	IdentityDomainID string                   `json:"identity_domain_id,omitempty"`
+>	Subscription     SubscriptionState        `json:"subscription"`
+>	Spaces           map[string]*SpaceState   `json:"spaces"`
+>	Transport        TransportDedup           `json:"transport"`
+>	Messages         map[string]*MessageState `json:"messages"`
+>	Changes          map[string]*ChangeState  `json:"changes"`
+>	Sends            map[string]*SendState    `json:"sends"`
+>	Unresolved       map[string]*ChangeState  `json:"unresolved"`
+>	Quarantine       []QuarantinedEvent       `json:"quarantine"`
+>	Counters         map[string]int64         `json:"counters"`
+>	JoinRequests     map[string]*JoinRequest  `json:"join_requests,omitempty"`
+>	JoinAttempts     []JoinAttempt            `json:"join_attempts,omitempty"`
+>>>>>>>> theirs
+><<<<<<< ours
+>	// JoinedAt is the earliest history allowed by an observed membership. Old
+>	// ledgers have no known join bound; never infer one from a moving cursor.
+>	JoinedAt time.Time `json:"joined_at,omitzero"`
+>	// HistoryStart bounds a space first encountered without a cursor or join.
+>	HistoryStart time.Time `json:"history_start,omitzero"`
+>||||||| base
+>	// JoinedAt is the earliest history allowed by an observed membership. Old
+>	// ledgers have no known join bound; never infer one from a moving cursor.
+>	JoinedAt time.Time `json:"joined_at,omitzero"`
+>=======
+>	// JoinedAt is the observed join time or discovery bound. FirstRead alone
+>	// permits a bounded message reach-back. Never infer a join from a cursor.
+>	JoinedAt  time.Time       `json:"joined_at,omitzero"`
+>	FirstRead *FirstReadState `json:"first_read,omitempty"`
+>>>>>>>> theirs

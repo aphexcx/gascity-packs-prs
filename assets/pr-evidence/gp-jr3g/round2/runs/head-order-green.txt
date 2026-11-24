@@ -1,0 +1,12 @@
+{
+  "exit": 0,
+  "counts": {
+    "packages_pass": 1,
+    "top_level_pass": 1
+  },
+  "command": null,
+  "last_event": "pass"
+}
+
+PASS gchat-adapter/internal/inbound TestHeadIsTheLiveOrderTestNotTheCauseWord
+PASS gchat-adapter/internal/inbound

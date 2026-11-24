@@ -2,11 +2,114 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
+import textwrap
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'assets/scripts/codex-gate.sh'
+DOC = Path(__file__).resolve().parents[2] / 'docs/ops/citadel-codex-gates.md'
+SHIM = SCRIPT.parent / 'codex-infisical-shim.sh'
+README = Path(__file__).resolve().parents[1] / 'README.md'
+FRAGMENT = Path(__file__).resolve().parents[1] / 'template-fragments/gc-role-worker.template.md'
+
+
+def gate_default_model():
+    models = re.findall(r'^model=(\S+)$', SCRIPT.read_text(encoding='utf-8'), re.M)
+    assert len(models) == 1, f'{SCRIPT.name}: expected one model= default'
+    return models[0]
+
+
+def fence_text(path, heading):
+    section = path.read_text(encoding='utf-8').partition(f'\n{heading}\n')[2].partition('\n## ')[0]
+    block = re.search(r'^( *)```bash\n(.*?)^\1```$', section, re.M | re.S)
+    assert block, f'{path.name}: expected a bash block under {heading}'
+    return textwrap.dedent(block[2])
+
+
+def documented_argv(text, env):
+    scratch = Path(env['TMPDIR'])
+    capture = scratch / 'helper-args.jsonl'
+    recorder = Path(env['HOME']) / 'bin/codex-gate.sh'
+    recorder.write_text('''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['CAPTURE'], 'a') as stream:
+    print(json.dumps(sys.argv[1:]), file=stream)
+''')
+    recorder.chmod(0o755)
+    subprocess.run(['bash', '-ec', text], cwd=scratch, env={**env, 'CAPTURE': str(capture)},
+                   capture_output=True, text=True, timeout=10, check=True)
+    assert not Path(env['UNEXPECTED_CALLS']).exists()
+    return [json.loads(line) for line in capture.read_text().splitlines()]
+
+
+def assert_passes_model(args, model, message):
+    assert args.count('--model') == 1, message
+    index = args.index('--model') + 1
+    assert args[index:index + 1] == [model], message
+
+
+def test_doc_examples_and_cli_pins_follow_the_gate_default(command_env):
+    model = gate_default_model()
+    examples = documented_argv(fence_text(DOC, '## Gate helper'), command_env)
+    assert [args[:1] for args in examples] == [['review'], ['exec']], (
+        f'{DOC.name}: expected the review and exec examples under Gate helper'
+    )
+    for args in examples:
+        assert_passes_model(args, model, f'{DOC.name}: the {args[0]} example must pass --model {model}')
+
+    pin = r'@openai/codex@([^\s`\'"]+)'
+    versions = re.findall(pin, README.read_text(encoding='utf-8'))
+    assert len(versions) == 1, f'{README.name}: expected one Codex CLI install pin'
+    cli = versions[0]
+    usage = re.search(r"<<'USAGE'\n(.*?)^USAGE$", SCRIPT.read_text(encoding='utf-8'), re.M | re.S)
+    assert usage and f'on Codex {cli})' in usage[1], f'{SCRIPT.name}: usage must name Codex {cli}'
+    assert re.findall(pin, SHIM.read_text(encoding='utf-8')) == [cli, cli], (
+        f'{SHIM.name}: both example pins must match Codex {cli}'
+    )
+
+
+def test_worker_prompt_gate_command_follows_the_gate_default(command_env):
+    model = gate_default_model()
+    commands = documented_argv(fence_text(FRAGMENT, '## Codex gates'), command_env)
+    assert len(commands) == 1 and commands[0][:1] == ['review'], (
+        f'{FRAGMENT.name}: expected one review command under Codex gates'
+    )
+    assert_passes_model(commands[0], model, f'{FRAGMENT.name}: the review command must pass --model {model}')
+
+
+@pytest.mark.parametrize('tail', ['--model {model}#old', '# --model {model}', '--model "$NEW_MODEL"'])
+def test_pin_reader_sees_what_bash_passes(command_env, tail):
+    model = gate_default_model()
+    command = 'codex-gate.sh exec "$PROMPT_FILE" ' + tail.format(model=model)
+    args, = documented_argv(command, command_env)
+    with pytest.raises(AssertionError, match='expected the exact model'):
+        assert_passes_model(args, model, 'expected the exact model')
+
+
+@pytest.fixture
+def command_env(tmp_path):
+    bindir, city, scratch = (tmp_path / name for name in ('bin', 'city', 'scratch'))
+    bindir.mkdir()
+    scratch.mkdir()
+    installed = city / 'assets/ops/mayor-tools/codex-gate.sh'
+    installed.parent.mkdir(parents=True)
+    installed.symlink_to(bindir / 'codex-gate.sh')
+    fallback = bindir / 'codex'
+    fallback.write_text('#!/bin/sh\necho fallback >> "$UNEXPECTED_CALLS"\nexit 97\n')
+    fallback.chmod(0o755)
+    env = {
+        'HOME': str(tmp_path), 'TMPDIR': str(scratch), 'GC_CITY_PATH': str(city),
+        'PATH': str(bindir) + os.pathsep + os.environ['PATH'],
+        'UNEXPECTED_CALLS': str(tmp_path / 'unexpected-calls'),
+        'PROMPT_FILE': str(tmp_path / 'prompt file.txt'),
+        'REPO': str(tmp_path / 'repo'), 'REPO_DIR': str(tmp_path / 'repo'),
+        'REVIEW_OUTPUT': str(tmp_path / 'real record'), 'REVIEW_BASE': 'review-base',
+        'REVIEW_CLASS': 'STANDARD',
+    }
+    assert Path(env['GC_CITY_PATH']).resolve().parent == tmp_path.resolve()
+    return env
 
 
 @pytest.fixture
@@ -21,19 +124,34 @@ print('VERDICT: CLEAN')  # A transcript match must never pass the gate.
 sys.exit(int(os.environ.get('CODEX_EXIT', '0')))
 ''')
     binary.chmod(0o755)
+    home = tmp_path / 'git-home'
+    hooks = home / 'empty-hooks'
+    hooks.mkdir(parents=True)
+    config = home / 'empty-config'
+    config.touch()
+    git_env = {
+        **os.environ,
+        'HOME': str(home),
+        'GIT_CONFIG_GLOBAL': str(config),
+        'GIT_CONFIG_SYSTEM': str(config),
+        'GIT_CONFIG_COUNT': '1',
+        'GIT_CONFIG_KEY_0': 'core.hooksPath',
+        'GIT_CONFIG_VALUE_0': str(hooks),
+    }
+    git_env.pop('GIT_CONFIG_PARAMETERS', None)  # An inherited git -c can override the hook path.
     repo = tmp_path / 'repo'
-    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=git_env)
     source = repo / 'source.txt'
     source.write_text('base\n')
-    subprocess.run(['git', '-C', str(repo), 'add', 'source.txt'], check=True)
+    subprocess.run(['git', '-C', str(repo), 'add', 'source.txt'], check=True, env=git_env)
     subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Gate Test',
                     '-c', 'user.email=gate@example.invalid', 'commit',
-                    '-qm', 'base'], check=True)
-    subprocess.run(['git', '-C', str(repo), 'branch', 'review-base'], check=True)
+                    '-qm', 'base'], check=True, env=git_env)
+    subprocess.run(['git', '-C', str(repo), 'branch', 'review-base'], check=True, env=git_env)
     source.write_text('delta\n')
     subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Gate Test',
                     '-c', 'user.email=gate@example.invalid', 'commit',
-                    '-qam', 'delta'], check=True)
+                    '-qam', 'delta'], check=True, env=git_env)
     prompt = tmp_path / 'prompt file.txt'
     prompt.write_text('Review a literal `command` and $(touch nope).\nSecond line.')
     output = tmp_path / 'answer file.txt'
@@ -45,17 +163,35 @@ sys.exit(int(os.environ.get('CODEX_EXIT', '0')))
         elif dirty:
             source.write_text('unreviewed\n')
             if dirty == 'staged':
-                subprocess.run(['git', '-C', str(repo), 'add', 'source.txt'], check=True)
+                subprocess.run(['git', '-C', str(repo), 'add', 'source.txt'], check=True, env=git_env)
         args = ['exec', str(prompt)] if mode == 'exec' else ['review', '--base', 'review-base']
         result = subprocess.run(
             ['bash', str(SCRIPT), *args, '-C', str(repo), '--output', str(output), *extra],
             input='inherited stdin must not reach Codex', text=True, capture_output=True,
-            env={**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'],
+            env={**git_env, 'PATH': str(tmp_path) + os.pathsep + git_env['PATH'],
                  'CAPTURE': str(capture), 'ANSWER': answer, 'CODEX_EXIT': str(exit_code)},
             timeout=10,
         )
         return result, json.loads(capture.read_text()) if capture.exists() else None, output
     return run
+
+
+def test_gate_fixture_runs_no_caller_git_hook(tmp_path, monkeypatch, request):
+    home = tmp_path / 'caller-home'
+    hooks = home / 'hooks'
+    hooks.mkdir(parents=True)
+    marker = hooks / 'marker'
+    hook = hooks / 'post-commit'
+    hook.write_text('#!/bin/sh\necho post-commit >> "$(dirname "$0")/marker"\n')
+    hook.chmod(0o755)
+    (home / '.gitconfig').write_text('[core]\n\thooksPath = ~/hooks\n')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.delenv('GIT_CONFIG_GLOBAL', raising=False)
+
+    gate = request.getfixturevalue('gate')
+    result, _, _ = gate('review')
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists(), marker.read_text()
 
 
 @pytest.mark.parametrize('mode', ['exec', 'review'])
@@ -64,8 +200,8 @@ def test_city_astra_invocation_and_stdin(gate, mode):
     assert result.returncode == 0, result.stderr
     args = call['args']
     assert args[args.index('-p') + 1] == 'city'
-    assert args[args.index('-m') + 1] == 'gpt-6-astra'
-    assert 'review_model="gpt-6-astra"' in args
+    assert args[args.index('-m') + 1] == 'gpt-6.2-astra'
+    assert 'review_model="gpt-6.2-astra"' in args
     assert args[args.index('-s') + 1] == 'read-only'
     assert args[args.index('-a') + 1] == 'never'
     assert any(a.startswith('developer_instructions=') for a in args)
