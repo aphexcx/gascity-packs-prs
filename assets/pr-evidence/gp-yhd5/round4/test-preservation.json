@@ -1,0 +1,56 @@
+{
+  "pr109": {
+    "files": [
+      "gchat/adapter/internal/ack/hold_context_test.go",
+      "gchat/adapter/internal/ack/hold_test.go",
+      "gchat/adapter/internal/ack/one_taker_test.go",
+      "gchat/adapter/internal/ack/session_mark_test.go",
+      "gchat/adapter/internal/app/held_answer_parity_test.go",
+      "gchat/adapter/internal/app/session_first_reaction_counts_test.go",
+      "gchat/adapter/internal/app/stamp_message_before_waiting_call_test.go",
+      "gchat/adapter/internal/app/stopwatch_waited_reaction_test.go",
+      "gchat/adapter/internal/app/waiter_gives_up_test.go",
+      "slack-full/adapter/held_answer_parity_test.go",
+      "slack-full/adapter/internal/ack/hold_context_test.go",
+      "slack-full/adapter/internal/ack/hold_test.go",
+      "slack-full/adapter/internal/ack/one_taker_test.go",
+      "slack-full/adapter/internal/ack/session_mark_test.go",
+      "slack-full/adapter/session_first_reaction_counts_test.go",
+      "slack-full/adapter/stamp_message_before_waiting_call_test.go",
+      "slack-full/adapter/stopwatch_waited_reaction_test.go",
+      "slack-full/adapter/waiter_gives_up_test.go"
+    ],
+    "count": 18,
+    "modified": [
+      "slack-full/adapter/session_first_reaction_counts_test.go"
+    ],
+    "authorized_change": "firstEyes callback completion wait only; 9 added lines; original assertions and expected values unchanged"
+  },
+  "parent_round5": {
+    "files": [
+      "gchat/adapter/cmd/gc-gchat-adapter/main_test.go",
+      "gchat/adapter/internal/app/app_test.go",
+      "gchat/adapter/internal/app/catchup_test.go",
+      "gchat/adapter/internal/app/join_test.go",
+      "gchat/adapter/internal/app/keyholder_test.go",
+      "gchat/adapter/internal/app/never_silent_gate_test.go",
+      "gchat/adapter/internal/app/ready_test.go",
+      "gchat/adapter/internal/catchup/catchup_test.go",
+      "gchat/adapter/internal/catchup/join_test.go",
+      "gchat/adapter/internal/config/arrival_test.go",
+      "gchat/adapter/internal/config/join_test.go",
+      "gchat/adapter/internal/fakes/fakegoogle/membership_test.go",
+      "gchat/adapter/internal/inbound/first_read_ack_test.go",
+      "gchat/adapter/internal/ledger/join_test.go",
+      "gchat/adapter/internal/ledger/ledger_test.go",
+      "gchat/adapter/internal/server/join_edges_test.go",
+      "gchat/adapter/internal/server/join_test.go",
+      "gchat/adapter/internal/token/join_test.go",
+      "gchat/adapter/test/e2e/e2e_test.go",
+      "gchat/tests/test_commands.py",
+      "gchat/tests/test_join_skill.py"
+    ],
+    "count": 21,
+    "modified": []
+  }
+}

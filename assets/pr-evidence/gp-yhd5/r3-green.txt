@@ -1,0 +1,384 @@
+# PR 109 round 3 (gp-2mn1 on gp-yhd5), green at 2486bb00
+# Section 1: the new tests, round 2's parity table and bound, round 1 and round 4 tests, off-parity, ack packages, the copies, unedited test files.
+# Section 2: -race -count=20 (passes counted per test).
+# Section 3: full suites (gofmt on the files this round touched, go vet, go test ./... -count=1; counts from -v top-level lines; the -v transcripts are not committed).
+# Section 4: the pytest target.
+
+# ===== Section 1: focused
+head 2486bb00
+
+== slack: the new tests and round 2's parity table and bound at 2486bb00
+$ (cd <clone>/slack-full/adapter) env -u GC_BIN go test . -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/' | grep -E -- '^(--- |    --- |ok|FAIL|PASS)|_test.go:[0-9]+:|build failed|undefined'
+start 2026-11-15T04:14:33Z load { 10.95 10.15 10.14 }
+    held_answer_parity_test.go:415: case1/removal-applied-answer-pending: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:415: case3/add-and-removal-answered-in-the-other-order: the call r1 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted] ; acts=2 journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted] ; acts=2 journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:415: case4/repeat-after-the-held-removal-lands: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; s3={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; s3={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:415: overlap/identical-adds-answered-in-the-other-order: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; r0={"delivered":true} ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; r0={"delivered":true} ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:415: overlap/session-add-pending-while-ack-answer-pending: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:415: stamp/message-arrives-while-a-call-waits: the call s2 has not returned after 500ms; the row goes on
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=1 journal=[eyes:counted,eyes:not counted] ; s1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    held_answer_parity_test.go:416: ACK_REACTION unset: acts=3 journal=[eyes:counted,eyes:counted,thumbsup:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; t1={"delivered":true} ; b1={"delivered":true} ; owner lines=1
+    held_answer_parity_test.go:417: ACK_REACTION=eyes:  acts=3 journal=[eyes:counted,eyes:counted,thumbsup:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; t1={"delivered":true} ; b1={"delivered":true} ; owner lines=1
+--- PASS: TestHeldAnswerParityWithAckOff (12.31s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (1.96s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (1.88s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (2.26s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (1.57s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.03s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (2.23s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (0.52s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (0.86s)
+    held_answer_parity_test.go:459: removal {"delivered":false,"failure_kind":"transient"}; next eyes {"delivered":true} after 839ms; Slack applied add:ok | remove:ok | add:ok
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (1.06s)
+    stamp_message_before_waiting_call_test.go:25: stamp/message-before-the-waiting-call: the call s2 has not returned after 500ms; the row goes on
+    stamp_message_before_waiting_call_test.go:26: ACK_REACTION unset: acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+    stamp_message_before_waiting_call_test.go:27: ACK_REACTION=eyes:  acts=2 journal=[eyes:counted,eyes:counted] ; acts=2 journal=[] ; s1={"delivered":true} ; r1={"delivered":true} ; s2={"delivered":true} ; owner lines=0
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (2.18s)
+    stopwatch_waited_reaction_test.go:118: from the ask: released +701ms, returned +1.263s; stopwatch +1.158s, journal +457ms, never-silent +457ms
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (1.34s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/waited (1.27s)
+    --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction/guard/did-not-wait (0.07s)
+    waiter_gives_up_test.go:253: without the waiter: slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session]
+    waiter_gives_up_test.go:254: waiter cancelled:                         slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session] ; its caller got {"delivered":false,"failure_kind":"transient"}
+    waiter_gives_up_test.go:253: without the waiter: slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session]
+    waiter_gives_up_test.go:254: waiter deadline:                          slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session] ; its caller got {"delivered":false,"failure_kind":"transient"}
+    waiter_gives_up_test.go:253: without the waiter: slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session]
+    waiter_gives_up_test.go:254: waiter client-gives-up-through-the-proxy: slack=add:ok | remove:ok | add:ok | add:already_reacted ; acts=2 ; journal=[eyes:counted,eyes:counted,eyes:not counted] ; s1={"delivered":true} ; r1={"delivered":true} ; s3={"delivered":true} ; s4={"delivered":true} ; state files=[ack-session] ; its caller got client timed out
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (6.01s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.96s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (2.15s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (1.90s)
+    waiter_gives_up_test.go:319: ACK_REACTION unset: slack=add:ok | remove:ok | add:ok ; acts=2 ; journal=[eyes:counted,eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; w={"delivered":true} ; owner lines=0
+    waiter_gives_up_test.go:320: ACK_REACTION=eyes:  slack=add:ok | remove:ok | add:ok | add:ok ; acts=1 ; journal=[eyes:counted] ; s1={"delivered":true} ; r1={"delivered":true} ; w={"delivered":false,"failure_kind":"transient"} ; owner lines=1
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (1.69s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	24.943s
+exit=0 (32s)
+
+== gchat: the new tests and round 2's parity table and bound at 2486bb00
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL|PASS)|_test.go:[0-9]+:|build failed|undefined'
+start 2026-11-15T04:15:05Z load { 10.00 10.10 10.13 }
+    held_answer_parity_test.go:431: case1/removal-applied-answer-pending: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:431: case3/add-and-removal-answered-in-the-other-order: the call r1 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    held_answer_parity_test.go:431: case4/repeat-after-the-held-removal-lands: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; s3=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; s3=502 ; owner lines=0
+    held_answer_parity_test.go:431: overlap/identical-adds-answered-in-the-other-order: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; r0=200 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; r0=200 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:431: overlap/session-add-pending-while-ack-answer-pending: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:431: stamp/message-arrives-while-a-call-waits: the call s2 has not returned after 750ms; the row goes on
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=1
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=1
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=1 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=1 ; s1=200 ; s2=502 ; owner lines=0
+    held_answer_parity_test.go:432: ACK_REACTION unset: acts=3 ; s1=200 ; r1=200 ; t1=200 ; b1=200 ; owner lines=0
+    held_answer_parity_test.go:433: ACK_REACTION=eyes:  acts=3 ; s1=200 ; r1=200 ; t1=200 ; b1=200 ; owner lines=0
+--- PASS: TestHeldAnswerParityWithAckOff (21.88s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case1/removal-applied-answer-pending (2.80s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case3/add-and-removal-answered-in-the-other-order (2.89s)
+    --- PASS: TestHeldAnswerParityWithAckOff/case4/repeat-after-the-held-removal-lands (3.51s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/identical-adds-answered-in-the-other-order (3.07s)
+    --- PASS: TestHeldAnswerParityWithAckOff/overlap/session-add-pending-while-ack-answer-pending (1.74s)
+    --- PASS: TestHeldAnswerParityWithAckOff/stamp/message-arrives-while-a-call-waits (3.45s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/session-add-while-ack-answer-held (1.60s)
+    --- PASS: TestHeldAnswerParityWithAckOff/guard/other-emoji-and-message-not-held (2.83s)
+    held_answer_parity_test.go:474: removal 502; next eyes 200 after 772ms; Google applied create:200 | delete:200 | create:200
+--- PASS: TestReactVerbHoldEndsWithTheCallsTimeout (1.00s)
+    stamp_message_before_waiting_call_test.go:24: stamp/message-before-the-waiting-call: the call s2 has not returned after 750ms; the row goes on
+    stamp_message_before_waiting_call_test.go:25: ACK_REACTION unset: acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+    stamp_message_before_waiting_call_test.go:26: ACK_REACTION=eyes:  acts=2 ; acts=2 ; s1=200 ; r1=200 ; s2=200 ; owner lines=0
+--- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall (3.45s)
+    stopwatch_waited_reaction_test.go:103: from the ask: released +902ms, returned +1.203s; stopwatch +1.155s, never-silent +253ms
+--- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction (1.22s)
+    waiter_gives_up_test.go:235: without the waiter: google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session]
+    waiter_gives_up_test.go:236: waiter cancelled:                         google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session] ; its caller got 502
+    waiter_gives_up_test.go:235: without the waiter: google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session]
+    waiter_gives_up_test.go:236: waiter deadline:                          google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session] ; its caller got 502
+    waiter_gives_up_test.go:235: without the waiter: google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session]
+    waiter_gives_up_test.go:236: waiter client-gives-up-through-the-proxy: google=create:200 | delete:200 | create:200 | create:409 ; acts=2 ; s1=200 ; r1=200 ; s3=200 ; s4=502 ; state files=[ack-session] ; its caller got client timed out
+--- PASS: TestReactVerbWaiterEndsWithItsCaller (6.68s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/cancelled (1.46s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/deadline (2.76s)
+    --- PASS: TestReactVerbWaiterEndsWithItsCaller/client-gives-up-through-the-proxy (2.46s)
+    waiter_gives_up_test.go:307: ACK_REACTION unset: google=create:200 | delete:200 | create:200 ; acts=2 ; s1=200 ; r1=200 ; w=200 ; owner lines=0
+    waiter_gives_up_test.go:308: ACK_REACTION=eyes:  google=create:200 | delete:200 | create:200 | create:200 ; acts=1 ; s1=200 ; r1=200 ; w=502 ; owner lines=1
+--- PASS: TestReactVerbWaiterGivenUpIsAMissedCount (3.48s)
+PASS
+ok  	gchat-adapter/internal/app	38.204s
+exit=0 (42s)
+
+== slack round 1, round 4 and off-parity at 2486bb00 (unedited)
+$ (cd <clone>/slack-full/adapter) env -u GC_BIN go test . -run 'TestSessionFirst|TestRound4|TestOffParity|TestAckGateOffZeroCalls' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL|PASS)'
+start 2026-11-15T04:15:47Z load { 9.69 10.01 10.09 }
+--- PASS: TestAckGateOffZeroCalls (0.78s)
+--- PASS: TestOffParityWithTheBase (2.79s)
+--- PASS: TestOffParityWithTheBaseNeverSilentOn (3.98s)
+--- PASS: TestOffParityStartsAsTheBase (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c) (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d) (0.00s)
+--- PASS: TestRound4SessionReactionCountsAsWithAckOff (2.71s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (0.43s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.34s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.40s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.38s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.34s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.33s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.27s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.20s)
+--- PASS: TestRound4CompanyRoomReactionCountsAsWithAckOff (0.83s)
+--- PASS: TestSessionFirstReactionCountsAsWithAckOff (2.86s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-jev (0.27s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-jev (0.34s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-jev (0.52s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-jev (0.42s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.20s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.27s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.55s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.29s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	14.207s
+exit=0 (15s)
+
+== gchat round 1 and round 4 at 2486bb00 (unedited)
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestSessionFirst|TestRound4' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL|PASS)'
+start 2026-11-15T04:16:02Z load { 12.43 10.57 10.29 }
+--- PASS: TestRound4SessionReactionCountsAsWithAckOff (4.49s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/ack-eyes-session-eyes-restart (1.09s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/class/silent-session-restart-control (0.53s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/switch-unset/old-ack-files-on-disk (0.58s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/lost-answer/ack-placed-answer-lost-session-eyes-twice (0.45s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/in-flight/session-eyes-while-ack-in-flight-then-again (0.53s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-eyes-twice (0.45s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-eyes-session-thumbsup-twice (0.44s)
+    --- PASS: TestRound4SessionReactionCountsAsWithAckOff/repeat/ack-refused-session-eyes-twice (0.42s)
+--- PASS: TestRound4RepeatedSessionReactionWithoutAckIsNoNewAnswer (0.60s)
+--- PASS: TestSessionFirstReactionCountsAsWithAckOff (8.26s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-eyes (0.78s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-eyes (0.53s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-eyes (1.01s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-eyes (1.05s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/ack-eyes (0.83s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.66s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.43s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (1.74s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.77s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/control-ack-unset (0.46s)
+PASS
+ok  	gchat-adapter/internal/app	13.568s
+exit=0 (15s)
+
+== gchat off-parity at 2486bb00 (unedited)
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test ./internal/inbound/ ./internal/chat/ -run 'TestOffParity|TestReactVerbUsesBaseGateWhileOff' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL|PASS)'
+start 2026-11-15T04:16:17Z load { 12.86 10.80 10.37 }
+--- PASS: TestOffParityWithTheBase (3.78s)
+--- PASS: TestOffParityWithTheBaseNeverSilentOn (3.76s)
+--- PASS: TestOffParityStartsAsTheBase (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/ACK_SCOPE=everyone_(1c) (0.01s)
+    --- PASS: TestOffParityStartsAsTheBase/an_executable_that_cannot_be_hashed_(1d) (0.00s)
+PASS
+ok  	gchat-adapter/internal/inbound	8.064s
+--- PASS: TestReactVerbUsesBaseGateWhileOff (0.00s)
+PASS
+ok  	gchat-adapter/internal/chat	0.493s
+exit=0 (11s)
+
+== slack-full ack package at 2486bb00
+$ (cd <clone>/slack-full/adapter) env -u GC_BIN go test ./internal/ack/ -count=1 -v 2>&1 | grep -E -- '^(--- |ok|FAIL)'
+start 2026-11-15T04:16:29Z load { 11.49 10.57 10.30 }
+--- PASS: TestChoiceTieBreakPairs (0.00s)
+--- PASS: TestChoiceCatalogAndRequest (0.00s)
+--- PASS: TestChoiceFallbacksAndUnusableCatalog (0.01s)
+--- PASS: TestChoiceNoTextNoKeyAndCharacterLimit (0.00s)
+--- PASS: TestChoiceDeadlineAndConcurrency (0.00s)
+--- PASS: TestChoiceEndpointAndCanary (0.00s)
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.91s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.30s)
+--- PASS: TestPlacementRecordHasOneTaker (5.79s)
+--- PASS: TestPlacementRecordIsTakenOnceAndOnlyWhileOn (0.70s)
+--- PASS: TestOldAckMarkersArePruned (0.00s)
+--- PASS: TestAcknowledgementExclusionsAndRestart (0.08s)
+--- PASS: TestAcknowledgementDeliveryDoesNotWait (0.13s)
+--- PASS: TestAcknowledgementOffStillTimesInbound (0.00s)
+--- PASS: TestSessionMarkMakesTheRepeatNoNewAnswer (0.74s)
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	8.819s
+exit=0 (10s)
+
+== gchat ack package at 2486bb00
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test ./internal/ack/ -count=1 -v 2>&1 | grep -E -- '^(--- |ok|FAIL)'
+start 2026-11-15T04:16:39Z load { 15.65 11.49 10.63 }
+--- PASS: TestChoiceTieBreakPairs (0.00s)
+--- PASS: TestChoiceCatalogAndRequest (0.00s)
+--- PASS: TestChoiceFallbacksAndUnusableCatalog (0.01s)
+--- PASS: TestChoiceNoTextNoKeyAndCharacterLimit (0.00s)
+--- PASS: TestChoiceDeadlineAndConcurrency (0.00s)
+--- PASS: TestChoiceEndpointAndCanary (0.00s)
+--- PASS: TestHoldReactionContextEndsWithItsCaller (0.96s)
+--- PASS: TestHoldReactionIsOneTurnPerReaction (0.31s)
+--- PASS: TestPlacementRecordHasOneTaker (7.11s)
+--- PASS: TestPlacementRecordIsTakenOnceAndOnlyWhileOn (0.65s)
+--- PASS: TestOldAckMarkersArePruned (0.00s)
+--- PASS: TestAcknowledgementExclusionsAndRestart (0.10s)
+--- PASS: TestAcknowledgementDeliveryDoesNotWait (0.04s)
+--- PASS: TestAcknowledgementOffStillTimesInbound (0.00s)
+--- PASS: TestSessionMarkMakesTheRepeatNoNewAnswer (0.42s)
+ok  	gchat-adapter/internal/ack	10.074s
+exit=0 (11s)
+
+== the two ack copies
+$ (cd <clone>) diff -r slack-full/adapter/internal/ack gchat/adapter/internal/ack && echo identical
+start 2026-11-15T04:16:50Z load { 15.89 11.77 10.74 }
+identical
+exit=0 (0s)
+
+== test files modified since 6a6e7ed7 and since 972ff72c, PR 104's head (empty: every earlier test unedited)
+$ (cd <clone>) git diff --diff-filter=M --name-only 6a6e7ed7 HEAD -- '*_test.go'; git diff --diff-filter=M --name-only 972ff72c HEAD -- '*_test.go'; echo '-- added since 6a6e7ed7:'; git diff --diff-filter=A --name-only 6a6e7ed7 HEAD -- '*_test.go'
+start 2026-11-15T04:16:50Z load { 15.89 11.77 10.74 }
+-- added since 6a6e7ed7:
+gchat/adapter/internal/ack/hold_context_test.go
+gchat/adapter/internal/app/stamp_message_before_waiting_call_test.go
+gchat/adapter/internal/app/stopwatch_waited_reaction_test.go
+gchat/adapter/internal/app/waiter_gives_up_test.go
+slack-full/adapter/internal/ack/hold_context_test.go
+slack-full/adapter/stamp_message_before_waiting_call_test.go
+slack-full/adapter/stopwatch_waited_reaction_test.go
+slack-full/adapter/waiter_gives_up_test.go
+exit=0 (0s)
+
+# ===== Section 2: race
+head 2486bb00
+
+== slack: the new tests, the parity table and the bound, -race -count=20 at 2486bb00
+$ (cd <clone>/slack-full/adapter) env -u GC_BIN go test -race . -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout' -count=20 -timeout=60m -v 2>&1 | grep -E -- '^(--- |ok|FAIL)|DATA RACE' | sort | uniq -c
+start 2026-11-15T04:33:53Z load { 5.30 6.69 8.87 }
+  20 --- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall
+  20 --- PASS: TestHeldAnswerParityWithAckOff
+  20 --- PASS: TestReactVerbHoldEndsWithTheCallsTimeout
+  20 --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction
+  20 --- PASS: TestReactVerbWaiterEndsWithItsCaller
+  20 --- PASS: TestReactVerbWaiterGivenUpIsAMissedCount
+   1 ok  github.com/sjarmak/gc-slack-adapter
+exit=0 (489s)
+
+== gchat: the new tests, the parity table and the bound, -race -count=20 at 2486bb00
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test -race ./internal/app/ -run 'TestReactVerbWaiterEndsWithItsCaller|TestReactVerbWaiterGivenUpIsAMissedCount|TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction|TestHeldAnswerParityMessageBeforeTheWaitingCall|TestHeldAnswerParityWithAckOff|TestReactVerbHoldEndsWithTheCallsTimeout' -count=20 -timeout=60m -v 2>&1 | grep -E -- '^(--- |ok|FAIL)|DATA RACE' | sort | uniq -c
+start 2026-11-15T04:42:03Z load { 8.00 8.03 8.69 }
+  20 --- PASS: TestHeldAnswerParityMessageBeforeTheWaitingCall
+  20 --- PASS: TestHeldAnswerParityWithAckOff
+  20 --- PASS: TestReactVerbHoldEndsWithTheCallsTimeout
+  20 --- PASS: TestReactVerbStopwatchKeepsTheRealTimeOfAWaitedReaction
+  20 --- PASS: TestReactVerbWaiterEndsWithItsCaller
+  20 --- PASS: TestReactVerbWaiterGivenUpIsAMissedCount
+   1 ok  gchat-adapter/internal/app
+exit=0 (630s)
+
+== slack-full: round 1's one taker, round 2's turn and the new turn test, -race -count=20 at 2486bb00
+$ (cd <clone>/slack-full/adapter) env -u GC_BIN go test -race ./internal/ack/ -run 'TestPlacementRecordHasOneTaker|TestHoldReactionIsOneTurnPerReaction|TestHoldReactionContextEndsWithItsCaller' -count=20 -v 2>&1 | grep -E -- '^(--- |ok|FAIL)|DATA RACE' | sort | uniq -c
+start 2026-11-15T04:52:33Z load { 4.79 5.71 7.11 }
+  20 --- PASS: TestHoldReactionContextEndsWithItsCaller
+  20 --- PASS: TestHoldReactionIsOneTurnPerReaction
+  20 --- PASS: TestPlacementRecordHasOneTaker
+   1 ok  github.com/sjarmak/gc-slack-adapter/internal/ack
+exit=0 (56s)
+
+== gchat: round 1's one taker, round 2's turn and the new turn test, -race -count=20 at 2486bb00
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go test -race ./internal/ack/ -run 'TestPlacementRecordHasOneTaker|TestHoldReactionIsOneTurnPerReaction|TestHoldReactionContextEndsWithItsCaller' -count=20 -v 2>&1 | grep -E -- '^(--- |ok|FAIL)|DATA RACE' | sort | uniq -c
+start 2026-11-15T04:53:29Z load { 3.66 5.24 6.84 }
+  20 --- PASS: TestHoldReactionContextEndsWithItsCaller
+  20 --- PASS: TestHoldReactionIsOneTurnPerReaction
+  20 --- PASS: TestPlacementRecordHasOneTaker
+   1 ok  gchat-adapter/internal/ack
+exit=0 (61s)
+
+# ===== Section 3: full suites
+head 2486bb00
+
+== slack-full gofmt -l on the files this round touched
+$ (cd <clone>/slack-full/adapter) gofmt -l $(git -C <clone> diff --name-only 6a6e7ed7 HEAD -- slack-full | grep '\.go$' | sed 's|^slack-full/adapter/||')
+start 2026-11-15T04:17:31Z load { 14.50 11.99 10.87 }
+exit=0 (1s)
+
+== slack-full go vet ./...
+$ (cd <clone>/slack-full/adapter) env -u GC_BIN go vet ./...
+start 2026-11-15T04:17:32Z load { 14.50 11.99 10.87 }
+exit=0 (2s)
+
+== slack-full env -u GC_BIN go test ./... -count=1 -v
+start 2026-11-15T04:17:34Z load { 14.50 11.99 10.87 }
+exit=0 (285s) top-level: passed=1685 failed=0 skipped=3
+ok  	github.com/sjarmak/gc-slack-adapter	283.547s
+ok  	github.com/sjarmak/gc-slack-adapter/internal/ack	5.365s
+ok  	github.com/sjarmak/gc-slack-adapter/internal/neversilent	11.417s
+ok  	github.com/sjarmak/gc-slack-adapter/internal/stopwatch	0.360s
+ok  	github.com/sjarmak/gc-slack-adapter/redact	0.106s
+head 2486bb00
+
+== gchat gofmt -l on the files this round touched
+$ (cd <clone>/gchat/adapter) gofmt -l $(git -C <clone> diff --name-only 6a6e7ed7 HEAD -- gchat | grep '\.go$' | sed 's|^gchat/adapter/||')
+start 2026-11-15T04:22:18Z load { 14.96 14.31 12.25 }
+exit=0 (0s)
+
+== gchat go vet ./...
+$ (cd <clone>/gchat/adapter) env -u GC_BIN go vet ./...
+start 2026-11-15T04:22:18Z load { 14.96 14.31 12.25 }
+exit=0 (1s)
+
+== gchat env -u GC_BIN go test ./... -count=1 -timeout=30m -v
+start 2026-11-15T04:22:19Z load { 14.96 14.31 12.25 }
+exit=0 (694s) top-level: passed=731 failed=0 skipped=2
+ok  	gchat-adapter/cmd/gc-gchat-adapter	23.714s
+ok  	gchat-adapter/internal/ack	6.881s
+ok  	gchat-adapter/internal/app	385.404s
+?   	gchat-adapter/internal/arrival	[no test files]
+ok  	gchat-adapter/internal/catchup	121.625s
+ok  	gchat-adapter/internal/chat	6.266s
+ok  	gchat-adapter/internal/config	10.145s
+ok  	gchat-adapter/internal/events	12.818s
+ok  	gchat-adapter/internal/fakes/fakegc	0.318s
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.781s
+ok  	gchat-adapter/internal/gcclient	0.255s
+ok  	gchat-adapter/internal/inbound	144.857s
+ok  	gchat-adapter/internal/ledger	5.849s
+ok  	gchat-adapter/internal/markdown	0.228s
+ok  	gchat-adapter/internal/media	0.188s
+ok  	gchat-adapter/internal/neversilent	16.631s
+ok  	gchat-adapter/internal/principal	30.299s
+ok  	gchat-adapter/internal/provenance	0.141s
+ok  	gchat-adapter/internal/puller	31.185s
+ok  	gchat-adapter/internal/redact	0.200s
+ok  	gchat-adapter/internal/server	134.712s
+ok  	gchat-adapter/internal/stopwatch	0.934s
+ok  	gchat-adapter/internal/token	10.554s
+ok  	gchat-adapter/internal/wire	0.159s
+ok  	gchat-adapter/test/contract	0.265s
+ok  	gchat-adapter/test/e2e	692.418s
+
+# ===== Section 4: pytest
+
+== pytest target
+$ (cd <clone>) env -u GC_BIN make test PYTEST_DIRS='tests/test_reaction_catalog.py tests/test_redaction_copies.py tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py' 2>&1 | tail -15
+start 2026-11-15T04:16:50Z load { 15.89 11.77 10.74 }
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) tests/test_reaction_catalog.py tests/test_redaction_copies.py tests/test_texting_rules.py slack-full/tests/test_slack_prompt_contract.py -q
+........................................................................ [ 65%]
+......................................                                   [100%]
+110 passed in 32.53s
+exit=0 (41s)

@@ -1,0 +1,465 @@
+[
+  {
+    "name": "gchat-full-rerun",
+    "exit": 0,
+    "tests": {
+      "pass": 784,
+      "skip": 2
+    },
+    "packages": {
+      "skip": 1,
+      "pass": 25
+    },
+    "failures": [],
+    "load_before": "11.43 10.02 10.86",
+    "load_after": "7.46 7.80 9.20",
+    "cwd": "gchat/adapter",
+    "command": "env -u GC_BIN go test -json ./... -count=1 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "gchat-full",
+    "exit": 1,
+    "tests": {
+      "pass": 783,
+      "skip": 2,
+      "fail": 1
+    },
+    "packages": {
+      "skip": 1,
+      "pass": 24,
+      "fail": 1
+    },
+    "failures": [
+      "gchat-adapter/internal/app:TestRevokedTokenReplacementResumes"
+    ],
+    "cwd": "gchat/adapter",
+    "command": "env -u GC_BIN go test -json ./... -count=1 -timeout=30m",
+    "exit_code": 1,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "gchat-gofmt",
+    "exit": 0,
+    "tests": {},
+    "packages": {},
+    "failures": [],
+    "cwd": "gchat/adapter",
+    "command": "gofmt -l .",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "gchat-python",
+    "exit": 0,
+    "tests": {},
+    "packages": {},
+    "failures": [],
+    "tail": [
+      "................................ [ 61%]",
+      "....................                                                                [100%]",
+      "52 passed, 101 subtests passed in 20.83s"
+    ],
+    "cwd": "gchat",
+    "command": "env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q",
+    "exit_code": 0,
+    "source_commit": "300f28b3dbfe571c3aa315edfa1d2f95cdb8e148",
+    "passed": 52,
+    "subtests_passed": 101
+  },
+  {
+    "name": "gchat-race",
+    "exit": 0,
+    "tests": {
+      "pass": 247
+    },
+    "packages": {
+      "skip": 1,
+      "pass": 4
+    },
+    "failures": [],
+    "cwd": "gchat/adapter",
+    "command": "env -u GC_BIN go test -race -json ./internal/ack ./internal/app ./internal/arrival ./internal/chat ./internal/server -count=1 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "gchat-readiness20",
+    "exit": 0,
+    "tests": {
+      "pass": 20
+    },
+    "packages": {
+      "pass": 1
+    },
+    "failures": [],
+    "load_before": "9.74 9.27 10.75",
+    "load_after": "11.85 9.77 10.82",
+    "cwd": "gchat/adapter",
+    "command": "env -u GC_BIN go test -json ./internal/app -run ^TestRevokedTokenReplacementResumes$ -count=20 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "gchat-vet",
+    "exit": 0,
+    "tests": {},
+    "packages": {},
+    "failures": [],
+    "cwd": "gchat/adapter",
+    "command": "go vet ./...",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "head-stub-race20",
+    "exit": 1,
+    "tests": {
+      "fail": 1,
+      "pass": 19
+    },
+    "packages": {
+      "fail": 1
+    },
+    "failures": [
+      "github.com/sjarmak/gc-slack-adapter:TestArrivalCoversLegacyThreadRoutes"
+    ],
+    "load_before": "12.15 8.16 7.30",
+    "load_after": "12.77 8.35 7.37",
+    "cwd": "slack-full/adapter",
+    "command": "env -u GC_BIN go test -race -json -run ^TestArrivalCoversLegacyThreadRoutes$ -count=20 -timeout=30m",
+    "exit_code": 1,
+    "source_commit": "300f28b3dbfe571c3aa315edfa1d2f95cdb8e148"
+  },
+  {
+    "name": "main-full",
+    "exit": 143,
+    "tests": {
+      "pass": 670,
+      "skip": 2
+    },
+    "packages": {
+      "skip": 1,
+      "pass": 20
+    },
+    "failures": [],
+    "cwd": "main/gchat/adapter",
+    "command": "env -u GC_BIN go test -json ./... -count=1 -timeout=30m",
+    "exit_code": 143,
+    "reason": "deliberately stopped after relevant test passed",
+    "source_commit": "920830934bf7d60e3ac15e5691e5f52d17db06c6",
+    "note": "Deliberately stopped after the relevant readiness test passed. No complete-suite verdict."
+  },
+  {
+    "name": "main-readiness",
+    "exit": 0,
+    "tests": {
+      "pass": 10
+    },
+    "packages": {
+      "pass": 1
+    },
+    "failures": [],
+    "cwd": "main/gchat/adapter",
+    "command": "env -u GC_BIN go test -json ./internal/app -run ^TestRevokedTokenReplacementResumes$ -count=10 -timeout=2m",
+    "exit_code": 0,
+    "source_commit": "920830934bf7d60e3ac15e5691e5f52d17db06c6"
+  },
+  {
+    "name": "main-slack-full-complete",
+    "exit": 0,
+    "tests": {
+      "pass": 1674,
+      "skip": 3
+    },
+    "packages": {
+      "pass": 5
+    },
+    "failures": [],
+    "load_before": "6.27 7.72 8.64",
+    "load_after": "4.70 5.99 7.65",
+    "cwd": "main/slack-full/adapter",
+    "command": "env -u GC_BIN go test -json ./... -count=1 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "920830934bf7d60e3ac15e5691e5f52d17db06c6"
+  },
+  {
+    "name": "main-slack-full",
+    "exit": 143,
+    "tests": {
+      "fail": 28,
+      "pass": 937,
+      "skip": 1
+    },
+    "packages": {
+      "fail": 1,
+      "pass": 3
+    },
+    "failures": [
+      "github.com/sjarmak/gc-slack-adapter/redact:TestSharedFixtures",
+      "github.com/sjarmak/gc-slack-adapter:TestStopwatchPublishToCanonicalThreadReport",
+      "github.com/sjarmak/gc-slack-adapter:TestDMFixturesParse",
+      "github.com/sjarmak/gc-slack-adapter:TestDMPointerFixtureByteShape",
+      "github.com/sjarmak/gc-slack-adapter:TestCurrentTurnPointerFixtureParity",
+      "github.com/sjarmak/gc-slack-adapter:TestInteropGoParsesPythonIntent",
+      "github.com/sjarmak/gc-slack-adapter:TestInteropGoClaimsPythonDelegation",
+      "github.com/sjarmak/gc-slack-adapter:TestInteropBodySplitReceiptGolden",
+      "github.com/sjarmak/gc-slack-adapter:TestMpimWireFixtureParse",
+      "github.com/sjarmak/gc-slack-adapter:TestSanitizerFixtureParity",
+      "github.com/sjarmak/gc-slack-adapter:TestDelegationFixtureRoundTrip",
+      "github.com/sjarmak/gc-slack-adapter:TestIntentFixtureRoundTrip",
+      "github.com/sjarmak/gc-slack-adapter:TestSynthesisLockNameParityPins",
+      "github.com/sjarmak/gc-slack-adapter:TestNormalizeGoldenClaimedFixtures",
+      "github.com/sjarmak/gc-slack-adapter:TestLivenessRestoredHeldReplayRedactsBeforeSaveAndLostLog",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionDMJournalMailAndDeadLetter",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionNestedAndEscapedText",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionCompanyDurableAdmission",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionBeforeContextAndHoldClipping",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionPreservesProtocolFields",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionReplaysOldCompanyReceipt",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionReplaysOldMentionOnlyReceipt",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionWithheldPathsSurviveDeliveryAndSpool",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionMarkupFilenamePathsRemainUsable",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionDownloadsShareStoreWithCLI",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionInteractionIngress",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionOldRigModalMetadata",
+      "github.com/sjarmak/gc-slack-adapter:TestInboundRedactionResolvedNamesInMentionOnlyDelivery"
+    ],
+    "load_before": "10.38 8.93 9.19",
+    "cwd": "main/slack-full/adapter",
+    "command": "env -u GC_BIN go test -json ./... -count=1 -timeout=30m",
+    "exit_code": 143,
+    "source_commit": "920830934bf7d60e3ac15e5691e5f52d17db06c6",
+    "comparison_valid": false,
+    "note": "Incomplete snapshot lacked sibling fixtures; stopped and replaced by complete-pack baseline. Not a source-regression result."
+  },
+  {
+    "name": "main-stub-race20",
+    "exit": 0,
+    "tests": {
+      "pass": 20
+    },
+    "packages": {
+      "pass": 1
+    },
+    "failures": [],
+    "load_before": "9.50 6.85 6.81",
+    "load_after": "9.28 6.89 6.82",
+    "cwd": "main/slack-full/adapter",
+    "command": "env -u GC_BIN go test -race -json -run ^TestArrivalCoversLegacyThreadRoutes$ -count=20 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "920830934bf7d60e3ac15e5691e5f52d17db06c6"
+  },
+  {
+    "name": "session-first-after20",
+    "exit": 0,
+    "tests": {
+      "pass": 20
+    },
+    "packages": {
+      "pass": 1
+    },
+    "failures": [],
+    "load_before": "6.28 5.71 6.47",
+    "load_after": "6.57 5.88 6.51",
+    "cwd": "slack-full/adapter",
+    "command": "env -u GC_BIN go test -race -json -run ^TestSessionFirstReactionCountsAsWithAckOff$ -count=20 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "300f28b3dbfe571c3aa315edfa1d2f95cdb8e148"
+  },
+  {
+    "name": "session-first-before20",
+    "exit": 0,
+    "tests": {
+      "pass": 20
+    },
+    "packages": {
+      "pass": 1
+    },
+    "failures": [],
+    "load_before": "3.95 5.64 6.60",
+    "load_after": "3.78 5.48 6.51",
+    "cwd": "slack-full/adapter",
+    "command": "env -u GC_BIN go test -race -json -run ^TestSessionFirstReactionCountsAsWithAckOff$ -count=20 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "slack-full-final",
+    "exit": 1,
+    "tests": {
+      "pass": 1684,
+      "skip": 3,
+      "fail": 1
+    },
+    "packages": {
+      "pass": 4,
+      "fail": 1
+    },
+    "failures": [
+      "github.com/sjarmak/gc-slack-adapter:TestOffParityWithTheBase"
+    ],
+    "cwd": "slack-full/adapter",
+    "command": "env -u GC_BIN go test -json ./... -count=1 -timeout=30m",
+    "exit_code": 1,
+    "source_commit": "300f28b3dbfe571c3aa315edfa1d2f95cdb8e148",
+    "note": "Previously classified off-parity capture recurrence: same three extra coalescer lines, zero missing expected lines. No further retry."
+  },
+  {
+    "name": "slack-full-rerun",
+    "exit": 0,
+    "tests": {
+      "pass": 1685,
+      "skip": 3
+    },
+    "packages": {
+      "pass": 5
+    },
+    "failures": [],
+    "load_before": "12.38 7.63 7.91",
+    "load_after": "5.75 6.30 7.23",
+    "cwd": "slack-full/adapter",
+    "command": "env -u GC_BIN go test -json ./... -count=1 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "slack-full",
+    "exit": 1,
+    "tests": {
+      "pass": 1684,
+      "skip": 3,
+      "fail": 1
+    },
+    "packages": {
+      "pass": 4,
+      "fail": 1
+    },
+    "failures": [
+      "github.com/sjarmak/gc-slack-adapter:TestOffParityWithTheBase"
+    ],
+    "cwd": "slack-full/adapter",
+    "command": "env -u GC_BIN go test -json ./... -count=1 -timeout=30m",
+    "exit_code": 1,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "slack-gofmt-changed",
+    "exit": 0,
+    "tests": {},
+    "packages": {},
+    "failures": [],
+    "cwd": "slack-full/adapter",
+    "command": "gofmt -l session_first_reaction_counts_test.go",
+    "exit_code": 0,
+    "source_commit": "300f28b3dbfe571c3aa315edfa1d2f95cdb8e148"
+  },
+  {
+    "name": "slack-gofmt",
+    "exit": 1,
+    "tests": {},
+    "packages": {},
+    "failures": [],
+    "tail": [
+      "company_thread_ambient.go"
+    ],
+    "cwd": "slack-full/adapter",
+    "command": "gofmt -l .",
+    "exit_code": 1,
+    "command_exit_code": 0,
+    "note": "wrapper validation exit 1 for the same pre-existing file listed on main",
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "slack-offparity20",
+    "exit": 0,
+    "tests": {
+      "pass": 20
+    },
+    "packages": {
+      "pass": 1
+    },
+    "failures": [],
+    "load_before": "6.58 6.23 7.55",
+    "load_after": "4.60 5.78 7.32",
+    "cwd": "slack-full/adapter",
+    "command": "env -u GC_BIN go test -json . -run ^TestOffParityWithTheBase$ -count=20 -timeout=30m",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "slack-python",
+    "exit": 0,
+    "tests": {},
+    "packages": {},
+    "failures": [],
+    "tail": [
+      "",
+      "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
+      "986 passed, 3 skipped, 2 warnings, 10 subtests passed in 53.37s"
+    ],
+    "cwd": "slack-full",
+    "command": "env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q",
+    "exit_code": 0,
+    "source_commit": "300f28b3dbfe571c3aa315edfa1d2f95cdb8e148",
+    "passed": 986,
+    "skipped": 3,
+    "subtests_passed": 10,
+    "warnings": 2,
+    "warning_type": "DeprecationWarning: fork from multithreaded test process"
+  },
+  {
+    "name": "slack-race",
+    "exit": 1,
+    "tests": {
+      "pass": 1659,
+      "fail": 2,
+      "skip": 3
+    },
+    "packages": {
+      "pass": 1,
+      "fail": 1
+    },
+    "failures": [
+      "github.com/sjarmak/gc-slack-adapter:TestArrivalCoversLegacyThreadRoutes",
+      "github.com/sjarmak/gc-slack-adapter:TestSessionFirstReactionCountsAsWithAckOff"
+    ],
+    "cwd": "slack-full/adapter",
+    "command": "env -u GC_BIN go test -race -json . ./internal/ack -count=1 -timeout=30m",
+    "exit_code": 1,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "slack-vet-final",
+    "exit": 0,
+    "tests": {},
+    "packages": {},
+    "failures": [],
+    "cwd": "slack-full/adapter",
+    "command": "go vet ./...",
+    "exit_code": 0,
+    "source_commit": "300f28b3dbfe571c3aa315edfa1d2f95cdb8e148"
+  },
+  {
+    "name": "slack-vet",
+    "exit": 0,
+    "tests": {},
+    "packages": {},
+    "failures": [],
+    "cwd": "slack-full/adapter",
+    "command": "go vet ./...",
+    "exit_code": 0,
+    "source_commit": "de95f930f9ce74bce8e4539b57db1a2fafca7ec9"
+  },
+  {
+    "name": "main-slack-gofmt",
+    "command": "gofmt -l .",
+    "cwd": "main/slack-full/adapter",
+    "exit_code": 0,
+    "output": [
+      "company_thread_ambient.go"
+    ],
+    "source_commit": "920830934bf7d60e3ac15e5691e5f52d17db06c6"
+  }
+]

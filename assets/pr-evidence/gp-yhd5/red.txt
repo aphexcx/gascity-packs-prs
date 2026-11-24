@@ -1,0 +1,382 @@
+gp-yhd5: the tests before the fix, and scratch checks that they can fail. Commands are as run;
+<clone> is the lane's clone, <scratch> / <scratch-NAME> a git archive (never committed), <tmp> a
+temporary directory. Go's log lines (20xx/...) are filtered from the Slack runs.
+
+1. The session-first subtests and the one-taker test at 79b7e39e: the code of 972ff72c (PR 104's
+   head) plus the two test commits. Expected red with the acknowledgement on, and red:
+   - Slack (ACK_REACTION=jev; the session's eyes completes inside the Jev hold):
+     ack-answer-lost fails at session_first_reaction_counts_test.go:309 (acts=2, want 1) and :312
+     (journal "eyes:counted,eyes:counted"); ack-answer-pending at :350 and :353;
+     later-message-notice at :373 (owner lines=0, want 1).
+   - Google Chat (ACK_REACTION=eyes; the session's eyes is created before the adapter admits A):
+     ack-answer-lost at :136 (acts=2, want 1) and :139 (200, want main's 502); ack-answer-pending
+     at :178 and :181; later-message-notice at :203 (owner lines=0, want 1).
+   - Every control with ACK_REACTION unset passes, and so does the removed-then-acknowledged guard
+     (green at the base: it pins an order the fix must not break).
+   - The one-taker test, -race -count=20: every run fails in both ack copies (2 takers).
+
+2. The self-review's added Google Chat subtest (removal-matched-nothing, from 16f9d03e) on the code
+   of 972ff72c and of cb597aad (the fix before the self-review): red on both at :260 (acts=2).
+
+3. Scratch mutations of the tip 16f9d03e, each in a git archive: the mark not written on a placed
+   answer (m1), a removal that keeps the mark (m2), TakePlaced without the lock (m3), a mark that
+   lives with one Service value only, as an in-memory mark would (m4: only the two subtests that
+   restart between the reaction and its repeat fail), marks pruned at the records' age (m5), and
+   Google Chat clearing the mark on a removal that found nothing (m6; its first wording left
+   `removed` unused and did not build, so it was rewritten as `(removed || true)` and rerun).
+
+== slack session-first at 79b7e39e (code at 972ff72c)
+$ (cd <scratch>/slack-full/adapter) env -u GC_BIN go test . -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/'
+start 2026-11-14T18:33:39Z load { 7.52 6.24 6.33 }
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-jev
+    session_first_reaction_counts_test.go:304: reactions.add: 1794681223.589489:eyes:ok | 1794681223.589489:eyes:already_reacted(lost) | 1794681223.589489:eyes:already_reacted
+    session_first_reaction_counts_test.go:309: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:312: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-jev
+    session_first_reaction_counts_test.go:345: reactions.add: 1794681223.692563:eyes:ok | 1794681223.692563:eyes:already_reacted | 1794681223.692563:eyes:already_reacted
+    session_first_reaction_counts_test.go:350: after the session's repeat with the acknowledgement's answer in flight: acts=2, want 1
+    session_first_reaction_counts_test.go:353: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-jev
+    session_first_reaction_counts_test.go:373: owner lines=0, want 1: B's not_delivered line (as with ACK_REACTION unset); acts=2, journal="eyes:counted,eyes:counted"
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-jev
+    session_first_reaction_counts_test.go:392: reactions: 1794681223.975573:eyes:ok | 1794681223.975573:eyes:remove:ok | 1794681223.975573:eyes:ok | 1794681223.975573:eyes:already_reacted
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset
+    session_first_reaction_counts_test.go:304: reactions.add: 1794681224.065760:eyes:ok | 1794681224.065760:eyes:already_reacted
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset
+    session_first_reaction_counts_test.go:345: reactions.add: 1794681224.139993:eyes:ok | 1794681224.139993:eyes:already_reacted
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset
+    session_first_reaction_counts_test.go:392: reactions: 1794681224.364403:eyes:ok | 1794681224.364403:eyes:remove:ok | 1794681224.364403:eyes:ok
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (0.86s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-jev (0.10s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-jev (0.10s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-jev (0.19s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-jev (0.09s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.07s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.07s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.15s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.08s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	1.084s
+FAIL
+exit=1
+
+== gchat session-first at 79b7e39e (code at 972ff72c)
+$ (cd <scratch>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1
+start 2026-11-14T18:33:44Z load { 7.40 6.23 6.33 }
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-eyes
+    session_first_reaction_counts_test.go:136: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:139: the session's repeat: status=200 {"name":"","removed":false}, want main's 502
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-eyes
+    session_first_reaction_counts_test.go:178: after the session's repeat with the acknowledgement's answer in flight: acts=2, want 1
+    session_first_reaction_counts_test.go:181: the session's repeat: status=200, want main's 502
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-eyes
+    session_first_reaction_counts_test.go:203: owner lines=0, want 1: B's not_delivered line (as with ACK_REACTION unset); acts=2
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-eyes
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset
+2026/11/14 12:33:48 never-silent: operator context unset; no operator mail will be sent
+=== RUN   TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (2.89s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-eyes (0.25s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-eyes (0.44s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-eyes (0.49s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-eyes (0.63s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.12s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.21s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.31s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.43s)
+FAIL
+FAIL	gchat-adapter/internal/app	3.128s
+FAIL
+exit=1
+
+== slack one taker at 79b7e39e
+$ (cd <scratch>/slack-full/adapter) env -u GC_BIN go test -race ./internal/ack/ -run 'TestPlacementRecordHasOneTaker' -count=20 2>&1 | sort | uniq -c | sort -rn
+start 2026-11-14T18:33:49Z load { 7.13 6.20 6.31 }
+  17     one_taker_test.go:42: message 0: 2 takers of one placement record, want exactly 1
+  15 --- FAIL: TestPlacementRecordHasOneTaker (0.02s)
+   3 --- FAIL: TestPlacementRecordHasOneTaker (0.03s)
+   2 FAIL
+   2     one_taker_test.go:42: message 1: 2 takers of one placement record, want exactly 1
+   1 FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	0.698s
+   1 --- FAIL: TestPlacementRecordHasOneTaker (0.08s)
+   1 --- FAIL: TestPlacementRecordHasOneTaker (0.05s)
+   1     one_taker_test.go:42: message 3: 2 takers of one placement record, want exactly 1
+exit=1
+
+== gchat one taker at 79b7e39e
+$ (cd <scratch>/gchat/adapter) env -u GC_BIN go test -race ./internal/ack/ -run 'TestPlacementRecordHasOneTaker' -count=20 2>&1 | sort | uniq -c | sort -rn
+start 2026-11-14T18:33:50Z load { 7.13 6.20 6.31 }
+  16     one_taker_test.go:42: message 0: 2 takers of one placement record, want exactly 1
+  13 --- FAIL: TestPlacementRecordHasOneTaker (0.02s)
+   5 --- FAIL: TestPlacementRecordHasOneTaker (0.03s)
+   3     one_taker_test.go:42: message 1: 2 takers of one placement record, want exactly 1
+   2 FAIL
+   1 FAIL	gchat-adapter/internal/ack	0.662s
+   1 --- FAIL: TestPlacementRecordHasOneTaker (0.05s)
+   1 --- FAIL: TestPlacementRecordHasOneTaker (0.04s)
+   1     one_taker_test.go:42: message 2: 2 takers of one placement record, want exactly 1
+exit=1
+
+
+== gchat removal-matched-nothing (test file at 16f9d03e) on the code of 972ff72c
+$ (cd <scratch-972ff72c>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:05Z load { 4.12 5.13 5.70 }
+    session_first_reaction_counts_test.go:260: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:263: the session's repeat: status=200 {"name":"","removed":false}, want main's 502
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (0.65s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/ack-eyes (0.44s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/control-ack-unset (0.21s)
+FAIL
+FAIL	gchat-adapter/internal/app	0.892s
+FAIL
+exit=1
+
+== gchat removal-matched-nothing (test file at 16f9d03e) on the code of cb597aad
+$ (cd <scratch-cb597aad>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:08Z load { 4.12 5.13 5.70 }
+    session_first_reaction_counts_test.go:260: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:263: the session's repeat: status=200 {"name":"","removed":false}, want main's 502
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (0.68s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/ack-eyes (0.45s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/control-ack-unset (0.23s)
+FAIL
+FAIL	gchat-adapter/internal/app	0.961s
+FAIL
+exit=1
+
+
+#### m1-no-mark-on-placed: 's.markError(touch(sessionPath(s.Dir, conversation, message, emoji)))\n}' -> '}' in internal/ack/service.go of slack-full/adapter, gchat/adapter, a git archive of 16f9d03e
+
+== m1-no-mark-on-placed: slack session-first
+$ (cd <scratch-m1-no-mark-on-placed>/slack-full/adapter) env -u GC_BIN go test . -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/' | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:11Z load { 4.11 5.12 5.69 }
+    session_first_reaction_counts_test.go:304: reactions.add: 1794683054.762254:eyes:ok | 1794683054.762254:eyes:already_reacted(lost) | 1794683054.762254:eyes:already_reacted
+    session_first_reaction_counts_test.go:309: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:312: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+    session_first_reaction_counts_test.go:345: reactions.add: 1794683054.884241:eyes:ok | 1794683054.884241:eyes:already_reacted | 1794683054.884241:eyes:already_reacted
+    session_first_reaction_counts_test.go:350: after the session's repeat with the acknowledgement's answer in flight: acts=2, want 1
+    session_first_reaction_counts_test.go:353: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+    session_first_reaction_counts_test.go:373: owner lines=0, want 1: B's not_delivered line (as with ACK_REACTION unset); acts=2, journal="eyes:counted,eyes:counted"
+    session_first_reaction_counts_test.go:392: reactions: 1794683055.203894:eyes:ok | 1794683055.203894:eyes:remove:ok | 1794683055.203894:eyes:ok | 1794683055.203894:eyes:already_reacted
+    session_first_reaction_counts_test.go:304: reactions.add: 1794683055.314029:eyes:ok | 1794683055.314029:eyes:already_reacted
+    session_first_reaction_counts_test.go:345: reactions.add: 1794683055.389613:eyes:ok | 1794683055.389613:eyes:already_reacted
+    session_first_reaction_counts_test.go:392: reactions: 1794683055.629978:eyes:ok | 1794683055.629978:eyes:remove:ok | 1794683055.629978:eyes:ok
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (0.96s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-jev (0.12s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-jev (0.12s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-jev (0.20s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-jev (0.11s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.08s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.08s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.16s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.10s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	1.197s
+FAIL
+exit=1
+
+== m1-no-mark-on-placed: gchat session-first
+$ (cd <scratch-m1-no-mark-on-placed>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:15Z load { 4.50 5.18 5.71 }
+    session_first_reaction_counts_test.go:136: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:139: the session's repeat: status=200 {"name":"","removed":false}, want main's 502
+    session_first_reaction_counts_test.go:178: after the session's repeat with the acknowledgement's answer in flight: acts=2, want 1
+    session_first_reaction_counts_test.go:181: the session's repeat: status=200, want main's 502
+    session_first_reaction_counts_test.go:203: owner lines=0, want 1: B's not_delivered line (as with ACK_REACTION unset); acts=2
+    session_first_reaction_counts_test.go:260: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:263: the session's repeat: status=200 {"name":"","removed":false}, want main's 502
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (3.66s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-eyes (0.28s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-eyes (0.45s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-eyes (0.53s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-eyes (0.65s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/ack-eyes (0.44s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.13s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.21s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.31s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.43s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/control-ack-unset (0.23s)
+FAIL
+FAIL	gchat-adapter/internal/app	3.925s
+FAIL
+exit=1
+
+#### m2-removal-keeps-mark: 'remove(sessionPath(s.Dir, conversation, message, emoji))\n}' -> '}' in internal/ack/service.go of slack-full/adapter, gchat/adapter, a git archive of 16f9d03e
+
+== m2-removal-keeps-mark: slack session-first
+$ (cd <scratch-m2-removal-keeps-mark>/slack-full/adapter) env -u GC_BIN go test . -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/' | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:21Z load { 4.94 5.26 5.73 }
+    session_first_reaction_counts_test.go:304: reactions.add: 1794683065.125254:eyes:ok | 1794683065.125254:eyes:already_reacted(lost) | 1794683065.125254:eyes:already_reacted
+    session_first_reaction_counts_test.go:345: reactions.add: 1794683065.227940:eyes:ok | 1794683065.227940:eyes:already_reacted | 1794683065.227940:eyes:already_reacted
+    session_first_reaction_counts_test.go:392: reactions: 1794683065.534859:eyes:ok | 1794683065.534859:eyes:remove:ok | 1794683065.534859:eyes:ok | 1794683065.534859:eyes:already_reacted
+    session_first_reaction_counts_test.go:400: after the session's eyes that followed its removal: acts=1, want 2 (as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:403: journal session_react rows="eyes:counted,eyes:not counted", want "eyes:counted,eyes:counted"
+    session_first_reaction_counts_test.go:304: reactions.add: 1794683065.633028:eyes:ok | 1794683065.633028:eyes:already_reacted
+    session_first_reaction_counts_test.go:345: reactions.add: 1794683065.699023:eyes:ok | 1794683065.699023:eyes:already_reacted
+    session_first_reaction_counts_test.go:392: reactions: 1794683065.916570:eyes:ok | 1794683065.916570:eyes:remove:ok | 1794683065.916570:eyes:ok
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (0.88s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-jev (0.10s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-jev (0.11s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-jev (0.20s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-jev (0.10s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.07s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.06s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.15s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.08s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	1.106s
+FAIL
+exit=1
+
+== m2-removal-keeps-mark: gchat session-first
+$ (cd <scratch-m2-removal-keeps-mark>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:26Z load { 7.43 5.77 5.91 }
+    session_first_reaction_counts_test.go:224: the session's eyes after its removal: status=502 {"error":"googleapi: Error 409: the user already reacted with this emoji"}, want 200
+    session_first_reaction_counts_test.go:230: after the session's eyes that followed its removal: acts=1, want 2 (as with ACK_REACTION unset)
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (3.61s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-eyes (0.25s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-eyes (0.43s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-eyes (0.53s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-eyes (0.63s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/ack-eyes (0.43s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.15s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.21s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.31s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.44s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/control-ack-unset (0.22s)
+FAIL
+FAIL	gchat-adapter/internal/app	3.846s
+FAIL
+exit=1
+
+#### m3-no-lock-in-take: 's.placing.Lock()\n\tdefer s.placing.Unlock()\n\tmark := sessionPath' -> 'mark := sessionPath' in internal/ack/service.go of slack-full/adapter, gchat/adapter, a git archive of 16f9d03e
+
+== m3-no-lock-in-take: slack-full one taker
+$ (cd <scratch-m3-no-lock-in-take>/slack-full/adapter) env -u GC_BIN go test -race ./internal/ack/ -run 'TestPlacementRecordHasOneTaker' -count=20 2>&1 | sort | uniq -c | sort -rn
+start 2026-11-14T19:04:31Z load { 6.91 5.69 5.88 }
+  18     one_taker_test.go:42: message 0: 2 takers of one placement record, want exactly 1
+   8 --- FAIL: TestPlacementRecordHasOneTaker (0.03s)
+   7 --- FAIL: TestPlacementRecordHasOneTaker (0.04s)
+   4 --- FAIL: TestPlacementRecordHasOneTaker (0.05s)
+   2 FAIL
+   2     one_taker_test.go:42: message 1: 2 takers of one placement record, want exactly 1
+   1 FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	0.922s
+   1 --- FAIL: TestPlacementRecordHasOneTaker (0.02s)
+exit=1
+
+== m3-no-lock-in-take: gchat one taker
+$ (cd <scratch-m3-no-lock-in-take>/gchat/adapter) env -u GC_BIN go test -race ./internal/ack/ -run 'TestPlacementRecordHasOneTaker' -count=20 2>&1 | sort | uniq -c | sort -rn
+start 2026-11-14T19:04:33Z load { 6.91 5.69 5.88 }
+  19     one_taker_test.go:42: message 0: 2 takers of one placement record, want exactly 1
+   9 --- FAIL: TestPlacementRecordHasOneTaker (0.03s)
+   6 --- FAIL: TestPlacementRecordHasOneTaker (0.04s)
+   2 FAIL
+   2 --- FAIL: TestPlacementRecordHasOneTaker (0.05s)
+   2 --- FAIL: TestPlacementRecordHasOneTaker (0.02s)
+   1 FAIL	gchat-adapter/internal/ack	0.939s
+   1 --- FAIL: TestPlacementRecordHasOneTaker (0.08s)
+   1     one_taker_test.go:42: message 1: 2 takers of one placement record, want exactly 1
+exit=1
+
+#### m4-mark-lost-on-restart: 'sessionPath(s.Dir,' -> 'sessionPath(fmt.Sprintf("%s/%p", s.Dir, s),' in internal/ack/service.go of slack-full/adapter, gchat/adapter, a git archive of 16f9d03e
+
+== m4-mark-lost-on-restart: slack session-first
+$ (cd <scratch-m4-mark-lost-on-restart>/slack-full/adapter) env -u GC_BIN go test . -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1 | grep -v '^20[0-9][0-9]/' | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:34Z load { 6.76 5.68 5.87 }
+    session_first_reaction_counts_test.go:304: reactions.add: 1794683078.658025:eyes:ok | 1794683078.658025:eyes:already_reacted(lost) | 1794683078.658025:eyes:already_reacted
+    session_first_reaction_counts_test.go:309: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:312: journal session_react rows="eyes:counted,eyes:counted", want "eyes:counted,eyes:not counted"
+    session_first_reaction_counts_test.go:345: reactions.add: 1794683078.788600:eyes:ok | 1794683078.788600:eyes:already_reacted | 1794683078.788600:eyes:already_reacted
+    session_first_reaction_counts_test.go:373: owner lines=0, want 1: B's not_delivered line (as with ACK_REACTION unset); acts=2, journal="eyes:counted,eyes:counted"
+    session_first_reaction_counts_test.go:392: reactions: 1794683079.098391:eyes:ok | 1794683079.098391:eyes:remove:ok | 1794683079.098391:eyes:ok | 1794683079.098391:eyes:already_reacted
+    session_first_reaction_counts_test.go:304: reactions.add: 1794683079.213004:eyes:ok | 1794683079.213004:eyes:already_reacted
+    session_first_reaction_counts_test.go:345: reactions.add: 1794683079.294109:eyes:ok | 1794683079.294109:eyes:already_reacted
+    session_first_reaction_counts_test.go:392: reactions: 1794683079.519918:eyes:ok | 1794683079.519918:eyes:remove:ok | 1794683079.519918:eyes:ok
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (0.94s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-jev (0.13s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-jev (0.11s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-jev (0.20s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-jev (0.11s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.08s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.07s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.15s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.08s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	1.161s
+FAIL
+exit=1
+
+== m4-mark-lost-on-restart: gchat session-first
+$ (cd <scratch-m4-mark-lost-on-restart>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:39Z load { 6.46 5.63 5.86 }
+    session_first_reaction_counts_test.go:136: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:139: the session's repeat: status=200 {"name":"","removed":false}, want main's 502
+    session_first_reaction_counts_test.go:203: owner lines=0, want 1: B's not_delivered line (as with ACK_REACTION unset); acts=2
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (3.51s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-eyes (0.26s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-eyes (0.42s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-eyes (0.49s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-eyes (0.64s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/ack-eyes (0.42s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.11s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.21s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.30s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.43s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/control-ack-unset (0.21s)
+FAIL
+FAIL	gchat-adapter/internal/app	3.759s
+FAIL
+exit=1
+
+#### m5-mark-pruned-with-records: 'const sessionMarkAge = 2 * MarkerAge' -> 'const sessionMarkAge = MarkerAge' in internal/ack/service.go of slack-full/adapter, gchat/adapter, a git archive of 16f9d03e
+
+== m5-mark-pruned-with-records: slack-full session mark
+$ (cd <scratch-m5-mark-pruned-with-records>/slack-full/adapter) env -u GC_BIN go test ./internal/ack/ -run 'TestSessionMarkMakesTheRepeatNoNewAnswer' -count=1 -v 2>&1 | grep -E -- '^(--- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:45Z load { 6.18 5.59 5.84 }
+    session_mark_test.go:92: the mark went with its younger record: stat <tmp> no such file or directory
+    session_mark_test.go:95: chtimes <tmp> no such file or directory
+--- FAIL: TestSessionMarkMakesTheRepeatNoNewAnswer (0.06s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/internal/ack	0.195s
+FAIL
+exit=1
+
+== m5-mark-pruned-with-records: gchat session mark
+$ (cd <scratch-m5-mark-pruned-with-records>/gchat/adapter) env -u GC_BIN go test ./internal/ack/ -run 'TestSessionMarkMakesTheRepeatNoNewAnswer' -count=1 -v 2>&1 | grep -E -- '^(--- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:04:45Z load { 6.18 5.59 5.84 }
+    session_mark_test.go:92: the mark went with its younger record: stat <tmp> no such file or directory
+    session_mark_test.go:95: chtimes <tmp> no such file or directory
+--- FAIL: TestSessionMarkMakesTheRepeatNoNewAnswer (0.06s)
+FAIL
+FAIL	gchat-adapter/internal/ack	0.202s
+FAIL
+exit=1
+
+
+#### m6-gchat-empty-removal-clears-mark: 'if err == nil && removed && c.ArrivalRemoved != nil {' -> 'if err == nil && (removed || true) && c.ArrivalRemoved != nil {' in internal/server/server.go of gchat/adapter, a git archive of 16f9d03e
+
+== m6-gchat-empty-removal-clears-mark: gchat session-first
+$ (cd <scratch-m6-gchat-empty-removal-clears-mark>/gchat/adapter) env -u GC_BIN go test ./internal/app/ -run 'TestSessionFirstReactionCountsAsWithAckOff' -count=1 -v 2>&1 | grep -E -- '^(--- |    --- |ok|FAIL)|_test.go:'
+start 2026-11-14T19:05:58Z load { 13.21 7.58 6.55 }
+    session_first_reaction_counts_test.go:260: after the session's repeat: acts=2, want 1 (a repeat is no new answer, as with ACK_REACTION unset)
+    session_first_reaction_counts_test.go:263: the session's repeat: status=200 {"name":"","removed":false}, want main's 502
+--- FAIL: TestSessionFirstReactionCountsAsWithAckOff (3.87s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/ack-eyes (0.25s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/ack-eyes (0.43s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/ack-eyes (0.56s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/ack-eyes (0.67s)
+    --- FAIL: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/ack-eyes (0.47s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-lost/control-ack-unset (0.18s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/ack-answer-pending/control-ack-unset (0.22s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/later-message-notice/control-ack-unset (0.45s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removed-then-acknowledged/control-ack-unset (0.44s)
+    --- PASS: TestSessionFirstReactionCountsAsWithAckOff/session-first/removal-matched-nothing/control-ack-unset (0.21s)
+FAIL
+FAIL	gchat-adapter/internal/app	4.105s
+FAIL
+exit=1
