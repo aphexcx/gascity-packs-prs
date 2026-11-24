@@ -1,0 +1,54 @@
+$ env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run '^TestDeletionLearnedAfterAnOutageRemovesFiles$' -count=1
+--- FAIL: TestDeletionLearnedAfterAnOutageRemovesFiles (0.03s)
+    media_cleanup_test.go:261: saved file or message directory remains
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.252s
+FAIL
+exit 1
+
+$ env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run '^(TestHistoryReadSavesAreRemovedToo|TestSaveRacingADeletionLeavesNoFile)$' -count=1
+--- FAIL: TestHistoryReadSavesAreRemovedToo (0.32s)
+    --- FAIL: TestHistoryReadSavesAreRemovedToo/unseen (0.06s)
+        media_cleanup_test.go:100: history file remains
+    --- FAIL: TestHistoryReadSavesAreRemovedToo/own (0.07s)
+        media_cleanup_test.go:100: history file remains
+    --- FAIL: TestHistoryReadSavesAreRemovedToo/withheld (0.08s)
+        media_cleanup_test.go:100: history file remains
+--- FAIL: TestSaveRacingADeletionLeavesNoFile (5.03s)
+    media_cleanup_test.go:293: tombstone was not persisted
+FAIL
+FAIL	gchat-adapter/internal/server	5.655s
+FAIL
+exit 1
+
+$ env -u GC_BIN -u NEVER_SILENT go test -overlay '<tmp>/swap.json' ./internal/inbound -run '^TestArrivalObservationAndEditMediaStepOrder$/^observation_starts_while_media_is_held$' -count=1
+--- FAIL: TestArrivalObservationAndEditMediaStepOrder (1.05s)
+    --- FAIL: TestArrivalObservationAndEditMediaStepOrder/observation_starts_while_media_is_held (1.05s)
+        media_arrival_order_test.go:99: observation did not start while media was held
+FAIL
+FAIL	gchat-adapter/internal/inbound	1.356s
+FAIL
+exit 1
+
+$ env -u GC_BIN -u NEVER_SILENT go test -overlay '<tmp>/floor.json' -p 1 -count=1 ./internal/ledger -run '^(TestMediaCleanupLedgerCompatibility|TestMediaAndJoinRecordsShareOneLedger|TestJoinLedgerCompatibility|TestHistoryFloorLedgerCompatibility|TestLedgerOfEitherParentLoads|TestCloneIsolatesEveryMutableRecord)$'
+--- FAIL: TestHistoryFloorLedgerCompatibility (0.01s)
+    history_floor_test.go:87: new ledger did not persist floor
+--- FAIL: TestLedgerOfEitherParentLoads (0.11s)
+    --- FAIL: TestLedgerOfEitherParentLoads/pr-head (0.04s)
+        history_notice_test.go:118: frozen reader changed more than new fields
+    --- FAIL: TestLedgerOfEitherParentLoads/merged (0.04s)
+        history_notice_test.go:118: frozen reader changed more than new fields
+FAIL
+FAIL	gchat-adapter/internal/ledger	0.387s
+FAIL
+exit 1
+
+$ env -u GC_BIN -u NEVER_SILENT go test -overlay '<tmp>/roots.json' -p 1 -count=1 ./internal/ledger -run '^(TestMediaCleanupLedgerCompatibility|TestMediaAndJoinRecordsShareOneLedger|TestJoinLedgerCompatibility|TestHistoryFloorLedgerCompatibility|TestLedgerOfEitherParentLoads|TestCloneIsolatesEveryMutableRecord)$'
+--- FAIL: TestMediaAndJoinRecordsShareOneLedger (0.01s)
+    media_join_test.go:56: saved ledger missing key "media_roots"
+--- FAIL: TestMediaCleanupLedgerCompatibility (0.01s)
+    media_cleanup_test.go:61: cleanup checkpoint lost on load, clone or save
+FAIL
+FAIL	gchat-adapter/internal/ledger	0.380s
+FAIL
+exit 1

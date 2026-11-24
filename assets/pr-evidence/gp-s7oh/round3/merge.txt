@@ -1,0 +1,181 @@
+Auto-merging gchat/CHANGELOG.md
+CONFLICT (content): Merge conflict in gchat/CHANGELOG.md
+Auto-merging gchat/README.md
+CONFLICT (content): Merge conflict in gchat/README.md
+Auto-merging gchat/adapter/internal/app/app.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/app/app.go
+Auto-merging gchat/adapter/internal/inbound/inbound.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/inbound/inbound.go
+Auto-merging gchat/adapter/internal/ledger/ledger.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/ledger/ledger.go
+Auto-merging gchat/adapter/internal/server/server.go
+Recorded preimage for 'gchat/CHANGELOG.md'
+Recorded preimage for 'gchat/README.md'
+Recorded preimage for 'gchat/adapter/internal/app/app.go'
+Recorded preimage for 'gchat/adapter/internal/inbound/inbound.go'
+Recorded preimage for 'gchat/adapter/internal/ledger/ledger.go'
+Automatic merge failed; fix conflicts and then commit the result.
+
+The following diff3 hunks use a leading colon on each source line. Removing that prefix recovers the original text.
+
+gchat/CHANGELOG.md
+
+:<<<<<<< HEAD
+:- Remove saved attachments when a message deletion is learned, and files of
+:  attachments an accepted edit took away. Cleanup retries survive restart;
+:  past deletions are left alone at an update. Nothing expires by age or is
+:  removed to make room. Ledger text, delivered turns and other copies stay;
+:  commands, settings, subscriptions and deletion turns are unchanged. Deletions
+:  outside membership or event retention cannot be learned. A merge changes
+:  no box (gp-s7oh).
+:
+:||||||| 9bcab163
+:=======
+:- Bound a newly listed room's first read by the installation floor while allowing its adding message within the join margin.
+:>>>>>>> 5f1ce902fce977f6b6d95da231652b0f753cce37
+
+gchat/README.md
+
+:<<<<<<< HEAD
+:When the adapter learns that a message was deleted, it removes the attachment
+:files it saved for that message, including copies saved by history reads and
+:edits. An accepted edit removes only the saved files of attachments it no
+:longer carries. Files saved before this change have no attachment link: an
+:edit leaves them, and a message deletion removes them. Attachment resource
+:names are assumed to stay the same across edits (UNPROVEN). If Google changes
+:a kept attachment's name, its earlier paths stop working and the edit saves
+:a fresh copy. Text edits and history reads still save additional copies.
+:
+:Failed removals remain in the ledger and are retried at startup and every
+:five seconds, independently of credentials, registration, subscriptions and
+:history recovery, without holding later messages. Configured media roots are
+:remembered across settings reloads and restarts, so a deletion also reaches
+:copies in earlier stores. Attachment links use a digest scoped to their store;
+:while a filename has pending removal debt, new downloads choose another name.
+:Each copy's link records the snapshot revision it came from; a delayed edit
+:cannot remove a copy from a newer snapshot. Links from an older ledger without
+:that source revision are treated as older than any edit. Catch-up snapshots
+:reconcile saved copies before delivery deduplication.
+:An edit checkpoint keeps its revision across a crash, preventing older edits
+:from restoring removed attachments. Directory removals are synchronized before
+:their ledger obligation is cleared; synchronization failures remain retryable.
+:Cleanup does not hold the health lock while waiting for downloads, so a
+:credential or settings reload can cancel a stalled download. The adapter log
+:reports the message id, removed count, and, on failure, a remaining count and
+:one cause word; `remaining=-1` means the directory could not be inspected.
+:Links and nested folders are left in place and reported for operator attention.
+:The first start after an update leaves files of past deletions alone: only
+:cleanup obligations recorded by the new code are retried. A rollback to the
+:released adapter drops these obligations, attachment links and remembered
+:media roots. Fields understood by that adapter remain, and it does not remove
+:saved attachments.
+:
+:Only the adapter's saved files are removed. Ledger text, turns already sent
+:to the mayor's session, and copies made elsewhere remain. Deletions in rooms
+:the mayor has left, or during outages longer than Google's event retention,
+:cannot be learned; files of a room the mayor leaves stay. Commands, settings,
+:Google subscriptions and deletion turns are unchanged. A merge changes no
+:box; adoption needs a separate adapter release and image or pack update.
+:
+:||||||| 9bcab163
+:=======
+:The root-level `first_start_history` setting optionally includes a short history
+:window on first start or reset. It is a Go duration string, from `"0s"` to
+:`"168h"` inclusive; write `"24h"` for a day, not `"1d"`. Omit it to start at
+:the first successful subscription attempt. Set it before connecting; changing
+:it after a subscription has been recorded does not change the saved history bound.
+:Remove this key before rolling back to 0.5.0, whose settings loader refuses
+:unknown keys. The older ledger reader drops the floor, per-space starts and
+:inventory boundary, keeps saved cursors, and recognizes skipped acts as non-turns.
+:
+:>>>>>>> 5f1ce902fce977f6b6d95da231652b0f753cce37
+
+gchat/adapter/internal/app/app.go
+
+:<<<<<<< HEAD
+:	mediaResetMu          sync.Mutex // excludes local cleanup during POST /state
+:||||||| 9bcab163
+:=======
+:	noticeStateMu         sync.Mutex // orders notice passes with state replacement
+:>>>>>>> 5f1ce902fce977f6b6d95da231652b0f753cce37
+
+gchat/adapter/internal/inbound/inbound.go
+
+:<<<<<<< HEAD
+:	if c.Kind == "message.updated" {
+:		if err := p.editMedia(ctx, m); err != nil {
+:			return err
+:		}
+:	}
+:||||||| 9bcab163
+:=======
+:	if observe != nil {
+:		go observe()
+:	}
+:>>>>>>> 5f1ce902fce977f6b6d95da231652b0f753cce37
+
+gchat/adapter/internal/ledger/ledger.go
+
+:<<<<<<< HEAD
+:	IdentityDomainID string                   `json:"identity_domain_id,omitempty"`
+:	Subscription     SubscriptionState        `json:"subscription"`
+:	Spaces           map[string]*SpaceState   `json:"spaces"`
+:	Transport        TransportDedup           `json:"transport"`
+:	Messages         map[string]*MessageState `json:"messages"`
+:	Changes          map[string]*ChangeState  `json:"changes"`
+:	Sends            map[string]*SendState    `json:"sends"`
+:	Unresolved       map[string]*ChangeState  `json:"unresolved"`
+:	Quarantine       []QuarantinedEvent       `json:"quarantine"`
+:	Counters         map[string]int64         `json:"counters"`
+:	JoinRequests     map[string]*JoinRequest  `json:"join_requests,omitempty"`
+:	JoinAttempts     []JoinAttempt            `json:"join_attempts,omitempty"`
+:	// Media holds attachment links and cleanup obligations introduced after
+:	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
+:	Media map[string]*MediaState `json:"media,omitempty"`
+:	// MediaRoots remembers configured inbound stores across reloads/restarts,
+:	// including stores containing legacy files without attachment links.
+:	MediaRoots []string `json:"media_roots,omitempty"`
+:}
+:
+:// MediaState stores resource IDs and file-name digests, never file names,
+:// local paths, sizes, senders or content. Files are reserved before download.
+:type MediaState struct {
+:	Files         map[string]string    `json:"files,omitempty"`
+:	Sources       map[string]time.Time `json:"sources,omitempty"` // absent revisions are older than any edit
+:	Remove        map[string]bool      `json:"remove,omitempty"`
+:	DeletePending bool                 `json:"delete_pending,omitempty"`
+:	Revision      time.Time            `json:"revision,omitzero"`
+:	Retained      []string             `json:"retained,omitempty"`
+:||||||| 9bcab163
+:	IdentityDomainID string                   `json:"identity_domain_id,omitempty"`
+:	Subscription     SubscriptionState        `json:"subscription"`
+:	Spaces           map[string]*SpaceState   `json:"spaces"`
+:	Transport        TransportDedup           `json:"transport"`
+:	Messages         map[string]*MessageState `json:"messages"`
+:	Changes          map[string]*ChangeState  `json:"changes"`
+:	Sends            map[string]*SendState    `json:"sends"`
+:	Unresolved       map[string]*ChangeState  `json:"unresolved"`
+:	Quarantine       []QuarantinedEvent       `json:"quarantine"`
+:	Counters         map[string]int64         `json:"counters"`
+:	JoinRequests     map[string]*JoinRequest  `json:"join_requests,omitempty"`
+:	JoinAttempts     []JoinAttempt            `json:"join_attempts,omitempty"`
+:=======
+:	IdentityDomainID string `json:"identity_domain_id,omitempty"`
+:	// HistoryFloor bounds automatic history on a new installation or reset.
+:	// Old ledgers omit it; spaces with saved cursors retain their outage.
+:	HistoryFloor time.Time `json:"history_floor,omitzero"`
+:	// SpacesListedAt is the last completed inventory boundary. On upgrade,
+:	// the saved local inventory establishes its first boundary at load time.
+:	SpacesListedAt time.Time                `json:"spaces_listed_at,omitzero"`
+:	Subscription   SubscriptionState        `json:"subscription"`
+:	Spaces         map[string]*SpaceState   `json:"spaces"`
+:	Transport      TransportDedup           `json:"transport"`
+:	Messages       map[string]*MessageState `json:"messages"`
+:	Changes        map[string]*ChangeState  `json:"changes"`
+:	Sends          map[string]*SendState    `json:"sends"`
+:	Unresolved     map[string]*ChangeState  `json:"unresolved"`
+:	Quarantine     []QuarantinedEvent       `json:"quarantine"`
+:	Counters       map[string]int64         `json:"counters"`
+:	JoinRequests   map[string]*JoinRequest  `json:"join_requests,omitempty"`
+:	JoinAttempts   []JoinAttempt            `json:"join_attempts,omitempty"`
+:>>>>>>> 5f1ce902fce977f6b6d95da231652b0f753cce37
