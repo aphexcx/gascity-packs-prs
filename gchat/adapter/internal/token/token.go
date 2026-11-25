@@ -174,6 +174,16 @@ func (s *Source) Client(ctx context.Context) (*http.Client, error) {
 	return authenticatedClient(ctx, s.token, s.invalidateSent), nil
 }
 
+type senderLookupBudgetKey struct{}
+
+// WithSenderLookupTimeout bounds the sender fill and reserves its effective
+// deadline against the bearer lifetime. A directory GET needs only a valid bearer.
+func WithSenderLookupTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	deadline, _ := ctx.Deadline()
+	return context.WithValue(ctx, senderLookupBudgetKey{}, deadline), cancel
+}
+
 // LookupClient authenticates optional reads on the shared refresh gate. Only a
 // successful refresh can update the cached credential. A failed lookup cannot
 // put required work on hold, including by expiring its bearer after a 401.
@@ -183,7 +193,7 @@ func (s *Source) LookupClient(ctx context.Context) *http.Client {
 		if errors.Is(err, ErrNeedsSignIn) {
 			return nil, errors.Join(ErrLookupCredential, err)
 		}
-		if deadline, ok := ctx.Deadline(); ok && err == nil && !tok.Expiry.IsZero() {
+		if deadline, ok := ctx.Value(senderLookupBudgetKey{}).(time.Time); ok && err == nil && !tok.Expiry.IsZero() {
 			// Test the remaining budget with oauth2's own early-expiry margin.
 			// Never modify the shared token or refresh it early for a lookup.
 			projected := *tok

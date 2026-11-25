@@ -90,7 +90,7 @@ func (p *Processor) fillSender(ctx context.Context, c puller.Change, identityDom
 }
 
 func (f *SenderFill) lookup(parent context.Context, c puller.Change, id string) senderEntry {
-	ctx, cancel := context.WithTimeout(parent, f.bound)
+	ctx, cancel := token.WithSenderLookupTimeout(parent, f.bound)
 	defer cancel()
 	var user *api.User
 	var err error

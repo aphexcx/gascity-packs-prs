@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,11 +14,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/principal"
+	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/token"
 	"golang.org/x/oauth2"
 	api "google.golang.org/api/chat/v1"
@@ -167,5 +170,79 @@ func TestDirectoryCauseTransientMintStatus(t *testing.T) {
 	_, err = lookup(t.Context(), "users/1")
 	if principal.LookupHTTPStatus(err) != http.StatusBadRequest || s.State() != token.Ready || errors.Is(err, token.ErrLookupCredential) {
 		t.Fatal("transient mint lost its HTTP status or entered the permanent refusal path")
+	}
+}
+
+func TestSenderFillNearExpiryDirectoryClass(t *testing.T) {
+	const base = "https://example.invalid"
+	const address = "reader@example.com"
+	for _, tc := range []struct {
+		name, kind     string
+		fill, complete bool
+		lifetime       time.Duration
+		wantSenderGET  int
+	}{
+		{"no_fill", "message.created", false, false, 41 * time.Second, 0},
+		{"message", "message.created", true, false, 41 * time.Second, 1},
+		{"member", "reaction.created", true, false, 41 * time.Second, 1},
+		{"complete_sender", "message.created", true, true, 39 * time.Second, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				dir := t.TempDir()
+				client, file := filepath.Join(dir, "client"), filepath.Join(dir, "credential")
+				if err := os.WriteFile(client, []byte(`{"installed":{"client_id":"example","client_secret":"example"}}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				expiry := time.Now().Add(tc.lifetime).Format(time.RFC3339)
+				if err := os.WriteFile(file, []byte(fmt.Sprintf(`{"access_token":"example","expiry":%q}`, expiry)), 0600); err != nil {
+					t.Fatal(err)
+				}
+				ep := config.Endpoints{ChatAPIBase: base, OAuthAuthURL: base, OAuthTokenURL: base}
+				s, err := token.New(client, file, ep, token.Scopes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var senderGET, directoryGET int
+				transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer example" {
+						t.Fatal("expected a GET with the current bearer")
+					}
+					resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}
+					switch r.URL.Path {
+					case "/v1/people/1":
+						directoryGET++
+						resp.Body = io.NopCloser(strings.NewReader(`{"emailAddresses":[{"value":"reader@example.com"}]}`))
+					case "/v1/" + space + "/messages/target", "/v1/" + space + "/members/1":
+						senderGET++
+						time.Sleep(2 * time.Second)
+						resp.StatusCode = http.StatusNotFound
+					default:
+						t.Fatalf("unexpected request to %s", r.URL.Path)
+					}
+					return resp, nil
+				})
+				ctx := context.WithValue(t.Context(), oauth2.HTTPClient, &http.Client{Transport: transport})
+				directory := principal.DirectoryLookup(s.LookupClient(ctx), base)
+				resolver := principal.New(principal.Options{Owners: []string{address}, Lookup: directory})
+				p := Processor{opts: Options{IdentityUserID: "users/99", Principals: resolver}}
+				if tc.fill {
+					reader, err := chat.New(ctx, s.LookupClient(ctx), ep)
+					if err != nil {
+						t.Fatal(err)
+					}
+					p.opts.SenderFill = NewSenderFill(reader, nil)
+				}
+				sender := &api.User{Name: "users/1"}
+				if tc.complete {
+					sender.DisplayName, sender.DomainId = "Example Reader", "example-org"
+				}
+				c, ctx := p.fillSender(ctx, fillChange(tc.kind, "target", space, sender), "")
+				got := resolver.Speaker(ctx, historyUser(c), "")
+				if senderGET != tc.wantSenderGET || directoryGET != 1 || got.Class != provenance.Owner || got.Address != address {
+					t.Fatalf("sender GETs=%d directory GETs=%d class=%s address=%s", senderGET, directoryGET, got.Class, got.Address)
+				}
+			})
+		})
 	}
 }

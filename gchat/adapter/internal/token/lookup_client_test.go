@@ -158,7 +158,7 @@ func TestSenderFillLookupNearExpiry(t *testing.T) {
 					t.Fatal(err)
 				}
 				if lookup {
-					bounded, cancel := context.WithTimeout(ctx, 3*time.Second)
+					bounded, cancel := WithSenderLookupTimeout(ctx, 3*time.Second)
 					defer cancel()
 					req, err := http.NewRequestWithContext(bounded, http.MethodGet, "https://example.invalid/optional", nil)
 					if err != nil {

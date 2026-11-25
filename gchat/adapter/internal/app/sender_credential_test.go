@@ -229,6 +229,14 @@ func (f *credentialFixture) change(t *testing.T, source, label, user string) {
 	}
 }
 
+func (f *credentialFixture) expectOneWarning(t *testing.T, warning string) {
+	t.Helper()
+	waitFor(t, 3*time.Second, func() bool { return strings.Contains(f.logs.String(), warning) })
+	if n := strings.Count(f.logs.String(), warning); n != 1 {
+		t.Errorf("expected one %q warning, got %d", warning, n)
+	}
+}
+
 func TestSenderFillCredentialRefusal(t *testing.T) {
 	for _, managed := range []bool{false, true} {
 		for _, source := range []string{"message", "member", "directory"} {
@@ -257,8 +265,8 @@ func TestSenderFillCredentialRefusal(t *testing.T) {
 					if f.directoryGET.Load() != 0 || strings.Contains(f.logs.String(), "directory lookup incomplete") {
 						t.Error("desktop made a directory lookup or warned")
 					}
-				} else if strings.Count(f.logs.String(), warning) != 1 {
-					t.Errorf("expected one %q warning: %s", warning, f.logs.String())
+				} else {
+					f.expectOneWarning(t, warning)
 				}
 				// The required send owns the first permanent credential hold.
 				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
@@ -306,7 +314,8 @@ func TestSenderFillResourceUnauthorized(t *testing.T) {
 				f.change(t, "parent", "one", "users/1")
 			}
 			f.health(t, "ready", time.Second)
-			if f.denied.Load() != 1 || f.parentGET.Load() != 1 || f.refreshes() != base || f.notices.Load() != 0 || strings.Count(f.logs.String(), row.warn) != 1 {
+			f.expectOneWarning(t, row.warn)
+			if f.denied.Load() != 1 || f.parentGET.Load() != 1 || f.refreshes() != base || f.notices.Load() != 0 {
 				t.Fatalf("denied=%d parent reads=%d refreshes=%d notices=%d logs=%s", f.denied.Load(), f.parentGET.Load(), f.refreshes()-base, f.notices.Load(), f.logs.String())
 			}
 		})
