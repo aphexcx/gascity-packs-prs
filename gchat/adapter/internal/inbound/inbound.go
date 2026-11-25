@@ -49,6 +49,7 @@ type Options struct {
 	// no owners, no organization, no directory: everyone is external until
 	// the identity's own Workspace domain is learned from its own messages.
 	Principals *principal.Resolver
+	SenderFill *SenderFill
 	Logger     puller.Logger
 	// Save optionally replaces Ledger.Save. It runs with LedgerMu held and must
 	// durably save the supplied snapshot without retaining or modifying it.

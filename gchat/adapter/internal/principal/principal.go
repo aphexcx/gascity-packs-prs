@@ -28,6 +28,7 @@ type Lookup func(ctx context.Context, userID string) (string, error)
 
 // Options configures a Resolver.
 type Options struct {
+	Logger interface{ Warn(string, ...any) }
 	// Owners are addresses (user@example.com) or Chat ids (users/123).
 	Owners []string
 	// OrganizationDomain is the organization's mail domain; empty means unknown.
