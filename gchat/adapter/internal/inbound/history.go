@@ -307,6 +307,7 @@ func (p *Processor) history(ctx context.Context, c puller.Change, catchUp bool) 
 	if l.Changes[historyID(c)] != nil {
 		return true, nil
 	}
+	c = p.fillSender(ctx, c, l.IdentityDomainID)
 	speaker := p.opts.Principals.Speaker(ctx, historyUser(c), l.IdentityDomainID)
 	added := false
 	err = p.update(func(current *ledger.Ledger) {

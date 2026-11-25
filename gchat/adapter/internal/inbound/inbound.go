@@ -928,6 +928,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 			}
 		}
 	}
+	m = p.fillSender(ctx, c, l.IdentityDomainID).Message
 	// The identity's own messages tell which Workspace domain is the
 	// organization; a sender in it is a colleague even without an address.
 	learnedDomain := ""
@@ -973,9 +974,8 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 	framed := false
 	if c.Kind == "message.deleted" && !state.Mine {
 		w.Text = "deleted"
-		// Google reports a deletion without its sender; the original turn
-		// carries both the actor and the frame.
-		if base != nil {
+		// Without a cached sender for this deletion, preserve the original actor and frame.
+		if base != nil && m == c.Message {
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(base.Event), &original) == nil {
 				w.Actor = original.Actor
@@ -1024,6 +1024,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		return p.resume(ctx, id)
 	}
 	parent := strings.Split(r.Name, "/reactions/")[0]
+	r = p.fillSender(ctx, c, l.IdentityDomainID).Reaction
 	speaker := p.opts.Principals.Speaker(ctx, r.User, l.IdentityDomainID)
 	state := l.Messages[parent]
 	if state == nil {

@@ -82,8 +82,8 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	if a.cfg.Secrets.TokenSource == config.TokenSourceKeyholder {
 		lookup = principal.DirectoryLookup(hc, a.cfg.Endpoints.PeopleAPIBase)
 	}
-	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup})
-	proc, err := inbound.New(inbound.Options{Ack: a.arrival, NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
+	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup, Logger: a.log})
+	proc, err := inbound.New(inbound.Options{Ack: a.arrival, NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, SenderFill: inbound.NewSenderFill(c, a.log), Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
 	if err != nil {
 		return err
 	}
