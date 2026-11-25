@@ -1,0 +1,260 @@
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/ack	0.144s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/cmd/gc-gchat-adapter	0.233s [no tests to run]
+?   	gchat-adapter/internal/arrival	[no test files]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/markdown	0.103s [no tests to run]
+testing: warning: no tests to run
+PASS
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/redact	0.118s [no tests to run]
+ok  	gchat-adapter/internal/provenance	0.119s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/media	0.129s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/neversilent	0.137s [no tests to run]
+=== RUN   TestSenderFillLookupCredential
+=== RUN   TestSenderFillLookupCredential/grant_rejected
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/wire	0.140s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/config	0.143s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/stopwatch	0.141s [no tests to run]
+--- PASS: TestSenderFillLookupCredential/grant_rejected (0.01s)
+=== RUN   TestSenderFillLookupCredential/invalid_grant
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/gcclient	0.158s [no tests to run]
+--- PASS: TestSenderFillLookupCredential/invalid_grant (0.01s)
+--- PASS: TestSenderFillLookupCredential (0.02s)
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/fakes/fakegc	0.166s [no tests to run]
+=== RUN   TestSenderFillSuccessfulLookupRefresh
+--- PASS: TestSenderFillSuccessfulLookupRefresh (0.01s)
+=== RUN   TestSenderFillDesktopRefusalPreservesFile
+--- PASS: TestSenderFillDesktopRefusalPreservesFile (0.01s)
+=== RUN   TestSenderFillLookupNearExpiry
+=== RUN   TestSenderFillLookupNearExpiry/no_fill
+--- PASS: TestSenderFillLookupNearExpiry/no_fill (0.00s)
+=== RUN   TestSenderFillLookupNearExpiry/with_fill
+--- PASS: TestSenderFillLookupNearExpiry/with_fill (0.00s)
+--- PASS: TestSenderFillLookupNearExpiry (0.00s)
+PASS
+ok  	gchat-adapter/internal/token	0.182s
+=== RUN   TestSenderFillAuthenticationStatus
+=== RUN   TestSenderFillAuthenticationStatus/oauth
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/chat	0.201s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/catchup	0.213s [no tests to run]
+=== RUN   TestDirectoryCause
+testing: warning: no tests to run
+PASS
+--- PASS: TestDirectoryCause (0.01s)
+=== RUN   TestDirectoryCauseNoLogger
+--- PASS: TestDirectoryCauseNoLogger (0.00s)
+PASS
+ok  	gchat-adapter/internal/ledger	0.214s [no tests to run]
+ok  	gchat-adapter/internal/principal	0.214s
+=== RUN   TestSenderFillCredentialRefusal
+=== RUN   TestSenderFillCredentialRefusal/managed_false/message
+testing: warning: no tests to run
+PASS
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/events	0.231s [no tests to run]
+ok  	gchat-adapter/internal/server	0.230s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.240s [no tests to run]
+testing: warning: no tests to run
+PASS
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/test/contract	0.246s [no tests to run]
+ok  	gchat-adapter/internal/puller	0.246s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/test/e2e	0.254s [no tests to run]
+--- PASS: TestSenderFillAuthenticationStatus/oauth (0.11s)
+=== RUN   TestSenderFillAuthenticationStatus/managed
+--- PASS: TestSenderFillAuthenticationStatus/managed (0.11s)
+--- PASS: TestSenderFillAuthenticationStatus (0.22s)
+=== RUN   TestSenderFillResourceStatus
+--- PASS: TestSenderFillResourceStatus (0.23s)
+=== RUN   TestDirectoryCauseTransientMintStatus
+--- PASS: TestDirectoryCauseTransientMintStatus (0.00s)
+=== RUN   TestSenderFillNearExpiryDirectoryClass
+=== RUN   TestSenderFillNearExpiryDirectoryClass/no_fill
+--- PASS: TestSenderFillNearExpiryDirectoryClass/no_fill (0.00s)
+=== RUN   TestSenderFillNearExpiryDirectoryClass/message
+--- PASS: TestSenderFillNearExpiryDirectoryClass/message (0.00s)
+=== RUN   TestSenderFillNearExpiryDirectoryClass/member
+--- PASS: TestSenderFillNearExpiryDirectoryClass/member (0.00s)
+=== RUN   TestSenderFillNearExpiryDirectoryClass/complete_sender
+--- PASS: TestSenderFillNearExpiryDirectoryClass/complete_sender (0.00s)
+--- PASS: TestSenderFillNearExpiryDirectoryClass (0.00s)
+=== RUN   TestSenderFillBound
+--- PASS: TestSenderFillBound (3.62s)
+=== RUN   TestSenderFillCallerCanceled
+--- PASS: TestSenderFillCallerCanceled (0.12s)
+=== RUN   TestSenderFillCache
+=== RUN   TestSenderFillCache/failed=false
+--- PASS: TestSenderFillCache/failed=false (0.12s)
+=== RUN   TestSenderFillCache/failed=true
+--- PASS: TestSenderFillCache/failed=true (0.13s)
+--- PASS: TestSenderFillCache (0.42s)
+=== RUN   TestSenderFillEligibility
+--- PASS: TestSenderFillCredentialRefusal/managed_false/message (5.16s)
+=== RUN   TestSenderFillCredentialRefusal/managed_false/member
+--- PASS: TestSenderFillEligibility (0.57s)
+=== RUN   TestSenderFillDeletion
+=== RUN   TestSenderFillDeletion/history=false/cold
+--- PASS: TestSenderFillDeletion/history=false/cold (0.46s)
+=== RUN   TestSenderFillDeletion/history=false/warm
+--- PASS: TestSenderFillDeletion/history=false/warm (0.35s)
+=== RUN   TestSenderFillDeletion/history=false/expired
+--- PASS: TestSenderFillDeletion/history=false/expired (0.39s)
+=== RUN   TestSenderFillDeletion/history=true/cold
+--- PASS: TestSenderFillDeletion/history=true/cold (0.31s)
+=== RUN   TestSenderFillDeletion/history=true/warm
+--- PASS: TestSenderFillDeletion/history=true/warm (0.51s)
+=== RUN   TestSenderFillDeletion/history=true/expired
+--- PASS: TestSenderFillDeletion/history=true/expired (0.31s)
+--- PASS: TestSenderFillDeletion (2.33s)
+=== RUN   TestSenderFillLog
+--- PASS: TestSenderFillCredentialRefusal/managed_false/member (2.84s)
+=== RUN   TestSenderFillCredentialRefusal/managed_false/directory
+--- PASS: TestSenderFillLog (1.96s)
+=== RUN   TestSenderFillMissingDisplayName
+--- PASS: TestSenderFillMissingDisplayName (1.28s)
+=== RUN   TestSenderFillDirectoryCacheDuringLookup
+--- PASS: TestSenderFillCredentialRefusal/managed_false/directory (2.95s)
+=== RUN   TestSenderFillCredentialRefusal/managed_true/message
+--- PASS: TestSenderFillDirectoryCacheDuringLookup (0.56s)
+=== RUN   TestSenderFillFrames
+=== RUN   TestSenderFillFrames/message.created/replay=false/old=false
+--- PASS: TestSenderFillFrames/message.created/replay=false/old=false (0.18s)
+=== RUN   TestSenderFillFrames/message.updated/replay=false/old=false
+--- PASS: TestSenderFillFrames/message.updated/replay=false/old=false (0.15s)
+=== RUN   TestSenderFillFrames/reaction.created/replay=false/old=false
+--- PASS: TestSenderFillFrames/reaction.created/replay=false/old=false (0.14s)
+=== RUN   TestSenderFillFrames/reaction.created/replay=true/old=false
+--- PASS: TestSenderFillFrames/reaction.created/replay=true/old=false (0.10s)
+=== RUN   TestSenderFillFrames/message.created/replay=false/old=true
+--- PASS: TestSenderFillFrames/message.created/replay=false/old=true (0.06s)
+=== RUN   TestSenderFillFrames/keep_delivered_fields
+--- PASS: TestSenderFillFrames/keep_delivered_fields (0.22s)
+=== RUN   TestSenderFillFrames/learn_identity_then_classify_teammate
+--- PASS: TestSenderFillFrames/learn_identity_then_classify_teammate (0.14s)
+--- PASS: TestSenderFillFrames (0.99s)
+=== RUN   TestSenderFillTrust
+=== RUN   TestSenderFillTrust/message.created/credential
+--- PASS: TestSenderFillTrust/message.created/credential (0.35s)
+=== RUN   TestSenderFillTrust/message.created/transport
+--- PASS: TestSenderFillTrust/message.created/transport (0.34s)
+=== RUN   TestSenderFillTrust/message.created/timeout
+--- PASS: TestSenderFillTrust/message.created/timeout (0.24s)
+=== RUN   TestSenderFillTrust/message.created/missing_user
+--- PASS: TestSenderFillTrust/message.created/missing_user (0.20s)
+=== RUN   TestSenderFillTrust/message.created/different_user
+--- PASS: TestSenderFillTrust/message.created/different_user (0.20s)
+=== RUN   TestSenderFillTrust/message.created/no_domain
+--- PASS: TestSenderFillTrust/message.created/no_domain (0.19s)
+=== RUN   TestSenderFillTrust/message.created/anonymous
+--- PASS: TestSenderFillCredentialRefusal/managed_true/message (2.85s)
+=== RUN   TestSenderFillCredentialRefusal/managed_true/member
+--- PASS: TestSenderFillTrust/message.created/anonymous (0.28s)
+=== RUN   TestSenderFillTrust/message.created/bot
+--- PASS: TestSenderFillTrust/message.created/bot (0.32s)
+=== RUN   TestSenderFillTrust/message.created/keep_name_on_failure
+--- PASS: TestSenderFillTrust/message.created/keep_name_on_failure (0.28s)
+=== RUN   TestSenderFillTrust/message.created/401
+--- PASS: TestSenderFillTrust/message.created/401 (0.19s)
+=== RUN   TestSenderFillTrust/message.created/403
+--- PASS: TestSenderFillTrust/message.created/403 (0.20s)
+=== RUN   TestSenderFillTrust/message.created/404
+--- PASS: TestSenderFillTrust/message.created/404 (0.28s)
+=== RUN   TestSenderFillTrust/message.created/429
+--- PASS: TestSenderFillTrust/message.created/429 (0.33s)
+=== RUN   TestSenderFillTrust/message.created/500
+--- PASS: TestSenderFillTrust/message.created/500 (0.31s)
+=== RUN   TestSenderFillTrust/message.created/different_cached_user
+--- PASS: TestSenderFillTrust/message.created/different_cached_user (0.29s)
+=== RUN   TestSenderFillTrust/message.created/expired_entry
+--- PASS: TestSenderFillTrust/message.created/expired_entry (0.28s)
+=== RUN   TestSenderFillTrust/reaction.created/credential
+--- PASS: TestSenderFillCredentialRefusal/managed_true/member (2.77s)
+=== RUN   TestSenderFillCredentialRefusal/managed_true/directory
+--- PASS: TestSenderFillTrust/reaction.created/credential (0.33s)
+=== RUN   TestSenderFillTrust/reaction.created/transport
+--- PASS: TestSenderFillTrust/reaction.created/transport (0.36s)
+=== RUN   TestSenderFillTrust/reaction.created/timeout
+--- PASS: TestSenderFillTrust/reaction.created/timeout (0.28s)
+=== RUN   TestSenderFillTrust/reaction.created/missing_user
+--- PASS: TestSenderFillTrust/reaction.created/missing_user (0.23s)
+=== RUN   TestSenderFillTrust/reaction.created/different_user
+--- PASS: TestSenderFillTrust/reaction.created/different_user (0.25s)
+=== RUN   TestSenderFillTrust/reaction.created/no_domain
+--- PASS: TestSenderFillTrust/reaction.created/no_domain (0.38s)
+=== RUN   TestSenderFillTrust/reaction.created/anonymous
+--- PASS: TestSenderFillTrust/reaction.created/anonymous (0.37s)
+=== RUN   TestSenderFillTrust/reaction.created/bot
+--- PASS: TestSenderFillTrust/reaction.created/bot (0.26s)
+=== RUN   TestSenderFillTrust/reaction.created/keep_name_on_failure
+--- PASS: TestSenderFillTrust/reaction.created/keep_name_on_failure (0.20s)
+=== RUN   TestSenderFillTrust/reaction.created/401
+--- PASS: TestSenderFillTrust/reaction.created/401 (0.21s)
+=== RUN   TestSenderFillTrust/reaction.created/403
+--- PASS: TestSenderFillCredentialRefusal/managed_true/directory (2.90s)
+--- PASS: TestSenderFillCredentialRefusal (19.46s)
+=== RUN   TestSenderFillResourceUnauthorized
+=== RUN   TestSenderFillResourceUnauthorized/member
+--- PASS: TestSenderFillTrust/reaction.created/403 (0.28s)
+=== RUN   TestSenderFillTrust/reaction.created/404
+--- PASS: TestSenderFillTrust/reaction.created/404 (0.30s)
+=== RUN   TestSenderFillTrust/reaction.created/429
+--- PASS: TestSenderFillTrust/reaction.created/429 (0.28s)
+=== RUN   TestSenderFillTrust/reaction.created/500
+--- PASS: TestSenderFillTrust/reaction.created/500 (0.26s)
+=== RUN   TestSenderFillTrust/reaction.created/different_cached_user
+--- PASS: TestSenderFillTrust/reaction.created/different_cached_user (0.35s)
+=== RUN   TestSenderFillTrust/reaction.created/expired_entry
+--- PASS: TestSenderFillResourceUnauthorized/member (1.54s)
+=== RUN   TestSenderFillResourceUnauthorized/message
+--- PASS: TestSenderFillTrust/reaction.created/expired_entry (0.40s)
+--- PASS: TestSenderFillTrust (9.03s)
+=== RUN   TestSenderFillExternalDomain
+--- PASS: TestSenderFillExternalDomain (4.43s)
+=== RUN   TestSenderFillCauses
+--- PASS: TestSenderFillResourceUnauthorized/message (4.78s)
+=== RUN   TestSenderFillResourceUnauthorized/directory
+--- PASS: TestSenderFillResourceUnauthorized/directory (1.67s)
+--- PASS: TestSenderFillResourceUnauthorized (8.00s)
+=== RUN   TestSenderFillStalledWarning
+=== RUN   TestSenderFillStalledWarning/managed_false
+--- PASS: TestSenderFillCauses (1.74s)
+PASS
+ok  	gchat-adapter/internal/inbound	27.704s
+--- PASS: TestSenderFillStalledWarning/managed_false (1.49s)
+=== RUN   TestSenderFillStalledWarning/managed_true
+--- PASS: TestSenderFillStalledWarning/managed_true (1.46s)
+--- PASS: TestSenderFillStalledWarning (2.95s)
+=== RUN   TestSenderFillWiring
+--- PASS: TestSenderFillWiring (1.44s)
+PASS
+ok  	gchat-adapter/internal/app	32.081s

@@ -1,0 +1,192 @@
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/ack	0.109s [no tests to run]
+?   	gchat-adapter/internal/arrival	[no test files]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/cmd/gc-gchat-adapter	0.214s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/media	0.061s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/redact	0.071s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/neversilent	0.075s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/provenance	0.082s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/markdown	0.089s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/stopwatch	0.091s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/wire	0.105s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/gcclient	0.111s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/fakes/fakegc	0.124s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/config	0.129s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/token	0.131s [no tests to run]
+=== RUN   TestDirectoryCause
+--- PASS: TestDirectoryCause (0.01s)
+=== RUN   TestDirectoryCauseNoLogger
+--- PASS: TestDirectoryCauseNoLogger (0.00s)
+PASS
+ok  	gchat-adapter/internal/principal	0.146s
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.178s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/puller	0.185s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/chat	0.194s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/ledger	0.200s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/events	0.207s [no tests to run]
+=== RUN   TestSenderFillBound
+=== RUN   TestSenderFillWiring
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/catchup	0.228s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/server	0.230s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/test/contract	0.235s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/test/e2e	0.251s [no tests to run]
+    sender_fill_cache_test.go:42: bounded=false requests=1 log=time=2026-11-25T12:34:33.928-06:00 level=WARN msg="sender lookup incomplete" source=message cause=error
+--- FAIL: TestSenderFillBound (1.27s)
+=== RUN   TestSenderFillCallerCanceled
+--- PASS: TestSenderFillCallerCanceled (0.10s)
+=== RUN   TestSenderFillCache
+=== RUN   TestSenderFillCache/failed=false
+--- PASS: TestSenderFillWiring (1.37s)
+PASS
+ok  	gchat-adapter/internal/app	1.592s
+--- PASS: TestSenderFillCache/failed=false (0.14s)
+=== RUN   TestSenderFillCache/failed=true
+--- PASS: TestSenderFillCache/failed=true (0.12s)
+--- PASS: TestSenderFillCache (0.43s)
+=== RUN   TestSenderFillEligibility
+--- PASS: TestSenderFillEligibility (0.50s)
+=== RUN   TestSenderFillDeletion
+=== RUN   TestSenderFillDeletion/history=false/cold
+--- PASS: TestSenderFillDeletion/history=false/cold (0.22s)
+=== RUN   TestSenderFillDeletion/history=false/warm
+--- PASS: TestSenderFillDeletion/history=false/warm (3.80s)
+=== RUN   TestSenderFillDeletion/history=false/expired
+--- PASS: TestSenderFillDeletion/history=false/expired (0.24s)
+=== RUN   TestSenderFillDeletion/history=true/cold
+--- PASS: TestSenderFillDeletion/history=true/cold (0.14s)
+=== RUN   TestSenderFillDeletion/history=true/warm
+--- PASS: TestSenderFillDeletion/history=true/warm (0.16s)
+=== RUN   TestSenderFillDeletion/history=true/expired
+--- PASS: TestSenderFillDeletion/history=true/expired (0.18s)
+--- PASS: TestSenderFillDeletion (4.74s)
+=== RUN   TestSenderFillLog
+--- PASS: TestSenderFillLog (0.90s)
+=== RUN   TestSenderFillMissingDisplayName
+--- PASS: TestSenderFillMissingDisplayName (0.54s)
+=== RUN   TestSenderFillFrames
+=== RUN   TestSenderFillFrames/message.created/replay=false/old=false
+--- PASS: TestSenderFillFrames/message.created/replay=false/old=false (0.05s)
+=== RUN   TestSenderFillFrames/message.updated/replay=false/old=false
+--- PASS: TestSenderFillFrames/message.updated/replay=false/old=false (0.06s)
+=== RUN   TestSenderFillFrames/reaction.created/replay=false/old=false
+--- PASS: TestSenderFillFrames/reaction.created/replay=false/old=false (0.05s)
+=== RUN   TestSenderFillFrames/reaction.created/replay=true/old=false
+--- PASS: TestSenderFillFrames/reaction.created/replay=true/old=false (0.06s)
+=== RUN   TestSenderFillFrames/message.created/replay=false/old=true
+--- PASS: TestSenderFillFrames/message.created/replay=false/old=true (0.04s)
+=== RUN   TestSenderFillFrames/keep_delivered_fields
+--- PASS: TestSenderFillFrames/keep_delivered_fields (0.11s)
+=== RUN   TestSenderFillFrames/learn_identity_then_classify_teammate
+--- PASS: TestSenderFillFrames/learn_identity_then_classify_teammate (0.06s)
+--- PASS: TestSenderFillFrames (0.44s)
+=== RUN   TestSenderFillTrust
+=== RUN   TestSenderFillTrust/message.created/transport
+--- PASS: TestSenderFillTrust/message.created/transport (0.10s)
+=== RUN   TestSenderFillTrust/message.created/timeout
+--- PASS: TestSenderFillTrust/message.created/timeout (0.10s)
+=== RUN   TestSenderFillTrust/message.created/missing_user
+--- PASS: TestSenderFillTrust/message.created/missing_user (0.10s)
+=== RUN   TestSenderFillTrust/message.created/different_user
+--- PASS: TestSenderFillTrust/message.created/different_user (0.10s)
+=== RUN   TestSenderFillTrust/message.created/no_domain
+--- PASS: TestSenderFillTrust/message.created/no_domain (0.11s)
+=== RUN   TestSenderFillTrust/message.created/anonymous
+--- PASS: TestSenderFillTrust/message.created/anonymous (0.11s)
+=== RUN   TestSenderFillTrust/message.created/bot
+--- PASS: TestSenderFillTrust/message.created/bot (0.10s)
+=== RUN   TestSenderFillTrust/message.created/keep_name_on_failure
+--- PASS: TestSenderFillTrust/message.created/keep_name_on_failure (0.10s)
+=== RUN   TestSenderFillTrust/message.created/401
+--- PASS: TestSenderFillTrust/message.created/401 (0.10s)
+=== RUN   TestSenderFillTrust/message.created/403
+--- PASS: TestSenderFillTrust/message.created/403 (0.11s)
+=== RUN   TestSenderFillTrust/message.created/404
+--- PASS: TestSenderFillTrust/message.created/404 (0.10s)
+=== RUN   TestSenderFillTrust/message.created/429
+--- PASS: TestSenderFillTrust/message.created/429 (0.10s)
+=== RUN   TestSenderFillTrust/message.created/500
+--- PASS: TestSenderFillTrust/message.created/500 (0.10s)
+=== RUN   TestSenderFillTrust/message.created/different_cached_user
+--- PASS: TestSenderFillTrust/message.created/different_cached_user (0.14s)
+=== RUN   TestSenderFillTrust/message.created/expired_entry
+--- PASS: TestSenderFillTrust/message.created/expired_entry (0.15s)
+=== RUN   TestSenderFillTrust/reaction.created/transport
+--- PASS: TestSenderFillTrust/reaction.created/transport (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/timeout
+--- PASS: TestSenderFillTrust/reaction.created/timeout (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/missing_user
+--- PASS: TestSenderFillTrust/reaction.created/missing_user (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/different_user
+--- PASS: TestSenderFillTrust/reaction.created/different_user (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/no_domain
+--- PASS: TestSenderFillTrust/reaction.created/no_domain (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/anonymous
+--- PASS: TestSenderFillTrust/reaction.created/anonymous (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/bot
+--- PASS: TestSenderFillTrust/reaction.created/bot (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/keep_name_on_failure
+--- PASS: TestSenderFillTrust/reaction.created/keep_name_on_failure (0.13s)
+=== RUN   TestSenderFillTrust/reaction.created/401
+--- PASS: TestSenderFillTrust/reaction.created/401 (0.15s)
+=== RUN   TestSenderFillTrust/reaction.created/403
+--- PASS: TestSenderFillTrust/reaction.created/403 (0.12s)
+=== RUN   TestSenderFillTrust/reaction.created/404
+--- PASS: TestSenderFillTrust/reaction.created/404 (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/429
+--- PASS: TestSenderFillTrust/reaction.created/429 (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/500
+--- PASS: TestSenderFillTrust/reaction.created/500 (0.12s)
+=== RUN   TestSenderFillTrust/reaction.created/different_cached_user
+--- PASS: TestSenderFillTrust/reaction.created/different_cached_user (0.19s)
+=== RUN   TestSenderFillTrust/reaction.created/expired_entry
+--- PASS: TestSenderFillTrust/reaction.created/expired_entry (0.21s)
+--- PASS: TestSenderFillTrust (3.54s)
+=== RUN   TestSenderFillExternalDomain
+--- PASS: TestSenderFillExternalDomain (0.24s)
+=== RUN   TestSenderFillCauses
+--- PASS: TestSenderFillCauses (0.63s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	13.547s

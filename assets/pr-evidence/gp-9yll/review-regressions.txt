@@ -1,0 +1,35 @@
+near expiry
+=== RUN   TestSenderFillLookupNearExpiry
+=== RUN   TestSenderFillLookupNearExpiry/no_fill
+--- PASS: TestSenderFillLookupNearExpiry/no_fill (0.00s)
+=== RUN   TestSenderFillLookupNearExpiry/with_fill
+    lookup_client_test.go:180: parent reads=0 state=needs-sign-in, want one read while ready
+--- FAIL: TestSenderFillLookupNearExpiry/with_fill (0.00s)
+--- FAIL: TestSenderFillLookupNearExpiry (0.00s)
+
+response status
+=== RUN   TestSenderFillResourceStatus
+    sender_fill_auth_test.go:133: wrong HTTP cause for message: time=2026-11-25T14:15:52.090-06:00 level=WARN msg="sender lookup incomplete" source=message cause=http_404
+    sender_fill_auth_test.go:133: wrong HTTP cause for member: time=2026-11-25T14:15:52.090-06:00 level=WARN msg="sender lookup incomplete" source=message cause=http_404
+--- FAIL: TestSenderFillResourceStatus (0.50s)
+
+non-final mint
+=== RUN   TestDirectoryCauseTransientMintStatus
+    sender_fill_auth_test.go:165: transient mint lost its HTTP status or entered the permanent refusal path
+--- FAIL: TestDirectoryCauseTransientMintStatus (0.00s)
+
+directory-cache decision
+=== RUN   TestSenderFillDirectoryCacheDuringLookup
+    sender_fill_cache_test.go:242: fill latency changed the original directory decision
+    sender_fill_cache_test.go:242: fill latency changed the original directory decision
+--- FAIL: TestSenderFillDirectoryCacheDuringLookup (0.24s)
+
+warning sink
+=== RUN   TestSenderFillStalledWarning
+=== RUN   TestSenderFillStalledWarning/managed_false
+    sender_credential_test.go:364: condition did not become true
+--- FAIL: TestSenderFillStalledWarning/managed_false (5.20s)
+=== RUN   TestSenderFillStalledWarning/managed_true
+    sender_credential_test.go:364: condition did not become true
+--- FAIL: TestSenderFillStalledWarning/managed_true (5.18s)
+--- FAIL: TestSenderFillStalledWarning (10.38s)
