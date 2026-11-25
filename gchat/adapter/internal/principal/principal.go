@@ -16,11 +16,14 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"gchat-adapter/internal/provenance"
+	"gchat-adapter/internal/token"
+	"golang.org/x/oauth2"
 	api "google.golang.org/api/chat/v1"
 	"google.golang.org/api/googleapi"
 )
@@ -162,17 +165,52 @@ func (status directoryHTTPStatus) Error() string {
 	return fmt.Sprintf("people.get: HTTP %d", status)
 }
 
+// LookupHTTPStatus returns the status carried by a lookup or by its token
+// exchange. An ordinary transport error and its possibly private text are opaque.
+func LookupHTTPStatus(err error) int {
+	switch e := err.(type) {
+	case nil:
+		return 0
+	case directoryHTTPStatus:
+		return int(e)
+	case *googleapi.Error:
+		return e.Code
+	case *oauth2.RetrieveError:
+		if e.Response != nil {
+			return e.Response.StatusCode
+		}
+	case interface{ Unwrap() []error }:
+		for _, child := range e.Unwrap() {
+			if status := LookupHTTPStatus(child); status != 0 {
+				return status
+			}
+		}
+	case interface{ Unwrap() error }:
+		return LookupHTTPStatus(e.Unwrap())
+	default:
+		// JoinRefusal recognizes the token package's private, typed 4xx
+		// refusal. Only that leaf's own fixed format exposes its status.
+		// A wrapper, response body or lookalike transport error cannot supply it.
+		if code := token.JoinRefusal(err); code != "" {
+			suffix, ok := strings.CutPrefix(err.Error(), "key holder: "+code+" (HTTP ")
+			if ok && len(suffix) == 4 && suffix[3] == ')' {
+				if n, err := strconv.Atoi(suffix[:3]); err == nil && n >= 400 && n < 500 {
+					return n
+				}
+			}
+		}
+	}
+	return 0
+}
+
 func directoryCause(err error) string {
-	var status directoryHTTPStatus
-	var apiErr *googleapi.Error
+	if status := LookupHTTPStatus(err); status != 0 {
+		return "http_" + strconv.Itoa(status)
+	}
 	var netErr net.Error
 	switch {
 	case err == nil:
 		return "not_found"
-	case errors.As(err, &status):
-		return fmt.Sprintf("http_%d", status)
-	case errors.As(err, &apiErr):
-		return fmt.Sprintf("http_%d", apiErr.Code)
 	case errors.Is(err, errBadID):
 		return "bad_id"
 	case errors.Is(err, errNoAddress):

@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
+	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
 	api "google.golang.org/api/chat/v1"
-	"google.golang.org/api/googleapi"
 )
 
 type senderSource interface {
@@ -45,7 +45,7 @@ func NewSenderFill(source senderSource, log puller.Logger) *SenderFill {
 }
 
 // Fill only local copies. The original puller event may also be used by the
-// arrival observer. A miss leaves even the resource pointers untouched.
+// arrival observer. An unused answer leaves the resource pointers untouched.
 func (p *Processor) fillSender(ctx context.Context, c puller.Change, identityDomain string) puller.Change {
 	f := p.opts.SenderFill
 	if f == nil || ctx.Err() != nil {
@@ -133,10 +133,10 @@ func (f *SenderFill) lookup(parent context.Context, c puller.Change, id string) 
 }
 
 func senderAnswerCause(ctx context.Context, err error, id string, user *api.User) string {
-	var httpErr *googleapi.Error
+	if status := principal.LookupHTTPStatus(err); status != 0 {
+		return "http_" + strconv.Itoa(status)
+	}
 	switch {
-	case errors.As(err, &httpErr):
-		return "http_" + strconv.Itoa(httpErr.Code)
 	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	case err != nil:
