@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"gchat-adapter/internal/config"
+	"gchat-adapter/internal/token"
 	googlechat "google.golang.org/api/chat/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
@@ -782,8 +783,8 @@ func (c *Client) retry(ctx context.Context, safe bool, call func(context.Context
 			return errors.Join(last, context.DeadlineExceeded)
 		}
 		err := call(ctx)
-		if err == nil {
-			return nil
+		if err == nil || errors.Is(err, token.ErrLookupCredential) {
+			return err
 		}
 		if ctx.Err() != nil {
 			return errors.Join(last, err, ctx.Err())

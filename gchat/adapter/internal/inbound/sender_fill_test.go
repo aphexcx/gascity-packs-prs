@@ -13,6 +13,7 @@ import (
 
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/token"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 	"google.golang.org/api/googleapi"
@@ -184,6 +185,7 @@ func TestSenderFillTrust(t *testing.T) {
 		delivered string
 	}
 	rows := []row{
+		{"credential", nil, token.ErrLookupCredential, ""},
 		{"transport", nil, errors.New("private error"), ""}, {"timeout", nil, context.DeadlineExceeded, ""}, {"missing user", nil, nil, ""},
 		{"different user", &api.User{Name: "users/2", DomainId: "example-org", DisplayName: "Other"}, nil, ""},
 		{"no domain", &api.User{Name: "users/1", DisplayName: "Example Reader"}, nil, ""},
@@ -202,6 +204,17 @@ func TestSenderFillTrust(t *testing.T) {
 				c := fillChange(kind, "one", space, &api.User{Name: "users/1", DisplayName: tc.delivered})
 				if got, want := f.deliver(t, c, false), base.deliver(t, c, false); got != want {
 					t.Fatalf("failed fill changed turn\ngot %s\nwant %s", got, want)
+				}
+				gotRows, err := json.Marshal(f.l.Changes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantRows, err := json.Marshal(base.l.Changes)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(gotRows, wantRows) {
+					t.Fatal("failed fill changed the stored row")
 				}
 			})
 		}

@@ -35,6 +35,10 @@ const (
 
 var ErrNeedsSignIn = errors.New("OAuth credential needs sign-in")
 
+// ErrLookupCredential marks a permanent refusal on the optional lookup path.
+// Lookup callers can stop retrying without initiating a credential hold.
+var ErrLookupCredential = errors.New("lookup credential refused")
+
 var errMalformedJSON = errors.New("malformed JSON")
 var errInvalidCredential = errors.New("invalid credential file")
 
@@ -166,6 +170,19 @@ func (s *Source) Client(ctx context.Context) (*http.Client, error) {
 	return authenticatedClient(ctx, s.token, s.invalidateSent), nil
 }
 
+// LookupClient authenticates optional reads on the shared refresh gate. Only a
+// successful refresh can update the cached credential. A failed lookup cannot
+// put required work on hold, including by expiring its bearer after a 401.
+func (s *Source) LookupClient(ctx context.Context) *http.Client {
+	return authenticatedClient(ctx, func(ctx context.Context) (*oauth2.Token, error) {
+		tok, err := s.acquire(ctx, false)
+		if errors.Is(err, ErrNeedsSignIn) {
+			return nil, errors.Join(ErrLookupCredential, err)
+		}
+		return tok, err
+	}, nil)
+}
+
 // TokenSource adapts Source to oauth2's context-free interface. The supplied ctx
 // bounds every Token call on this adapter, including its wait for a refresh.
 // HTTP callers should use Client to acquire tokens with each request's context.
@@ -183,6 +200,10 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 }
 
 func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
+	return s.acquire(ctx, true)
+}
+
+func (s *Source) acquire(ctx context.Context, required bool) (*oauth2.Token, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -225,14 +246,16 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 			s.mu.Unlock()
 			continue
 		}
-		if errors.Is(err, ErrNeedsSignIn) {
+		if required && errors.Is(err, ErrNeedsSignIn) {
 			s.state = NeedsSignIn
 		}
 		if err == nil {
 			s.current, s.state = tok, Ready
 		}
 		s.mu.Unlock()
-		if err == nil {
+		// Identity discovery is separate from installing a refreshed token. It
+		// can rebuild the generation and belongs to the required client or Watch.
+		if required && err == nil {
 			s.learnIdentity(ctx, tok)
 		}
 		if err != nil {

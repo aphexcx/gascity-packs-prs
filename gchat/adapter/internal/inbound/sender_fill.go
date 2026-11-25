@@ -9,6 +9,7 @@ import (
 
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/token"
 	api "google.golang.org/api/chat/v1"
 )
 
@@ -133,6 +134,9 @@ func (f *SenderFill) lookup(parent context.Context, c puller.Change, id string) 
 }
 
 func senderAnswerCause(ctx context.Context, err error, id string, user *api.User) string {
+	if errors.Is(err, token.ErrLookupCredential) {
+		return "credential"
+	}
 	if status := principal.LookupHTTPStatus(err); status != 0 {
 		return "http_" + strconv.Itoa(status)
 	}
