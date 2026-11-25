@@ -25,7 +25,7 @@ func TestDirectoryCause(t *testing.T) {
 	defer srv.Close()
 	read := DirectoryLookup(srv.Client(), srv.URL)
 	var failure error
-	r := New(Options{Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }, Lookup: func(ctx context.Context, id string) (string, error) {
+	r := New(Options{Logger: NewWarningLog(slog.New(slog.NewTextHandler(&logs, nil))), Now: func() time.Time { return now }, Lookup: func(ctx context.Context, id string) (string, error) {
 		calls++
 		if failure != nil {
 			return "", failure
@@ -36,6 +36,9 @@ func TestDirectoryCause(t *testing.T) {
 	for i := range 30 {
 		r.resolve(t.Context(), fmt.Sprintf("users/%d", 1+i%3))
 		now = now.Add(11 * time.Minute)
+	}
+	if err := r.logger.Flush(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	if calls != 30 || strings.Count(logs.String(), "level=WARN") != 1 {
 		t.Errorf("lookups %d log %s", calls, logs.String())
@@ -49,6 +52,9 @@ func TestDirectoryCause(t *testing.T) {
 	r.resolve(t.Context(), "users/6")
 	failure = errors.New("example@example.com " + srv.URL + "/users/7")
 	r.resolve(t.Context(), "users/7")
+	if err := r.logger.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	for _, cause := range []string{"http_403", "not_found", "no_address", "timeout", "bad_id", "error"} {
 		if strings.Count(logs.String(), "cause="+cause+"\n") != 1 {
 			t.Errorf("cause %q: %s", cause, logs.String())

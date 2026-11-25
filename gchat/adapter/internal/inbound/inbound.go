@@ -928,14 +928,15 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 			}
 		}
 	}
-	m = p.fillSender(ctx, c, l.IdentityDomainID).Message
+	filled, speakerCtx := p.fillSender(ctx, c, l.IdentityDomainID)
+	m = filled.Message
 	// The identity's own messages tell which Workspace domain is the
 	// organization; a sender in it is a colleague even without an address.
 	learnedDomain := ""
 	if state.Mine && m.Sender != nil && m.Sender.DomainId != "" && m.Sender.DomainId != l.IdentityDomainID {
 		learnedDomain = m.Sender.DomainId
 	}
-	speaker := p.opts.Principals.Speaker(ctx, m.Sender, l.IdentityDomainID)
+	speaker := p.opts.Principals.Speaker(speakerCtx, m.Sender, l.IdentityDomainID)
 	// The message's own name is the item the key holder can verify at the
 	// source when the agent acts on it (boxboxbox-google mail --for).
 	speaker.Item = provenance.ChatItem(m.Name)
@@ -1024,8 +1025,9 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		return p.resume(ctx, id)
 	}
 	parent := strings.Split(r.Name, "/reactions/")[0]
-	r = p.fillSender(ctx, c, l.IdentityDomainID).Reaction
-	speaker := p.opts.Principals.Speaker(ctx, r.User, l.IdentityDomainID)
+	filled, speakerCtx := p.fillSender(ctx, c, l.IdentityDomainID)
+	r = filled.Reaction
+	speaker := p.opts.Principals.Speaker(speakerCtx, r.User, l.IdentityDomainID)
 	state := l.Messages[parent]
 	if state == nil {
 		m, err := p.opts.Chat.GetMessage(ctx, parent)

@@ -312,3 +312,61 @@ func TestSenderFillResourceUnauthorized(t *testing.T) {
 		})
 	}
 }
+
+type stalledLookupLog struct {
+	logBuffer
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *stalledLookupLog) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "lookup incomplete") {
+		s.once.Do(func() { close(s.entered); <-s.release })
+	}
+	return s.logBuffer.Write(p)
+}
+
+func TestSenderFillStalledWarning(t *testing.T) {
+	for _, managed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("managed_%t", managed), func(t *testing.T) {
+			var f *fixture
+			if managed {
+				f, _ = managedFixture(t)
+			} else {
+				f = newFixture(t, false)
+				f.replaceIdentityToken(t, fakegoogle.UserID)
+			}
+			f.google.Configure(func(g *fakegoogle.Server) {
+				g.Spaces[lookupRoom] = &api.Space{Name: lookupRoom, SpaceType: "DIRECT_MESSAGE"}
+			})
+			sink := &stalledLookupLog{entered: make(chan struct{}), release: make(chan struct{})}
+			f.startOptions(t, Options{Logger: slog.New(slog.NewTextHandler(sink, nil))})
+			defer close(sink.release)
+			f.health(t, "ready", 8*time.Second)
+			for i, label := range []string{"one", "two"} {
+				m := historyMessage(lookupRoom, label, time.Now())
+				m.Space = &api.Space{Name: lookupRoom, SpaceType: "DIRECT_MESSAGE"}
+				// UNPROVEN: the desktop message has only the sender id. The
+				// managed case exercises only the directory warning with a full sender.
+				if managed {
+					m.Sender.DisplayName = "Example Reader"
+					m.Sender.DomainId = "example-org"
+				}
+				publishHistoryMessage(t, f, m)
+				if i == 0 {
+					select {
+					case <-sink.entered:
+					case <-time.After(5 * time.Second):
+						t.Fatal("warning never reached the sink")
+					}
+				}
+				waitFor(t, 4*time.Second, func() bool {
+					l, _ := historyState(t, f)
+					row := l.Changes[m.Name]
+					return row != nil && row.Status == "committed" && len(f.gc.Inbound()) == i+1
+				})
+			}
+		})
+	}
+}

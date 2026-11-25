@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"gchat-adapter/internal/config"
+	"golang.org/x/oauth2"
 )
 
 func TestSenderFillLookupCredential(t *testing.T) {
@@ -123,5 +125,61 @@ func TestSenderFillDesktopRefusalPreservesFile(t *testing.T) {
 	after, readErr := os.ReadFile(file)
 	if !errors.Is(err, ErrLookupCredential) || readErr != nil || string(after) != saved || s.current != original || s.IdentityUserID() != "users/1" || s.State() != Ready {
 		t.Fatal("refused desktop lookup changed the credential")
+	}
+}
+
+func TestSenderFillLookupNearExpiry(t *testing.T) {
+	for _, lookup := range []bool{false, true} {
+		name := "no_fill"
+		if lookup {
+			name = "with_fill"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				// The initial token is usable for one more second before oauth2's
+				// early-expiry boundary. The required parent accepts this bearer.
+				s := &Source{state: Ready, refreshGate: make(chan struct{}, 1),
+					current: &oauth2.Token{AccessToken: "example", Expiry: time.Now().Add(11 * time.Second)},
+					mint:    func(context.Context) (*oauth2.Token, error) { return nil, ErrNeedsSignIn }}
+				parentReads := 0
+				resource := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					status := http.StatusOK
+					if r.URL.Path == "/optional" {
+						time.Sleep(2 * time.Second)
+						status = http.StatusNotFound
+					} else {
+						parentReads++
+					}
+					return &http.Response{StatusCode: status, Body: http.NoBody, Header: make(http.Header)}, nil
+				})
+				ctx := context.WithValue(t.Context(), oauth2.HTTPClient, &http.Client{Transport: resource})
+				required, err := s.Client(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if lookup {
+					bounded, cancel := context.WithTimeout(ctx, 3*time.Second)
+					defer cancel()
+					req, err := http.NewRequestWithContext(bounded, http.MethodGet, "https://example.invalid/optional", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					resp, err := s.LookupClient(ctx).Do(req)
+					if resp != nil {
+						resp.Body.Close()
+					}
+					if err == nil && resp.StatusCode < 400 {
+						t.Fatal("expected the optional read to fail")
+					}
+				}
+				resp, err := required.Get("https://example.invalid/parent")
+				if resp != nil {
+					resp.Body.Close()
+				}
+				if err != nil || parentReads != 1 || s.State() != Ready {
+					t.Fatalf("parent reads=%d state=%s, want one read while ready", parentReads, s.State())
+				}
+			})
+		})
 	}
 }

@@ -783,7 +783,7 @@ func (c *Client) retry(ctx context.Context, safe bool, call func(context.Context
 			return errors.Join(last, context.DeadlineExceeded)
 		}
 		err := call(ctx)
-		if err == nil || errors.Is(err, token.ErrLookupCredential) {
+		if err == nil || errors.Is(err, token.ErrLookupCredential) || errors.Is(err, token.ErrLookupLifetime) {
 			return err
 		}
 		if ctx.Err() != nil {

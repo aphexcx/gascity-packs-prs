@@ -27,6 +27,7 @@ import (
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/neversilent"
+	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/server"
 	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/token"
@@ -47,6 +48,7 @@ type Options struct {
 var errIdentityChanged = errors.New("app: observed identity changed; rebuilding client")
 
 type application struct {
+	lookupWarnings        *principal.WarningLog
 	arrival               *ack.Service
 	watch                 *stopwatch.Writer
 	stateDir              string

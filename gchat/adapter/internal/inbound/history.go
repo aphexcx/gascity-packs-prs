@@ -307,8 +307,8 @@ func (p *Processor) history(ctx context.Context, c puller.Change, catchUp bool) 
 	if l.Changes[historyID(c)] != nil {
 		return true, nil
 	}
-	c = p.fillSender(ctx, c, l.IdentityDomainID)
-	speaker := p.opts.Principals.Speaker(ctx, historyUser(c), l.IdentityDomainID)
+	c, speakerCtx := p.fillSender(ctx, c, l.IdentityDomainID)
+	speaker := p.opts.Principals.Speaker(speakerCtx, historyUser(c), l.IdentityDomainID)
 	added := false
 	err = p.update(func(current *ledger.Ledger) {
 		added = RetainHistorySkip(current, p.opts.Config, c, p.opts.Now(), speaker, catchUp, p.identity())

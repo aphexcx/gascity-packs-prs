@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,7 +10,9 @@ import (
 	"time"
 
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 	"google.golang.org/api/googleapi"
 )
@@ -99,7 +102,7 @@ func TestSenderFillCache(t *testing.T) {
 		case "domain":
 			f.l.IdentityDomainID = "different"
 		case "restart":
-			f.p.opts.SenderFill = NewSenderFill(&f.source, f.opts.Logger)
+			f.p.opts.SenderFill = NewSenderFill(&f.source, principal.NewWarningLog(f.opts.Logger))
 		}
 		f.deliver(t, fillChange("message.created", fmt.Sprint(i), space, &api.User{Name: "users/1"}), false)
 		if len(f.source.calls) != i+1 {
@@ -206,6 +209,37 @@ func TestSenderFillMissingDisplayName(t *testing.T) {
 			if len(f.source.calls) != 2 || strings.Count(f.log.String(), "level=WARN") != 1 || !strings.Contains(f.log.String(), "source="+source+" cause=no_display_name") {
 				t.Errorf("requests=%v log=%s", f.source.calls, f.log.String())
 			}
+		}
+	}
+}
+
+func TestSenderFillDirectoryCacheDuringLookup(t *testing.T) {
+	for _, kind := range []string{"message.created", "reaction.created"} {
+		f, base := fillSetup(t, true), fillSetup(t, false)
+		c := fillChange(kind, "target", space, &api.User{Name: "users/1"})
+		for _, fixture := range []*fillFixture{base, f} {
+			first := true
+			r := principal.New(principal.Options{OrganizationDomain: "example.com", Now: func() time.Time { return fixture.now }, Lookup: func(context.Context, string) (string, error) {
+				if first {
+					first = false
+					return "", errors.New("fixture failure")
+				}
+				return "reader@example.com", nil
+			}})
+			r.Speaker(t.Context(), &api.User{Name: "users/1"}, "")
+			fixture.p.opts.Principals = r
+			fixture.now = fixture.now.Add(10*time.Minute - time.Second)
+		}
+		f.source.answer = func(context.Context) (*api.User, error) { f.now = f.now.Add(2 * time.Second); return nil, nil }
+		var got, want wire.InboundMessage
+		if err := json.Unmarshal([]byte(f.deliver(t, c, false)), &got); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(base.deliver(t, c, false)), &want); err != nil {
+			t.Fatal(err)
+		}
+		if got.Text != want.Text || got.Actor != want.Actor {
+			t.Error("fill latency changed the original directory decision")
 		}
 	}
 }

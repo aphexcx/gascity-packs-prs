@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/token"
 	"gchat-adapter/internal/wire"
@@ -51,7 +52,7 @@ func fillSetup(t *testing.T, enabled bool) *fillFixture {
 	f.reply(&api.User{Name: "users/1", DomainId: "example-org", DisplayName: "Example Reader"}, nil)
 	f.opts.Now = func() time.Time { return f.now }
 	if enabled {
-		f.opts.SenderFill = NewSenderFill(&f.source, slog.New(slog.NewTextHandler(&f.log, nil)))
+		f.opts.SenderFill = NewSenderFill(&f.source, principal.NewWarningLog(slog.New(slog.NewTextHandler(&f.log, nil))))
 		f.opts.SenderFill.now = f.opts.Now
 	}
 	var err error
@@ -103,6 +104,13 @@ func (f *fillFixture) deliver(t *testing.T, c puller.Change, replay bool) string
 	}
 	if err != nil || out != puller.Ack {
 		t.Fatalf("handle %s: %v %v", c.Kind, out, err)
+	}
+	if fill := f.p.opts.SenderFill; fill != nil {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		if err := fill.log.Flush(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	after, _ := json.Marshal(c)
 	if !bytes.Equal(before, after) {

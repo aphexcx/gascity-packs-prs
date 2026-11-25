@@ -32,7 +32,7 @@ type senderEntry struct {
 // Its processor's delivery gate serializes access, including during catch-up.
 type SenderFill struct {
 	source                       senderSource
-	log                          puller.Logger
+	log                          *principal.WarningLog
 	now                          func() time.Time
 	bound                        time.Duration
 	identityUser, identityDomain string
@@ -40,17 +40,17 @@ type SenderFill struct {
 	warned                       map[[2]string]bool
 }
 
-func NewSenderFill(source senderSource, log puller.Logger) *SenderFill {
+func NewSenderFill(source senderSource, log *principal.WarningLog) *SenderFill {
 	return &SenderFill{source: source, log: log, now: time.Now, bound: senderFillTimeout,
 		entries: make(map[string]senderEntry), warned: make(map[[2]string]bool)}
 }
 
 // Fill only local copies. The original puller event may also be used by the
 // arrival observer. An unused answer leaves the resource pointers untouched.
-func (p *Processor) fillSender(ctx context.Context, c puller.Change, identityDomain string) puller.Change {
+func (p *Processor) fillSender(ctx context.Context, c puller.Change, identityDomain string) (puller.Change, context.Context) {
 	f := p.opts.SenderFill
 	if f == nil || ctx.Err() != nil {
-		return c
+		return c, ctx
 	}
 	identity := p.identity()
 	if identity != f.identityUser || identityDomain != f.identityDomain {
@@ -60,14 +60,15 @@ func (p *Processor) fillSender(ctx context.Context, c puller.Change, identityDom
 	u := historyUser(c)
 	if u == nil || u.IsAnonymous || u.Type == "BOT" || !fillUserID.MatchString(u.Name) ||
 		(u.DisplayName != "" && u.DomainId != "") || (u.Name == identity && identityDomain != "") {
-		return c
+		return c, ctx
 	}
 	entry, ok := f.entries[u.Name]
 	if !ok || !f.now().Before(entry.expires) {
+		ctx = p.opts.Principals.BeforeFill(ctx)
 		entry = f.lookup(ctx, c, u.Name)
 	}
 	if entry.domainID == "" {
-		return c
+		return c, ctx
 	}
 	user := *u
 	if user.DomainId == "" {
@@ -85,7 +86,7 @@ func (p *Processor) fillSender(ctx context.Context, c puller.Change, identityDom
 		r.User = &user
 		c.Reaction = &r
 	}
-	return c
+	return c, ctx
 }
 
 func (f *SenderFill) lookup(parent context.Context, c puller.Change, id string) senderEntry {
@@ -128,7 +129,7 @@ func (f *SenderFill) lookup(parent context.Context, c puller.Change, id string) 
 	key := [2]string{source, cause}
 	if cause != "" && f.log != nil && !f.warned[key] {
 		f.warned[key] = true
-		f.log.Warn("sender lookup incomplete", "source", source, "cause", cause)
+		f.log.Report(source, cause)
 	}
 	return entry
 }

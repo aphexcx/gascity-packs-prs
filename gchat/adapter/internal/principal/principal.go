@@ -34,7 +34,7 @@ type Lookup func(ctx context.Context, userID string) (string, error)
 // Options configures a Resolver.
 type Options struct {
 	// Logger receives one warning per directory failure cause, when supplied.
-	Logger interface{ Warn(string, ...any) }
+	Logger *WarningLog
 	// Owners are addresses (user@example.com) or Chat ids (users/123).
 	Owners []string
 	// OrganizationDomain is the organization's mail domain; empty means unknown.
@@ -51,7 +51,7 @@ type Resolver struct {
 	owners  map[string]bool
 	domain  string
 	lookup  Lookup
-	logger  interface{ Warn(string, ...any) }
+	logger  *WarningLog
 	warned  map[string]bool
 	now     func() time.Time
 	ttl     time.Duration
@@ -110,6 +110,17 @@ func (r *Resolver) Speaker(ctx context.Context, u *api.User, identityDomain stri
 	return s
 }
 
+type cacheTimeKey struct{}
+
+// BeforeFill captures the directory-cache decision time for this speaker.
+// A slow optional GET must not expire a cached failure within the same turn.
+func (r *Resolver) BeforeFill(ctx context.Context) context.Context {
+	if r.lookup == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, cacheTimeKey{}, r.now())
+}
+
 func (r *Resolver) resolve(ctx context.Context, id string) string {
 	if r.lookup == nil || id == "" {
 		return ""
@@ -121,8 +132,14 @@ func (r *Resolver) resolve(ctx context.Context, id string) string {
 	if known {
 		return address
 	}
-	if failed && r.now().Sub(failedAt) < r.ttl {
-		return ""
+	if failed {
+		at, ok := ctx.Value(cacheTimeKey{}).(time.Time)
+		if !ok {
+			at = r.now()
+		}
+		if at.Sub(failedAt) < r.ttl {
+			return ""
+		}
 	}
 	// Inbound holds its delivery gate while classifying a speaker. A stalled
 	// directory must not hold that gate indefinitely.
@@ -147,7 +164,7 @@ func (r *Resolver) resolve(ctx context.Context, id string) string {
 	}
 	r.mu.Unlock()
 	if warn {
-		r.logger.Warn("directory lookup incomplete", "cause", cause)
+		r.logger.Report("", cause)
 	}
 	return address
 }
@@ -188,17 +205,7 @@ func LookupHTTPStatus(err error) int {
 	case interface{ Unwrap() error }:
 		return LookupHTTPStatus(e.Unwrap())
 	default:
-		// JoinRefusal recognizes the token package's private, typed 4xx
-		// refusal. Only that leaf's own fixed format exposes its status.
-		// A wrapper, response body or lookalike transport error cannot supply it.
-		if code := token.JoinRefusal(err); code != "" {
-			suffix, ok := strings.CutPrefix(err.Error(), "key holder: "+code+" (HTTP ")
-			if ok && len(suffix) == 4 && suffix[3] == ')' {
-				if n, err := strconv.Atoi(suffix[:3]); err == nil && n >= 400 && n < 500 {
-					return n
-				}
-			}
-		}
+		return token.KeyholderHTTPStatus(err)
 	}
 	return 0
 }
