@@ -240,7 +240,7 @@ func installInboundRecovery(cfg *config) error {
 			}
 		}
 	}
-	r.recordNotice = holdNoticeRecorder(cfg.cityPath, r.deadDir)
+	r.recordNotice = holdNoticeRecorder(*cfg, r.deadDir)
 	return nil
 }
 
@@ -1949,7 +1949,8 @@ func (r *inboundRecovery) noticeFailure(channel string, n inboundHoldNotice, err
 	return n
 }
 
-func holdNoticeRecorder(cityPath, deadDir string) func(string, holdNoticeReport) error {
+func holdNoticeRecorder(cfg config, deadDir string) func(string, holdNoticeReport) error {
+	city := cfg.operatorMailCity()
 	return func(channel string, report holdNoticeReport) error {
 		id := ingestionDigest(strings.Join([]string{channel, report.Since.UTC().Format(time.RFC3339Nano), report.ThreadTS, report.MessageTS, report.Phase}, "|"))
 		body := fmt.Sprintf("channel=%s thread_ts=%s message_ts=%s\n%s", channel, report.ThreadTS, report.MessageTS, report.Text)
@@ -1961,7 +1962,7 @@ func holdNoticeRecorder(cityPath, deadDir string) func(string, holdNoticeReport)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := sendOperatorMail(ctx, "gc", cityPath, "slack-hold:"+id, "Slack inbound hold "+report.Phase, body, false)
+		err := sendOperatorMail(ctx, "gc", city, "slack-hold:"+id, "Slack inbound hold "+report.Phase, body, false)
 		if err == nil || report.MailOnly || !ingestionNotifyDefinitelyRefused(err) {
 			return err
 		}

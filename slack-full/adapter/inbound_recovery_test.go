@@ -379,10 +379,31 @@ func TestInboundRecoveryNoticePolicyAfterRestart(t *testing.T) {
 	}
 }
 
+func TestHoldNoticeUsesConfiguredCityNameWithoutPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	t.Setenv("GC_CITY", "example-ambient")
+	t.Setenv("MAIL_ARGS", filepath.Join(dir, "args"))
+	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte("#!/bin/sh\nprintf '%s\\000' \"$@\" > \"$MAIL_ARGS\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	record := holdNoticeRecorder(config{cityName: "example-target"}, dir)
+	if err := record("C_EXAMPLE", holdNoticeReport{Phase: "held", MailOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(os.Getenv("MAIL_ARGS"))
+	args := strings.Split(strings.TrimSuffix(string(got), "\x00"), "\x00")
+	if err != nil || len(args) != 11 ||
+		!reflect.DeepEqual(args[:6], []string{"--city", "example-target", "mail", "send", "mayor", "--dedup"}) ||
+		!strings.HasPrefix(args[6], "slack-hold:") || args[7] != "-s" || args[9] != "-m" {
+		t.Fatalf("unexpected HOLD mail: %q, %v", args, err)
+	}
+}
+
 func TestInboundRecoveryNoticeFallback(t *testing.T) {
 	r, now := round2Recovery(t)
 	t.Setenv("PATH", t.TempDir()) // The mail executable is unavailable.
-	r.recordNotice = holdNoticeRecorder(t.TempDir(), r.deadDir)
+	r.recordNotice = holdNoticeRecorder(config{cityPath: t.TempDir()}, r.deadDir)
 	round2Hold(t, r, "111.2")
 	*now = now.Add(time.Minute)
 	r.updateNotices()
@@ -471,7 +492,7 @@ func TestInboundRecoveryNoticeUncertainMail(t *testing.T) {
 		t.Fatal(err)
 	}
 	dead := filepath.Join(dir, "dead")
-	report := holdNoticeRecorder(dir, dead)
+	report := holdNoticeRecorder(config{cityPath: dir}, dead)
 	err := report("CROOM", holdNoticeReport{ThreadTS: "111.1", MessageTS: "111.2", Phase: "held", Text: "hold text"})
 	if err == nil {
 		t.Error("uncertain acceptance must retry the same mail key")
@@ -486,7 +507,7 @@ func TestInboundRecoveryNoticeUncertainThenRefusedAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "gc")
 	t.Setenv("PATH", dir)
-	r.recordNotice = holdNoticeRecorder(dir, r.deadDir)
+	r.recordNotice = holdNoticeRecorder(config{cityPath: dir}, r.deadDir)
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'connection reset' >&2\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +521,7 @@ func TestInboundRecoveryNoticeUncertainThenRefusedAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.recordNotice = holdNoticeRecorder(dir, r.deadDir)
+	r.recordNotice = holdNoticeRecorder(config{cityPath: dir}, r.deadDir)
 	r.now = func() time.Time { return now.Add(time.Hour) }
 	r.updateNotices()
 	if _, err := os.Stat(filepath.Join(r.deadDir, "hold-notices")); !errors.Is(err, os.ErrNotExist) {
@@ -674,7 +695,7 @@ func TestInboundRecoveryNoticeFallbackPreservesExistingRecord(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte("#!/bin/sh\necho winner > \"$TEST_FALLBACK\"\nexit 1\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := holdNoticeRecorder(dir, dir)("CROOM", report); err != nil {
+	if err := holdNoticeRecorder(config{cityPath: dir}, dir)("CROOM", report); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(target)

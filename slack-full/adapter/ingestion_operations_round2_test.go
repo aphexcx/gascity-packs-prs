@@ -38,7 +38,7 @@ func TestIngestionMailExecDeduplicatesFanoutAndRetriesFailure(t *testing.T) {
 		}
 	}
 	now = at.Add(ingestionWindow + time.Second)
-	o := &ingestionObserver{cfg: config{inboundJournal: j, cityPath: "/fixture/city"}, now: func() time.Time { return now },
+	o := &ingestionObserver{cfg: config{inboundJournal: j, cityPath: "/fixture/city", cityName: "example-registered"}, now: func() time.Time { return now },
 		fetch: func(context.Context, string) ([]json.RawMessage, error) { return nil, nil }}
 	o.notify = o.mailUnseen
 	if err := o.step(context.Background()); err == nil {

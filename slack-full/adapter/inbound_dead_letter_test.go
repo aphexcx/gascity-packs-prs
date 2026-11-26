@@ -105,7 +105,7 @@ fi
 }
 
 func TestDeadLetterConcurrentWriteChecksMailboxAgain(t *testing.T) {
-	for _, outcome := range []string{"refused", "archived"} {
+	for _, outcome := range []string{"refused", "accepted"} {
 		t.Run(outcome, func(t *testing.T) {
 			a := newDeadLetterAlerts(t.TempDir())
 			started, finish := make(chan struct{}), make(chan struct{})
