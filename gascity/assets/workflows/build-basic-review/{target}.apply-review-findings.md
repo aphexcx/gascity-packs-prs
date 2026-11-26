@@ -73,8 +73,8 @@ and no other: FIXED with a commit; for missing evidence, FIXED with a proof
 command that no earlier summary records for it; or a line without an outcome
 that gives the reviewer's reason and says why this pass neither fixes nor
 proves it. Never write WRONG, INTENDED or DOES NOT MATTER for it again, and
-never the same proof command again. Each of the three sets `iterate` by the
-verdict rules below. An entry the synthesis carries as ANSWER ACCEPTED is not
+never again FIXED by the same proof command without a commit. Each of the
+three sets `iterate` by the verdict rules below. An entry the synthesis carries as ANSWER ACCEPTED is not
 a finding of this round and takes no line in the summary.
 
 Record every review-fix summary this step writes, the no-op summary too, in
@@ -82,8 +82,11 @@ the review context file at `gc.build.code_review_context_path` before this
 pass closes, whether or not the pass commits: under the heading
 `## Earlier Review Rounds`, which you add at the end of the file when it is
 not there yet, keep one line per round,
-`- round <n>: <absolute path of that round's review-fix summary>`. A retry of
-the same round rewrites that round's line and never adds a second. This write
+`- round <n>: <absolute path of that round's review-fix summary>`. Each
+round's review-fix summary has a path of its own, keyed by workflow, review
+loop and round like the input copies, and never overwrites an earlier
+round's. A retry of the same round rewrites that round's line and never adds
+a second. This write
 needs no branch and no commit: the context file lies under the build artifact
 root. The section is the loop's own, not a source anchor's record. A pass
 that ends on a terminal exit without a review-fix summary records nothing.
@@ -189,10 +192,10 @@ only residual risks or PRECONDITION items counts as approving. Set
 evidence, so the review lanes see it, or when a required fix or missing
 evidence remains. A required fix
 settled WRONG, INTENDED or DOES NOT MATTER sets `iterate` too: the review
-lanes, not this lane, retire a required fix. The unchanged-root-checkout case
-above is the one exception to both rules: it is not a required fix, takes no
-line in the summary and stays `done`, whatever verdict the lane that reported
-it recorded.
+lanes, not this lane, retire a required fix. An unchanged root checkout is
+never a required fix and takes no line in the summary. In the case above where
+it is the only reported issue, it is the one exception to both rules: the
+verdict stays `done`, whatever verdict the lane that reported it recorded.
 
 For ordinary approval or iteration, close with `gc.outcome=pass`,
 `code_review.verdict=done|iterate`,

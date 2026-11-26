@@ -25,13 +25,14 @@ a proof command and its result) is an answer: check it against the current
 commit, by the line or reason it gives or by the proof command and its
 result, which you may run again. When the answer holds, do not report the
 finding: list it once in your report as ANSWER ACCEPTED with the round of the
-answer. When it does not hold, report the finding as ANSWER REJECTED with the
-round of the answer and the reason the answer fails. When you cannot tell
-whether the answer covers what you see (another case of the class, another
-line, another criterion), the answer is rejected: report the finding as
-ANSWER REJECTED and say what it does not cover. A line that reads FIXED with
-a commit is no answer: judge the current commit as you would without it. A
-line without an outcome is no answer: the finding stands. A listed summary
+answer and its outcome word. When it does not hold, report the finding as
+ANSWER REJECTED with the round of the answer and the reason the answer fails.
+When you cannot tell whether the answer covers what you see (another case of
+the class, another line, another criterion), the answer is rejected: report
+the finding as ANSWER REJECTED with the round of the answer and say what it
+does not cover. A line that reads FIXED with a commit is no answer: judge the
+current commit as you would without it. A line without an outcome is no
+answer: the finding stands. A listed summary
 that is missing or cannot be read answers nothing: say so in your report and
 report as you would without it. An accepted answer is no reason for
 `iterate`: with no finding left but accepted answers, record `approve`.
