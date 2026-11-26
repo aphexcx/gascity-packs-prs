@@ -44,7 +44,7 @@ fi
 			if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config{inboundDeadLetterDir: filepath.Join(dir, "dead"), deadLetterAlerts: &deadLetterAlerts{cityPath: dir}}
+			cfg := config{inboundDeadLetterDir: filepath.Join(dir, "dead"), deadLetterAlerts: newDeadLetterAlerts(dir)}
 			sink := inboundDeadLetterSink(cfg)
 			var logs bytes.Buffer
 			old := log.Writer()
@@ -99,8 +99,31 @@ fi
 	}
 }
 
+func TestDeadLetterConcurrentWriteSurvivesMailFailure(t *testing.T) {
+	a := newDeadLetterAlerts(t.TempDir())
+	started, finish := make(chan struct{}), make(chan struct{})
+	var reasons []string
+	a.send = func(path, reason string) error {
+		reasons = append(reasons, reason)
+		if len(reasons) == 1 {
+			close(started)
+			<-finish
+			return errors.New("mail refused")
+		}
+		return nil
+	}
+	a.notify("example.jsonl", "first")
+	<-started
+	a.notify("example.jsonl", "second")
+	close(finish)
+	a.wait()
+	if strings.Join(reasons, ",") != "first,second" {
+		t.Fatalf("attempts = %q", reasons)
+	}
+}
+
 func TestOperatorMailOldGC(t *testing.T) {
-	for _, flag := range []string{"notify", "dedup"} {
+	for _, flag := range []string{"notify", "dedup", "json"} {
 		t.Run(flag, func(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv("MAIL_ARGS", filepath.Join(dir, "calls"))
@@ -128,7 +151,11 @@ echo 'Sent message example-mail to mayor'
 			}
 			calls, err := os.ReadFile(os.Getenv("MAIL_ARGS"))
 			base := strings.Join([]string{"--city", dir, "mail", "send", "mayor", "-s", "subject", "-m", "body", ""}, "\x00")
-			if err != nil || string(calls) != base+"--dedup\x00example-key\x00--notify\x00--json\x00"+base ||
+			fallback := base
+			if flag == "json" {
+				fallback += "--dedup\x00example-key\x00--notify\x00"
+			}
+			if err != nil || string(calls) != base+"--dedup\x00example-key\x00--notify\x00--json\x00"+fallback ||
 				!strings.Contains(logs.String(), "falling back to plain mail") ||
 				!strings.Contains(logs.String(), `id="example-mail" notified=false key="example-key" plain=true`) {
 				t.Fatalf("old gc fallback: %v %q %s", err, calls, &logs)

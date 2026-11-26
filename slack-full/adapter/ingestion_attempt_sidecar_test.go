@@ -26,6 +26,20 @@ func ingestionReadAttempt(t *testing.T, j *inboundJournal, id string) ingestionA
 	return state
 }
 
+func TestIngestionMailKeyOverlappingBatches(t *testing.T) {
+	at := time.Unix(100, 0).UTC()
+	first := ingestionTestRecord("100.1", at, "first")
+	singleKey := ingestionMailKey([]inboundJournalRecord{first}, "")
+	first.ReceiptID = "example-late-receipt"
+	second := ingestionTestRecord("100.2", at, "second")
+	third := ingestionTestRecord("100.3", at, "third")
+	secondKey := ingestionMailKey([]inboundJournalRecord{first, second}, "")
+	thirdKey := ingestionMailKey([]inboundJournalRecord{first, third}, "")
+	if singleKey != "slack-ingest:C1:100.1" || secondKey == singleKey || thirdKey == singleKey || secondKey == thirdKey {
+		t.Fatalf("mail keys for overlapping batches: %q, %q, %q", singleKey, secondKey, thirdKey)
+	}
+}
+
 func TestIngestionMailKeyAfterRestart(t *testing.T) {
 	at := time.Unix(100, 0).UTC()
 	rows := []inboundJournalRecord{ingestionTestRecord("100.2", at, "second"), ingestionTestRecord("100.1", at, "first")}
@@ -39,7 +53,7 @@ func TestIngestionMailKeyAfterRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			state, err := o.beginAlertAttempt(plan, rows)
-			if err != nil || state.MailKey != "slack-ingest:C1:100.1" {
+			if err != nil || state.MailKey != "slack-ingest:C1:100.1:"+plan.ID {
 				t.Fatalf("first attempt: key=%s err=%v", state.MailKey, err)
 			}
 			want := state.MailKey

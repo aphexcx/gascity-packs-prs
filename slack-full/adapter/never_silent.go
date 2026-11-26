@@ -62,7 +62,7 @@ func newNeverSilent(cfg config, identities *identityRegistry, aliases *handleAli
 			}
 			return nil
 		},
-		SendLocal: func(ctx context.Context, m neversilent.Message, line string) error {
+		SendLocal: func(ctx context.Context, m neversilent.Message, line, key string) error {
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			bin := os.Getenv("GC_BIN")
@@ -70,7 +70,7 @@ func newNeverSilent(cfg config, identities *identityRegistry, aliases *handleAli
 				bin = "gc"
 			}
 			body := fmt.Sprintf("The adapter told the owner: %q\nChannel: %s\nThread: %s\nStatus: gc slack status\n", line, m.Conversation, m.Thread)
-			return sendOperatorMail(ctx, bin, cfg.cityPath, "slack-silent:"+m.ID, "slack: owner delivery notice", body, true)
+			return sendOperatorMail(ctx, bin, cfg.cityPath, key, "slack: owner delivery notice", body, true)
 		},
 	})
 }

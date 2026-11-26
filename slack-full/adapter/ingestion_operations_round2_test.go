@@ -71,12 +71,18 @@ func TestIngestionMailExecDeduplicatesFanoutAndRetriesFailure(t *testing.T) {
 	if len(args) != 2*13 {
 		t.Fatalf("unexpected mail calls/argv: %q", args)
 	}
+	var planID string
+	for _, row := range ingestionJournalRows(t, j) {
+		if row.Phase == "ingestion_batch" {
+			planID = row.AlertBatch.ID
+		}
+	}
 	for i := 0; i < len(args); i += 13 {
 		if !reflect.DeepEqual(args[i:i+6], []string{"--city", "/fixture/city", "mail", "send", "mayor", "-s"}) ||
 			args[i+6] != "Slack delivered_unseen: 3 lines in C1" || args[i+7] != "-m" ||
 			!strings.Contains(args[i+8], "message_ts=100.1") || !strings.Contains(args[i+8], "message_ts=100.2") ||
 			!strings.Contains(args[i+8], "message_ts=100.3") || strings.Contains(args[i+8], "private payload") ||
-			!reflect.DeepEqual(args[i+9:i+13], []string{"--dedup", "slack-ingest:C1:100.1", "--notify", "--json"}) {
+			!reflect.DeepEqual(args[i+9:i+13], []string{"--dedup", "slack-ingest:C1:100.1:" + planID, "--notify", "--json"}) {
 			t.Fatalf("incorrect alert invocation: %q", args[i:i+13])
 		}
 	}

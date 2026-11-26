@@ -718,16 +718,29 @@ func ingestionRead(ctx context.Context, u string, limit int64) ([]byte, error) {
 	return b, nil
 }
 
-func ingestionMailKey(rows []inboundJournalRecord) string {
+func ingestionMailKey(rows []inboundJournalRecord, batchID string) string {
 	var first string
+	multiple := false
 	for _, r := range rows {
 		for _, w := range ingestionAlertWindows(r) {
+			if first != "" && first != w.MessageTS {
+				multiple = true
+			}
 			if first == "" || w.MessageTS < first {
 				first = w.MessageTS
 			}
 		}
 	}
-	return "slack-ingest:" + rows[0].Channel + ":" + first
+	key := "slack-ingest:" + rows[0].Channel + ":" + first
+	if multiple {
+		// Distinct receipts for the same Slack message can appear in later
+		// batches. A collision must never suppress their new companions.
+		if batchID == "" {
+			batchID = ingestionCoverageID(ingestionCoverageFor(rows))
+		}
+		key += ":" + batchID
+	}
+	return key
 }
 
 func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJournalRecord) error {
@@ -737,7 +750,7 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 	}
 	key := rows[0].MailKey
 	if key == "" {
-		key = ingestionMailKey(rows)
+		key = ingestionMailKey(rows, rows[0].AlertBatchID)
 	}
 	subject, body := ingestionAlertMessage(rows)
 	if notice := o.cfg.neverSilent.OwnerLine(rows[0].Channel); notice != "" {
@@ -757,8 +770,11 @@ func sendOperatorMail(ctx context.Context, bin, cityPath, key, subject, body str
 	}
 	args = append(args, "-s", subject, "-m", body)
 	output, err := runOperatorMail(ctx, bin, append(args, "--dedup", key, "--notify", "--json"))
-	if unsupportedMailFlag(err) {
-		log.Printf("operator mail key=%q: gc lacks alert flags, falling back to plain mail", key)
+	if flag := unsupportedMailFlag(err); flag != "" {
+		if flag == "json" {
+			args = append(args, "--dedup", key, "--notify")
+		}
+		log.Printf("operator mail key=%q: gc lacks --%s, falling back to plain mail output", key, flag)
 		output, err = runOperatorMail(ctx, bin, args)
 		if err == nil {
 			var id string
@@ -782,19 +798,19 @@ func sendOperatorMail(ctx context.Context, bin, cityPath, key, subject, body str
 	return nil
 }
 
-func unsupportedMailFlag(err error) bool {
+func unsupportedMailFlag(err error) string {
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() <= 0 {
-		return false
+		return ""
 	}
 	line, _, _ := strings.Cut(strings.TrimSpace(string(exit.Stderr)), "\n")
 	line = strings.TrimPrefix(strings.TrimPrefix(line, "gc: "), "Error: ")
-	for _, flag := range []string{"notify", "dedup"} {
+	for _, flag := range []string{"notify", "dedup", "json"} {
 		if line == "unknown flag: --"+flag || line == "flag provided but not defined: -"+flag {
-			return true
+			return flag
 		}
 	}
-	return false
+	return ""
 }
 
 func runOperatorMail(ctx context.Context, bin string, args []string) ([]byte, error) {

@@ -38,7 +38,7 @@ func (o *ingestionObserver) beginAlertAttempt(plan ingestionAlertBatch, rows []i
 	if plan.attempt != nil {
 		state.Refusals, state.RetryAt = plan.attempt.Refusals, plan.attempt.RetryAt
 	}
-	state.MailKey = ingestionMailKey(rows)
+	state.MailKey = ingestionMailKey(rows, plan.ID)
 	if plan.recovered {
 		// A previous attempt may already be in the mailbox. Preserve its
 		// key even if proof has since arrived for its first message.

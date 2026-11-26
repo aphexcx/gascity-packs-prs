@@ -22,36 +22,68 @@ import (
 // most one command per channel file can be in flight. gc deduplicates later
 // writes against the same live mail, including across adapter restarts.
 type deadLetterAlerts struct {
-	cityPath string
-	inFlight sync.Map
+	mu       sync.Mutex
+	inFlight map[string]*deadLetterMail
+	send     func(path, reason string) error
+}
+
+type deadLetterMail struct {
+	done    chan struct{}
+	pending string
+}
+
+func newDeadLetterAlerts(cityPath string) *deadLetterAlerts {
+	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(path, reason string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		body := fmt.Sprintf("File: %s\nReason: %s", path, reason)
+		return sendOperatorMail(ctx, "gc", cityPath, "dead-letter:"+filepath.Base(path), "Slack inbound message could not be delivered", body, true)
+	}}
 }
 
 func (a *deadLetterAlerts) notify(path, reason string) {
 	if a == nil {
 		return
 	}
-	key := "dead-letter:" + filepath.Base(path)
-	done := make(chan struct{})
-	if _, busy := a.inFlight.LoadOrStore(key, done); busy {
+	a.mu.Lock()
+	if mail := a.inFlight[path]; mail != nil {
+		mail.pending = reason
+		a.mu.Unlock()
 		return
 	}
+	mail := &deadLetterMail{done: make(chan struct{})}
+	a.inFlight[path] = mail
+	a.mu.Unlock()
 	go func() {
-		defer close(done)
-		defer a.inFlight.Delete(key)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		body := fmt.Sprintf("File: %s\nReason: %s", path, reason)
-		if err := sendOperatorMail(ctx, "gc", a.cityPath, key, "Slack inbound message could not be delivered", body, true); err != nil {
-			log.Printf("operator mail failed key=%q: %v", key, err)
+		for {
+			err := a.send(path, reason)
+			if err != nil {
+				log.Printf("operator mail failed key=%q: %v", "dead-letter:"+filepath.Base(path), err)
+			}
+			a.mu.Lock()
+			if err == nil || mail.pending == "" {
+				delete(a.inFlight, path)
+				close(mail.done)
+				a.mu.Unlock()
+				return
+			}
+			// A different write arrived while the failed send was running.
+			reason, mail.pending = mail.pending, ""
+			a.mu.Unlock()
 		}
 	}()
 }
 
 func (a *deadLetterAlerts) wait() {
-	a.inFlight.Range(func(_, done any) bool {
-		<-done.(chan struct{})
-		return true
-	})
+	a.mu.Lock()
+	var active []chan struct{}
+	for _, mail := range a.inFlight {
+		active = append(active, mail.done)
+	}
+	a.mu.Unlock()
+	for _, done := range active {
+		<-done
+	}
 }
 
 // A stored rejection can include a provider response quoting user input.

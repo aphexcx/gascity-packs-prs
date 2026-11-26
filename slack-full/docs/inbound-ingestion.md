@@ -87,7 +87,9 @@ has proof, `sent` stays false. This retains ambiguous acceptance; it does not
 claim that the original attempt was confirmed.
 New attempts record the exact message/target coverage and attempt time immediately
 before notification. A new mail uses `slack-ingest:<channel>:<message ts>`,
-using the first timestamp in the batch in lexical order. Its attempt sidecar
+for one distinct timestamp. A batch with several uses the first timestamp in
+lexical order and appends `:<batch digest>` so another batch that shares that
+timestamp cannot suppress its other lines. Its attempt sidecar
 keeps the mailbox key across an uncertain send, even when proof subsequently
 arrives for that timestamp. An uncertain pre-upgrade send keeps its old key.
 Each eligible retry atomically replaces its sidecar before
@@ -175,7 +177,8 @@ the message was definitely lost. The existing dead-letter file continues to
 represent failed transport handoffs.
 
 The local never-silent owner notice asks for a turn with
-`slack-silent:<message id>`. After a new inbound loss is written to disk, the
+`slack-silent:<message id>`. A retry of a local notice first attempted before
+upgrade retains its original key. After a new inbound loss is written to disk, the
 adapter also asks for a turn with `dead-letter:<file name>`. That mail contains
 the path and the delivery reason. Provider response bodies stay in the file.
 Writes to the same file share one live mailbox entry. Check the adapter log
