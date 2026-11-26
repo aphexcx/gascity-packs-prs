@@ -582,6 +582,46 @@ func TestHeldClockOrder(t *testing.T) {
 	}
 }
 
+func TestHeldClockRetirementOrder(t *testing.T) {
+	for _, maxAge := range []time.Duration{0, 24 * time.Hour} {
+		t.Run(maxAge.String(), func(t *testing.T) {
+			c := clockCase(t, false)
+			c.r.replayMaxAge = maxAge
+			c.r.bound = 30 * time.Second
+			old := c.hold("100.1", "s1")
+			good := c.r.deadDir
+			bad := filepath.Join(t.TempDir(), "file")
+			if err := os.WriteFile(bad, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			c.r.deadDir = filepath.Join(bad, "history")
+			c.tick(30)
+			e := c.r.state.Entries[old]
+			if !e.Retiring {
+				t.Fatal("expected failed history write")
+			}
+			c.r.deadDir = good
+			retry := int(e.NextAttemptAt.Sub(c.start) / time.Second)
+			*c.now = e.NextAttemptAt.Add(-c.r.bound)
+			young := c.hold("100.2", "s1")
+			c.answer = func(inboundRecoveryEntry) (deliveryReceipt, error) {
+				return clockReceipt("delivered", "s1"), nil
+			}
+			c.tick(retry)
+			if c.r.state.Entries[old].DeadLetteredAt.IsZero() {
+				t.Fatal("retirement did not finish")
+			}
+			want := 1
+			if maxAge != 0 {
+				want = 0
+			}
+			if c.pastes[young] != want {
+				t.Errorf("younger pastes at its bound = %d, want %d", c.pastes[young], want)
+			}
+		})
+	}
+}
+
 func TestHeldClockRow(t *testing.T) {
 	c := clockCase(t, false)
 	key := c.hold("100.1", "s1")

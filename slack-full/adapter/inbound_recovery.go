@@ -1225,15 +1225,23 @@ func (r *inboundRecovery) tick(startup bool) {
 		if e.inactive() && !e.Retiring {
 			continue
 		}
+		blockHeldFollowers := func() {
+			// Retirement can succeed, defer a failed append, or race an
+			// acknowledgement. Use the resulting state for session ordering.
+			r.mu.Lock()
+			current := r.state.Entries[key]
+			r.mu.Unlock()
+			if r.heldClockActive(current, r.now()) {
+				for _, k := range recoveryOrderKeys(current) {
+					blocked[k] = true
+				}
+			}
+		}
 		if e.Retiring {
 			if !now.Before(e.NextAttemptAt) {
 				r.retire(key, e)
 			}
-			if r.heldClockActive(e, now) {
-				for _, k := range recoveryOrderKeys(e) {
-					blocked[k] = true
-				}
-			}
+			blockHeldFollowers()
 			continue
 		}
 		if e.PendingReceipt && e.PendingReceiptID == "" {
@@ -1263,14 +1271,13 @@ func (r *inboundRecovery) tick(startup bool) {
 		retireUnvouched := func() {
 			e.Reason = "unvouched delivery held for " + r.bound.String()
 			r.retire(key, e)
-			if r.replayMaxAge > 0 && r.heldClockActive(e, now) {
-				block()
-			}
+			blockHeldFollowers()
 		}
 		if blockedHere && !e.PendingReceipt && !e.Landed {
 			if atBound {
 				e.Reason = "unvouched delivery held for " + r.bound.String() + "; older delivery still outstanding"
 				r.retire(key, e)
+				blockHeldFollowers()
 			} else if e.DeadLetteredAt.IsZero() && !now.Before(e.NextAttemptAt) {
 				e.RetryStep++
 				e.NextAttemptAt = now.Add(retryLadderDelay(inboundHoldBackoff, e.RetryStep, r.ceiling))
@@ -1279,7 +1286,7 @@ func (r *inboundRecovery) tick(startup bool) {
 				}
 				r.put(key, e)
 			}
-			if !atBound || (r.replayMaxAge > 0 && r.heldClockActive(e, now)) {
+			if !atBound {
 				block()
 			}
 			continue
