@@ -223,6 +223,8 @@ class WorkerWorktreeTests(unittest.TestCase):
                 self.assertRegex(asides[0].name, rf"^{lane.name}\.aside-\d{{8}}T\d{{6}}Z(?:-\d+)?$")
                 self.assertEqual(self.start_file_snapshot(asides[0]), seeds)
                 self.assertEqual((asides[0] / stray).read_text(), "keep stray\n")
+                self.assertEqual((lane / ".gc/settings.json").read_bytes(), seeds[".gc/settings.json"][0])
+                self.assertFalse((lane / stray).exists())
                 self.assert_is_worktree(lane)
 
     def test_staged_start_file_symlink_is_not_treated_as_empty(self) -> None:
@@ -233,7 +235,19 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.fx.run(self.lane, "gp-link1")
         self.assertEqual(len(self.asides()), 1)
         self.assertTrue((self.asides()[0] / ".gc/settings.json").is_symlink())
+        self.assertFalse((self.lane / ".gc/settings.json").is_symlink())
+        self.assertFalse((self.lane / ".gc/settings.json").exists())
         self.assertEqual(external.read_text(), "keep external\n")
+
+    def test_staged_start_files_do_not_copy_a_nested_checkout(self) -> None:
+        nested = self.lane / ".gc/scripts/project"
+        nested.mkdir(parents=True)
+        git(nested, "init", "--quiet")
+        commit(nested, "source", "repository content\n", "local work")
+        self.fx.run(self.lane, "gp-nested1")
+        aside, = self.asides()
+        self.assertEqual((aside / ".gc/scripts/project/source").read_text(), "repository content\n")
+        self.assertFalse(nested.exists())
 
     def test_staged_start_files_survive_detached_and_local_branch_creation(self) -> None:
         for index, bead in enumerate((None, "gp-local1")):
@@ -537,6 +551,7 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertEqual((asides[0] / "README.md").read_text(encoding="utf-8"), "uncommitted edit\n")
         self.assertEqual(self.branch_of(asides[0]), "gp-old1")
         self.assertEqual(self.branch_of(self.lane), "gp-new2")
+        self.assertIn(f"Recovery: another ticket's work at {asides[0]} (branch: gp-old1)", proc.stderr)
         self.assertEqual((self.lane / "README.md").read_text(encoding="utf-8"), "hello\n")
         # git still knows both worktrees.
         listing = git(self.fx.rig, "worktree", "list", "--porcelain")
@@ -559,7 +574,9 @@ class WorkerWorktreeTests(unittest.TestCase):
         if not exclude.is_absolute():
             exclude = self.lane / exclude
         exclude.parent.mkdir(parents=True, exist_ok=True)
-        exclude.write_text("build/\n", encoding="utf-8")
+        exclude.write_text("build/\n.gc/\n", encoding="utf-8")
+        (self.lane / ".gc").mkdir()
+        (self.lane / ".gc/settings.json").write_bytes(b"ignored settings\n")
         (self.lane / "build").mkdir()
         (self.lane / "build" / "out.txt").write_text("local artifact, ignored\n", encoding="utf-8")
         self.assertEqual(git(self.lane, "status", "--porcelain"), "")
@@ -568,6 +585,8 @@ class WorkerWorktreeTests(unittest.TestCase):
         asides = self.asides()
         self.assertEqual(len(asides), 1)
         self.assertEqual((asides[0] / "build" / "out.txt").read_text(encoding="utf-8"), "local artifact, ignored\n")
+        for tree in (self.lane, asides[0]):
+            self.assertEqual((tree / ".gc/settings.json").read_bytes(), b"ignored settings\n")
         self.assertEqual(self.branch_of(self.lane), "gp-ign2-tracks-build")
         self.assertEqual((self.lane / "build" / "out.txt").read_text(encoding="utf-8"), "tracked\n")
         self.assertNotEqual(sha, "")
@@ -591,6 +610,7 @@ class WorkerWorktreeTests(unittest.TestCase):
         asides = self.asides()
         self.assertEqual(len(asides), 1)
         self.assertEqual((asides[0] / "junk.txt").read_text(encoding="utf-8"), "keep me\n")
+        self.assertIn(f"Recovery: another ticket's work at {asides[0]} (branch: unknown)", proc.stderr)
         self.assert_is_worktree(self.lane)
         self.assertEqual(self.branch_of(self.lane), "gp-abc1")
 
@@ -685,19 +705,215 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertIn("clearing stale lock", proc.stderr)
         self.assertEqual(self.branch_of(self.lane), "gp-abc1")
 
-    def test_dirty_lane_on_the_same_bead_restarts_detached_at_its_tip(self) -> None:
+    def test_dirty_lane_on_the_same_bead_reclaims_its_branch_at_the_tip(self) -> None:
+        self.check_dirty_restart(second_edit=False)
+
+    def test_dirty_restart_preserves_and_reports_both_tracked_edits(self) -> None:
+        self.check_dirty_restart(second_edit=True)
+
+    def test_dirty_restart_logs_the_recovery_path(self) -> None:
         self.fx.run(self.lane, "gp-old1")
-        sha = commit(self.lane, "work.txt", "committed\n", "bead work")
-        (self.lane / "README.md").write_text("uncommitted edit\n", encoding="utf-8")
+        for i in range(80):
+            (self.lane / f"{i:02d}-{'x' * 64}").write_text("unfinished\n")
+        git(self.lane, "add", ".")
         proc = self.fx.run(self.lane, "gp-old1")
-        asides = self.asides()
-        self.assertEqual(len(asides), 1)
-        self.assertEqual(self.branch_of(asides[0]), "gp-old1")
-        self.assertEqual((asides[0] / "README.md").read_text(encoding="utf-8"), "uncommitted edit\n")
-        self.assertEqual(self.branch_of(self.lane), "HEAD")
+        aside, = self.asides()
+        self.assertGreater(len(proc.stderr), 4096)
+        self.assertIn(f"Recovery: own ticket's work at {aside} (branch: gp-old1)", proc.stderr[-4096:])
+
+    def test_detached_lane_reports_another_tickets_work_even_at_target_tip(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        git(self.lane, "switch", "--detach")
+        (self.lane / "README.md").write_text("unfinished\n")
+        proc = self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertIn(f"Recovery: another ticket's work at {aside} (branch: unknown)", proc.stderr)
+
+    def test_dirty_restart_copies_effective_start_files(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        self.seed_start_files(self.lane)
+        (self.lane / ".codex/hooks.json").write_bytes(b'{"worker_key": true, "hooks": {}}\n')
+        (self.lane / ".gc/scripts/local helper").write_bytes(b"worker script\n")
+        (self.lane / ".gc/scripts/empty").mkdir()
+        directory_modes = {".codex": 0o700, ".gc": 0o750, ".gc/scripts": 0o710,
+                           ".gc/scripts/nested": 0o750, ".gc/scripts/empty": 0o500}
+        for name, mode in directory_modes.items():
+            (self.lane / name).chmod(mode)
+        (self.lane / ".gc/tmp/notes").write_bytes(b"private notes\n")
+        (self.lane / "README.md").write_text("unfinished\n")
+        seeds = self.start_file_snapshot(self.lane)
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.branch_of(self.lane), "gp-old1")
+        self.assertEqual(self.start_file_snapshot(aside), seeds)
+        for name, (data, mode, inode) in seeds.items():
+            with self.subTest(name=name):
+                copy = self.lane / name
+                self.assertEqual(copy.read_bytes(), data)
+                self.assertEqual(copy.stat().st_mode, mode)
+                self.assertNotEqual(copy.stat().st_ino, inode)
+        for name, mode in directory_modes.items():
+            with self.subTest(directory=name):
+                self.assertEqual((aside / name).stat().st_mode & 0o7777, mode)
+                self.assertEqual((self.lane / name).stat().st_mode, (aside / name).stat().st_mode)
+        self.assertEqual((self.lane / ".gc/scripts/local helper").read_bytes(), b"worker script\n")
+        self.assertTrue((self.lane / ".gc/scripts/empty").is_dir())
+        self.assertFalse((self.lane / ".gc/tmp/notes").exists())
+        self.assertEqual((aside / ".gc/tmp/notes").read_bytes(), b"private notes\n")
+
+    def test_dirty_restart_can_retry_a_failed_start_file_copy(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        seeds = self.seed_start_files(self.lane)
+        (self.lane / "README.md").write_text("unfinished\n")
+        tools = self.fx.root / "tools"
+        tools.mkdir()
+        copy = tools / "cp"
+        copy.write_text("#!/bin/sh\nexit 1\n")
+        copy.chmod(0o755)
+        failed = self.fx.run(self.lane, "gp-old1", check=False, env_extra={"PATH": f"{tools}:{os.environ['PATH']}"})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.start_file_snapshot(self.lane), seeds)
+        self.assertEqual(self.asides(), [])
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.start_file_snapshot(aside), seeds)
+        self.assertEqual((self.lane / ".gc/settings.json").read_bytes(), seeds[".gc/settings.json"][0])
+
+    def test_dirty_restart_keeps_tracked_start_file_changes_only_in_aside(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        commit(self.lane, "AGENTS.md", "committed\n", "track instructions")
+        git(self.lane, "rm", "--cached", "AGENTS.md")
+        (self.lane / "AGENTS.md").write_text("after staged deletion\n")
+        new = ".github/copilot-instructions.md"
+        (self.lane / ".github").mkdir()
+        (self.lane / new).write_text("staged addition\n")
+        git(self.lane, "add", new)
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual((self.lane / "AGENTS.md").read_text(), "committed\n")
+        self.assertFalse((self.lane / new).exists())
+        self.assertEqual((aside / "AGENTS.md").read_text(), "after staged deletion\n")
+        self.assertEqual(git(aside, "show", f":{new}"), "staged addition")
+
+    def test_dirty_restart_checks_out_tracked_files_in_read_only_start_directory(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        scripts = self.lane / ".gc/scripts"
+        scripts.mkdir(parents=True)
+        commit(self.lane, ".gc/scripts/tracked.sh", "committed\n", "track script")
+        (scripts / "local.sh").write_text("preserve\n")
+        scripts.chmod(0o500)
+        (self.lane / "README.md").write_text("unfinished\n")
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        for tree in (aside, self.lane):
+            self.assertEqual((tree / ".gc/scripts").stat().st_mode & 0o7777, 0o500)
+            self.assertEqual((tree / ".gc/scripts/tracked.sh").read_text(), "committed\n")
+            self.assertEqual((tree / ".gc/scripts/local.sh").read_text(), "preserve\n")
+
+    def test_dirty_restart_refuses_target_colliding_with_start_file(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        self.fx.push_branch("gp-next1", "AGENTS.md")
+        scripts = self.lane / ".gc/scripts"
+        scripts.mkdir(parents=True)
+        scripts.chmod(0o500)
+        (self.lane / "AGENTS.md").write_text("local instructions\n")
+        (self.lane / "README.md").write_text("unfinished\n")
+        proc = self.fx.run(self.lane, "gp-next1", check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        aside, = self.asides()
+        self.assertEqual((aside / "AGENTS.md").read_text(), "local instructions\n")
+        self.assertEqual(scripts.stat().st_mode & 0o7777, 0o500)
+        self.assertNotIn("WORKTREE ", proc.stdout)
+
+    def test_dirty_restart_disables_checkout_hooks_in_the_aside(self) -> None:
+        self.check_dirty_restart_hooks(seeded=False)
+
+    def test_dirty_restart_with_start_files_runs_the_fresh_checkout_hook(self) -> None:
+        self.check_dirty_restart_hooks(seeded=True)
+
+    def check_dirty_restart_hooks(self, *, seeded: bool) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        (self.lane / "README.md").write_text("unfinished\n")
+        if seeded:
+            (self.lane / ".gc").mkdir()
+            (self.lane / ".gc/settings.json").write_text("{}\n")
+        hooks = self.fx.root / "checkout-hooks"
+        hooks.mkdir()
+        hook = hooks / "post-checkout"
+        hook.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> hook-ran\n')
+        hook.chmod(0o755)
+        git(self.fx.rig, "config", "core.hooksPath", str(hooks))
+        self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.branch_of(aside), "HEAD")
+        self.assertFalse((aside / "hook-ran").exists())
+        head = git(self.lane, "rev-parse", "HEAD")
+        self.assertEqual((self.lane / "hook-ran").read_text().splitlines(), ["0" * len(head), head, "1"])
+
+    def check_dirty_restart(self, *, second_edit: bool) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        sha = commit(self.lane, "build.lock", "initial\n", "bead work")
+        (self.lane / "build.lock").write_text("regenerated\n")
+        if second_edit:
+            (self.lane / "README.md").write_text("staged edit\n")
+            git(self.lane, "add", "README.md")
+            (self.lane / "README.md").write_text("further edit\n")
+        (self.lane / "notes").write_text("untracked\n")
+        proc = self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.branch_of(self.lane), "gp-old1")
         self.assertEqual(git(self.lane, "rev-parse", "HEAD"), sha)
+        self.assertEqual((self.lane / "build.lock").read_text(), "initial\n")
+        self.assertEqual(self.branch_of(aside), "HEAD")
+        self.assertEqual(git(aside, "rev-parse", "HEAD"), sha)
+        self.assertEqual((aside / "build.lock").read_text(), "regenerated\n")
+        self.assertEqual((aside / "notes").read_text(), "untracked\n")
+        self.assertIn(f"detached {aside}", proc.stderr)
+        self.assertIn("build.lock", proc.stderr)
+        if second_edit:
+            self.assertEqual(git(aside, "show", ":README.md"), "staged edit")
+            self.assertEqual((aside / "README.md").read_text(), "further edit\n")
+            self.assertIn("README.md", proc.stderr)
+
+    def test_preexisting_asides_holding_the_branch_are_left_alone(self) -> None:
+        for name in ("other-lane.aside-old", f"{self.lane.name}.aside-old"):
+            with self.subTest(name=name):
+                holder = self.lane.parent / name
+                self.fx.run(holder, "gp-old1")
+                proc = self.fx.run(self.lane, "gp-old1")
+                self.assertEqual(self.branch_of(self.lane), "HEAD")
+                self.assertEqual(self.branch_of(holder), "gp-old1")
+                self.assertIn(f"checked out at {holder}", proc.stderr)
+                git(holder, "switch", "--detach")
+
+    def test_dirty_restart_preserves_a_merge_that_refuses_to_detach(self) -> None:
+        feature = self.fx.push_branch("feature")
+        self.fx.run(self.lane, "gp-old1")
+        git(self.lane, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+            "merge", "--no-commit", "--no-ff", feature)
+        proc = self.fx.run(self.lane, "gp-old1")
+        aside, = self.asides()
+        self.assertEqual(self.branch_of(self.lane), "HEAD")
+        self.assertEqual(self.branch_of(aside), "gp-old1")
+        self.assertEqual(git(aside, "rev-parse", "MERGE_HEAD"), feature)
+        self.assertEqual(git(aside, "show", ":feature.txt"), "feature")
+        self.assertIn(f"checked out at {aside}", proc.stderr)
+
+    def test_detached_commit_in_an_older_aside_is_left_alone(self) -> None:
+        self.fx.run(self.lane, "gp-old1")
+        tip = git(self.lane, "rev-parse", "HEAD")
+        aside = self.lane.with_name(f"{self.lane.name}.aside-old")
+        git(self.fx.rig, "worktree", "add", "--detach", str(aside), tip)
+        ahead = commit(aside, "notes", "aside only\n", "detached work")
+        holder = self.lane.parent / "other-lane"
+        git(self.fx.rig, "worktree", "move", str(self.lane), str(holder))
+        proc = self.fx.run(self.lane, "gp-old1")
         self.assertIn("checked out at", proc.stderr)
-        self.assertEqual(proc.stdout.split()[2], "detached")
+        self.assertEqual(self.branch_of(self.lane), "HEAD")
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), tip)
+        self.assertEqual(self.branch_of(holder), "gp-old1")
+        self.assertEqual(self.branch_of(aside), "HEAD")
+        self.assertEqual(git(aside, "rev-parse", "HEAD"), ahead)
 
     def test_base_head_fallback_means_the_rig_head_not_the_lane_head(self) -> None:
         # No usable remote: BASE falls back to HEAD, which must be the rig's.
