@@ -414,13 +414,13 @@ func TestDeadLetterAlarmWords(t *testing.T) {
 			if dead.IsZero() {
 				dead = e.HeldAt
 			}
-			lbody := strings.Join([]string{"channel: C1", "thread_ts: 99.1", "message_ts: 100.1", "held_since: " + e.HeldAt.UTC().Format(time.RFC3339), "dead_lettered_at: " + dead.UTC().Format(time.RFC3339), "state: " + row.state, "composer: " + row.composer, "operator: configured", "look: gc slack status", "redrive: gc slack inbound-redrive --conversation-id C1", "by hand: gc slack inbound-redrive --conversation-id C1 --acknowledge 100.1"}, "\n")
+			lbody := strings.Join([]string{"channel: C1", "thread_ts: 99.1", "message_ts: 100.1", "held_since: " + e.HeldAt.UTC().Format(time.RFC3339), "dead_lettered_at: " + dead.UTC().Format(time.RFC3339), "state: " + row.state, "composer: " + row.composer, "operator: configured", "look: gc slack status", "redrive: gc slack inbound-redrive --conversation-id C1", "only after you have read this message in Slack and answered it yourself (this delivers nothing and closes the alarm): gc slack inbound-redrive --conversation-id C1 --acknowledge 100.1"}, "\n")
 			local := []string{"--city", f.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-dead:" + ingestionDigest("C1|100.1"), "--notify", "--json", "-s", "slack: a message did not reach the session", "-m", lbody}
 			if got := f.one("local"); !slices.Equal(got, local) {
 				t.Error("local arguments or body differ")
 			}
 			count := map[string]int{row.state: 1}
-			obody := fmt.Sprintf("city: fixture\nchannel: slack\nmessages: 1\nconversations: 1\noldest_age_seconds: %d\nretrying: %d\nwaiting: %d\nhand_check: %d\ncomposer: %s\nlocal_wake: asked\nstatus: gc slack status --json", int(f.now.Sub(e.HeldAt).Seconds()), count["retrying"], count["waiting"], count["hand_check"], row.composer)
+			obody := fmt.Sprintf("city: fixture\nchannel: slack\nmessages: 1\nconversations: 1\noldest_age_seconds: %d\nretrying: %d\nwaiting: %d\nhand_check: %d\ncomposer: %s\nlocal_wake: asked\nstatus (run in the city named above): gc slack status --json", int(f.now.Sub(e.HeldAt).Seconds()), count["retrying"], count["waiting"], count["hand_check"], row.composer)
 			op := []string{"mail", "send", "--context", "fixture-context", "fixture-agent", "--dedup", "slack-dead-operator:" + ingestionDigest("C1|100.1"), "--json", "-s", "slack: fixture: 1 message(s) did not reach the session", "-m", obody}
 			if got := f.one("operator"); !slices.Equal(got, op) {
 				t.Error("operator arguments or body differ")
