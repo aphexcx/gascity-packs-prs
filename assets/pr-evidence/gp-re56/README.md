@@ -101,7 +101,7 @@ composer: <stored state|none>
 operator: <configured|not_configured>
 look: gc slack status
 redrive: gc slack inbound-redrive --conversation-id <room>
-by hand: gc slack inbound-redrive --conversation-id <room> --acknowledge <message ts>
+only after you have read this message in Slack and answered it yourself (this delivers nothing and closes the alarm): gc slack inbound-redrive --conversation-id <room> --acknowledge <message ts>
 ```
 
 ```text
@@ -115,7 +115,7 @@ waiting: <count>
 hand_check: <count>
 composer: <oldest composer>
 local_wake: <asked|not_asked|not_known>
-status: gc slack status --json
+status (run in the city named above): gc slack status --json
 ```
 
 The worker’s log messages are shown below. The local cause is `mail_refused`, `mail_timeout` or `mail_no_result`. The remote cause is `operator_refused` or `operator_not_known`.
@@ -138,3 +138,49 @@ For each message that gets a dead-letter row, one mail in the local mayor's mail
 - `slack-full/adapter/dead_letter_alarm_test.go:67` UNPROVEN Q2/Q4/Q6: operator configuration, reading remote mail, and the production command deadline are premises. This fixture models settings and mailbox writes only, and timeout cases use a shorter limit.
 - `slack-full/adapter/dead_letter_alarm_test.go:208` UNPROVEN Q5: archiving between a lost result and a retry releases the fake dedup key.
 - `slack-full/adapter/dead_letter_alarm_test.go:496` UNPROVEN Q7: compare the normal held clock and vouch paths against the same fake receipts with the alarm enabled.
+
+## Round 2
+
+Base `dd986f79c1970c0c5dca4ac127d602f9e799ac3e`. Test-only commit `656b9d906fb58f371bd1521466f16402ab84d92c`. Last code commit `69349be108b7f8e92514ab573617f57e9b368e7b`. Only line 11 of each body changed. Both subjects, lines 1–10, command arguments and final newline behavior match the base.
+
+The C1 command below ran for every row in this table. Counts include named Go subtests and their parents. [Test transcripts](round2-go-tests.txt)
+
+| C1 run | Passed | Failed | Skipped | Exit |
+| --- | ---: | ---: | ---: | ---: |
+| Base | 51 | 0 | 0 | 0 |
+| Test-only commit, first run | 43 | 8 | 0 | 1 |
+| Test-only commit, isolated repeat | 45 | 6 | 0 | 1 |
+| Both messages updated | 51 | 0 | 0 | 0 |
+| S1, restore the local line | 45 | 6 | 0 | 1 |
+| S2, remove the local clause about delivery and closure | 45 | 6 | 0 | 1 |
+| S3, restore the operator line | 45 | 6 | 0 | 1 |
+
+At the test-only commit, `TestDeadLetterAlarmWords/{clock,plain,manual,aged,off}` and their parent failed. Each row reported both message mismatches. The first run also failed `TestDeadLetterAlarmRoads/remote-ambiguous` at line 324 (zero local calls, one expected) and its parent. That fixture uses a 250 ms real-time limit. All Roads cases passed on the isolated repeat at the same commit. Each scratch run failed the same five Words rows and their parent. Each edit was reverted before the next check.
+
+Each command ran offline with a scratch home and temporary directory. C1–C5 ran in `slack-full/adapter` with Go 1.27.3 and the Go 1.26.10 formatter.
+
+```text
+C1  go test -count=1 -json -run 'DeadLetterAlarm' .
+C2  go vet ./...
+    exit 0, no diagnostics
+C3  go test -count=1 -json -run 'InboundRecovery|Round2|Notice|NeverSilentHold|IngestionMail|HeldAnswer|HeldClock|DeadLetterAlarm' .
+    exit 0, 431 passed, 0 failed, 0 skipped
+C4  go test -race -count=1 -json -run 'DeadLetterAlarm' .
+    exit 0, 51 passed, 0 failed, 0 skipped
+C5  gofmt -l .
+    exit 0, empty output
+```
+
+The handoff suites ran one at a time. Reachable used Node v24.21.0 in `reachable/test`. The Python command ran from the repository root. Both reproduced round 1's pass and skip counts.
+
+```text
+node --test --test-skip-pattern '^review 4: archive replay advances in bounded chunks without dropping rows$'
+exit 0, 218 passed, 0 failed, 1 skipped
+
+python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q -p no:cacheprovider
+exit 0, 3118 passed, 0 failed, 136 skipped, 10932 subtests passed, 2 deprecation warnings
+```
+
+- A3. `git diff --name-only dd986f79c1970c0c5dca4ac127d602f9e799ac3e..HEAD` lists the composer, its test, this README and the round 2 transcript.
+- A4. The same comparison with `--numstat` gives two insertions and two deletions for each Go file.
+- A5–A6. `git grep -c -F "$prefix" HEAD -- slack-full assets/pr-evidence/gp-re56` ran once per prefix. Both old prefixes returned exit 1 with no matches. Each new prefix returned exit 0 and one match in each of the composer, its test and this README. The separate never-silent mail uses a channel placeholder in its source.
