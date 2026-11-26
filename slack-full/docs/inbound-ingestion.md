@@ -153,7 +153,7 @@ source records until those individual completion rows are durable, even if a
 previous day's failed mail succeeds after its observation horizon. Failed mail is retried
 on the next eligible pass and logged; a channel's state-write failure is collected
 without preventing other channels from mailing.
-The mail command and each target's transcript fetch have ten-second limits.
+The observer allows 10 seconds for each target's transcript fetch and 60 seconds for the notifying mail command.
 The normal alert latency is the three-minute window plus one polling pass.
 The controlled busy-session proof needed 2m16s for the first queued input to
 render after the held tool call, so a two-minute window was too short.
