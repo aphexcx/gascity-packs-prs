@@ -2575,6 +2575,8 @@ class FormulaAssetTests(unittest.TestCase):
         # round, with no branch and no commit.
         for sentence in (
             record,
+            "Each round's review-fix summary has a path of its own, keyed by workflow, review loop and round "
+            "like the input copies, and never overwrites an earlier round's.",
             "A retry of the same round rewrites that round's line and never adds a second.",
             "This write needs no branch and no commit: the context file lies under the build artifact root.",
             "The section is the loop's own, not a source anchor's record.",
@@ -2596,12 +2598,12 @@ class FormulaAssetTests(unittest.TestCase):
                    "proof command and its result) is an answer: check it against the current commit, by the "
                    "line or reason it gives or by the proof command and its result, which you may run again."),
             ("T2", "When the answer holds, do not report the finding: list it once in your report as "
-                   "ANSWER ACCEPTED with the round of the answer."),
+                   "ANSWER ACCEPTED with the round of the answer and its outcome word."),
             ("T3", "When it does not hold, report the finding as ANSWER REJECTED with the round of the "
                    "answer and the reason the answer fails."),
             ("T3", "When you cannot tell whether the answer covers what you see (another case of the class, "
                    "another line, another criterion), the answer is rejected: report the finding as "
-                   "ANSWER REJECTED and say what it does not cover."),
+                   "ANSWER REJECTED with the round of the answer and say what it does not cover."),
             ("T3", "A line that reads FIXED with a commit is no answer: judge the current commit as you "
                    "would without it."),
             ("T3", "A line without an outcome is no answer: the finding stands."),
@@ -2640,7 +2642,8 @@ class FormulaAssetTests(unittest.TestCase):
             "It takes one of three lines and no other: FIXED with a commit; for missing evidence, FIXED with "
             "a proof command that no earlier summary records for it; or a line without an outcome that gives "
             "the reviewer's reason and says why this pass neither fixes nor proves it.",
-            "Never write WRONG, INTENDED or DOES NOT MATTER for it again, and never the same proof command again.",
+            "Never write WRONG, INTENDED or DOES NOT MATTER for it again, and never again FIXED by the same "
+            "proof command without a commit.",
             "Each of the three sets `iterate` by the verdict rules below.",
             "An entry the synthesis carries as ANSWER ACCEPTED is not a finding of this round and takes no "
             "line in the summary.",
@@ -2657,7 +2660,7 @@ class FormulaAssetTests(unittest.TestCase):
         # every lane, and it names no lane.
         paragraphs = {}
         for name, text in lanes.items():
-            found = [fold(part) for part in text.split("\n\n") if heading in part]
+            found = [fold(part) for part in text.split("\n\n") if heading in fold(part)]
             with self.subTest(contract="T7", lane=name, check="one paragraph"):
                 self.assertEqual(len(found), 1)
                 paragraphs[name] = found[0]
@@ -2669,18 +2672,26 @@ class FormulaAssetTests(unittest.TestCase):
             self.assertEqual(len(paragraphs), 3)
             self.assertEqual(len(set(paragraphs.values())), 1)
 
-        # T8: the unchanged root checkout gets one verdict, stated after the
-        # sentence that leaves retiring a required fix to the review lanes.
+        # T8: the unchanged root checkout gets one verdict, stated directly
+        # after the sentence that leaves retiring a required fix to the
+        # review lanes. It takes no line whether it is reported alone or
+        # beside other findings, and the case it names is still there.
         retire = "the review lanes, not this lane, retire a required fix."
         exception = (
-            "The unchanged-root-checkout case above is the one exception to both rules: it is not a "
-            "required fix, takes no line in the summary and stays `done`, whatever verdict the lane that "
-            "reported it recorded."
+            "An unchanged root checkout is never a required fix and takes no line in the summary. In the "
+            "case above where it is the only reported issue, it is the one exception to both rules: the "
+            "verdict stays `done`, whatever verdict the lane that reported it recorded."
+        )
+        case = (
+            'If the only reported issue is "implementation exists in the worktree but not the root checkout" '
+            "and the source anchor/worktree passes the requirements, record a no-op fix summary and set "
+            "`code_review.verdict=done`."
         )
         with self.subTest(contract="T8"):
-            self.assertIn(exception, apply)
             self.assertIn(retire, apply)
-            self.assertGreater(apply.index(exception), apply.index(retire))
+            self.assertIn(exception, apply)
+            self.assertEqual(apply.index(exception), apply.index(retire) + len(retire) + 1)
+            self.assertIn(case, apply)
 
         # Guards: the three lanes are as city-neutral as the files of the
         # test above.
