@@ -170,6 +170,27 @@ run
 calls 1
 seen one
 
+start empty_recovery
+mail one | inbox
+run
+: > .gc/mail-wake.seen
+inbox < /dev/null
+run
+calls 1
+seen one
+
+start senderless
+jq -n '{messages: [
+    {id:"one", subject:"update", read:false, created_at:"1970-01-01T00:16:40Z"},
+    {id:"two", from:"", read:false, created_at:"1970-01-01T00:16:40Z"},
+    {id:"three", from:"control\ncharacter", read:false, created_at:"1970-01-01T00:16:40Z"}
+]}' > inbox
+run --check
+grep -Fq 'unread=3 eligible=3' output || fail "missing sender should remain eligible"
+run
+sent '[mail-wake] 3 unread mail from (unknown sender)'
+seen one two three
+
 start torn_seed
 { mail message-ab; mail message-abcdef; } | inbox
 run --seed
@@ -302,4 +323,4 @@ assert order["timeout"] == "90s"
 assert order["exec"] == '"$ORDER_DIR/scripts/mail-wake.sh"'
 PY
 
-echo '20 mail-wake cases passed'
+echo '22 mail-wake cases passed'

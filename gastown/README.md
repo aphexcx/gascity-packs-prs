@@ -49,7 +49,8 @@ without sending. If it prints `inbox unavailable`, retry the seed before enablin
 To opt in, copy the script and `orders/mail-wake.toml` into the
 same relative paths in that city, then change `enabled = false` to `true` in
 the local TOML. To turn it off, restore `false`. To roll back, remove those two
-local copies and retain the seen file for a future install.
+local copies and retain both `.gc/mail-wake.seen` and `.gc/mail-wake.confirmed`
+for a future install.
 
 ## Merge strategies
 

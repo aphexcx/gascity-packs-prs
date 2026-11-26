@@ -22,11 +22,11 @@ if ! headers=$(gc mail inbox mayor --json --city "$(pwd -P)" 2>/dev/null | jq -c
     | (.recipients // []) as $local_addresses
     | .messages | arrays | map(
         select(type == "object" and (.read == false or .read == null))
-        | select((.id | identifier) and (.from | identifier))
+        | select(.id | identifier)
         | if (.subject // "" | startswith("[mail-wake]")) then {wake: .id}
           else select(.from != "mayor" and .from != "mail-wake")
             | select(.from as $from | $local_addresses | index($from) == null)
-            | {id, from, created_at}
+            | {id, from: (if (.from | identifier) then .from else "(unknown sender)" end), created_at}
           end)
 ' 2>/dev/null); then
     headers=null
@@ -118,7 +118,7 @@ def send(rows, confirmed_id):
         return None
     if reply.get("notified") is True:
         return wake_id, "announced"
-    sys.exit("mail-wake: turn unconfirmed, archive the wake to release its dedup key")
+    sys.exit(f"mail-wake: turn unconfirmed for wake {wake_id}, archive it to release its dedup key")
 
 
 def promote_confirmation():
@@ -186,7 +186,7 @@ def process():
                 seen, _ = ledger_view(ledger.read(), read_confirmation())
         print(f"mail-wake: unread={len(unread)} eligible={sum(row['id'] not in seen for row in candidates)}")
         return
-    if not candidates:
+    if not candidates and not (confirmation.exists() or staged.exists()):
         print("mail-wake: no eligible mail")
         return
     state.parent.mkdir(exist_ok=True)
