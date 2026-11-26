@@ -623,11 +623,13 @@ func (e *Engine) sendLocal(ctx context.Context, now time.Time) error {
 		}
 		key := mark.LocalMail.Key
 		if key == "" {
-			key = "slack-silent:" + mark.Message.ID
+			prefix := "slack-silent:"
 			if !mark.LocalMail.Tried.IsZero() {
 				// A pre-upgrade attempt may already have reached the mailbox.
-				key = fmt.Sprintf("slack-owner-notice:%x", sha256.Sum256([]byte(mark.Message.ID+mark.Message.Created.Format(time.RFC3339Nano))))
+				prefix = "slack-owner-notice:"
 			}
+			episode := sha256.Sum256([]byte(mark.Message.ID + mark.Message.Created.Format(time.RFC3339Nano)))
+			key = fmt.Sprintf("%s%x", prefix, episode)
 		}
 		if err := e.change(func(s *state) {
 			m := s.Owners[conversation]

@@ -149,7 +149,7 @@ func TestNeverSilentCompanyUsesActingToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = e.Track(neversilent.Message{ID: "example", Conversation: "D_EXAMPLE", OwnerAgent: "ollie"}); err != nil {
+	if err = e.Track(neversilent.Message{ID: "example", Conversation: "D_EXAMPLE", OwnerAgent: "ollie", Created: time.Unix(100, 0).UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	if err = e.Stop("example", true); err != nil {
@@ -162,7 +162,8 @@ func TestNeverSilentCompanyUsesActingToken(t *testing.T) {
 		t.Fatalf("posts=%d", posts)
 	}
 	args, err := os.ReadFile(os.Getenv("MAIL_ARGS"))
-	if err != nil || !strings.HasSuffix(string(args), "--dedup\x00slack-silent:example\x00--notify\x00--json\x00") {
+	const key = "slack-silent:4a87696a777b37fc5c70408cd82e00a9c5b2700055ac5347684bd0d339ef1150"
+	if err != nil || !strings.HasSuffix(string(args), "--dedup\x00"+key+"\x00--notify\x00--json\x00") {
 		t.Fatalf("local notice flags: %q, %v", args, err)
 	}
 }

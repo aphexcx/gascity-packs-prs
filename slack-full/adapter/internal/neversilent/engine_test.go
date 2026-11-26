@@ -279,10 +279,11 @@ func TestLocalMailKeySurvivesUpgradeAndRestart(t *testing.T) {
 			const conversation = "example-conversation"
 			msg := Message{ID: "example-message", Created: f.now, Conversation: conversation}
 			mark := ownerMark{Message: msg, Posted: true, At: f.now, Line: DownLine}
-			want := "slack-silent:" + msg.ID
+			episode := fmt.Sprintf("%x", sha256.Sum256([]byte(msg.ID+msg.Created.Format(time.RFC3339Nano))))
+			want := "slack-silent:" + episode
 			if legacy {
 				mark.LocalMail.Tried = f.now.Add(-MailRetry)
-				want = fmt.Sprintf("slack-owner-notice:%x", sha256.Sum256([]byte(msg.ID+msg.Created.Format(time.RFC3339Nano))))
+				want = "slack-owner-notice:" + episode
 			}
 			f.check(f.e.change(func(s *state) { s.Owners[conversation] = mark }))
 			var keys []string

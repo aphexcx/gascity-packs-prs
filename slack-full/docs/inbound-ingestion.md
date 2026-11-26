@@ -177,7 +177,8 @@ the message was definitely lost. The existing dead-letter file continues to
 represent failed transport handoffs.
 
 The local never-silent owner notice asks for a turn with
-`slack-silent:<message id>`. A retry of a local notice first attempted before
+`slack-silent:<episode id>`, using the existing digest of the tracked message ID
+and its creation time. A retry of a local notice first attempted before
 upgrade retains its original key. After a new inbound loss is written to disk, the
 adapter also asks for a turn with `dead-letter:<file name>`. That mail contains
 the path and the delivery reason. Provider response bodies stay in the file.
