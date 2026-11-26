@@ -36,10 +36,11 @@ The recipe must read warrant metadata from the claimed bead via
 The city-wide `mail-wake` order is off by default. When enabled, it checks the
 mayor's unread mail every three minutes and sends one local notification for
 previously unannounced mail at least three minutes old. The order appends covered
-IDs to `.gc/mail-wake.seen` after GC confirms a turn or returns an earlier wake
-still in the unread inbox. It remembers the last wake whose turn failed in
-`.gc/mail-wake.unnotified`. If a read or unnotified wake holds the dedup key,
-archive that wake so the next tick can retry the pending mail. With `gc`, `jq`, and Python 3
+IDs to `.gc/mail-wake.seen` after GC confirms a turn. A suppressed send covers
+new IDs only while that confirmed wake, recorded in `.gc/mail-wake.confirmed`,
+is still unread. If a read or unconfirmed wake holds the dedup key, archive
+that wake so the next tick can retry the pending mail. Use a mail provider
+that supports `--dedup`, such as GC's built-in provider. With `gc`, `jq`, and Python 3.7+
 on PATH, run the pack's `orders/scripts/mail-wake.sh --check` from the city
 directory to preview counts, or use `--seed` there to cover the existing backlog
 without sending. If it prints `inbox unavailable`, retry the seed before enabling.

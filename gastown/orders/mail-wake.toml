@@ -5,4 +5,5 @@ enabled = false
 trigger = "cooldown"
 interval = "3m"
 exec = '"$ORDER_DIR/scripts/mail-wake.sh"'
-timeout = "30s"
+# GC can wait 30 seconds for an idle recipient before queuing a turn.
+timeout = "90s"

@@ -70,7 +70,7 @@ args = json.loads(Path("calls").read_text().splitlines()[1])
 assert args[:3] == ["mail", "send", "mayor"]
 assert "--json" in args and "--notify" in args
 for flag, value in [("--dedup", "mail-net"), ("--from", "controller"), ("-s", sys.argv[1]),
-                    ("-m", "Please read your inbox with gc mail inbox.")]:
+                    ("-m", "Archive this wake notice, then read your inbox with gc mail inbox.")]:
     assert args[args.index(flag) + 1] == value, args
 PY
 }
@@ -115,20 +115,38 @@ sent '[mail-wake] 3 unread mail from alpha,beta'
 seen one two three
 
 start suppressed
+mail first | inbox
+run
+seen first
 { mail one; mail notice controller '' '[mail-wake] earlier'; } | inbox
 duplicate='{"ok":true,"already_done":true,"id":"notice","count":0}'
 SEND_JSON="$duplicate" run
 sent '[mail-wake] 1 unread mail from worker'
-seen one
+seen first one
 
 start stale
+mail first | inbox
+run
+seen first
 mail one | inbox
 SEND_JSON="$duplicate" run
 calls 2
-no_seen
+seen first
 # Archiving the read notice releases the dedup key.
 run
 sent '[mail-wake] 1 unread mail from worker'
+seen first one
+
+start missing_confirmation
+mail one | inbox
+SEND_JSON='' EXPECT_RC=1 run
+no_seen
+{ mail one; mail notice controller '' '[mail-wake] earlier'; } | inbox
+SEND_JSON="$duplicate" run
+calls 2
+no_seen
+mail one | inbox
+SEND_JSON='{"ok":true,"id":"replacement","notified":true}' run
 seen one
 
 start unnotified
@@ -202,6 +220,9 @@ mail one | inbox
 INBOX_RC=1 run
 calls 1
 no_seen
+INBOX_RC=1 run --seed
+calls 1
+no_seen
 
 start dependencies
 mkdir no-jq
@@ -219,7 +240,8 @@ import tomllib
 order = tomllib.loads(Path(sys.argv[1]).read_text())["order"]
 assert order["scope"] == "city" and order["enabled"] is False
 assert order["trigger"] == "cooldown" and order["interval"] == "3m"
+assert order["timeout"] == "90s"
 assert order["exec"] == '"$ORDER_DIR/scripts/mail-wake.sh"'
 PY
 
-echo '14 mail-wake cases passed'
+echo '15 mail-wake cases passed'

@@ -10,9 +10,13 @@ if ! command -v jq >/dev/null; then
     echo 'mail-wake requires jq on PATH' >&2
     exit 2
 fi
+if ! command -v gc >/dev/null || ! command -v python3 >/dev/null; then
+    echo 'mail-wake requires gc and python3 on PATH' >&2
+    exit 2
+fi
 
 # Discard bodies in the pipeline, before storing anything in a shell variable.
-if ! headers=$(gc mail inbox mayor --json --city "$PWD" 2>/dev/null | jq -ces '
+if ! headers=$(gc mail inbox mayor --json --city "$(pwd -P)" 2>/dev/null | jq -ces '
     def identifier: type == "string" and length > 0 and (test("[[:cntrl:]]") | not);
     select(length == 1) | .[0] | select(.ok != false)
     | (.recipients // []) as $local_addresses
@@ -31,7 +35,7 @@ fi
 
 # The order runs on Linux and macOS. Use the standard library for RFC 3339
 # offsets and for a file lock that the kernel releases if the order times out.
-exec python3 - "${1:-send}" 3<<<"$headers" <<'PY'
+exec python3 -I - "${1:-send}" 3<<<"$headers" <<'PY'
 from datetime import datetime
 import fcntl
 import json
@@ -44,7 +48,7 @@ import time
 
 mode = sys.argv[1]
 state = Path(".gc/mail-wake.seen")
-with os.fdopen(3) as stream:
+with os.fdopen(3, encoding="utf-8") as stream:
     headers = json.load(stream)
 unread = {row["id"]: row for row in headers if "id" in row}
 unread_wakes = {row["wake"] for row in headers if "wake" in row}
@@ -71,7 +75,7 @@ def send(rows):
         subject = subject.encode()[:497].decode("utf-8", errors="ignore") + "..."
     result = subprocess.run(
         ["gc", "mail", "send", "mayor", "--notify", "--dedup", "mail-net", "--json", "--city", os.getcwd(),
-         "--from", "controller", "-s", subject, "-m", "Please read your inbox with gc mail inbox."],
+         "--from", "controller", "-s", subject, "-m", "Archive this wake notice, then read your inbox with gc mail inbox."],
         capture_output=True,
     )
     if result.returncode:
@@ -84,27 +88,31 @@ def send(rows):
         sys.exit("mail-wake: send failed, will retry")
 
     wake_id = reply.get("id")
-    # An unread notice can exist even though gc failed to notify.
-    # Remember that ID across ticks until an archive releases the key.
-    failed = state.with_name("mail-wake.unnotified")
+    if not isinstance(wake_id, str) or not wake_id:
+        sys.exit("mail-wake: no wake ID in send reply, will retry")
+    # A timeout can leave an unread notice behind without an acknowledged
+    # turn. Only the notice whose confirmation we saved can cover more mail.
+    confirmed = state.with_name("mail-wake.confirmed")
     if reply.get("already_done") is True:
-        if isinstance(wake_id, str) and wake_id in unread_wakes:
-            if not failed.exists() or failed.read_text(encoding="utf-8") != wake_id:
-                return "covered by existing wake"
+        if (wake_id in unread_wakes and confirmed.exists()
+                and confirmed.read_text(encoding="utf-8") == wake_id + "\n"):
+            return "covered by existing wake"
         return None
     if reply.get("notified") is True:
+        confirmed.write_text(wake_id + "\n", encoding="utf-8")
         return "announced"
-    if isinstance(wake_id, str) and wake_id:
-        failed.write_text(wake_id, encoding="utf-8")
     sys.exit("mail-wake: turn unconfirmed, archive the wake to release its dedup key")
 
 
 def process():
-    now = int(os.environ["MAIL_WAKE_NOW"]) * 10**9 if "MAIL_WAKE_NOW" in os.environ else time.time_ns()
+    try:
+        now = int(os.environ["MAIL_WAKE_NOW"]) * 10**9 if "MAIL_WAKE_NOW" in os.environ else time.time_ns()
+    except ValueError:
+        sys.exit("mail-wake: MAIL_WAKE_NOW must be an integer Unix timestamp")
     cutoff = now - 180 * 10**9
     candidates = [row for row in unread.values() if mode == "--seed" or old_enough(row, cutoff)]
     if mode == "--check":
-        seen = set(state.read_text().splitlines()) if state.exists() else set()
+        seen = set(state.read_text(encoding="utf-8").split("\n")) if state.exists() else set()
         print(f"mail-wake: unread={len(unread)} eligible={sum(row['id'] not in seen for row in candidates)}")
         return
     if not candidates:
