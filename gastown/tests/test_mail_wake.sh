@@ -23,6 +23,10 @@ if args == ["mail", "inbox", "mayor", "--json"]:
     sys.stdout.buffer.write(Path("inbox").read_bytes())
     sys.exit(int(os.environ.get("INBOX_RC", 0)))
 if args[:3] == ["mail", "send", "mayor"]:
+    # A city order has no mail-wake session. GC accepts its reserved
+    # controller sender without requiring the operator to configure a mailbox.
+    if "--from" in args and args[args.index("--from") + 1] != "controller":
+        sys.exit(1)
     print(os.environ.get("SEND_JSON", '{"ok":true,"count":1}'))
     sys.exit(int(os.environ.get("SEND_RC", 0)))
 sys.exit(99)
@@ -62,7 +66,7 @@ import sys
 args = json.loads(Path("calls").read_text().splitlines()[1])
 assert args[:3] == ["mail", "send", "mayor"]
 assert "--json" in args and "--notify" in args
-for flag, value in [("--dedup", "mail-net"), ("--from", "mail-wake"), ("-s", sys.argv[1]),
+for flag, value in [("--dedup", "mail-net"), ("--from", "controller"), ("-s", sys.argv[1]),
                     ("-m", "Please read your inbox with gc mail inbox.")]:
     assert args[args.index(flag) + 1] == value, args
 PY
@@ -89,7 +93,7 @@ sent '[mail-wake] 1 unread mail from worker'
 seen recent
 
 start boundary
-{ mail exactly worker 1970-01-01T01:17:00+01:00; mail young worker 1970-01-01T00:17:00.001Z; } | inbox
+{ mail exactly worker 1970-01-01T01:17:00+01:00; mail young worker 1970-01-01T00:17:00.000000001Z; } | inbox
 run
 sent '[mail-wake] 1 unread mail from worker'
 seen exactly

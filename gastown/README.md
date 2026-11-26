@@ -35,8 +35,10 @@ The recipe must read warrant metadata from the claimed bead via
 
 The city-wide `mail-wake` order is off by default. When enabled, it checks the
 mayor's unread mail every three minutes and sends one local notification for
-previously unannounced mail at least three minutes old. It records covered IDs
-in the city's append-only `.gc/mail-wake.seen`. With `gc`, `jq`, and Python 3
+previously unannounced mail at least three minutes old. GC's built-in mail
+provider suppresses another notification until the previous one is archived.
+The order records IDs covered by either outcome in the city's append-only
+`.gc/mail-wake.seen`. With `gc`, `jq`, and Python 3
 on PATH, run the pack's `orders/scripts/mail-wake.sh --check` from the city
 directory to preview counts, or use `--seed` there to cover the existing backlog
 without sending. To opt in, copy the script and `orders/mail-wake.toml` into the

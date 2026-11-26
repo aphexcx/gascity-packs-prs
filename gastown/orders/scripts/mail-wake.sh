@@ -36,6 +36,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -47,10 +48,16 @@ with os.fdopen(3) as stream:
 
 
 def old_enough(row, cutoff):
+    # Go emits RFC3339Nano. datetime alone truncates the last three digits.
+    stamp = re.fullmatch(r"([0-9-]+T[0-9:]+)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)", str(row["created_at"]))
+    if not stamp:
+        return False
+    seconds, fraction, zone = stamp.groups()
     try:
-        ts = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
-        return ts.tzinfo is not None and ts.timestamp() <= cutoff
-    except (AttributeError, ValueError, OverflowError, OSError):
+        ts = datetime.fromisoformat(seconds + zone.replace("Z", "+00:00"))
+        ns = int(ts.timestamp()) * 10**9 + int((fraction or "").ljust(9, "0"))
+        return ns <= cutoff
+    except (ValueError, OverflowError, OSError):
         return False
 
 
@@ -59,7 +66,7 @@ def send(rows):
     subject = f"[mail-wake] {len(rows)} unread mail from {senders}"
     result = subprocess.run(
         ["gc", "mail", "send", "mayor", "--notify", "--dedup", "mail-net", "--json",
-         "--from", "mail-wake", "-s", subject, "-m", "Please read your inbox with gc mail inbox."],
+         "--from", "controller", "-s", subject, "-m", "Please read your inbox with gc mail inbox."],
         capture_output=True,
     )
     if result.returncode == 0:
@@ -73,8 +80,9 @@ def send(rows):
 
 
 def process():
-    now = float(os.environ["MAIL_WAKE_NOW"]) if "MAIL_WAKE_NOW" in os.environ else time.time()
-    candidates = [row for row in unread.values() if mode == "--seed" or old_enough(row, now - 180)]
+    now = int(os.environ["MAIL_WAKE_NOW"]) * 10**9 if "MAIL_WAKE_NOW" in os.environ else time.time_ns()
+    cutoff = now - 180 * 10**9
+    candidates = [row for row in unread.values() if mode == "--seed" or old_enough(row, cutoff)]
     if mode == "--check":
         seen = set(state.read_text().splitlines()) if state.exists() else set()
         print(f"mail-wake: unread={len(unread)} eligible={sum(row['id'] not in seen for row in candidates)}")
