@@ -1,0 +1,434 @@
+A1
+dead_letter_alarm_test.go:177: local calls = 0, want 1
+FAIL TestDeadLetterAlarmSet/dead
+dead_letter_alarm_test.go:177: local calls = 0, want 1
+FAIL TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+dead_letter_alarm_test.go:177: local calls = 0, want 1
+FAIL TestDeadLetterAlarmSet/room-and-handle
+dead_letter_alarm_test.go:177: local calls = 0, want 1
+FAIL TestDeadLetterAlarmSet/replay-refused
+FAIL TestDeadLetterAlarmSet
+dead_letter_alarm_test.go:197: local calls = 0, want 2
+FAIL TestDeadLetterAlarmOnce
+dead_letter_alarm_test.go:219: local calls = 0, want 1
+FAIL TestDeadLetterAlarmArchive/unarchived
+dead_letter_alarm_test.go:219: local calls = 0, want 1
+FAIL TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+dead_letter_alarm_test.go:219: local calls = 0, want 1
+FAIL TestDeadLetterAlarmArchive/arrived-before-retry
+FAIL TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+dead_letter_alarm_test.go:252: local calls = 0, want 1
+FAIL TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+FAIL TestDeadLetterAlarmArrived
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/success
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/local-refused
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/wake-absent
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/empty
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/non-json
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/ok-false
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/operator-refused
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/operator-unsupported
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/operator-context
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/remote-ambiguous
+dead_letter_alarm_test.go:316: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/operator-timeout
+dead_letter_alarm_test.go:337: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/not-configured
+dead_letter_alarm_test.go:366: local calls = 0, want 100
+FAIL TestDeadLetterAlarmRoads/both-refused-for-a-day
+FAIL TestDeadLetterAlarmRoads
+dead_letter_alarm_test.go:406: local calls = 0, want 1
+FAIL TestDeadLetterAlarmWords/clock
+dead_letter_alarm_test.go:406: local calls = 0, want 1
+FAIL TestDeadLetterAlarmWords/plain
+dead_letter_alarm_test.go:406: local calls = 0, want 1
+FAIL TestDeadLetterAlarmWords/manual
+dead_letter_alarm_test.go:406: local calls = 0, want 1
+FAIL TestDeadLetterAlarmWords/aged
+dead_letter_alarm_test.go:406: local calls = 0, want 1
+FAIL TestDeadLetterAlarmWords/off
+dead_letter_alarm_test.go:433: operator calls = 0, want 2
+FAIL TestDeadLetterAlarmWords/batch-and-earliest-retry
+FAIL TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+dead_letter_alarm_test.go:541: missing pre-command record
+FAIL TestDeadLetterAlarmRestart/in-flight-local
+dead_letter_alarm_test.go:541: missing pre-command record
+FAIL TestDeadLetterAlarmRestart/in-flight-operator
+dead_letter_alarm_test.go:559: operator calls = 0, want 1
+FAIL TestDeadLetterAlarmRestart/damaged-records
+FAIL TestDeadLetterAlarmRestart
+dead_letter_alarm_test.go:594: worker returned before sending
+FAIL TestDeadLetterAlarmWire
+A1: 13 passed, 38 failed, 0 skipped; package fail
+
+A2-set
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+dead_letter_alarm_test.go:177: local calls = 1, want 0
+FAIL TestDeadLetterAlarmSet/held
+dead_letter_alarm_test.go:177: local calls = 1, want 0
+FAIL TestDeadLetterAlarmSet/pasted
+dead_letter_alarm_test.go:177: local calls = 1, want 0
+FAIL TestDeadLetterAlarmSet/acknowledged
+dead_letter_alarm_test.go:177: local calls = 1, want 0
+FAIL TestDeadLetterAlarmSet/reaction
+dead_letter_alarm_test.go:177: local calls = 1, want 0
+FAIL TestDeadLetterAlarmSet/bot
+dead_letter_alarm_test.go:177: local calls = 1, want 0
+FAIL TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+FAIL TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+dead_letter_alarm_test.go:232: local calls = 2, want 1
+FAIL TestDeadLetterAlarmArchive/arrived-before-retry
+FAIL TestDeadLetterAlarmArchive
+dead_letter_alarm_test.go:268: local calls = 1, want 0
+FAIL TestDeadLetterAlarmArrived/before-pass
+dead_letter_alarm_test.go:270: operator calls = 1, want 0
+FAIL TestDeadLetterAlarmArrived/before-operator
+dead_letter_alarm_test.go:268: local calls = 1, want 0
+FAIL TestDeadLetterAlarmArrived/replay-row
+FAIL TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+dead_letter_alarm_test.go:367: local calls = 101, want 100
+FAIL TestDeadLetterAlarmRoads/both-refused-for-a-day
+FAIL TestDeadLetterAlarmRoads
+PASS TestDeadLetterAlarmWords/clock
+PASS TestDeadLetterAlarmWords/plain
+dead_letter_alarm_test.go:408: local arguments or body differ
+dead_letter_alarm_test.go:414: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/manual
+PASS TestDeadLetterAlarmWords/aged
+PASS TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+FAIL TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+A2-set: 34 passed, 17 failed, 0 skipped; package fail
+
+A2-arrived
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+dead_letter_alarm_test.go:270: operator calls = 1, want 0
+FAIL TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+FAIL TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+PASS TestDeadLetterAlarmWords/clock
+PASS TestDeadLetterAlarmWords/plain
+PASS TestDeadLetterAlarmWords/manual
+PASS TestDeadLetterAlarmWords/aged
+PASS TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+PASS TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+A2-arrived: 49 passed, 2 failed, 0 skipped; package fail
+
+A2-roads
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+dead_letter_alarm_test.go:337: operator calls = 2, want 0
+FAIL TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+FAIL TestDeadLetterAlarmRoads
+PASS TestDeadLetterAlarmWords/clock
+PASS TestDeadLetterAlarmWords/plain
+PASS TestDeadLetterAlarmWords/manual
+PASS TestDeadLetterAlarmWords/aged
+PASS TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+PASS TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+A2-roads: 49 passed, 2 failed, 0 skipped; package fail
+
+A2-apart
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+PASS TestDeadLetterAlarmWords/clock
+PASS TestDeadLetterAlarmWords/plain
+PASS TestDeadLetterAlarmWords/manual
+PASS TestDeadLetterAlarmWords/aged
+PASS TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+PASS TestDeadLetterAlarmWords
+dead_letter_alarm_test.go:477: hold queue blocked until command ended
+FAIL TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+A2-apart: 50 passed, 1 failed, 0 skipped; package fail
+
+A2-back
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+PASS TestDeadLetterAlarmWords/clock
+PASS TestDeadLetterAlarmWords/plain
+PASS TestDeadLetterAlarmWords/manual
+PASS TestDeadLetterAlarmWords/aged
+PASS TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+PASS TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+dead_letter_alarm_test.go:522: expected 1 recovery offers and pastes
+dead_letter_alarm_test.go:527: alarm changed offer schedule
+dead_letter_alarm_test.go:491: C1|100.1: pastes=2 inactive=true recorded=true replayed=true
+FAIL TestDeadLetterAlarmBack/retrying
+dead_letter_alarm_test.go:522: expected 1 recovery offers and pastes
+dead_letter_alarm_test.go:527: alarm changed offer schedule
+dead_letter_alarm_test.go:491: C1|100.1: pastes=2 inactive=true recorded=true replayed=true
+FAIL TestDeadLetterAlarmBack/waiting
+dead_letter_alarm_test.go:522: expected 0 recovery offers and pastes
+dead_letter_alarm_test.go:527: alarm changed offer schedule
+dead_letter_alarm_test.go:491: C1|100.1: pastes=1 inactive=true recorded=true replayed=false
+FAIL TestDeadLetterAlarmBack/hand_check
+FAIL TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+A2-back: 47 passed, 4 failed, 0 skipped; package fail
+
+final-C1
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+PASS TestDeadLetterAlarmWords/clock
+PASS TestDeadLetterAlarmWords/plain
+PASS TestDeadLetterAlarmWords/manual
+PASS TestDeadLetterAlarmWords/aged
+PASS TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+PASS TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+final-C1: 51 passed, 0 failed, 0 skipped; package pass
