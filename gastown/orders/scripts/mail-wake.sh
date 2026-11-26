@@ -12,7 +12,7 @@ if ! command -v jq >/dev/null; then
 fi
 
 # Discard bodies in the pipeline, before storing anything in a shell variable.
-if ! headers=$(gc mail inbox mayor --json 2>/dev/null | jq -ces '
+if ! headers=$(gc mail inbox mayor --json --city "$PWD" 2>/dev/null | jq -ces '
     def identifier: type == "string" and length > 0 and (test("[[:cntrl:]]") | not);
     select(length == 1) | .[0] | select(.ok != false)
     | (.recipients // []) as $local_addresses
@@ -65,7 +65,7 @@ def send(rows):
     senders = ",".join(sorted({row["from"] for row in rows}))
     subject = f"[mail-wake] {len(rows)} unread mail from {senders}"
     result = subprocess.run(
-        ["gc", "mail", "send", "mayor", "--notify", "--dedup", "mail-net", "--json",
+        ["gc", "mail", "send", "mayor", "--notify", "--dedup", "mail-net", "--json", "--city", os.getcwd(),
          "--from", "controller", "-s", subject, "-m", "Please read your inbox with gc mail inbox."],
         capture_output=True,
     )

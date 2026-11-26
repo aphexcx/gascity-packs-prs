@@ -19,6 +19,9 @@ import sys
 args = sys.argv[1:]
 with open("calls", "a") as log:
     print(json.dumps(args), file=log)
+if "--city" not in args or Path(args[args.index("--city") + 1]).resolve() != Path.cwd():
+    sys.exit(98)
+del args[args.index("--city"):args.index("--city") + 2]
 if args == ["mail", "inbox", "mayor", "--json"]:
     sys.stdout.buffer.write(Path("inbox").read_bytes())
     sys.exit(int(os.environ.get("INBOX_RC", 0)))
@@ -53,7 +56,7 @@ run() {
     "$script" "$@" >output 2>&1 || rc=$?
     [[ $rc -eq ${EXPECT_RC:-0} ]] || fail "exit $rc, output $(cat output)"
     if grep -Fq "$BODY_MARKER" calls output; then fail "body escaped the inbox"; fi
-    [[ $(jq -sc 'map(select(. == ["mail","inbox","mayor","--json"])) | length' calls) == 1 ]] ||
+    [[ $(jq -sc 'map(select(.[:4] == ["mail","inbox","mayor","--json"])) | length' calls) == 1 ]] ||
         fail "expected one inbox read"
 }
 calls() { [[ $(wc -l <calls) -eq $1 ]] || fail "unexpected gc calls: $(cat calls)"; }
