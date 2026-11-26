@@ -2568,8 +2568,9 @@ class FormulaAssetTests(unittest.TestCase):
             with self.subTest(contract="TC", step=name, mark="writes the list"):
                 self.assertIn(record, fold(children[name]))
 
-        apply = fold((workflows / "build-basic-review/{target}.apply-review-findings.md").read_text(encoding="utf-8"))
-        synthesize = fold((workflows / "build-basic-review/{target}.synthesize-review.md").read_text(encoding="utf-8"))
+        # T1 to T8 read the texts the formula loads, not paths of their own.
+        apply = fold(children["{target}.apply-review-findings"])
+        synthesize = fold(children["{target}.synthesize-review"])
 
         # T1 (R1): the fix step records each round's summary, one line a
         # round, with no branch and no commit.
@@ -2622,8 +2623,8 @@ class FormulaAssetTests(unittest.TestCase):
             "Read no review-fix summary and judge no answer: carry the lanes' marks.",
             "An ANSWER ACCEPTED entry is not a finding and takes none of the four classes above: carry it "
             "in one line with what was answered, the round of the answer and its outcome word.",
-            "A finding a lane marks ANSWER REJECTED keeps its class, required fix or missing evidence, and "
-            "carries the round of the answer and the lane's reason.",
+            "A finding a lane marks ANSWER REJECTED keeps the class it has, of the four above, and carries "
+            "the round of the answer and the lane's reason.",
             "When one lane accepts an answer and another rejects it, it is rejected.",
         ):
             with self.subTest(contract="T5", sentence=sentence[:60]):
@@ -2636,6 +2637,7 @@ class FormulaAssetTests(unittest.TestCase):
             "In a round after the first that the family comparison above did not stop, read every "
             "review-fix summary listed under the review context's `## Earlier Review Rounds` before you "
             "settle a finding.",
+            "A listed summary that is missing or cannot be read answers nothing: say so in this round's summary.",
             "A blocking finding of this round that an earlier summary answered (WRONG, INTENDED, DOES NOT "
             "MATTER, or FIXED by a proof command without a commit) has been rejected, whether or not a lane "
             "marked it ANSWER REJECTED.",
@@ -2656,21 +2658,25 @@ class FormulaAssetTests(unittest.TestCase):
         with self.subTest(contract="T6", sentence="the single-case line without an outcome is gone"):
             self.assertNotIn("The only line without an outcome is a required fix this pass cannot settle", apply)
 
-        # T7 (R2, one rule): the read is one paragraph, the same text in
-        # every lane, and it names no lane.
-        paragraphs = {}
+        # T7 (R2, one rule): the read, from its first sentence to its last
+        # with whitespace folded, is the same text in every lane, and it
+        # names no lane.
+        first, last = read[0][1], read[-1][1]
+        spans = {}
         for name, text in lanes.items():
-            found = [fold(part) for part in text.split("\n\n") if heading in fold(part)]
-            with self.subTest(contract="T7", lane=name, check="one paragraph"):
-                self.assertEqual(len(found), 1)
-                paragraphs[name] = found[0]
+            folded = fold(text)
+            with self.subTest(contract="T7", lane=name, check="one read"):
+                self.assertEqual(folded.count(first), 1)
+                start = folded.index(first)
+                span = folded[start : folded.index(last, start) + len(last)]
+                spans[name] = span
                 for _, sentence in read:
-                    self.assertIn(sentence, found[0])
+                    self.assertIn(sentence, span)
                 for lane_word in ("acceptance", "test evidence", "simplicity", "_verdict"):
-                    self.assertNotIn(lane_word, found[0])
+                    self.assertNotIn(lane_word, span)
         with self.subTest(contract="T7", check="the same text in every lane"):
-            self.assertEqual(len(paragraphs), 3)
-            self.assertEqual(len(set(paragraphs.values())), 1)
+            self.assertEqual(len(spans), 3)
+            self.assertEqual(len(set(spans.values())), 1)
 
         # T8: the unchanged root checkout gets one verdict, stated directly
         # after the sentence that leaves retiring a required fix to the
@@ -2678,9 +2684,10 @@ class FormulaAssetTests(unittest.TestCase):
         # beside other findings, and the case it names is still there.
         retire = "the review lanes, not this lane, retire a required fix."
         exception = (
-            "An unchanged root checkout is never a required fix and takes no line in the summary. In the "
-            "case above where it is the only reported issue, it is the one exception to both rules: the "
-            "verdict stays `done`, whatever verdict the lane that reported it recorded."
+            "An unchanged root checkout is never a required fix and takes no line in the summary. A lane "
+            "that reported it and nothing else, or nothing else but residual risks or PRECONDITION items, "
+            "counts as approving, whatever verdict it recorded; so when it is the only reported issue, the "
+            "verdict stays `done`."
         )
         case = (
             'If the only reported issue is "implementation exists in the worktree but not the root checkout" '
