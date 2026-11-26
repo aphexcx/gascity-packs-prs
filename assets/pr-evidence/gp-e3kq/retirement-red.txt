@@ -1,0 +1,6 @@
+1 passed, 2 failed, 0 skipped
+held_clock_test.go:619: younger pastes at its bound = 0, want 1
+FAIL TestHeldClockRetirementOrder/0s (0.02s)
+PASS TestHeldClockRetirementOrder/24h0m0s (0.04s)
+FAIL TestHeldClockRetirementOrder (0.06s)
+FAIL package (0.266s)

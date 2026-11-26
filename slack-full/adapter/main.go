@@ -6957,9 +6957,10 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 	}
 	if readErr != nil {
 		log.Printf("alias dispatch: handle=%s -> session=%s accepted; receipt unreadable: %v", handle, sessionID, readErr)
-		return deliveryReceipt{}, true
+		return deliveryReceipt{postStatus: resp.StatusCode}, true
 	}
 	receipt := parseDeliveryReceipt(respBody)
+	receipt.postStatus = resp.StatusCode
 	log.Printf("alias dispatch: handle=%s -> session=%s OK %s",
 		handle, sessionID, receipt.logField(receipt.verdict(cfg.deliveryReceiptGate)))
 	return receipt, true
@@ -7168,7 +7169,7 @@ func postInboundWithReceipt(cfg config, msg externalInboundMessage) (receipt del
 	defer resp.Body.Close()
 	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, deliveryReceiptBodyLimit))
 	if resp.StatusCode >= 400 {
-		return deliveryReceipt{}, &inboundPostError{Status: resp.StatusCode, StatusText: resp.Status, Body: string(respBody)}
+		return deliveryReceipt{postStatus: resp.StatusCode}, &inboundPostError{Status: resp.StatusCode, StatusText: resp.Status, Body: string(respBody)}
 	}
 	if readErr != nil {
 		// gc accepted (2xx headers) but the body did not finish. The
@@ -7177,7 +7178,9 @@ func postInboundWithReceipt(cfg config, msg externalInboundMessage) (receipt del
 		// gate treat it as an unsupported/legacy conclusion rather
 		// than inventing a delivery claim from a truncated body.
 		log.Printf("inbound receipt: response body read failed (delivery still accepted): %v", readErr)
-		return deliveryReceipt{}, nil
+		return deliveryReceipt{postStatus: resp.StatusCode}, nil
 	}
-	return parseDeliveryReceipt(respBody), nil
+	receipt = parseDeliveryReceipt(respBody)
+	receipt.postStatus = resp.StatusCode
+	return receipt, nil
 }
