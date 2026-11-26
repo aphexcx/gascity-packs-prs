@@ -2161,6 +2161,7 @@ func main() {
 	go runDispatchDropSummary(janitorCtx, dispatchDropSummaryInterval, cfg.dispatchConcurrency)
 	go cfg.inboundLiveness.runWatchdog(janitorCtx)
 	go cfg.inboundRecovery.run(janitorCtx, cfg)
+	go runDeadLetterAlarm(janitorCtx, cfg)
 
 	// Socket Mode inbound transport (gp-3og). Runs alongside the public
 	// listener; Slack routes each app's events to exactly one of the two

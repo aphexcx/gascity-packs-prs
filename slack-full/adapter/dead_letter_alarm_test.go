@@ -26,7 +26,7 @@ mode=$(cat "$road.mode")
 case "$mode" in
   refused) printf '%s\n' '{"ok":false,"error":{"code":"invalid_arguments"}}'; exit 1;;
   unsupported) printf '%s\n' '{"ok":false,"error":{"code":"unsupported_remote"}}'; exit 1;;
-  context) echo 'gc: unknown context "fixture"' >&2; exit 1;;
+  context) echo "gc mail send: context \"fixture-context\" is not defined in contexts.toml (run 'gc context list')" >&2; exit 1;;
   ambiguous) printf '%s\n' '{"ok":false,"error":{"code":"mail_send_failed"}}'; exit 1;;
   noise) echo noise; exit 0;;
   blank) exit 0;;
@@ -64,6 +64,9 @@ func alarmWrite(t *testing.T, path, value string) {
 	}
 }
 
+// UNPROVEN Q2/Q4/Q6: operator configuration, reading remote mail, and the
+// production command deadline are premises. This fixture models settings and
+// mailbox writes only, and timeout cases use a shorter limit.
 func newAlarmFixture(t *testing.T, operator bool) *alarmFixture {
 	t.Helper()
 	r, now := round2Recovery(t)
@@ -245,6 +248,7 @@ func TestDeadLetterAlarmArrived(t *testing.T) {
 			f.put("room", e)
 			if name == "before-operator" {
 				f.mode("local", "wait")
+				f.a.limit = 2 * time.Second
 				done := make(chan struct{})
 				go func() { defer close(done); f.pass() }()
 				defer func() { alarmWrite(t, filepath.Join(f.dir, "release"), ""); <-done }()
@@ -308,6 +312,10 @@ func TestDeadLetterAlarmRoads(t *testing.T) {
 			f := newAlarmFixture(t, true)
 			f.mode("local", row.local)
 			f.mode("operator", row.operator)
+			var logs bytes.Buffer
+			previous := log.Writer()
+			log.SetOutput(&logs)
+			defer log.SetOutput(previous)
 			f.a.limit = 250 * time.Millisecond
 			f.put("room", f.add("C1", "100.1"))
 			f.pass()
@@ -323,6 +331,11 @@ func TestDeadLetterAlarmRoads(t *testing.T) {
 			f.pass()
 			f.count("local", row.localCalls)
 			f.count("operator", row.operatorCalls)
+			if row.operator == "hang" || row.operator == "ambiguous" {
+				if strings.Count(logs.String(), "cause=operator_not_known") != 1 {
+					t.Error("expected one unknown-outcome diagnostic for the operator batch")
+				}
+			}
 		})
 	}
 	t.Run("not-configured", func(t *testing.T) {
