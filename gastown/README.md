@@ -35,15 +35,18 @@ The recipe must read warrant metadata from the claimed bead via
 
 The city-wide `mail-wake` order is off by default. When enabled, it checks the
 mayor's unread mail every three minutes and sends one local notification for
-previously unannounced mail at least three minutes old. The order appends covered
-IDs to `.gc/mail-wake.seen` after GC confirms a turn. A suppressed send covers
-new IDs only while that confirmed wake is still unread. The order saves the
-last batch and confirmed wake ID in `.gc/mail-wake.confirmed` so it can finish an interrupted
-append. If a read or unconfirmed wake holds the dedup key, `gc events --type
-order.skipped --since 1h` shows the reason. Inspect an unfamiliar key holder
-before acting on it. Archiving a handled wake releases the key for the next tick. Use a mail provider
-that supports `--dedup`, such as GC's built-in provider. With `gc`, `jq`, and Python 3.7+
-on PATH, run the pack's `orders/scripts/mail-wake.sh --check` from the city
+previously unannounced mail at least three minutes old. While the last confirmed
+notice is unread, later mail stays pending. Once that notice leaves the unread
+inbox, the next tick announces the eligible pending IDs under their own dedup
+key, even if the mayor kept the old notice. The order appends IDs to
+`.gc/mail-wake.seen` after GC confirms the notification and saves the batch in
+`.gc/mail-wake.confirmed` so it can finish an interrupted append. A duplicate
+reply leaves the batch pending. Inspect the holder named in `gc events --type
+order.skipped --since 1h` before handling it.
+
+The order requires `gc`, `jq`, Python 3.7+, and a mail provider that supports
+`--dedup`, such as GC's built-in provider. Its test suite requires Python 3.11+
+for TOML parsing. Run the pack's `orders/scripts/mail-wake.sh --check` from the city
 directory to preview counts, or use `--seed` there to cover the existing backlog
 without sending. If it prints `inbox unavailable`, retry the seed before enabling.
 To opt in, copy the script and `orders/mail-wake.toml` into the

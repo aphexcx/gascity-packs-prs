@@ -30,6 +30,10 @@ if args[:3] == ["mail", "send", "mayor"]:
     # controller sender without requiring the operator to configure a mailbox.
     if "--from" in args and args[args.index("--from") + 1] != "controller":
         sys.exit(1)
+    held_keys = Path("held-keys")
+    if held_keys.exists() and args[args.index("--dedup") + 1] in held_keys.read_text().splitlines():
+        print('{"ok":true,"already_done":true,"id":"notice","count":0}')
+        sys.exit(0)
     print(os.environ.get("SEND_JSON", '{"ok":true,"id":"notice","count":1,"notified":true}'))
     sys.exit(int(os.environ.get("SEND_RC", 0)))
 sys.exit(99)
@@ -69,8 +73,9 @@ import sys
 args = json.loads(Path("calls").read_text().splitlines()[1])
 assert args[:3] == ["mail", "send", "mayor"]
 assert "--json" in args and "--notify" in args
-for flag, value in [("--dedup", "mail-net"), ("--from", "controller"), ("-s", sys.argv[1]),
-                    ("-m", "Archive this wake notice, then read your inbox with gc mail inbox.")]:
+assert args[args.index("--dedup") + 1].startswith("mail-net:")
+for flag, value in [("--from", "controller"), ("-s", sys.argv[1]),
+                    ("-m", "Read your inbox with gc mail inbox and handle it, then archive this notice.")]:
     assert args[args.index(flag) + 1] == value, args
 PY
 }
@@ -114,13 +119,19 @@ run
 sent '[mail-wake] 3 unread mail from alpha,beta'
 seen one two three
 
-start suppressed
+start held_unread
 mail first | inbox
 run
 seen first
 { mail one; mail notice controller '' '[mail-wake] earlier'; } | inbox
-duplicate='{"ok":true,"already_done":true,"id":"notice","count":0}'
-SEND_JSON="$duplicate" run
+run
+calls 1
+seen first
+mail one | inbox
+SEND_JSON='{"ok":true,"id":"replacement"}' EXPECT_RC=1 run
+calls 2
+seen first
+SEND_JSON='{"ok":true,"id":"replacement","notified":true}' run
 sent '[mail-wake] 1 unread mail from worker'
 seen first one
 
@@ -128,13 +139,11 @@ start stale
 mail first | inbox
 run
 seen first
+# Read the first notice but leave its key and the legacy mailbox key live.
+jq -r 'select(.[0:2] == ["mail","send"]) | .[index("--dedup") + 1]' calls > held-keys
+echo mail-net >> held-keys
 mail one | inbox
-GC_ORDER_OUTCOME_FILE="$PWD/outcome" SEND_JSON="$duplicate" run
-calls 2
-seen first
-jq -e '.outcome == "skipped" and (.reason | contains("notice"))' outcome >/dev/null || fail "missing archive instruction"
-# Archiving the read notice releases the dedup key.
-run
+SEND_JSON='{"ok":true,"id":"second","notified":true}' run
 sent '[mail-wake] 1 unread mail from worker'
 seen first one
 
@@ -210,6 +219,7 @@ no_seen
 jq -e '.reason | contains("inspect mail ordinary")' outcome >/dev/null || fail "unrecognized key holder needs inspection"
 
 start missing_confirmation
+duplicate='{"ok":true,"already_done":true,"id":"notice","count":0}'
 mail one | inbox
 SEND_JSON='' EXPECT_RC=1 run
 no_seen
@@ -222,18 +232,21 @@ SEND_JSON='{"ok":true,"id":"replacement","notified":true}' run
 seen one
 
 start unnotified
-mail one | inbox
+{ mail one; mail two; } | inbox
 SEND_JSON='{"ok":true,"id":"notice","count":1}' EXPECT_RC=1 run
 calls 2
 no_seen
-# Even while unread, the wake whose notify failed never covered this mail.
-{ mail one; mail notice controller '' '[mail-wake] earlier'; } | inbox
-SEND_JSON="$duplicate" run
+# The same IDs in another order still belong to the unconfirmed batch.
+jq -r 'select(.[0:2] == ["mail","send"]) | .[index("--dedup") + 1]' calls > held-keys
+{ mail two; mail one; mail notice controller '' '[mail-wake] earlier'; } | inbox
+run
 calls 2
 no_seen
-mail one | inbox
+# A newly eligible ID changes the batch even when the first ID stays the same.
+{ mail one; mail two; mail three; mail notice controller '' '[mail-wake] earlier'; } | inbox
 SEND_JSON='{"ok":true,"id":"replacement","notified":true}' run
-seen one
+sent '[mail-wake] 3 unread mail from worker'
+seen one two three
 
 start overflow
 jq -n '{messages:[range(101) | {id:("message-" + tostring), from:("αβ" + tostring),

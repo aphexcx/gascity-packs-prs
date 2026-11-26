@@ -37,6 +37,7 @@ fi
 exec python3 -I - "${1:-send}" 3<<<"$headers" <<'PY'
 from datetime import datetime
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -84,14 +85,17 @@ def old_enough(row, cutoff):
         return False
 
 
-def send(rows, confirmed_id):
+def send(rows):
     senders = ",".join(sorted({row["from"] for row in rows}))
     subject = f"[mail-wake] {len(rows)} unread mail from {senders}"
     if len(subject.encode()) > 500:
         subject = subject.encode()[:497].decode("utf-8", errors="ignore") + "..."
+    # Inbox order can change between retries. Only a change of membership
+    # should give a batch a new key, including after an unconfirmed send.
+    batch = hashlib.sha256(id_lines(sorted(row["id"] for row in rows))).hexdigest()
     result = subprocess.run(
-        ["gc", "mail", "send", "mayor", "--notify", "--dedup", "mail-net", "--json", "--city", os.getcwd(),
-         "--from", "controller", "-s", subject, "-m", "Archive this wake notice, then read your inbox with gc mail inbox."],
+        ["gc", "mail", "send", "mayor", "--notify", "--dedup", f"mail-net:{batch}", "--json", "--city", os.getcwd(),
+         "--from", "controller", "-s", subject, "-m", "Read your inbox with gc mail inbox and handle it, then archive this notice."],
         capture_output=True,
     )
     if result.returncode:
@@ -106,18 +110,11 @@ def send(rows, confirmed_id):
     wake_id = reply.get("id")
     if not isinstance(wake_id, str) or not wake_id:
         sys.exit("mail-wake: no wake ID in send reply, will retry")
-    # A timeout can leave an unread notice behind without an acknowledged
-    # turn. Only the notice whose confirmation we saved can cover more mail.
     if reply.get("already_done") is True:
-        if wake_id in unread_wakes and wake_id == confirmed_id:
-            return wake_id, "covered by existing wake"
-        if wake_id == confirmed_id:
-            skipped(f"still pending, archive wake {wake_id} to release its dedup key")
-        else:
-            skipped(f"still pending, inspect mail {wake_id} holding the mail-net key before handling it")
+        skipped(f"still pending, inspect mail {wake_id} holding this batch's key")
         return None
     if reply.get("notified") is True:
-        return wake_id, "announced"
+        return wake_id
     sys.exit(f"mail-wake: turn unconfirmed for wake {wake_id}, archive it to release its dedup key")
 
 
@@ -204,10 +201,13 @@ def process():
         ids = [row["id"] for row in pending]
         wake_id, outcome = receipt["wake"], "seeded"
         if mode == "send":
-            sent = send(pending, receipt["wake"])
-            if sent is None:
+            if wake_id in unread_wakes:
+                skipped(f"holding {len(pending)} pending while wake {wake_id} is unread")
                 return
-            wake_id, outcome = sent
+            wake_id = send(pending)
+            if wake_id is None:
+                return
+            outcome = "announced"
         with staged.open("w", encoding="utf-8") as handle:
             json.dump({"wake": wake_id, "offset": ledger.tell(), "ids": ids}, handle)
             handle.flush()
