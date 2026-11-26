@@ -30,7 +30,7 @@ if args[:3] == ["mail", "send", "mayor"]:
     # controller sender without requiring the operator to configure a mailbox.
     if "--from" in args and args[args.index("--from") + 1] != "controller":
         sys.exit(1)
-    print(os.environ.get("SEND_JSON", '{"ok":true,"count":1}'))
+    print(os.environ.get("SEND_JSON", '{"ok":true,"id":"notice","count":1,"notified":true}'))
     sys.exit(int(os.environ.get("SEND_RC", 0)))
 sys.exit(99)
 STUB
@@ -115,10 +115,50 @@ sent '[mail-wake] 3 unread mail from alpha,beta'
 seen one two three
 
 start suppressed
-mail one | inbox
-SEND_JSON='{"ok":true,"already_done":true,"count":0}' run
+{ mail one; mail notice controller '' '[mail-wake] earlier'; } | inbox
+duplicate='{"ok":true,"already_done":true,"id":"notice","count":0}'
+SEND_JSON="$duplicate" run
 sent '[mail-wake] 1 unread mail from worker'
 seen one
+
+start stale
+mail one | inbox
+SEND_JSON="$duplicate" run
+calls 2
+no_seen
+# Archiving the read notice releases the dedup key.
+run
+sent '[mail-wake] 1 unread mail from worker'
+seen one
+
+start unnotified
+mail one | inbox
+SEND_JSON='{"ok":true,"id":"notice","count":1}' EXPECT_RC=1 run
+calls 2
+no_seen
+# Even while unread, the wake whose notify failed never covered this mail.
+{ mail one; mail notice controller '' '[mail-wake] earlier'; } | inbox
+SEND_JSON="$duplicate" run
+calls 2
+no_seen
+mail one | inbox
+SEND_JSON='{"ok":true,"id":"replacement","notified":true}' run
+seen one
+
+start overflow
+jq -n '{messages:[range(101) | {id:("message-" + tostring), from:("équipe-" + tostring),
+    subject:"update", read:false, created_at:"1970-01-01T00:16:40Z"}]}' > inbox
+run
+calls 2
+python3 - <<'PY'
+import json
+from pathlib import Path
+args = json.loads(Path("calls").read_text().splitlines()[1])
+subject = args[args.index("-s") + 1]
+assert subject.startswith("[mail-wake] 101 unread mail from équipe-") and subject.endswith("...")
+assert len(subject.encode()) <= 500
+assert len(set(Path(".gc/mail-wake.seen").read_text().splitlines())) == 101
+PY
 
 start retry
 mail one | inbox
@@ -182,4 +222,4 @@ assert order["trigger"] == "cooldown" and order["interval"] == "3m"
 assert order["exec"] == '"$ORDER_DIR/scripts/mail-wake.sh"'
 PY
 
-echo '11 mail-wake cases passed'
+echo '14 mail-wake cases passed'
