@@ -2,7 +2,14 @@ Synthesize the build-basic starter factory review.
 
 Read the acceptance, test evidence, and simplicity review reports. Deduplicate
 findings, preserve the source review lane for each finding, and classify each
-item as required fix, missing evidence, or residual risk.
+item as required fix, missing evidence, residual risk, or PRECONDITION.
+
+Name the class of each required fix: the general fault, not the one case a
+lane reported. List with it the other cases of that class you can see in the
+change, each with its file and line, so the fix lane can close the whole class
+in one pass. A finding that holds only under a runtime or provider this city
+does not run, or a right no one in it has, is a PRECONDITION, not a required
+fix: carry it with its precondition in one sentence.
 
 Also read `gc.build.code_review_context_path` from the workflow root bead. When
 you carry a finding forward, include the source anchor and implementation

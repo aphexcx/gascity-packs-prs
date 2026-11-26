@@ -8,7 +8,8 @@ Key the copies by workflow, review loop and round. Reuse them on retry.
 From round 3 onward, compare each blocking finding with the blocking findings
 in all earlier rounds of this loop. A pair belongs to the same family if it
 concerns the same class of fault and the earlier class-level fix, stated in
-one sentence, would close both findings. Treat an uncertain comparison as a
+one sentence, would close both findings. A different guard, input or invariant
+is a different fault, even in the same file. Treat an uncertain comparison as a
 match. On a match, apply no fix. In the handoff identify both findings, their
 rounds and the preserved report paths. Set `gc.build.repair_status=family_stop`,
 `gc.failure_class=review_family_stop` and `gc.restart.reason=review_family_stop`.
@@ -38,9 +39,21 @@ This terminal close takes precedence over the ordinary verdict instructions belo
 
 Use implementation target {{implementation_target}} for any code changes. Read
 the starter review synthesis. If all three review lanes approve, write a no-op
-review summary. If required fixes or missing evidence remain, make the smallest
-focused changes, run the relevant proof commands, and write the review-fix
-summary under the build artifact root.
+review summary. If required fixes or missing evidence remain, address them,
+run the relevant proof commands, and write the review-fix summary under the
+build artifact root.
+
+Fix each required fix as a class: fix every case of its class in the change,
+not only the case the review named, and add one test at the class level that
+fails on any case of it. Name the class, its cases and that test in the
+summary. A residual risk or a PRECONDITION item never forces another loop:
+fix a residual risk in this pass when it is cheap, and list it otherwise.
+
+The review-fix summary carries one line per finding. A finding this pass
+settles takes exactly one outcome: FIXED (with the commit), WRONG (the
+reviewer was mistaken, with the line that shows it), INTENDED, or DOES NOT
+MATTER. A PRECONDITION item takes DOES NOT MATTER with its precondition in one
+sentence. A finding still open says why.
 
 Apply fixes to the implementation source anchor/worktree named in the review
 context, not to the launcher rig root. An unchanged root checkout is not itself
@@ -137,8 +150,9 @@ checkout's HEAD; in the `work_dir` case the per-item worktree is already
 detached and shared with no one, so there is nothing to release.
 
 Set `code_review.verdict=done` only when acceptance, test evidence, and
-simplicity all approve after this pass. Set `code_review.verdict=iterate` when
-required fixes remain.
+simplicity all approve after this pass; a lane whose only open items are
+residual risks or PRECONDITION items counts as approving. Set
+`code_review.verdict=iterate` when required fixes remain.
 
 For ordinary approval or iteration, close with `gc.outcome=pass`,
 `code_review.verdict=done|iterate`,
