@@ -6,7 +6,9 @@ Keep a copy of each input report under the build artifact root.
 Key the copies by workflow, review loop and round. Reuse them on retry.
 
 From round 3 onward, compare each blocking finding with the blocking findings
-in all earlier rounds of this loop. A pair belongs to the same family if it
+in all earlier rounds of this loop. Blocking findings are the synthesis's
+required fixes and missing evidence; a residual risk or a PRECONDITION item is
+never one. A pair belongs to the same family if it
 concerns the same class of fault and the earlier class-level fix, stated in
 one sentence, would close both findings. A different guard, input or invariant
 is a different fault, even in the same file. Treat an uncertain comparison as a
@@ -39,21 +41,25 @@ This terminal close takes precedence over the ordinary verdict instructions belo
 
 Use implementation target {{implementation_target}} for any code changes. Read
 the starter review synthesis. If all three review lanes approve, write a no-op
-review summary. If required fixes or missing evidence remain, address them,
-run the relevant proof commands, and write the review-fix summary under the
-build artifact root.
+review summary. If required fixes or missing evidence remain, address them
+with the smallest focused changes that close each class, run the relevant
+proof commands, and write the review-fix summary under the build artifact
+root.
 
 Fix each required fix as a class: fix every case of its class in the change,
 not only the case the review named, and add one test at the class level that
 fails on any case of it. Name the class, its cases and that test in the
-summary. A residual risk or a PRECONDITION item never forces another loop:
-fix a residual risk in this pass when it is cheap, and list it otherwise.
+summary. A residual risk or a PRECONDITION item never forces another loop: fix
+a residual risk only in a pass that already commits a required fix, when it is
+cheap, and list it otherwise.
 
-The review-fix summary carries one line per finding. A finding this pass
-settles takes exactly one outcome: FIXED (with the commit), WRONG (the
-reviewer was mistaken, with the line that shows it), INTENDED, or DOES NOT
-MATTER. A PRECONDITION item takes DOES NOT MATTER with its precondition in one
-sentence. A finding still open says why.
+The review-fix summary carries one line per finding of this round, with
+exactly one outcome: FIXED (with the commit), WRONG (the reviewer was
+mistaken, with the line that shows it), INTENDED, or DOES NOT MATTER. A
+PRECONDITION item and a residual risk left unfixed take DOES NOT MATTER, the
+PRECONDITION with its precondition in one sentence. The only line without an
+outcome is a required fix this pass cannot settle, such as one with no
+implementation worktree: it says why.
 
 Apply fixes to the implementation source anchor/worktree named in the review
 context, not to the launcher rig root. An unchanged root checkout is not itself
@@ -149,10 +155,13 @@ switched and detaches nothing, because a detach there would move the human
 checkout's HEAD; in the `work_dir` case the per-item worktree is already
 detached and shared with no one, so there is nothing to release.
 
-Set `code_review.verdict=done` only when acceptance, test evidence, and
-simplicity all approve after this pass; a lane whose only open items are
-residual risks or PRECONDITION items counts as approving. Set
-`code_review.verdict=iterate` when required fixes remain.
+Set `code_review.verdict=done` only when this pass commits no fix and
+acceptance, test evidence, and simplicity all approve; a lane that reported
+only residual risks or PRECONDITION items counts as approving. Set
+`code_review.verdict=iterate` when this pass commits a fix, so the review lanes
+see it, or when a required fix or missing evidence remains. A required fix
+settled WRONG, INTENDED or DOES NOT MATTER sets `iterate` too: the review
+lanes, not this lane, retire a required fix.
 
 For ordinary approval or iteration, close with `gc.outcome=pass`,
 `code_review.verdict=done|iterate`,

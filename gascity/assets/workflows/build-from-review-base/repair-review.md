@@ -43,6 +43,7 @@ recorded review findings and implementation evidence until one of these happens:
 - the implementation is approved;
 - review or repair returns blocked;
 - a blocking finding repeats a family from an earlier review round (from round 3 onward);
+- past round 3, every blocking finding left is NOT SHOWN;
 - max_iterations is exhausted.
 
 From round 3 onward, a blocking finding of the same family as an earlier
@@ -50,9 +51,11 @@ round's ends the loop with `gc.build.repair_status=family_stop`, never another
 fix round. Past round 3, a finding is fixed only when it is reproduced (by a
 failing test, or shown reachable in what this city runs) and sits in the
 changes made since the previous round; the rest are listed as NOT SHOWN with
-their file and line. Pass the fix loop only the findings to fix, and list the
-NOT SHOWN ones in the repair handoff. When none is left to fix, open no
-further fix attempt and record the exhaustion exit below.
+their file and line. Pass the fix loop only the findings to fix, with the NOT
+SHOWN ones listed apart in its findings input, and carry them into any
+terminal handoff. When none is left to fix, open no further fix attempt and
+record the exhaustion exit below, with the NOT SHOWN findings as its
+outstanding findings.
 
 Count the initial review as round 1. Include the round numbers and preserved
 report paths in each fix loop's findings input and record its workflow ID
