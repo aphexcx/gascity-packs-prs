@@ -551,6 +551,9 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			continue
 		}
 		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		for i := range unseen {
+			unseen[i].MailKey = attempt.MailKey
+		}
 		err = o.notify(mailCtx, ingestionAlertRows(unseen))
 		cancel()
 		if err != nil {
@@ -715,14 +718,26 @@ func ingestionRead(ctx context.Context, u string, limit int64) ([]byte, error) {
 	return b, nil
 }
 
+func ingestionMailKey(rows []inboundJournalRecord) string {
+	var first string
+	for _, r := range rows {
+		for _, w := range ingestionAlertWindows(r) {
+			if first == "" || w.MessageTS < first {
+				first = w.MessageTS
+			}
+		}
+	}
+	return "slack-ingest:" + rows[0].Channel + ":" + first
+}
+
 func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJournalRecord) error {
 	rows = ingestionAlertRows(rows)
 	if len(rows) == 0 {
 		return nil
 	}
-	key := rows[0].AlertBatchID
+	key := rows[0].MailKey
 	if key == "" {
-		key = ingestionAlertID(ingestionAlertMembers(rows))
+		key = ingestionMailKey(rows)
 	}
 	subject, body := ingestionAlertMessage(rows)
 	if notice := o.cfg.neverSilent.OwnerLine(rows[0].Channel); notice != "" {
@@ -731,30 +746,78 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 	if len(body) > ingestionAlertBatchBudget {
 		return ingestionNotifyRefusal{fmt.Errorf("ingestion alert exceeds %d-byte mail budget", ingestionAlertBatchBudget)}
 	}
-	return sendOperatorMail(ctx, o.cfg.cityPath, "slack-ingestion:"+key, subject, body)
+	return sendOperatorMail(ctx, "gc", o.cfg.cityPath, key, subject, body, true)
 }
 
-func sendOperatorMail(ctx context.Context, cityPath, key, subject, body string) error {
-	if err := ctx.Err(); err != nil {
-		return ingestionNotifyRefusal{err} // No child process was started.
+func sendOperatorMail(ctx context.Context, bin, cityPath, key, subject, body string, notify bool) error {
+	args := []string{"--city", cityPath, "mail", "send", "mayor"}
+	if !notify {
+		_, err := runOperatorMail(ctx, bin, append(args, "--dedup", key, "-s", subject, "-m", body))
+		return err // HOLD notices retain their original CLI contract.
 	}
-	cmd := exec.CommandContext(ctx, "gc", "--city", cityPath, "mail", "send", "mayor", "--dedup", key, "-s", subject, "-m", body)
+	args = append(args, "-s", subject, "-m", body)
+	output, err := runOperatorMail(ctx, bin, append(args, "--dedup", key, "--notify", "--json"))
+	if unsupportedMailFlag(err) {
+		log.Printf("operator mail key=%q: gc lacks alert flags, falling back to plain mail", key)
+		output, err = runOperatorMail(ctx, bin, args)
+		if err == nil {
+			var id string
+			fmt.Sscanf(string(output), "Sent message %s to mayor", &id)
+			log.Printf("operator mail id=%q notified=false key=%q plain=true", id, key)
+		}
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	var result struct {
+		ID          string `json:"id"`
+		Notified    bool   `json:"notified"`
+		AlreadyDone bool   `json:"already_done"`
+	}
+	if json.Unmarshal(output, &result) != nil || (result.ID == "" && !result.AlreadyDone) {
+		return errors.New("gc mail send returned an invalid receipt")
+	}
+	log.Printf("operator mail id=%q notified=%t key=%q already_done=%t", result.ID, result.Notified, key, result.AlreadyDone)
+	return nil
+}
+
+func unsupportedMailFlag(err error) bool {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() <= 0 {
+		return false
+	}
+	line, _, _ := strings.Cut(strings.TrimSpace(string(exit.Stderr)), "\n")
+	line = strings.TrimPrefix(strings.TrimPrefix(line, "gc: "), "Error: ")
+	for _, flag := range []string{"notify", "dedup"} {
+		if line == "unknown flag: --"+flag || line == "flag provided but not defined: -"+flag {
+			return true
+		}
+	}
+	return false
+}
+
+func runOperatorMail(ctx context.Context, bin string, args []string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, ingestionNotifyRefusal{err} // No child process was started.
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.WaitDelay = time.Second
 	// Do not log CLI output, which may contain mailbox or provider data.
 	// Output retains bounded stderr on ExitError for refusal classification.
-	_, err := cmd.Output()
+	output, err := cmd.Output()
 	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 		// A completed exit remains authoritative if the context expires
 		// while waiting for inherited pipes. Signal termination is different.
 		if cmd.ProcessState.Success() {
-			return nil
+			return output, nil
 		}
-		return err
+		return nil, err
 	}
 	if ctx.Err() != nil {
-		return ctx.Err() // Cancellation after start leaves acceptance ambiguous.
+		return nil, ctx.Err() // Cancellation after start leaves acceptance ambiguous.
 	}
-	return err
+	return nil, err
 }
 
 type ingestionNotifyRefusal struct{ error }

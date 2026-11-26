@@ -26,6 +26,40 @@ func ingestionReadAttempt(t *testing.T, j *inboundJournal, id string) ingestionA
 	return state
 }
 
+func TestIngestionMailKeyAfterRestart(t *testing.T) {
+	at := time.Unix(100, 0).UTC()
+	rows := []inboundJournalRecord{ingestionTestRecord("100.2", at, "second"), ingestionTestRecord("100.1", at, "first")}
+	for _, mode := range []string{"ambiguous", "legacy", "refused"} {
+		t.Run(mode, func(t *testing.T) {
+			j := &inboundJournal{dir: t.TempDir()}
+			o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return at }}
+			plan := ingestionAlertBatch{ID: "example-batch", Channel: "C1", Version: ingestionAlertSidecarVersion}
+			state, err := o.beginAlertAttempt(plan, rows)
+			if err != nil || state.MailKey != "slack-ingest:C1:100.1" {
+				t.Fatalf("first attempt: key=%s err=%v", state.MailKey, err)
+			}
+			want := state.MailKey
+			switch mode {
+			case "legacy":
+				state.MailKey = "" // Written before mail keys were kept in the sidecar.
+				want = "slack-ingestion:" + plan.ID
+			case "refused":
+				state.Refused = true
+				want = "slack-ingest:C1:100.2"
+			}
+			if err := j.writeAlertAttempt(state); err != nil {
+				t.Fatal(err)
+			}
+			saved := ingestionReadAttempt(t, j, plan.ID)
+			plan.attempt, plan.recovered = &saved, !saved.Refused
+			retry, err := o.beginAlertAttempt(plan, rows[:1])
+			if err != nil || retry.MailKey != want {
+				t.Fatalf("retry: key=%s want=%s err=%v", retry.MailKey, want, err)
+			}
+		})
+	}
+}
+
 func TestIngestionAttemptLegacySixThousandReceipts(t *testing.T) {
 	at := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	now := at

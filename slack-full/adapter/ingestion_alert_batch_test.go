@@ -132,7 +132,7 @@ func TestIngestionBatchRetryPayloadCannotGrowWithFanout(t *testing.T) {
 	writeRows(records)
 	dir := t.TempDir()
 	argsPath := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\000' \"$@\" >> \"$INGESTION_TEST_ARGS\"\nexit \"$INGESTION_TEST_EXIT\"\n"
+	script := "#!/bin/sh\nprintf '%s\\000' \"$@\" >> \"$INGESTION_TEST_ARGS\"\nprintf '%s\\n' '{\"id\":\"example-mail\",\"notified\":true}'\nexit \"$INGESTION_TEST_EXIT\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -163,10 +163,10 @@ func TestIngestionBatchRetryPayloadCannotGrowWithFanout(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00")
-	if len(args) != 22 || args[6] != args[17] {
+	if len(args) != 26 || args[10] != args[23] {
 		t.Fatalf("retry changed dedup identity: %d argv entries", len(args))
 	}
-	if len(args[10]) > ingestionAlertBatchBudget || len(args[21]) > ingestionAlertBatchBudget {
+	if len(args[8]) > ingestionAlertBatchBudget || len(args[21]) > ingestionAlertBatchBudget {
 		t.Fatal("mail exceeded budget")
 	}
 }

@@ -19,6 +19,7 @@ const ingestionAttemptMaxBytes = 8 << 20
 
 type ingestionAttemptState struct {
 	ID          string                   `json:"id"`
+	MailKey     string                   `json:"mail_key,omitempty"`
 	Version     int                      `json:"version"`
 	PlanVersion int                      `json:"plan_version"`
 	Coverage    []ingestionAlertCoverage `json:"coverage"`            // last attempt, exactly
@@ -36,6 +37,15 @@ func (o *ingestionObserver) beginAlertAttempt(plan ingestionAlertBatch, rows []i
 		PriorAll: plan.Version < ingestionAlertCoverageVersion && plan.recovered}
 	if plan.attempt != nil {
 		state.Refusals, state.RetryAt = plan.attempt.Refusals, plan.attempt.RetryAt
+	}
+	state.MailKey = ingestionMailKey(rows)
+	if plan.recovered {
+		// A previous attempt may already be in the mailbox. Preserve its
+		// key even if proof has since arrived for its first message.
+		state.MailKey = "slack-ingestion:" + plan.ID
+		if plan.attempt != nil && plan.attempt.MailKey != "" {
+			state.MailKey = plan.attempt.MailKey
+		}
 	}
 	// Each eligible invocation gets its own timestamp and exact pair list.
 	// The previous unresolved attempt is already in Prior, so refusing this

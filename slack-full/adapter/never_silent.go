@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -70,11 +69,8 @@ func newNeverSilent(cfg config, identities *identityRegistry, aliases *handleAli
 			if bin == "" {
 				bin = "gc"
 			}
-			key := fmt.Sprintf("slack-owner-notice:%x", sha256.Sum256([]byte(m.ID+m.Created.Format(time.RFC3339Nano))))
 			body := fmt.Sprintf("The adapter told the owner: %q\nChannel: %s\nThread: %s\nStatus: gc slack status\n", line, m.Conversation, m.Thread)
-			cmd := exec.CommandContext(ctx, bin, "mail", "send", "mayor", "--dedup", key, "-s", "slack: owner delivery notice", "-m", body)
-			cmd.WaitDelay = time.Second
-			return cmd.Run()
+			return sendOperatorMail(ctx, bin, cfg.cityPath, "slack-silent:"+m.ID, "slack: owner delivery notice", body, true)
 		},
 	})
 }

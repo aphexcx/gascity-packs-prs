@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,12 +10,75 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
 )
+
+// A write confirms delivery to disk independently of the mail command. At
+// most one command per channel file can be in flight. gc deduplicates later
+// writes against the same live mail, including across adapter restarts.
+type deadLetterAlerts struct {
+	cityPath string
+	inFlight sync.Map
+}
+
+func (a *deadLetterAlerts) notify(path, reason string) {
+	if a == nil {
+		return
+	}
+	key := "dead-letter:" + filepath.Base(path)
+	done := make(chan struct{})
+	if _, busy := a.inFlight.LoadOrStore(key, done); busy {
+		return
+	}
+	go func() {
+		defer close(done)
+		defer a.inFlight.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		body := fmt.Sprintf("File: %s\nReason: %s", path, reason)
+		if err := sendOperatorMail(ctx, "gc", a.cityPath, key, "Slack inbound message could not be delivered", body, true); err != nil {
+			log.Printf("operator mail failed key=%q: %v", key, err)
+		}
+	}()
+}
+
+func (a *deadLetterAlerts) wait() {
+	a.inFlight.Range(func(_, done any) bool {
+		<-done.(chan struct{})
+		return true
+	})
+}
+
+// A stored rejection can include a provider response quoting user input.
+// Mail the recorded status or adapter-authored reason and leave external
+// diagnostics in the private file.
+func deadLetterMailReason(reason string) string {
+	if legacyPayloadRefusal(reason, true) {
+		code, _ := strconv.Atoi(reason[:3])
+		return strings.TrimSpace(fmt.Sprintf("%d %s", code, http.StatusText(code)))
+	}
+	for _, cause := range []error{errReceiptFollowUpLost, errReceiptFollowUpStuck, errDeliveryUnvouched} {
+		if strings.HasPrefix(reason, cause.Error()) {
+			return cause.Error()
+		}
+	}
+	const held = "unvouched delivery held for "
+	if duration, ok := strings.CutPrefix(reason, held); ok {
+		if _, err := time.ParseDuration(strings.TrimSuffix(duration, "; older delivery still outstanding")); err == nil {
+			return reason
+		}
+	}
+	switch reason {
+	case "verify by hand: no pollable receipt", "verify by hand: delivery proof unavailable", "verify by hand: receipt gate is off":
+		return reason
+	}
+	return "delivery refused (see file for details)"
+}
 
 // --- inbound delivery failure classes + dead letters (gp-xnc) ---------------
 

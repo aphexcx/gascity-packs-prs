@@ -76,6 +76,7 @@ func installInboundRecovery(cfg *config) error {
 	}
 	cfg.inboundRecovery, cfg.coalescer.recovery = r, r
 	r.coalescer = cfg.coalescer
+	r.deadLetterAlerts = cfg.deadLetterAlerts
 	if cfg.slackBotToken != "" && cfg.busyReaction != "" {
 		r.busyMarks = cfg.busyMarks
 	}
@@ -429,6 +430,7 @@ type inboundRecovery struct {
 	state            inboundRecoveryState
 	path             string
 	deadDir          string
+	deadLetterAlerts *deadLetterAlerts
 	ceiling          time.Duration
 	bound            time.Duration
 	replayMaxAge     time.Duration
@@ -1518,6 +1520,7 @@ func (r *inboundRecovery) retire(key string, e inboundRecoveryEntry) {
 	r.put(key, e)
 	if !e.Retiring {
 		path := filepath.Join(r.deadDir, safePathComponent(e.Inbound.Conversation.ConversationID)+".jsonl")
+		r.deadLetterAlerts.notify(path, deadLetterMailReason(e.Reason))
 		log.Printf("inbound HOLD: LOSS chan=%s ts=%s receipt=%s dead-lettered after %d attempt(s) over %s file=%s", e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID, receiptLogID(e.OriginalReceiptID), e.Attempts, r.now().Sub(e.HeldAt), path)
 	}
 	if !e.Retiring && r.finished != nil {
@@ -1958,7 +1961,7 @@ func holdNoticeRecorder(cityPath, deadDir string) func(string, holdNoticeReport)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := sendOperatorMail(ctx, cityPath, "slack-hold:"+id, "Slack inbound hold "+report.Phase, body)
+		err := sendOperatorMail(ctx, "gc", cityPath, "slack-hold:"+id, "Slack inbound hold "+report.Phase, body, false)
 		if err == nil || report.MailOnly || !ingestionNotifyDefinitelyRefused(err) {
 			return err
 		}

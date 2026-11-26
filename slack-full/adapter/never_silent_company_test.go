@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,7 +120,8 @@ func TestNeverSilentCompanyUsesActingToken(t *testing.T) {
 	t.Setenv("NEVER_SILENT_OPERATOR_CONTEXT", "")
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "fake-gc")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+	t.Setenv("MAIL_ARGS", filepath.Join(dir, "calls"))
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\" >> \"$MAIL_ARGS\"\necho '{\"id\":\"example-mail\",\"notified\":true}'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GC_BIN", bin)
@@ -158,6 +160,10 @@ func TestNeverSilentCompanyUsesActingToken(t *testing.T) {
 	}
 	if posts != 1 {
 		t.Fatalf("posts=%d", posts)
+	}
+	args, err := os.ReadFile(os.Getenv("MAIL_ARGS"))
+	if err != nil || !strings.HasSuffix(string(args), "--dedup\x00slack-silent:example\x00--notify\x00--json\x00") {
+		t.Fatalf("local notice flags: %q, %v", args, err)
 	}
 }
 

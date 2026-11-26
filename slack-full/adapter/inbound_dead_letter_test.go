@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +17,125 @@ import (
 	"time"
 	"unicode/utf8"
 )
+
+func TestDeadLetterOperatorMail(t *testing.T) {
+	for _, mode := range []string{"accepted", "failed"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("PATH", dir)
+			t.Setenv("MAIL_DIR", dir)
+			t.Setenv("MAIL_MODE", mode)
+			// Model gc's live mailbox. A repeated key returns the original ID.
+			const script = `#!/bin/sh
+printf '%s\0' "$@" >> "$MAIL_DIR/argv"
+if [ "$MAIL_MODE" = failed ]; then
+    echo 'fixture failure with private-inbound-marker' >&2
+    exit 1
+fi
+while [ "$1" != --dedup ]; do shift || exit 2; done
+shift
+if [ -f "$MAIL_DIR/$1" ]; then
+    echo '{"id":"example-mail","already_done":true}'
+else
+    echo delivered >> "$MAIL_DIR/$1"
+    echo '{"id":"example-mail"}'
+fi
+`
+			if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			cfg := config{inboundDeadLetterDir: filepath.Join(dir, "dead"), deadLetterAlerts: &deadLetterAlerts{cityPath: dir}}
+			sink := inboundDeadLetterSink(cfg)
+			var logs bytes.Buffer
+			old := log.Writer()
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(old) })
+			const channel, marker, user = "C_EXAMPLE", "private-inbound-marker", "example-sender-name"
+			rejection := &inboundPostError{Status: 422, StatusText: "422 Unprocessable Entity", Body: marker + " " + user}
+			writes := 1
+			if mode == "accepted" {
+				writes = 2
+			}
+			for i := 0; i < writes; i++ {
+				entry := testPending(channel, []string{"100.1", "100.2"}[i], marker)
+				entry.inbound.Actor.DisplayName = user
+				if !sink(channel, []pendingChannelInbound{entry}, rejection) {
+					t.Fatal("mail affected durable write")
+				}
+				cfg.deadLetterAlerts.wait()
+			}
+			path := filepath.Join(cfg.inboundDeadLetterDir, channel+".jsonl")
+			rows, err := os.ReadFile(path)
+			if err != nil || bytes.Count(rows, []byte("\n")) != writes || !bytes.Contains(rows, []byte(marker)) {
+				t.Fatalf("durable dead-letter record missing (%v)", err)
+			}
+			argv, err := os.ReadFile(filepath.Join(dir, "argv"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := "dead-letter:" + channel + ".jsonl"
+			want := strings.Join([]string{"--city", dir, "mail", "send", "mayor", "-s", "Slack inbound message could not be delivered",
+				"-m", "File: " + path + "\nReason: 422 Unprocessable Entity", "--dedup", key, "--notify", "--json", ""}, "\x00")
+			if string(argv) != strings.Repeat(want, writes) {
+				t.Fatalf("unexpected dead-letter argv %q", argv)
+			}
+			for _, private := range []string{marker, user} {
+				if strings.Contains(logs.String(), private) {
+					t.Fatal("operator log disclosed inbound data")
+				}
+			}
+			if mode == "failed" {
+				if strings.Count(logs.String(), "operator mail failed") != 1 {
+					t.Fatalf("missing failure outcome: %s", &logs)
+				}
+				return
+			}
+			mail, err := os.ReadFile(filepath.Join(dir, key))
+			if err != nil || string(mail) != "delivered\n" ||
+				!strings.Contains(logs.String(), `id="example-mail" notified=false key="`+key+`" already_done=true`) {
+				t.Fatalf("mailbox or duplicate outcome incorrect: %q, %v, %s", mail, err, &logs)
+			}
+		})
+	}
+}
+
+func TestOperatorMailOldGC(t *testing.T) {
+	for _, flag := range []string{"notify", "dedup"} {
+		t.Run(flag, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("MAIL_ARGS", filepath.Join(dir, "calls"))
+			t.Setenv("OLD_FLAG", flag)
+			bin := filepath.Join(dir, "gc")
+			const script = `#!/bin/sh
+printf '%s\0' "$@" >> "$MAIL_ARGS"
+for arg do
+    if [ "$arg" = "--$OLD_FLAG" ]; then
+        echo "gc: unknown flag: --$OLD_FLAG" >&2
+        exit 1
+    fi
+done
+echo 'Sent message example-mail to mayor'
+`
+			if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			var logs bytes.Buffer
+			old := log.Writer()
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(old) })
+			if err := sendOperatorMail(context.Background(), bin, dir, "example-key", "subject", "body", true); err != nil {
+				t.Fatal(err)
+			}
+			calls, err := os.ReadFile(os.Getenv("MAIL_ARGS"))
+			base := strings.Join([]string{"--city", dir, "mail", "send", "mayor", "-s", "subject", "-m", "body", ""}, "\x00")
+			if err != nil || string(calls) != base+"--dedup\x00example-key\x00--notify\x00--json\x00"+base ||
+				!strings.Contains(logs.String(), "falling back to plain mail") ||
+				!strings.Contains(logs.String(), `id="example-mail" notified=false key="example-key" plain=true`) {
+				t.Fatalf("old gc fallback: %v %q %s", err, calls, &logs)
+			}
+		})
+	}
+}
 
 // --- gp-xnc: poison-batch handling for the inbound coalescer ---------------
 //

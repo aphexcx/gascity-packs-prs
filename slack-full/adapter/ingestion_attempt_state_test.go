@@ -201,7 +201,7 @@ func TestIngestionMailProcessBoundary(t *testing.T) {
 	for _, mode := range []string{"pipe_success", "pipe_refusal", "pipe_success_short_deadline", "pipe_refusal_short_deadline", "cancel_after_start"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
-			script := "#!/bin/sh\n/bin/sleep 4 &\nexit 0\n"
+			script := "#!/bin/sh\n/bin/sleep 4 &\nprintf '%s\\n' '{\"id\":\"example-mail\"}'\nexit 0\n"
 			if mode == "pipe_refusal" || mode == "pipe_refusal_short_deadline" {
 				script = "#!/bin/sh\n/bin/sleep 4 &\nprintf refused >&2\nexit 17\n"
 			}
