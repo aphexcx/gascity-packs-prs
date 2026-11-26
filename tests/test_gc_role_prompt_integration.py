@@ -359,6 +359,26 @@ def test_role_prompts_render_public_worker_fragment(
     assert result.returncode == 0, result.stderr
     assert_clean_worker_render(result.stdout, persona_heading)
 
+    prompt = " ".join(result.stdout.split())
+    claim, rest = prompt.split("## Claim", 1)[1].split("## Workspace", 1)
+    workspace_text, continuation = rest.split("## Continue", 1)
+    assert "Before your first write, read this start's entries in `$GC_PRESTART_LOG`" in workspace_text
+    own = ("If the `Recovery:` notice says `own ticket's work`, first verify that you own the lane "
+           "and hold the bead's branch, then carry staged, unstaged and untracked work from the aside "
+           "into the lane or explain in your READY which changes you left there and why.")
+    other = ("If it says `another ticket's work`, leave the aside untouched, copy nothing from it, "
+             "and name its directory and branch in one sentence in your READY (or your close note "
+             "if the contract has no READY) so the mayor can route it.")
+    assert f"{own} {other}" in workspace_text
+    assert "The held-branch handoff is an exception to this end-of-turn rule" in claim
+    assert "open PR or inconclusive PR records" in claim
+    assert 'the “end this turn” instruction in Continue' in claim
+    assert "a held one closed above" not in workspace_text
+    handoff, after_close = continuation.split("After close,", 1)
+    assert "end this turn with the claim still assigned" in handoff
+    assert "gc runtime drain-ack" not in handoff
+    assert "gc runtime drain-ack" in after_close
+
     # The city command binding may differ from the rig role binding. Exercise
     # the command actually rendered, without claiming work in the fixture.
     claim = result.stdout.split("```bash\n", 1)[1].split("\n", 1)[0]

@@ -183,6 +183,8 @@ than Chat allows are split at paragraph boundaries.
 
 ## Files and history
 
+When a message is deleted, the adapter removes the files it saved for it, and a local path from that message stops working.
+
 - **Send a file:** write it under `.gc/gchat-out/` in the city directory,
   then `gc gchat upload --to spaces/<id>/messages/<id> --file
   "$PWD/.gc/gchat-out/<name>" [--body 'caption']`. Use `--conversation-id`

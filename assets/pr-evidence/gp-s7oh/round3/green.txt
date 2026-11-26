@@ -1,0 +1,26 @@
+$ env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run '^TestDeletionLearnedAfterAnOutageRemovesFiles$' -count=1
+ok  	gchat-adapter/internal/inbound	0.253s
+exit 0
+
+$ env -u GC_BIN -u NEVER_SILENT go test ./internal/server -run '^(TestHistoryReadSavesAreRemovedToo|TestSaveRacingADeletionLeavesNoFile)$' -count=1
+ok  	gchat-adapter/internal/server	0.683s
+exit 0
+
+$ env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run '^TestArrivalObservationAndEditMediaStepOrder$' -count=1 -v
+--- PASS: TestArrivalObservationAndEditMediaStepOrder (2.43s)
+    --- PASS: TestArrivalObservationAndEditMediaStepOrder/creation_and_live_edit (2.38s)
+    --- PASS: TestArrivalObservationAndEditMediaStepOrder/observation_starts_while_media_is_held (0.05s)
+PASS
+ok  	gchat-adapter/internal/inbound	2.744s
+exit 0
+
+$ env -u GC_BIN -u NEVER_SILENT go test -p 1 -count=1 ./internal/ledger -run '^(TestMediaCleanupLedgerCompatibility|TestMediaAndJoinRecordsShareOneLedger|TestJoinLedgerCompatibility|TestHistoryFloorLedgerCompatibility|TestLedgerOfEitherParentLoads|TestCloneIsolatesEveryMutableRecord)$' -v
+--- PASS: TestHistoryFloorLedgerCompatibility (0.01s)
+--- PASS: TestJoinLedgerCompatibility (0.01s)
+--- PASS: TestMediaAndJoinRecordsShareOneLedger (0.03s)
+--- PASS: TestLedgerOfEitherParentLoads (0.12s)
+--- PASS: TestCloneIsolatesEveryMutableRecord (0.00s)
+--- PASS: TestMediaCleanupLedgerCompatibility (0.01s)
+PASS
+ok  	gchat-adapter/internal/ledger	0.359s
+exit 0

@@ -2644,7 +2644,7 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertNotIn("%(refname:short)' refs/heads", script)
         # The script's WARN no longer tells a worker to create a second candidate.
         self.assertNotIn("Create your own branch in this work dir before committing", script)
-        self.assertIn("Do not create a second branch naming the bead; fail closed (branch-held) until that holder releases it.", script)
+        self.assertIn("Do not create a second branch naming the bead. Follow the worker role's held-branch rule.", script)
 
         # Every writer of the key, by grep: reads first, never records over an item branch.
         writers: dict[str, str] = {}
@@ -2671,8 +2671,12 @@ class FormulaAssetTests(unittest.TestCase):
             "no checkout state, not the rig root's branch nor a default branch, is consulted",
             "exactly one such branch is the item's whether or not the record agrees",
             "several fail closed for the operator to reconcile",
-            "closes `gc.failure_class=branch-held` naming the holder instead of creating a second candidate",
-            "a branch recorded before this rule under a name without the id is renamed by the operator",
+            "in_progress bead with an open PR",
+            "mails the mayor the holder path, PR URL and branch head",
+            "stops with the bead open",
+            "If the branch has no PR",
+            "closes `gc.failure_class=branch-held` naming the holder",
+            "A branch recorded before this rule under a name without the id is renamed by the operator",
         ):
             with self.subTest(readme=clause):
                 self.assertIn(clause, section)

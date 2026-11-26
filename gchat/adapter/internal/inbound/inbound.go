@@ -364,6 +364,7 @@ func (p *Processor) Pass(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	p.cleanupMediaPass(ctx, l)
 	ids := make([]string, 0)
 	for id, c := range l.Changes {
 		if c.Status == "pending" || c.Status == "intent" {
@@ -874,6 +875,9 @@ func spaceKind(s *api.Space) string {
 
 func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, observe func()) error {
 	m := c.Message
+	if c.Kind == "message.updated" || c.Kind == "message.deleted" {
+		defer p.cleanupMedia(ctx, m.Name)
+	}
 	id := m.Name
 	l, err := p.snapshot()
 	if err != nil {
@@ -896,6 +900,24 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 			id = m.Name
 		}
 	}
+	// An edit's cleanup checkpoint can be ahead of its turn after a stop.
+	// Equal revisions still finish that interrupted turn; older ones cannot
+	// roll back attachment ownership or resurrect a removed attachment.
+	if checkpoint := l.Media[m.Name]; c.Kind != "message.deleted" && checkpoint != nil && updated.Before(checkpoint.Revision) {
+		return nil
+	}
+	// Catch-up delivers current snapshots as creations. Reconcile saved copies
+	// before turn deduplication, including an equal revision already delivered.
+	checkpoint := l.Media[m.Name]
+	created, _ := time.Parse(time.RFC3339Nano, m.CreateTime)
+	editedSnapshot := m.LastUpdateTime != "" && updated.After(created)
+	reconcile := c.Kind == "message.created" && (editedSnapshot || (checkpoint != nil && len(checkpoint.Files) != 0))
+	if reconcile && (previous == nil || (!previous.Deleted && !updated.Before(previous.Revision))) {
+		defer p.cleanupMedia(ctx, m.Name)
+		if err := p.editMedia(ctx, m); err != nil {
+			return err
+		}
+	}
 	if l.Changes[id] != nil {
 		return p.resume(ctx, id)
 	}
@@ -904,6 +926,11 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 	}
 	if observe != nil {
 		go observe()
+	}
+	if c.Kind == "message.updated" {
+		if err := p.editMedia(ctx, m); err != nil {
+			return err
+		}
 	}
 	state := ledger.MessageState{Revision: updated}
 	if previous != nil {
@@ -989,7 +1016,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 		local = "wake_policy"
 	}
 	if local == "" && c.Kind != "message.deleted" {
-		w.Text, w.Attachments = NormalizeContent(ctx, p.opts.Chat, p.opts.Config.Endpoints, m)
+		w.Text, w.Attachments = NormalizeContent(ctx, p.opts.Chat, p.opts.Config.Endpoints, m, p.mediaStore())
 	}
 	if c.Kind == "message.updated" && id != m.Name {
 		w.Text = "edited: " + w.Text
@@ -1157,6 +1184,9 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 				state.SendKey = current.SendKey
 			}
 			l.Messages[name] = state
+			if c.Kind == "message.deleted" {
+				mediaState(l, name).DeletePending = true
+			}
 		}
 		if space != nil {
 			// Preserve cursors/backlog and any concurrent wake-policy update.
@@ -1337,6 +1367,9 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 		return false
 	}
 	if state.Deleted {
+		return true
+	}
+	if checkpoint := l.Media[c.Message]; checkpoint != nil && checkpoint.Revision.After(state.Revision) {
 		return true
 	}
 	if stamp, ok := strings.CutPrefix(c.ID, c.Message+"#updated#"); ok {
@@ -1574,9 +1607,13 @@ func renderMentions(m *api.Message) string {
 // NormalizeContent is shared by inbound turns and on-demand history. Uploaded
 // files use the same bounded, symlink-safe download path; failures remain visible
 // in the text instead of dropping the attachment or the message.
-func NormalizeContent(ctx context.Context, client *chat.Client, endpoints config.Endpoints, m *api.Message) (string, []wire.Attachment) {
+func NormalizeContent(ctx context.Context, client *chat.Client, endpoints config.Endpoints, m *api.Message, stores ...*MediaStore) (string, []wire.Attachment) {
 	w := wire.InboundMessage{Text: renderMentions(m)}
-	appendAttachments(ctx, client, endpoints, m, &w)
+	var store *MediaStore
+	if len(stores) > 0 {
+		store = stores[0]
+	}
+	appendAttachments(ctx, client, endpoints, m, &w, store)
 	return w.Text, w.Attachments
 }
 
@@ -1584,7 +1621,7 @@ func NormalizeContent(ctx context.Context, client *chat.Client, endpoints config
 // process-wide gate also covers config reloads and aliases of the media root.
 var mediaNormalizationGate = make(chan struct{}, 1)
 
-func appendAttachments(ctx context.Context, client *chat.Client, endpoints config.Endpoints, m *api.Message, w *wire.InboundMessage) {
+func appendAttachments(ctx context.Context, client *chat.Client, endpoints config.Endpoints, m *api.Message, w *wire.InboundMessage, store *MediaStore) {
 	if len(m.Attachment) == 0 {
 		return
 	}
@@ -1617,6 +1654,9 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 		case a.DriveDataRef != nil && a.DriveDataRef.DriveFileId != "":
 			item.URL = "https://drive.google.com/file/d/" + url.PathEscape(a.DriveDataRef.DriveFileId) + "/view"
 		case a.AttachmentDataRef != nil && a.AttachmentDataRef.ResourceName != "":
+			if reason = store.allowed(m, a.Name); reason != "" {
+				break
+			}
 			if usageErr != nil {
 				reason = "media accounting unavailable"
 				break
@@ -1662,6 +1702,17 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 					limit = remaining
 					quotaBound = true
 				}
+			}
+			var pending bool
+			reason, pending = store.reserve(m, a.Name, dest)
+			if pending {
+				// Keep a prior removal recoverable even if its path is currently
+				// vacant. The new copy gets its own exclusive reservation.
+				dest = filepath.Join(dir, rand.Text()+"-"+filename)
+				reason, _ = store.reserve(m, a.Name, dest)
+			}
+			if reason != "" {
+				break
 			}
 			written, err := client.DownloadMedia(ctx, a.AttachmentDataRef.ResourceName, dest, limit)
 			if err != nil {
