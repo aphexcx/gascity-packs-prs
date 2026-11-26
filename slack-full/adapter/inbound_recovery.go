@@ -296,6 +296,7 @@ func (s *recoverySubmission) message() externalInboundMessage {
 }
 
 type inboundRecoveryEntry struct {
+	LastHeldAnswerAt          time.Time              `json:"last_held_answer_at,omitzero"`
 	ReactionReceiptGeneration uint64                 `json:"reaction_receipt_generation,omitempty"`
 	ReplayIncludeOlder        bool                   `json:"replay_include_older,omitempty"`
 	ReplayRequestGeneration   uint64                 `json:"replay_request_generation,omitempty"`
