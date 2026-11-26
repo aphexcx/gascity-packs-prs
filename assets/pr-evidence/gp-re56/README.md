@@ -30,7 +30,7 @@ C6 verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests di
 exit 0, 3118 passed, 0 failed, 136 skipped, 10932 subtests passed, 2 warnings.
 ```
 
-C-7 is the hosted Check workflow’s adapter job on the draft. It runs after publication.
+C-7 passed on draft head `b55d630808bc027744e7b4214250a1c4e4c2654b`. The hosted Check job ran `go test ./...` in `slack-full/adapter` and finished successfully. [Adapter step in Check](https://github.com/aphexcx/gascity-packs-prs/actions/runs/45803870085/job/139853851368#step:15:1)
 
 The transcripts preserve Go’s per-test outcomes and assertion lines. Counts include named subtests and parent tests, and exclude the package outcome. The fake mailbox cases cover the retained local dedup key, archive between a lost result and a retry, and arrival before a retry.
 
