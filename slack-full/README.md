@@ -469,6 +469,10 @@ at the default 30-minute bound. Longer bounds permit 15-minute intervals.
 A vouch releases held lines for that session, at most once per line per minute.
 A follower's due rung wakes its FIFO head; when that head settles, due followers
 run in order in the same tick.
+After an HTTP 2xx receipt says `held` and all its members and parsed counts agree
+that nothing landed, the adapter records the time of the answer. With receipt
+checking enabled, it offers the oldest eligible line again after 60 seconds,
+or sooner when an existing trigger makes it due.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -504,6 +508,7 @@ the bound, makes one final attempt, then records a dead letter and lets later
 lines flow. Transient replay failures delay followers only until
 their backoff ends. A fresh follower can advance an active HOLD, but cannot
 shorten a history replay's cooldown after a start, vouch or explicit redrive.
+The 60-second clock caps that cooldown after a fresh held answer.
 A `no_route` response remains subject to the hold bound.
 Reactions whose receipt establishes loss return to their coalescer side buffer.
 They ride a real message or a new overflow of 100 fresh reactions; returned
@@ -553,7 +558,8 @@ concurrent message/app-mention twin cannot add a stale hourglass after removal.
 
 Dead letters within the configured age limit replay at startup, on a vouched
 delivery to their target, or through
-`gc slack inbound-redrive --conversation-id C…`. The bare verb prints how many
+`gc slack inbound-redrive --conversation-id C…`. A marked line is also offered
+every 60 seconds until the replay age ends. The bare verb prints how many
 records it skips for age and the oldest skipped timestamp. To deliberately
 replay older history, use `--include-older`; the CLI previews and flushes the
 eligible count before requesting replay. The service log records the flag and
@@ -619,6 +625,7 @@ decoders accept them; absent/zero values preserve the previous stored facts.
 | Entry and history | `reaction_receipt_generation` | Zero is the initial/legacy receipt; increases when a buffered reaction acquires a new receipt so older history writes cannot replace it |
 | Entry and history | `alias_original_session_id` | Empty uses the existing alias ID as identity; otherwise preserves dedup identity after retargeting |
 | Entry | `last_attempt_at` | Zero means no recorded recovery send; otherwise its latest time |
+| Entry | `last_held_answer_at` | Time of the latest qualifying held answer. Absent before each POST, after other answers, in older state and in history. |
 | Entry | `replay_include_older` | False enforces the age horizon; true preserves a deliberately queued older replay through ordering and pending receipt checks, then clears on a failed concluded attempt |
 | Entry | `replay_request_generation` | Zero means no accepted redrive command; each selected command increments it so an older attempt preserves newer queue permission and scheduling |
 | Entry | `last_vouch_at` | Zero means no vouch acceleration; otherwise limits those accelerations to one per minute |
@@ -635,6 +642,16 @@ Completed state compacts payloads but retains dedup and timestamps. History
 retains original records. Delivery remains at least once: a crash after gc
 vouches but before durable completion can repeat a notification. This work
 changes only `slack-full`; other adapters need their own assessment.
+
+While gc holds a session's input box closed to a line, the adapter posts that
+session's oldest held line to gc once a minute, for at most 24 hours a line.
+Each such post costs gc up to 30 seconds of waiting for the session and one read
+of its pane, and costs the adapter one log line, one journal row and two saves
+of its state file. A line that has its 30 minute row and is still marked keeps
+the younger lines of its session waiting behind it. The gc premises are
+UNPROVEN P3 (held means zero pastes), UNPROVEN P4 (a retry is claimed again
+after held and deduplicated after delivery), UNPROVEN P5 (cost per offer) and
+UNPROVEN P6 (a later offer can submit gc's own stalled paste).
 
 ### Socket Mode inbound transport + inbound-liveness watchdog
 

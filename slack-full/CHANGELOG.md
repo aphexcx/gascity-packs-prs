@@ -159,6 +159,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   messages already delivered.` without the `(newest ts …) — not re-quoted`
   tail.
 
+- **Held inbound retries.** A 2xx held answer with no evidence of a paste
+  starts a 60-second retry clock. Pending receipts keep their poll schedule.
+  The 30-minute dead-letter row and configured replay age still apply.
+  While gc holds a session's input box closed to a line, the adapter posts that
+  session's oldest held line to gc once a minute, for at most 24 hours a line.
+  Each such post costs gc up to 30 seconds of waiting for the session and one read
+  of its pane, and costs the adapter one log line, one journal row and two saves
+  of its state file. A line that has its 30 minute row and is still marked keeps
+  the younger lines of its session waiting behind it. The gc premises are
+  UNPROVEN P3 (held means zero pastes), UNPROVEN P4 (a retry is claimed again
+  after held and deduplicated after delivery), UNPROVEN P5 (cost per offer) and
+  UNPROVEN P6 (a later offer can submit gc's own stalled paste).
+
 ### Upgrade
 
 From the peer-parity change (PR 63, gp-j5p4), a city with no `peer_bots.json`,

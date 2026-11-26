@@ -296,7 +296,7 @@ func (s *recoverySubmission) message() externalInboundMessage {
 }
 
 type inboundRecoveryEntry struct {
-	LastHeldAnswerAt          time.Time              `json:"last_held_answer_at,omitzero"`
+	LastHeldAnswerAt          time.Time              `json:"last_held_answer_at,omitempty,omitzero"`
 	ReactionReceiptGeneration uint64                 `json:"reaction_receipt_generation,omitempty"`
 	ReplayIncludeOlder        bool                   `json:"replay_include_older,omitempty"`
 	ReplayRequestGeneration   uint64                 `json:"replay_request_generation,omitempty"`
@@ -713,6 +713,9 @@ func (r *inboundRecovery) holdEntry(e inboundRecoveryEntry, receipt deliveryRece
 		e.OriginalReceiptID = receipt.id
 	}
 	e.TargetSessions = receiptSessions(receipt)
+	if receipt.heldAnswer(r.gated, nil) {
+		e.LastHeldAnswerAt = now
+	}
 	e.Submission, e.ComposerHold = receipt.submission, receipt.composerHold()
 	e.TrustedFilePaths = append([]string(nil), e.Inbound.trustedFilePaths...)
 	e.Landed = receipt.landedUnconfirmed()
@@ -1226,6 +1229,11 @@ func (r *inboundRecovery) tick(startup bool) {
 			if !now.Before(e.NextAttemptAt) {
 				r.retire(key, e)
 			}
+			if r.heldClockActive(e, now) {
+				for _, k := range recoveryOrderKeys(e) {
+					blocked[k] = true
+				}
+			}
 			continue
 		}
 		if e.PendingReceipt && e.PendingReceiptID == "" {
@@ -1252,6 +1260,13 @@ func (r *inboundRecovery) tick(startup bool) {
 			}
 		}
 		atBound := e.DeadLetteredAt.IsZero() && now.Sub(e.HeldAt) >= r.bound
+		retireUnvouched := func() {
+			e.Reason = "unvouched delivery held for " + r.bound.String()
+			r.retire(key, e)
+			if r.replayMaxAge > 0 && r.heldClockActive(e, now) {
+				block()
+			}
+		}
 		if blockedHere && !e.PendingReceipt && !e.Landed {
 			if atBound {
 				e.Reason = "unvouched delivery held for " + r.bound.String() + "; older delivery still outstanding"
@@ -1264,18 +1279,20 @@ func (r *inboundRecovery) tick(startup bool) {
 				}
 				r.put(key, e)
 			}
-			if !atBound {
+			if !atBound || (r.replayMaxAge > 0 && r.heldClockActive(e, now)) {
 				block()
 			}
 			continue
 		}
-		if !e.PendingReceipt && !e.DeadLetteredAt.IsZero() && e.NextAttemptAt.IsZero() {
-			if e.ReplayNotBefore.After(now) {
+		clockActive := r.heldClockActive(e, now)
+		clockDue := clockActive && now.Sub(e.LastHeldAnswerAt) >= heldOfferInterval
+		if !e.PendingReceipt && !e.DeadLetteredAt.IsZero() && e.NextAttemptAt.IsZero() && !clockDue {
+			if e.ReplayNotBefore.After(now) || clockActive {
 				block()
 			}
 			continue
 		}
-		due := atBound || e.Landed
+		due := atBound || e.Landed || clockDue
 		if e.PendingReceipt {
 			due = due || !now.Before(e.NextPollAt)
 		} else {
@@ -1291,6 +1308,15 @@ func (r *inboundRecovery) tick(startup bool) {
 		}
 		wasPending := e.PendingReceipt
 		receipt, err, clearPending := r.attempt(key, e, !blockedHere)
+		if errors.Is(err, errOfferState) {
+			log.Printf("inbound HOLD persistence retry: %v", err)
+			if atBound {
+				retireUnvouched()
+			} else {
+				block()
+			}
+			continue
+		}
 		if errors.Is(err, errRecoveryInactive) {
 			continue
 		}
@@ -1301,6 +1327,10 @@ func (r *inboundRecovery) tick(startup bool) {
 			e.Attempts++
 			e.RetryStep++
 			e.LastAttemptAt = now
+			e.LastHeldAnswerAt = time.Time{}
+			if receipt.heldAnswer(r.gated, err) {
+				e.LastHeldAnswerAt = r.now()
+			}
 		}
 		if clearPending {
 			e.PendingReceiptID, e.PendingReceipt, e.LegacyUncertain = "", false, false
@@ -1428,8 +1458,7 @@ func (r *inboundRecovery) tick(startup bool) {
 			e.NextPollAt = now.Add(r.pollDelay(e))
 		}
 		if atBound {
-			e.Reason = "unvouched delivery held for " + r.bound.String()
-			r.retire(key, e)
+			retireUnvouched()
 			continue
 		}
 		if e.DeadLetteredAt.IsZero() {
@@ -1442,6 +1471,12 @@ func (r *inboundRecovery) tick(startup bool) {
 			e.ReplayIncludeOlder = false
 			e.NextAttemptAt = time.Time{}
 			e.ReplayNotBefore = now.Add(retryLadderDelay(inboundHoldBackoff, e.RetryStep, r.ceiling))
+			if !e.LastHeldAnswerAt.IsZero() {
+				deadline := e.LastHeldAnswerAt.Add(heldOfferInterval)
+				if e.ReplayNotBefore.After(deadline) {
+					e.ReplayNotBefore = deadline
+				}
+			}
 			block()
 		} else if !e.PendingSince.IsZero() && now.Sub(e.PendingSince) < r.bound {
 			block()
@@ -1835,6 +1870,10 @@ func (r *inboundRecovery) attempt(key string, e inboundRecoveryEntry, allowSend 
 			e.AliasBody = marker + e.AliasBody
 		}
 	}
+	if err := r.saveBeforeOffer(key); err != nil {
+		return deliveryReceipt{}, err, false
+	}
+	e.LastHeldAnswerAt = time.Time{}
 	receipt, err := r.send(e)
 	if (err == nil || errors.Is(err, errDeliveryUnvouched)) && receipt.landedUnconfirmed() {
 		err = nil

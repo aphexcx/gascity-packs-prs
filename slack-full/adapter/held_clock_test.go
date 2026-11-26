@@ -51,6 +51,7 @@ func TestHeldClockAnswer(t *testing.T) {
 		{name: "partial member", summary: "held", member: "partial", code: 200},
 		{name: "pending member", summary: "held", member: "pending", code: 200},
 		{name: "unknown member", summary: "held", member: "new", code: 200},
+		{name: "nonempty unknown spelling", summary: "held", member: "---", code: 200},
 		{name: "delivered member", summary: "held", member: "delivered", code: 200},
 		{name: "summary bytes", summary: "held", member: "held", summaryCount: 1, code: 200},
 		{name: "member bytes", summary: "held", member: "failed", memberCount: 1, code: 200},
@@ -493,6 +494,18 @@ func TestHeldClockState(t *testing.T) {
 		c.r.path = good
 		if len(c.posts[key]) != 2 || !c.r.state.Entries[key].LastHeldAnswerAt.Equal(e.LastHeldAnswerAt) {
 			t.Fatal("save failure consumed the mark or made a POST")
+		}
+	})
+	t.Run("save failed at bound", func(t *testing.T) {
+		c := clockCase(t, true)
+		key := c.hold("100.1", "s1")
+		good := c.r.path
+		c.r.path = filepath.Join(good, "not-a-directory")
+		c.tick(1800)
+		c.r.path = good
+		rows := c.history()
+		if len(c.posts[key]) != 0 || len(rows) != 1 || rows[0].Reason != "unvouched delivery held for 30m0s" {
+			t.Fatal("failed save allowed a POST or suppressed the bound row")
 		}
 	})
 	t.Run("old state and history keys", func(t *testing.T) {
