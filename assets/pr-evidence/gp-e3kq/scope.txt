@@ -1,0 +1,33 @@
+A0
+merge-base --is-ancestor 0
+git grep send 0
+git grep attempt 0
+git grep eligible 0
+git grep test prefix 1
+HEAD:slack-full/adapter/inbound_recovery.go:1837:	receipt, err := r.send(e)
+HEAD:slack-full/adapter/inbound_recovery.go:1292:		receipt, err, clearPending := r.attempt(key, e, !blockedHere)
+HEAD:slack-full/adapter/inbound_recovery.go:1
+A4  git diff --name-only START IMPLEMENTATION
+slack-full/CHANGELOG.md
+slack-full/README.md
+slack-full/adapter/held_clock.go
+slack-full/adapter/held_clock_test.go
+slack-full/adapter/inbound_recovery.go
+slack-full/adapter/main.go
+A4  changed hunks in inbound_recovery.go at START lines 27 through 38: 0
+A5  git grep -cF for the five log formats in specification order, START then IMPLEMENTATION
+baa1898f01608e6ad7d312475ace5bb35782f562:slack-full/adapter/inbound_recovery.go:1
+baa1898f01608e6ad7d312475ace5bb35782f562:slack-full/adapter/inbound_recovery.go:1
+baa1898f01608e6ad7d312475ace5bb35782f562:slack-full/adapter/inbound_recovery.go:1
+baa1898f01608e6ad7d312475ace5bb35782f562:slack-full/adapter/inbound_recovery.go:1
+baa1898f01608e6ad7d312475ace5bb35782f562:slack-full/adapter/inbound_recovery.go:1
+e7dd47c586766aff05ad3b0f0c6b6b370b28c302:slack-full/adapter/inbound_recovery.go:1
+e7dd47c586766aff05ad3b0f0c6b6b370b28c302:slack-full/adapter/inbound_recovery.go:1
+e7dd47c586766aff05ad3b0f0c6b6b370b28c302:slack-full/adapter/inbound_recovery.go:1
+e7dd47c586766aff05ad3b0f0c6b6b370b28c302:slack-full/adapter/inbound_recovery.go:1
+e7dd47c586766aff05ad3b0f0c6b6b370b28c302:slack-full/adapter/inbound_recovery.go:1
+A6  git diff --numstat START IMPLEMENTATION -- slack-full/adapter
+63	0	slack-full/adapter/held_clock.go
+659	0	slack-full/adapter/held_clock_test.go
+52	5	slack-full/adapter/inbound_recovery.go
+7	4	slack-full/adapter/main.go

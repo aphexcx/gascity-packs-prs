@@ -1,0 +1,80 @@
+33 passed, 23 failed, 0 skipped
+held_clock_test.go:67: held answer = false, want true
+FAIL TestHeldClockAnswer/held (0s)
+held_clock_test.go:67: held answer = false, want true
+FAIL TestHeldClockAnswer/normalized (0s)
+held_clock_test.go:67: held answer = false, want true
+FAIL TestHeldClockAnswer/member_without_status (0s)
+held_clock_test.go:67: held answer = false, want true
+FAIL TestHeldClockAnswer/adapter_withheld_vouch (0s)
+PASS TestHeldClockAnswer/redirect (0s)
+PASS TestHeldClockAnswer/unanswered (0s)
+PASS TestHeldClockAnswer/failed (0s)
+PASS TestHeldClockAnswer/partial (0s)
+PASS TestHeldClockAnswer/pending (0s)
+PASS TestHeldClockAnswer/no_route (0s)
+PASS TestHeldClockAnswer/short (0s)
+PASS TestHeldClockAnswer/unknown_summary (0s)
+PASS TestHeldClockAnswer/partial_member (0s)
+PASS TestHeldClockAnswer/pending_member (0s)
+PASS TestHeldClockAnswer/unknown_member (0s)
+PASS TestHeldClockAnswer/delivered_member (0s)
+PASS TestHeldClockAnswer/summary_bytes (0s)
+PASS TestHeldClockAnswer/member_bytes (0s)
+PASS TestHeldClockAnswer/gate_off (0s)
+PASS TestHeldClockAnswer/no_receipt (0s)
+PASS TestHeldClockAnswer/other_error (0s)
+FAIL TestHeldClockAnswer (0s)
+held_clock_test.go:103: HTTP 200: receipt status "held", code 0
+held_clock_test.go:103: HTTP 300: receipt status "held", code 0
+FAIL TestHeldClockPOSTStatus/channel (0s)
+held_clock_test.go:103: HTTP 200: receipt status "held", code 0
+held_clock_test.go:103: HTTP 300: receipt status "held", code 0
+FAIL TestHeldClockPOSTStatus/alias (0s)
+FAIL TestHeldClockPOSTStatus (0s)
+PASS TestHeldClockGap/30 (0s)
+held_clock_test.go:260: no paste within 60s of 90s
+FAIL TestHeldClockGap/90 (0s)
+held_clock_test.go:260: no paste within 60s of 210s
+FAIL TestHeldClockGap/210 (0s)
+held_clock_test.go:260: no paste within 60s of 510s
+FAIL TestHeldClockGap/510 (0s)
+held_clock_test.go:260: no paste within 60s of 1110s
+FAIL TestHeldClockGap/1110 (0s)
+held_clock_test.go:260: no paste within 60s of 1900s
+FAIL TestHeldClockGap/1900 (0.01s)
+held_clock_test.go:260: no paste within 60s of 10800s
+FAIL TestHeldClockGap/10800 (0.02s)
+held_clock_test.go:260: no paste within 60s of 82800s
+FAIL TestHeldClockGap/82800 (0.05s)
+PASS TestHeldClockGap/108000 (0.05s)
+FAIL TestHeldClockGap (0.13s)
+held_clock_test.go:272: three hours: 6 offers
+FAIL TestHeldClockCadence (0.01s)
+PASS TestHeldClockOneTurn/held_then_delivered (0s)
+PASS TestHeldClockOneTurn/pending_concluded_delivered (0s)
+PASS TestHeldClockOneTurn/pending_concluded_held (0s)
+PASS TestHeldClockOneTurn/no_answer (0.02s)
+PASS TestHeldClockOneTurn/no_route (0.02s)
+PASS TestHeldClockOneTurn/failed (0.02s)
+PASS TestHeldClockOneTurn/partial_member (0.01s)
+PASS TestHeldClockOneTurn/short_delivered (0.01s)
+held_clock_test.go:371: latest held answer did not survive restart
+held_clock_test.go:378: after restart [20 80]
+FAIL TestHeldClockOneTurn/restart_after_held (0.05s)
+PASS TestHeldClockOneTurn/restart_before_POST (0.11s)
+PASS TestHeldClockOneTurn/gate_off (0.02s)
+PASS TestHeldClockOneTurn/acknowledgement_during_offer (0.02s)
+PASS TestHeldClockOneTurn/vouch_and_clock (0.02s)
+FAIL TestHeldClockOneTurn (0.29s)
+held_clock_test.go:464: initial held answer missing from state
+FAIL TestHeldClockState/save_around_POST (0.09s)
+PASS TestHeldClockState/save_failed (0.09s)
+PASS TestHeldClockState/old_state_and_history_keys (0.08s)
+FAIL TestHeldClockState (0.27s)
+held_clock_test.go:562: landing order [C1|100.3 C1|100.2 C1|100.1]
+held_clock_test.go:566: younger offered early at 1800
+FAIL TestHeldClockOrder (0.02s)
+held_clock_test.go:587: replay offers []
+FAIL TestHeldClockRow (0.03s)
+FAIL package (0.932s)
