@@ -48,12 +48,16 @@ import time
 mode = sys.argv[1]
 state = Path(".gc/mail-wake.seen")
 confirmation = state.with_name("mail-wake.confirmed")
+staged = confirmation.with_suffix(".confirmed.tmp")
 
 
 def skipped(reason):
     outcome_file = os.environ.get("GC_ORDER_OUTCOME_FILE")
     if mode == "send" and outcome_file:
-        Path(outcome_file).write_text(json.dumps({"outcome": "skipped", "reason": reason}), encoding="utf-8")
+        try:
+            Path(outcome_file).write_text(json.dumps({"outcome": "skipped", "reason": reason}), encoding="utf-8")
+        except OSError as error:
+            reason += f" (could not record skipped outcome: {error.strerror})"
     print(f"mail-wake: {reason}")
 
 
@@ -107,22 +111,62 @@ def send(rows, confirmed_id):
     if reply.get("already_done") is True:
         if wake_id in unread_wakes and wake_id == confirmed_id:
             return wake_id, "covered by existing wake"
-        skipped(f"still pending, archive wake {wake_id} to release its dedup key")
+        if wake_id == confirmed_id:
+            skipped(f"still pending, archive wake {wake_id} to release its dedup key")
+        else:
+            skipped(f"still pending, inspect mail {wake_id} holding the mail-net key before handling it")
         return None
     if reply.get("notified") is True:
         return wake_id, "announced"
     sys.exit("mail-wake: turn unconfirmed, archive the wake to release its dedup key")
 
 
-def read_confirmation():
+def promote_confirmation():
+    staged.replace(confirmation)
+    directory = os.open(confirmation.parent, os.O_RDONLY)
     try:
-        return json.loads(confirmation.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {"wake": None, "ids": []}
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
-def append_ids(ledger, ids):
-    ledger.write("".join(mail_id + "\n" for mail_id in ids))
+def read_confirmation(promote=False):
+    for path in (staged, confirmation):
+        try:
+            batch = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+        except ValueError:
+            if path == staged:  # The writer stopped before finishing its new receipt.
+                continue
+            sys.exit("mail-wake: unreadable batch receipt")
+        if path == staged and promote:
+            promote_confirmation()
+        return batch
+    return {"wake": None, "offset": 0, "ids": []}
+
+
+def id_lines(ids):
+    return "".join(mail_id + "\n" for mail_id in ids).encode("utf-8")
+
+
+def ledger_view(data, batch):
+    # Match bytes at the recorded append position. Two IDs can have the
+    # same prefix, and a tear can occur inside a UTF-8 character.
+    offset = batch["offset"]
+    expected = id_lines(batch["ids"])
+    written = data[offset:offset + len(expected)]
+    if len(data) < offset or not expected.startswith(written):
+        sys.exit("mail-wake: seen file disagrees with the saved batch")
+    missing = expected[len(written):]
+    complete = data + missing
+    if complete and not complete.endswith(b"\n"):
+        sys.exit("mail-wake: incomplete seen ID outside the saved batch")
+    return set(complete.decode("utf-8").split("\n")), missing
+
+
+def append_bytes(ledger, data):
+    ledger.write(data)
     ledger.flush()
     os.fsync(ledger.fileno())
 
@@ -135,49 +179,41 @@ def process():
     cutoff = now - 180 * 10**9
     candidates = [row for row in unread.values() if mode == "--seed" or old_enough(row, cutoff)]
     if mode == "--check":
-        seen = set(state.read_text(encoding="utf-8").split("\n")) if state.exists() else set()
-        seen.update(read_confirmation()["ids"])
+        seen = set()
+        if state.exists():
+            with state.open("rb") as ledger:
+                fcntl.flock(ledger, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                seen, _ = ledger_view(ledger.read(), read_confirmation())
         print(f"mail-wake: unread={len(unread)} eligible={sum(row['id'] not in seen for row in candidates)}")
         return
     if not candidates:
         print("mail-wake: no eligible mail")
         return
     state.parent.mkdir(exist_ok=True)
-    with state.open("a+", encoding="utf-8") as ledger:
+    with state.open("a+b") as ledger:
         fcntl.flock(ledger, fcntl.LOCK_EX | fcntl.LOCK_NB)
         ledger.seek(0)
-        receipt = read_confirmation()
-        # A confirmed send and a ledger append span two stores. Replay the
-        # saved batch under the lock before replacing it with a later batch.
-        lines = ledger.read().split("\n")
-        tail = lines.pop()
-        seen = set(lines)
-        if tail:
-            full_id = next((mail_id for mail_id in receipt["ids"] if mail_id.startswith(tail)), tail)
-            ledger.write(full_id[len(tail):] + "\n")
-            seen.add(full_id)
-        missing = [mail_id for mail_id in receipt["ids"] if mail_id not in seen]
-        if tail or missing:
-            append_ids(ledger, missing)
-            seen.update(missing)
+        receipt = read_confirmation(promote=True)
+        seen, missing = ledger_view(ledger.read(), receipt)
+        if missing:
+            append_bytes(ledger, missing)
         pending = [row for row in candidates if row["id"] not in seen]
         if not pending:
             print("mail-wake: no new mail")
             return
         ids = [row["id"] for row in pending]
-        outcome = "seeded"
+        wake_id, outcome = receipt["wake"], "seeded"
         if mode == "send":
             sent = send(pending, receipt["wake"])
             if sent is None:
                 return
             wake_id, outcome = sent
-            staged = confirmation.with_suffix(".confirmed.tmp")
-            with staged.open("w", encoding="utf-8") as handle:
-                json.dump({"wake": wake_id, "ids": ids}, handle)
-                handle.flush()
-                os.fsync(handle.fileno())
-            staged.replace(confirmation)
-        append_ids(ledger, ids)
+        with staged.open("w", encoding="utf-8") as handle:
+            json.dump({"wake": wake_id, "offset": ledger.tell(), "ids": ids}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        promote_confirmation()
+        append_bytes(ledger, id_lines(ids))
     print(f"mail-wake: {outcome} {len(pending)}")
 
 

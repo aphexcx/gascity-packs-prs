@@ -147,7 +147,7 @@ calls 2
 seen first
 
 start interrupted_append
-mail one | inbox
+{ mail one; mail two; } | inbox
 run
 # Simulate interruption after saving the confirmed batch, before completing
 # the append. The dedup key has since been released by an archive.
@@ -156,7 +156,37 @@ run --check
 grep -Fq 'eligible=0' output || fail "preview should account for confirmed batch"
 run
 calls 1
+seen one two
+
+start staged_receipt
+mail one | inbox
+run
+mv .gc/mail-wake.confirmed .gc/mail-wake.confirmed.tmp
+: > .gc/mail-wake.seen
+run --check
+grep -Fq 'eligible=0' output || fail "preview missed the staged receipt"
+[[ -e .gc/mail-wake.confirmed.tmp ]] || fail "preview promoted the staged receipt"
+run
+calls 1
 seen one
+
+start torn_seed
+{ mail message-ab; mail message-abcdef; } | inbox
+run --seed
+printf 'message-ab\nmessage-abc' > .gc/mail-wake.seen
+{ mail message-abcdef; mail message-abc; } | inbox
+run --check
+grep -Fq 'eligible=1' output || fail "preview counted a torn ID as a separate message"
+run
+sent '[mail-wake] 1 unread mail from worker'
+seen message-ab message-abcdef message-abc
+
+start foreign_key
+mail ordinary | inbox
+GC_ORDER_OUTCOME_FILE="$PWD/outcome" SEND_JSON='{"ok":true,"already_done":true,"id":"ordinary"}' run
+calls 2
+no_seen
+jq -e '.reason | contains("inspect mail ordinary")' outcome >/dev/null || fail "unrecognized key holder needs inspection"
 
 start missing_confirmation
 mail one | inbox
@@ -245,6 +275,8 @@ calls 1
 no_seen
 GC_ORDER_OUTCOME_FILE="$PWD/outcome" INBOX_RC=1 run
 jq -e '.outcome == "skipped"' outcome >/dev/null || fail "inbox failure invisible to scheduler"
+GC_ORDER_OUTCOME_FILE="$PWD/missing/outcome" INBOX_RC=1 run
+[[ $(wc -l <output) -eq 1 ]] || fail "expected one inbox diagnostic with unwritable outcome"
 GC_ORDER_OUTCOME_FILE="$PWD/seed-outcome" INBOX_RC=1 run --seed
 calls 1
 no_seen
@@ -270,4 +302,4 @@ assert order["timeout"] == "90s"
 assert order["exec"] == '"$ORDER_DIR/scripts/mail-wake.sh"'
 PY
 
-echo '17 mail-wake cases passed'
+echo '20 mail-wake cases passed'

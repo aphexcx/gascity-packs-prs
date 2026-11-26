@@ -38,10 +38,10 @@ mayor's unread mail every three minutes and sends one local notification for
 previously unannounced mail at least three minutes old. The order appends covered
 IDs to `.gc/mail-wake.seen` after GC confirms a turn. A suppressed send covers
 new IDs only while that confirmed wake is still unread. The order saves the
-last confirmed batch in `.gc/mail-wake.confirmed` so it can finish an interrupted
-append. If a read or unconfirmed wake holds the dedup key, `gc order history
-mail-wake` records a skipped run. Archive the wake named in its reason so the
-next tick can retry the pending mail. Use a mail provider
+last batch and confirmed wake ID in `.gc/mail-wake.confirmed` so it can finish an interrupted
+append. If a read or unconfirmed wake holds the dedup key, `gc events --type
+order.skipped --since 1h` shows the reason. Inspect an unfamiliar key holder
+before acting on it. Archiving a handled wake releases the key for the next tick. Use a mail provider
 that supports `--dedup`, such as GC's built-in provider. With `gc`, `jq`, and Python 3.7+
 on PATH, run the pack's `orders/scripts/mail-wake.sh --check` from the city
 directory to preview counts, or use `--seed` there to cover the existing backlog
