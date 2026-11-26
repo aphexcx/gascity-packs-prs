@@ -2520,6 +2520,176 @@ class FormulaAssetTests(unittest.TestCase):
                 self.assertNotRegex(text, r"(?i)\b\d+(?:st|nd|rd|th)\b")
                 self.assertNotIn("this city", text)
 
+    def test_review_lanes_read_the_fix_steps_earlier_answers(self) -> None:
+        """The fix step lists every round's review-fix summary in the review
+        context, the one file each review lane of the next round already
+        reads, and every lane reads every listed summary. A finding the fix
+        step answered without a commit (WRONG, INTENDED, DOES NOT MATTER, or
+        a proof) meets its answer in the next round instead of repeating to
+        the family stop. The synthesis carries the lanes' marks, an answered
+        finding reported again gets no second answer, and the unchanged
+        root checkout gets one verdict."""
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflows = root / "assets" / "workflows"
+        heading = "## Earlier Review Rounds"
+        marks = ("ANSWER ACCEPTED", "ANSWER REJECTED")
+
+        def fold(text: str) -> str:
+            return " ".join(text.split())
+
+        # TC, the class test: every child of the loop template whose text
+        # sets a lane verdict reads the earlier rounds, and the one child
+        # that sets the fix verdict writes them. Read from the formula, so a
+        # lane added later without the read fails here.
+        formula = load_formula(root, "build-basic-review")
+        loop = next(node for node in formula["template"] if node["id"] == "{target}.build-basic-review-loop")
+        children = {
+            child["id"]: (root / "formulas" / child["description_file"]).resolve().read_text(encoding="utf-8")
+            for child in loop["children"]
+        }
+        lanes = {name: text for name, text in children.items() if "_verdict=approve|iterate" in text}
+        fixers = [name for name, text in children.items() if "`code_review.verdict=iterate`" in text]
+        record = (
+            "Record every review-fix summary this step writes, the no-op summary too, in the review context "
+            "file at `gc.build.code_review_context_path` before this pass closes, whether or not the pass "
+            "commits: under the heading `## Earlier Review Rounds`, which you add at the end of the file when "
+            "it is not there yet, keep one line per round, "
+            "`- round <n>: <absolute path of that round's review-fix summary>`."
+        )
+        with self.subTest(contract="TC", check="three lanes"):
+            self.assertEqual(len(lanes), 3, sorted(lanes))
+        with self.subTest(contract="TC", check="one fix step"):
+            self.assertEqual(fixers, ["{target}.apply-review-findings"])
+        for name, text in lanes.items():
+            for mark in (heading,) + marks:
+                with self.subTest(contract="TC", lane=name, mark=mark):
+                    self.assertIn(mark, fold(text))
+        for name in fixers:
+            with self.subTest(contract="TC", step=name, mark="writes the list"):
+                self.assertIn(record, fold(children[name]))
+
+        apply = fold((workflows / "build-basic-review/{target}.apply-review-findings.md").read_text(encoding="utf-8"))
+        synthesize = fold((workflows / "build-basic-review/{target}.synthesize-review.md").read_text(encoding="utf-8"))
+
+        # T1 (R1): the fix step records each round's summary, one line a
+        # round, with no branch and no commit.
+        for sentence in (
+            record,
+            "A retry of the same round rewrites that round's line and never adds a second.",
+            "This write needs no branch and no commit: the context file lies under the build artifact root.",
+            "The section is the loop's own, not a source anchor's record.",
+            "A pass that ends on a terminal exit without a review-fix summary records nothing.",
+        ):
+            with self.subTest(contract="T1", sentence=sentence[:60]):
+                self.assertIn(sentence, apply)
+
+        # T2 to T4 (R2): the same sentences in every lane. T2 is an answer
+        # that holds, T3 one that does not or cannot be told, T4 every listed
+        # summary with the latest round's line counting.
+        read = (
+            ("T4", "After reading the review context and before writing any finding, read its "
+                   "`## Earlier Review Rounds` section when it has one, and every review-fix summary that "
+                   "section lists, whatever its round; round 1 has none."),
+            ("T4", "For each finding you would report, look for its line in those summaries; when several "
+                   "rounds carry a line for one finding, the latest round's line counts."),
+            ("T2", "A line whose outcome names no commit (WRONG, INTENDED, DOES NOT MATTER, or FIXED by a "
+                   "proof command and its result) is an answer: check it against the current commit, by the "
+                   "line or reason it gives or by the proof command and its result, which you may run again."),
+            ("T2", "When the answer holds, do not report the finding: list it once in your report as "
+                   "ANSWER ACCEPTED with the round of the answer."),
+            ("T3", "When it does not hold, report the finding as ANSWER REJECTED with the round of the "
+                   "answer and the reason the answer fails."),
+            ("T3", "When you cannot tell whether the answer covers what you see (another case of the class, "
+                   "another line, another criterion), the answer is rejected: report the finding as "
+                   "ANSWER REJECTED and say what it does not cover."),
+            ("T3", "A line that reads FIXED with a commit is no answer: judge the current commit as you "
+                   "would without it."),
+            ("T3", "A line without an outcome is no answer: the finding stands."),
+            ("T3", "A listed summary that is missing or cannot be read answers nothing: say so in your "
+                   "report and report as you would without it."),
+            ("T2", "An accepted answer is no reason for `iterate`: with no finding left but accepted "
+                   "answers, record `approve`."),
+        )
+        for name, text in lanes.items():
+            for contract, sentence in read:
+                with self.subTest(contract=contract, lane=name, sentence=sentence[:60]):
+                    self.assertIn(sentence, fold(text))
+
+        # T5 (R3): the synthesis reads no summary and carries the marks.
+        for sentence in (
+            "Read no review-fix summary and judge no answer: carry the lanes' marks.",
+            "An ANSWER ACCEPTED entry is not a finding and takes none of the four classes above: carry it "
+            "in one line with what was answered, the round of the answer and its outcome word.",
+            "A finding a lane marks ANSWER REJECTED keeps its class, required fix or missing evidence, and "
+            "carries the round of the answer and the lane's reason.",
+            "When one lane accepts an answer and another rejects it, it is rejected.",
+        ):
+            with self.subTest(contract="T5", sentence=sentence[:60]):
+                self.assertIn(sentence, synthesize)
+
+        # T6 (R4): an answered finding reported again takes one of three
+        # lines, never a second answer, and the line without an outcome
+        # names this case beside the first.
+        for sentence in (
+            "In a round after the first that the family comparison above did not stop, read every "
+            "review-fix summary listed under the review context's `## Earlier Review Rounds` before you "
+            "settle a finding.",
+            "A blocking finding of this round that an earlier summary answered (WRONG, INTENDED, DOES NOT "
+            "MATTER, or FIXED by a proof command without a commit) has been rejected, whether or not a lane "
+            "marked it ANSWER REJECTED.",
+            "It takes one of three lines and no other: FIXED with a commit; for missing evidence, FIXED with "
+            "a proof command that no earlier summary records for it; or a line without an outcome that gives "
+            "the reviewer's reason and says why this pass neither fixes nor proves it.",
+            "Never write WRONG, INTENDED or DOES NOT MATTER for it again, and never the same proof command again.",
+            "Each of the three sets `iterate` by the verdict rules below.",
+            "An entry the synthesis carries as ANSWER ACCEPTED is not a finding of this round and takes no "
+            "line in the summary.",
+            "The only lines without an outcome are a required fix this pass cannot settle, such as one with "
+            "no implementation worktree, and a blocking finding an earlier summary answered that this pass "
+            "neither fixes nor proves (below): each says why.",
+        ):
+            with self.subTest(contract="T6", sentence=sentence[:60]):
+                self.assertIn(sentence, apply)
+        with self.subTest(contract="T6", sentence="the single-case line without an outcome is gone"):
+            self.assertNotIn("The only line without an outcome is a required fix this pass cannot settle", apply)
+
+        # T7 (R2, one rule): the read is one paragraph, the same text in
+        # every lane, and it names no lane.
+        paragraphs = {}
+        for name, text in lanes.items():
+            found = [fold(part) for part in text.split("\n\n") if heading in part]
+            with self.subTest(contract="T7", lane=name, check="one paragraph"):
+                self.assertEqual(len(found), 1)
+                paragraphs[name] = found[0]
+                for _, sentence in read:
+                    self.assertIn(sentence, found[0])
+                for lane_word in ("acceptance", "test evidence", "simplicity", "_verdict"):
+                    self.assertNotIn(lane_word, found[0])
+        with self.subTest(contract="T7", check="the same text in every lane"):
+            self.assertEqual(len(paragraphs), 3)
+            self.assertEqual(len(set(paragraphs.values())), 1)
+
+        # T8: the unchanged root checkout gets one verdict, stated after the
+        # sentence that leaves retiring a required fix to the review lanes.
+        retire = "the review lanes, not this lane, retire a required fix."
+        exception = (
+            "The unchanged-root-checkout case above is the one exception to both rules: it is not a "
+            "required fix, takes no line in the summary and stays `done`, whatever verdict the lane that "
+            "reported it recorded."
+        )
+        with self.subTest(contract="T8"):
+            self.assertIn(exception, apply)
+            self.assertIn(retire, apply)
+            self.assertGreater(apply.index(exception), apply.index(retire))
+
+        # Guards: the three lanes are as city-neutral as the files of the
+        # test above.
+        for name, text in lanes.items():
+            with self.subTest(contract="city-neutral", lane=name):
+                self.assertNotRegex(fold(text), r"\b\d{4}-\d{2}-\d{2}\b")
+                self.assertNotRegex(fold(text), r"(?i)\b\d+(?:st|nd|rd|th)\b")
+                self.assertNotIn("this city", fold(text))
+
     def test_do_work_lane_case_hands_over_the_branch_never_the_directory(self) -> None:
         """When gc started the session in an agent lane (work_dir + pre_start),
         prepare-worktree (run operator) records the item's BRANCH on the source
