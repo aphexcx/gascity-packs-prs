@@ -2424,9 +2424,11 @@ class FormulaAssetTests(unittest.TestCase):
         The synthesis names each required fix's class and its other cases and
         carries PRECONDITION items apart from required fixes. The fix step
         fixes the whole class under one class-level test, lets no minor item
-        force another loop, and gives every finding one outcome. Both loops
-        state the same family stop with the exit value their own terminal
-        lines record, the same family test and the same NOT SHOWN rule."""
+        force another loop, sends every fix commit back to the review lanes
+        and gives every finding one outcome. Both loops state the same family
+        stop, naming the exit value the fix step's and the repair stage's
+        terminal lines record, the same family test and the same NOT SHOWN
+        rule."""
         workflows = pathlib.Path(__file__).resolve().parents[1] / "assets" / "workflows"
         synthesize = "build-basic-review/{target}.synthesize-review.md"
         apply = "build-basic-review/{target}.apply-review-findings.md"
@@ -2438,6 +2440,10 @@ class FormulaAssetTests(unittest.TestCase):
             "never another fix round."
         )
         different_fault = "A different guard, input or invariant is a different fault, even in the same file."
+        blocking = (
+            "Blocking findings are the synthesis's required fixes and missing evidence; "
+            "a residual risk or a PRECONDITION item is never one."
+        )
         not_shown = (
             "Past round 3, a finding is fixed only when it is reproduced (by a failing "
             "test, or shown reachable in what this city runs) and sits in the changes "
@@ -2451,19 +2457,33 @@ class FormulaAssetTests(unittest.TestCase):
             (synthesize, "PRECONDITION", "is a PRECONDITION, not a required fix: carry it with its precondition in one sentence."),
             (apply, "class", "fix every case of its class in the change, not only the case the review named, "
                              "and add one test at the class level that fails on any case of it."),
-            (apply, "PRECONDITION", "A residual risk or a PRECONDITION item never forces another loop"),
-            (apply, "PRECONDITION", "a lane whose only open items are residual risks or PRECONDITION items counts as approving"),
-            (apply, "outcome words", "exactly one outcome: FIXED (with the commit), WRONG (the reviewer was mistaken, "
+            (apply, "minor", "A residual risk or a PRECONDITION item never forces another loop: fix a residual "
+                             "risk only in a pass that already commits a required fix, when it is cheap"),
+            (apply, "minor", "a lane that reported only residual risks or PRECONDITION items counts as approving."),
+            (apply, "verdict", "Set `code_review.verdict=done` only when this pass commits no fix and acceptance, "
+                               "test evidence, and simplicity all approve;"),
+            (apply, "verdict", "A required fix settled WRONG, INTENDED or DOES NOT MATTER sets `iterate` too: "
+                               "the review lanes, not this lane, retire a required fix."),
+            (apply, "outcome words", "The review-fix summary carries one line per finding of this round, with exactly "
+                                     "one outcome: FIXED (with the commit), WRONG (the reviewer was mistaken, "
                                      "with the line that shows it), INTENDED, or DOES NOT MATTER."),
+            (apply, "outcome words", "A PRECONDITION item and a residual risk left unfixed take DOES NOT MATTER"),
+            (apply, "blocking", blocking),
             (apply, "family", different_fault),
             (loop, "family stop", family_stop),
+            (loop, "blocking", blocking),
             (loop, "family", "the same class of fault and the earlier class-level fix, stated in one sentence"),
             (loop, "family", different_fault),
+            (loop, "family", "When the lane cannot tell, it is the same family."),
             (loop, "NOT SHOWN", not_shown),
             (repair, "family stop", family_stop),
             (repair, "family", different_fault),
             (repair, "NOT SHOWN", not_shown),
-            (repair, "NOT SHOWN", "When none is left to fix, open no further fix attempt and record the exhaustion exit below."),
+            (repair, "NOT SHOWN", "- past round 3, every blocking finding left is NOT SHOWN;"),
+            (repair, "NOT SHOWN", "with the NOT SHOWN ones listed apart in its findings input, and carry them into "
+                                  "any terminal handoff."),
+            (repair, "NOT SHOWN", "When none is left to fix, open no further fix attempt and record the exhaustion "
+                                  "exit below, with the NOT SHOWN findings as its outstanding findings."),
         )
         texts = {name: " ".join((workflows / name).read_text(encoding="utf-8").split())
                  for name in (synthesize, apply, loop, repair)}
