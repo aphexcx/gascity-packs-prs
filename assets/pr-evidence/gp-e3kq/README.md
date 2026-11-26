@@ -65,3 +65,7 @@ The held clock declines an entry carrying any pending receipt ID, even with a mi
 ## Review
 
 The first DEEP review at `e689813bfe3e21f0e71fa4a4343019ebfb49afe5` returned CLEAN and identified one minor ordering error. A retried history append could succeed while the FIFO decision still used its pre-retirement state. The replay-off regression failed before the repair. Commit `e7dd47c586766aff05ad3b0f0c6b6b370b28c302` reads the stored entry at every retirement that can retain a mark. The second DEEP review returned CLEAN with zero findings. It confirmed both pending indicators exclude clock eligibility and found no new path out of the queue without a paste or a history record.
+
+## Hosted verification
+
+C-7 passed for PR head `ac314a50a2383cf57ad282b7be67cd225f364828`. The hosted Check job ran `go test ./...` in the full Slack adapter module and finished successfully. Reachable and both CodeQL analyses also passed. [Check run](https://github.com/aphexcx/gascity-packs-prs/actions/runs/45736894981/job/139632188547)
