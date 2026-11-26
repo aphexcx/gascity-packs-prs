@@ -1,0 +1,6 @@
+$ env -u GC_BIN -u NEVER_SILENT go test -p 1 -count=1 ./internal/ledger -run '^TestMediaAndJoinRecordsShareOneLedger$' -v
+=== RUN   TestMediaAndJoinRecordsShareOneLedger
+--- PASS: TestMediaAndJoinRecordsShareOneLedger (0.04s)
+PASS
+ok  	gchat-adapter/internal/ledger	0.120s
+exit 0
