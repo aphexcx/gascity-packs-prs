@@ -2446,15 +2446,17 @@ class FormulaAssetTests(unittest.TestCase):
         )
         not_shown = (
             "Past round 3, a finding is fixed only when it is reproduced (by a failing "
-            "test, or shown reachable in what this city runs) and sits in the changes "
-            "made since the previous round; the rest are listed as NOT SHOWN with "
-            "their file and line."
+            "test, or shown reachable in a deployment of this change) and sits in the "
+            "changes made since the previous round; the rest are listed as NOT SHOWN "
+            "with their file and line."
         )
         rules = (
             (synthesize, "class", "Name the class of each required fix: the general fault, not the one case a lane reported."),
             (synthesize, "class", "List with it the other cases of that class you can see in the change"),
             (synthesize, "PRECONDITION", "classify each item as required fix, missing evidence, residual risk, or PRECONDITION."),
-            (synthesize, "PRECONDITION", "is a PRECONDITION, not a required fix: carry it with its precondition in one sentence."),
+            (synthesize, "PRECONDITION", "A finding that holds only under a runtime or provider that no deployment of "
+                                         "this change runs, or a right no one there has, is a PRECONDITION, not a "
+                                         "required fix: carry it with its precondition in one sentence."),
             (apply, "class", "fix every case of its class in the change, not only the case the review named, "
                              "and add one test at the class level that fails on any case of it."),
             (apply, "minor", "A residual risk or a PRECONDITION item never forces another loop: fix a residual "
@@ -2462,10 +2464,13 @@ class FormulaAssetTests(unittest.TestCase):
             (apply, "minor", "a lane that reported only residual risks or PRECONDITION items counts as approving."),
             (apply, "verdict", "Set `code_review.verdict=done` only when this pass commits no fix and acceptance, "
                                "test evidence, and simplicity all approve;"),
+            (apply, "verdict", "`code_review.verdict=iterate` when this pass commits a fix or supplies missing "
+                               "evidence, so the review lanes see it,"),
             (apply, "verdict", "A required fix settled WRONG, INTENDED or DOES NOT MATTER sets `iterate` too: "
                                "the review lanes, not this lane, retire a required fix."),
             (apply, "outcome words", "The review-fix summary carries one line per finding of this round, with exactly "
-                                     "one outcome: FIXED (with the commit), WRONG (the reviewer was mistaken, "
+                                     "one outcome: FIXED (with the commit, or for missing evidence the proof command "
+                                     "and its result), WRONG (the reviewer was mistaken, "
                                      "with the line that shows it), INTENDED, or DOES NOT MATTER."),
             (apply, "outcome words", "A PRECONDITION item and a residual risk left unfixed take DOES NOT MATTER"),
             (apply, "blocking", blocking),
@@ -2491,22 +2496,29 @@ class FormulaAssetTests(unittest.TestCase):
             with self.subTest(asset=name, contract=contract, sentence=sentence[:60]):
                 self.assertIn(sentence, texts[name])
 
-        # The family-stop sentence names the value the terminal lines record
-        # beside `gc.failure_class=review_family_stop`, read from those lines.
+        # The family-stop sentence names the value each step's own terminal
+        # lines record beside `gc.failure_class=review_family_stop`. Read per
+        # step from its exit paragraph, so the sentence repeating the value in
+        # prose cannot stand in for a terminal record that lost it.
         stated = set(re.findall(r"`gc\.build\.repair_status=(\w+)`", family_stop))
-        recorded = set()
+        self.assertEqual(stated, {"family_stop"})
         for name in (apply, repair):
+            recorded = set()
             for paragraph in (workflows / name).read_text(encoding="utf-8").split("\n\n"):
                 flat = " ".join(paragraph.split())
                 if "gc.failure_class=review_family_stop" in flat and family_stop not in flat:
                     recorded |= set(re.findall(r"`gc\.build\.repair_status=(\w+)`", flat))
-        self.assertEqual(stated, recorded)
+            with self.subTest(asset=name, contract="family-stop exit value"):
+                self.assertEqual(stated, recorded)
 
-        # City-neutral step text: no date and no ordinal in any of these files.
+        # City-neutral step text: no date and no ordinal in any of these files,
+        # and PRECONDITION and reachability are judged against the change's
+        # deployments, never against the one city that runs the review.
         for name, text in texts.items():
             with self.subTest(asset=name, contract="city-neutral"):
                 self.assertNotRegex(text, r"\b\d{4}-\d{2}-\d{2}\b")
                 self.assertNotRegex(text, r"(?i)\b\d+(?:st|nd|rd|th)\b")
+                self.assertNotIn("this city", text)
 
     def test_do_work_lane_case_hands_over_the_branch_never_the_directory(self) -> None:
         """When gc started the session in an agent lane (work_dir + pre_start),
