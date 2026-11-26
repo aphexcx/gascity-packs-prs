@@ -180,9 +180,12 @@ The local never-silent owner notice asks for a turn with
 `slack-silent:<episode id>`, using the existing digest of the tracked message ID
 and its creation time. A retry of a local notice first attempted before
 upgrade retains its original key. After a new inbound loss is written to disk, the
-adapter also asks for a turn with `dead-letter:<file name>`. That mail contains
-the path and the delivery reason. Provider response bodies stay in the file.
-Writes to the same file share one live mailbox entry. Check the adapter log
+adapter also asks for a turn with `dead-letter:<file name>:<first message ts>`.
+Each append uses the timestamp of its first record. Distinct losses in one
+channel get separate mails, and a repeat of the same loss shares its live
+mailbox entry. The mail contains the path and the delivery reason. Provider
+response bodies stay in the file. The three notifying sends allow up to
+60 seconds for gc to request the turn. Check the adapter log
 for `operator mail` with `id`, `notified`, `key` and `already_done`. A missing
 notification flag reads as false. If gc rejects either alert flag as unknown,
 the adapter logs the fallback and makes one plain send. A dead-letter mail

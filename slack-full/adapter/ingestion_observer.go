@@ -550,12 +550,10 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			failures = append(failures, fmt.Errorf("persist unseen attempt for %s: %w", channel, err))
 			continue
 		}
-		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		for i := range unseen {
 			unseen[i].MailKey = attempt.MailKey
 		}
-		err = o.notify(mailCtx, ingestionAlertRows(unseen))
-		cancel()
+		err = o.notify(ctx, ingestionAlertRows(unseen))
 		if err != nil {
 			if ingestionNotifyDefinitelyRefused(err) {
 				attempt.Refusals = min(attempt.Refusals+1, 7)
@@ -771,12 +769,17 @@ func (cfg config) operatorMailCity() string {
 	return cfg.cityName
 }
 
+// gc can wait up to 30 seconds for an idle session before queuing the turn.
+const operatorMailNotifyTimeout = 60 * time.Second
+
 func sendOperatorMail(ctx context.Context, bin, city, key, subject, body string, notify bool) error {
 	args := []string{"--city", city, "mail", "send", "mayor"}
 	if !notify {
 		_, err := runOperatorMail(ctx, bin, append(args, "--dedup", key, "-s", subject, "-m", body))
 		return err // HOLD notices retain their original CLI contract.
 	}
+	ctx, cancel := context.WithTimeout(ctx, operatorMailNotifyTimeout)
+	defer cancel()
 	args = append(args, "-s", subject, "-m", body)
 	output, err := runOperatorMail(ctx, bin, append(args, "--dedup", key, "--notify", "--json"))
 	if flag := unsupportedMailFlag(err); flag != "" {

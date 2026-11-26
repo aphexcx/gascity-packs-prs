@@ -63,8 +63,6 @@ func newNeverSilent(cfg config, identities *identityRegistry, aliases *handleAli
 			return nil
 		},
 		SendLocal: func(ctx context.Context, m neversilent.Message, line, key string) error {
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
 			bin := os.Getenv("GC_BIN")
 			if bin == "" {
 				bin = "gc"

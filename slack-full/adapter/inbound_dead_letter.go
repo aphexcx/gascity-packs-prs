@@ -18,58 +18,59 @@ import (
 	"unicode/utf8"
 )
 
-// A write confirms delivery to disk independently of the mail command. At
-// most one command per channel file can be in flight. gc deduplicates later
-// writes against the same live mail, including across adapter restarts.
+// Each distinct loss can request its turn independently. Overlapping writes
+// for the same key share a worker that rechecks gc's mailbox after the send.
 type deadLetterAlerts struct {
 	mu       sync.Mutex
 	inFlight map[string]*deadLetterMail
-	send     func(path, reason string) error
+	send     func(path, key, reason string) error
 }
 
 type deadLetterMail struct {
 	done    chan struct{}
-	pending string
+	pending *deadLetterNotice
+}
+
+type deadLetterNotice struct {
+	path, reason string
 }
 
 func newDeadLetterAlerts(city string) *deadLetterAlerts {
-	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(path, reason string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(path, key, reason string) error {
 		body := fmt.Sprintf("File: %s\nReason: %s", path, reason)
-		return sendOperatorMail(ctx, "gc", city, "dead-letter:"+filepath.Base(path), "Slack inbound message could not be delivered", body, true)
+		return sendOperatorMail(context.Background(), "gc", city, key, "Slack inbound message could not be delivered", body, true)
 	}}
 }
 
-func (a *deadLetterAlerts) notify(path, reason string) {
+func (a *deadLetterAlerts) notify(path, firstMessageTS, reason string) {
 	if a == nil {
 		return
 	}
+	key := "dead-letter:" + filepath.Base(path) + ":" + firstMessageTS
 	a.mu.Lock()
-	if mail := a.inFlight[path]; mail != nil {
-		mail.pending = reason
+	if mail := a.inFlight[key]; mail != nil {
+		mail.pending = &deadLetterNotice{path: path, reason: reason}
 		a.mu.Unlock()
 		return
 	}
 	mail := &deadLetterMail{done: make(chan struct{})}
-	a.inFlight[path] = mail
+	a.inFlight[key] = mail
 	a.mu.Unlock()
 	go func() {
 		for {
-			err := a.send(path, reason)
+			err := a.send(path, key, reason)
 			if err != nil {
-				log.Printf("operator mail failed key=%q: %v", "dead-letter:"+filepath.Base(path), err)
+				log.Printf("operator mail failed key=%q: %v", key, err)
 			}
 			a.mu.Lock()
-			if mail.pending == "" {
-				delete(a.inFlight, path)
+			if mail.pending == nil {
+				delete(a.inFlight, key)
 				close(mail.done)
 				a.mu.Unlock()
 				return
 			}
-			// A different write arrived while this send was running. Let gc
-			// determine whether the prior mail is still live.
-			reason, mail.pending = mail.pending, ""
+			path, reason = mail.pending.path, mail.pending.reason
+			mail.pending = nil
 			a.mu.Unlock()
 		}
 	}()

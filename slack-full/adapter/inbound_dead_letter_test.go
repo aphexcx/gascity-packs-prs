@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -42,7 +43,7 @@ if [ -f "$MAIL_DIR/$1" ]; then
     echo '{"id":"example-mail","already_done":true}'
 else
     echo delivered >> "$MAIL_DIR/$1"
-    echo '{"id":"example-mail"}'
+    echo '{"id":"example-mail","notified":true}'
 fi
 `
 			if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
@@ -57,12 +58,12 @@ fi
 			t.Cleanup(func() { log.SetOutput(old) })
 			const channel, marker, user = "C_EXAMPLE", "private-inbound-marker", "example-sender-name"
 			rejection := &inboundPostError{Status: 422, StatusText: "422 Unprocessable Entity", Body: marker + " " + user}
-			writes := 1
+			timestamps := []string{"100.1"}
 			if mode == "accepted" {
-				writes = 2
+				timestamps = append(timestamps, "100.2", "100.1")
 			}
-			for i := 0; i < writes; i++ {
-				entry := testPending(channel, []string{"100.1", "100.2"}[i], marker)
+			for _, ts := range timestamps {
+				entry := testPending(channel, ts, marker)
 				entry.inbound.Actor.DisplayName = user
 				if !sink(channel, []pendingChannelInbound{entry}, rejection) {
 					t.Fatal("mail affected durable write")
@@ -71,17 +72,20 @@ fi
 			}
 			path := filepath.Join(cfg.inboundDeadLetterDir, channel+".jsonl")
 			rows, err := os.ReadFile(path)
-			if err != nil || bytes.Count(rows, []byte("\n")) != writes || !bytes.Contains(rows, []byte(marker)) {
+			if err != nil || bytes.Count(rows, []byte("\n")) != len(timestamps) || !bytes.Contains(rows, []byte(marker)) {
 				t.Fatalf("durable dead-letter record missing (%v)", err)
 			}
 			argv, err := os.ReadFile(filepath.Join(dir, "argv"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			key := "dead-letter:" + channel + ".jsonl"
-			want := strings.Join([]string{"--city", "example-target", "mail", "send", "mayor", "-s", "Slack inbound message could not be delivered",
-				"-m", "File: " + path + "\nReason: 422 Unprocessable Entity", "--dedup", key, "--notify", "--json", ""}, "\x00")
-			if string(argv) != strings.Repeat(want, writes) {
+			keyPrefix := "dead-letter:" + channel + ".jsonl:"
+			var want strings.Builder
+			for _, ts := range timestamps {
+				want.WriteString(strings.Join([]string{"--city", "example-target", "mail", "send", "mayor", "-s", "Slack inbound message could not be delivered",
+					"-m", "File: " + path + "\nReason: 422 Unprocessable Entity", "--dedup", keyPrefix + ts, "--notify", "--json", ""}, "\x00"))
+			}
+			if string(argv) != want.String() {
 				t.Fatalf("unexpected dead-letter argv %q", argv)
 			}
 			for _, private := range []string{marker, user} {
@@ -95,10 +99,16 @@ fi
 				}
 				return
 			}
-			mail, err := os.ReadFile(filepath.Join(dir, key))
-			if err != nil || string(mail) != "delivered\n" ||
-				!strings.Contains(logs.String(), `id="example-mail" notified=false key="`+key+`" already_done=true`) {
-				t.Fatalf("mailbox or duplicate outcome incorrect: %q, %v, %s", mail, err, &logs)
+			for _, ts := range []string{"100.1", "100.2"} {
+				key := keyPrefix + ts
+				mail, err := os.ReadFile(filepath.Join(dir, key))
+				if err != nil || string(mail) != "delivered\n" ||
+					strings.Count(logs.String(), `notified=true key="`+key+`" already_done=false`) != 1 {
+					t.Fatalf("mailbox or turn request incorrect for %s: %q, %v, %s", key, mail, err, &logs)
+				}
+			}
+			if !strings.Contains(logs.String(), `notified=false key="`+keyPrefix+`100.1" already_done=true`) {
+				t.Fatalf("missing duplicate receipt: %s", &logs)
 			}
 		})
 	}
@@ -109,10 +119,10 @@ func TestDeadLetterConcurrentWriteChecksMailboxAgain(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			a := newDeadLetterAlerts(t.TempDir())
 			started, finish := make(chan struct{}), make(chan struct{})
-			var reasons []string
-			a.send = func(path, reason string) error {
-				reasons = append(reasons, reason)
-				if len(reasons) == 1 {
+			var attempts []string
+			a.send = func(path, key, reason string) error {
+				attempts = append(attempts, reason)
+				if len(attempts) == 1 {
 					close(started)
 					<-finish
 					if outcome == "refused" {
@@ -121,15 +131,80 @@ func TestDeadLetterConcurrentWriteChecksMailboxAgain(t *testing.T) {
 				}
 				return nil
 			}
-			a.notify("example.jsonl", "first")
+			a.notify("example.jsonl", "100.1", "first")
 			<-started
-			a.notify("example.jsonl", "second")
+			a.notify("example.jsonl", "100.1", "second")
+			a.notify("example.jsonl", "100.1", "third")
 			close(finish)
 			a.wait()
-			if strings.Join(reasons, ",") != "first,second" {
-				t.Fatalf("attempts = %q", reasons)
+			want := []string{"first", "third"}
+			if !slices.Equal(attempts, want) {
+				t.Fatalf("attempts = %v, want %v", attempts, want)
 			}
 		})
+	}
+}
+
+func TestDeadLetterDistinctLossesDrainTogether(t *testing.T) {
+	alerts := newDeadLetterAlerts(t.TempDir())
+	const count = 3
+	started := make(chan string, count)
+	release := make(chan struct{})
+	alerts.send = func(path, key, reason string) error {
+		started <- key
+		<-release
+		return nil
+	}
+	for _, ts := range []string{"100.1", "100.2", "100.3"} {
+		alerts.notify("example.jsonl", ts, "delivery refused")
+	}
+	drained := make(chan struct{})
+	go func() {
+		alerts.wait()
+		close(drained)
+	}()
+	defer func() {
+		close(release)
+		select {
+		case <-drained:
+		case <-time.After(5 * time.Second):
+			t.Error("shutdown did not finish after the sends returned")
+		}
+	}()
+	got := make(map[string]bool)
+	deadline := time.After(5 * time.Second)
+	for len(got) < count {
+		select {
+		case key := <-started:
+			got[key] = true
+		case <-drained:
+			t.Fatal("shutdown finished with notifications in flight")
+		case <-deadline:
+			t.Fatalf("slow sends blocked later losses in the same file: started %v", got)
+		}
+	}
+}
+
+func TestDeadLetterMailWaitsForTurn(t *testing.T) {
+	dir := t.TempDir()
+	const script = `#!/bin/sh
+sleep 35 || exit 1
+echo '{"id":"example-mail","notified":true}'
+`
+	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(old) })
+
+	alerts := newDeadLetterAlerts(dir)
+	alerts.notify("example.jsonl", "100.1", "delivery refused")
+	alerts.wait()
+	if !strings.Contains(logs.String(), `id="example-mail" notified=true key="dead-letter:example.jsonl:100.1" already_done=false`) {
+		t.Fatalf("missing turn request after gc waited for the busy session: %s", &logs)
 	}
 }
 

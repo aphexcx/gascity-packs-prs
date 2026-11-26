@@ -7112,7 +7112,7 @@ func inboundDeadLetterSink(deliverCfg config) func(string, []pendingChannelInbou
 			return false
 		}
 		if len(batch) > 0 {
-			deliverCfg.deadLetterAlerts.notify(path, deadLetterMailReason(rejectionReasonText(cause)))
+			deliverCfg.deadLetterAlerts.notify(path, batch[0].inbound.ProviderMessageID, deadLetterMailReason(rejectionReasonText(cause)))
 		}
 		deliverCfg.postFailures.clear("dead-letter:" + channel)
 		if err := deliverCfg.inboundRecovery.importDeadLetters(); err != nil {

@@ -1183,7 +1183,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 			}
 			continue
 		}
-		l.cfg.deadLetterAlerts.notify(path, records[0].Reason)
+		l.cfg.deadLetterAlerts.notify(path, records[0].Inbound.ProviderMessageID, records[0].Reason)
 		log.Printf("inbound liveness: channel=%s %d undelivered inbound record(s) dead-lettered to %s — never delivered to gc", channel, len(records), path)
 		if err := l.cfg.inboundRecovery.importDeadLetters(); err != nil {
 			log.Printf("inbound liveness: dead-letter index refresh: %v", err)
