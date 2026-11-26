@@ -241,7 +241,7 @@ func (a *deadLetterAlarm) localMail(ctx context.Context, key string, r alarmReco
 		a.records[key] = before
 		return a.save()
 	}
-	body := fmt.Sprintf("channel: %s\nthread_ts: %s\nmessage_ts: %s\nheld_since: %s\ndead_lettered_at: %s\nstate: %s\ncomposer: %s\noperator: %s\nlook: gc slack status\nredrive: gc slack inbound-redrive --conversation-id %s\nby hand: gc slack inbound-redrive --conversation-id %s --acknowledge %s",
+	body := fmt.Sprintf("channel: %s\nthread_ts: %s\nmessage_ts: %s\nheld_since: %s\ndead_lettered_at: %s\nstate: %s\ncomposer: %s\noperator: %s\nlook: gc slack status\nredrive: gc slack inbound-redrive --conversation-id %s\nonly after you have read this message in Slack and answered it yourself (this delivers nothing and closes the alarm): gc slack inbound-redrive --conversation-id %s --acknowledge %s",
 		m.channel, m.thread, m.ts, m.held.UTC().Format(time.RFC3339), m.row.UTC().Format(time.RFC3339), m.state, m.composer, a.operatorSetting(), m.channel, m.channel, m.ts)
 	out, err, timedOut := a.command(ctx, "--city", a.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-dead:"+ingestionDigest(key), "--notify", "--json", "-s", "slack: a message did not reach the session", "-m", body)
 	r.LocalEnded = true
@@ -411,7 +411,7 @@ func (a *deadLetterAlarm) operatorBody(keys []string, set map[string]alarmMessag
 		}
 	}
 	m := set[oldest]
-	return fmt.Sprintf("city: %s\nchannel: slack\nmessages: %d\nconversations: %d\noldest_age_seconds: %d\nretrying: %d\nwaiting: %d\nhand_check: %d\ncomposer: %s\nlocal_wake: %s\nstatus: gc slack status --json",
+	return fmt.Sprintf("city: %s\nchannel: slack\nmessages: %d\nconversations: %d\noldest_age_seconds: %d\nretrying: %d\nwaiting: %d\nhand_check: %d\ncomposer: %s\nlocal_wake: %s\nstatus (run in the city named above): gc slack status --json",
 		a.cfg.cityName, len(keys), len(channels), max(0, int64(now.Sub(m.held)/time.Second)), counts["retrying"], counts["waiting"], counts["hand_check"], m.composer, a.records[oldest].wake())
 }
 
