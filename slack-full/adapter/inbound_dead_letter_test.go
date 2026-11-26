@@ -25,9 +25,13 @@ func TestDeadLetterOperatorMail(t *testing.T) {
 			t.Setenv("PATH", dir)
 			t.Setenv("MAIL_DIR", dir)
 			t.Setenv("MAIL_MODE", mode)
+			t.Setenv("GC_CITY", "example-ambient")
 			// Model gc's live mailbox. A repeated key returns the original ID.
 			const script = `#!/bin/sh
 printf '%s\0' "$@" >> "$MAIL_DIR/argv"
+city=$GC_CITY
+if [ "$1" = --city ] && [ -n "$2" ]; then city=$2; fi
+[ "$city" = example-target ] || exit 2
 if [ "$MAIL_MODE" = failed ]; then
     echo 'fixture failure with private-inbound-marker' >&2
     exit 1
@@ -44,7 +48,8 @@ fi
 			if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
-			cfg := config{inboundDeadLetterDir: filepath.Join(dir, "dead"), deadLetterAlerts: newDeadLetterAlerts(dir)}
+			cfg := config{inboundDeadLetterDir: filepath.Join(dir, "dead"), cityName: "example-target"}
+			cfg.deadLetterAlerts = newDeadLetterAlerts(cfg.operatorMailCity())
 			sink := inboundDeadLetterSink(cfg)
 			var logs bytes.Buffer
 			old := log.Writer()
@@ -74,7 +79,7 @@ fi
 				t.Fatal(err)
 			}
 			key := "dead-letter:" + channel + ".jsonl"
-			want := strings.Join([]string{"--city", dir, "mail", "send", "mayor", "-s", "Slack inbound message could not be delivered",
+			want := strings.Join([]string{"--city", "example-target", "mail", "send", "mayor", "-s", "Slack inbound message could not be delivered",
 				"-m", "File: " + path + "\nReason: 422 Unprocessable Entity", "--dedup", key, "--notify", "--json", ""}, "\x00")
 			if string(argv) != strings.Repeat(want, writes) {
 				t.Fatalf("unexpected dead-letter argv %q", argv)
@@ -99,26 +104,32 @@ fi
 	}
 }
 
-func TestDeadLetterConcurrentWriteSurvivesMailFailure(t *testing.T) {
-	a := newDeadLetterAlerts(t.TempDir())
-	started, finish := make(chan struct{}), make(chan struct{})
-	var reasons []string
-	a.send = func(path, reason string) error {
-		reasons = append(reasons, reason)
-		if len(reasons) == 1 {
-			close(started)
-			<-finish
-			return errors.New("mail refused")
-		}
-		return nil
-	}
-	a.notify("example.jsonl", "first")
-	<-started
-	a.notify("example.jsonl", "second")
-	close(finish)
-	a.wait()
-	if strings.Join(reasons, ",") != "first,second" {
-		t.Fatalf("attempts = %q", reasons)
+func TestDeadLetterConcurrentWriteChecksMailboxAgain(t *testing.T) {
+	for _, outcome := range []string{"refused", "archived"} {
+		t.Run(outcome, func(t *testing.T) {
+			a := newDeadLetterAlerts(t.TempDir())
+			started, finish := make(chan struct{}), make(chan struct{})
+			var reasons []string
+			a.send = func(path, reason string) error {
+				reasons = append(reasons, reason)
+				if len(reasons) == 1 {
+					close(started)
+					<-finish
+					if outcome == "refused" {
+						return errors.New("mail refused")
+					}
+				}
+				return nil
+			}
+			a.notify("example.jsonl", "first")
+			<-started
+			a.notify("example.jsonl", "second")
+			close(finish)
+			a.wait()
+			if strings.Join(reasons, ",") != "first,second" {
+				t.Fatalf("attempts = %q", reasons)
+			}
+		})
 	}
 }
 

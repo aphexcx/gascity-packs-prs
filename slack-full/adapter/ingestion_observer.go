@@ -759,11 +759,20 @@ func (o *ingestionObserver) mailUnseen(ctx context.Context, rows []inboundJourna
 	if len(body) > ingestionAlertBatchBudget {
 		return ingestionNotifyRefusal{fmt.Errorf("ingestion alert exceeds %d-byte mail budget", ingestionAlertBatchBudget)}
 	}
-	return sendOperatorMail(ctx, "gc", o.cfg.cityPath, key, subject, body, true)
+	return sendOperatorMail(ctx, "gc", o.cfg.operatorMailCity(), key, subject, body, true)
 }
 
-func sendOperatorMail(ctx context.Context, bin, cityPath, key, subject, body string, notify bool) error {
-	args := []string{"--city", cityPath, "mail", "send", "mayor"}
+// gc accepts a registered name as well as a path. An adapter started outside
+// its city must address the same city it uses for inbound delivery.
+func (cfg config) operatorMailCity() string {
+	if cfg.cityPath != "" {
+		return cfg.cityPath
+	}
+	return cfg.cityName
+}
+
+func sendOperatorMail(ctx context.Context, bin, city, key, subject, body string, notify bool) error {
+	args := []string{"--city", city, "mail", "send", "mayor"}
 	if !notify {
 		_, err := runOperatorMail(ctx, bin, append(args, "--dedup", key, "-s", subject, "-m", body))
 		return err // HOLD notices retain their original CLI contract.

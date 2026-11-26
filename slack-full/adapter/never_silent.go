@@ -70,7 +70,7 @@ func newNeverSilent(cfg config, identities *identityRegistry, aliases *handleAli
 				bin = "gc"
 			}
 			body := fmt.Sprintf("The adapter told the owner: %q\nChannel: %s\nThread: %s\nStatus: gc slack status\n", line, m.Conversation, m.Thread)
-			return sendOperatorMail(ctx, bin, cfg.cityPath, key, "slack: owner delivery notice", body, true)
+			return sendOperatorMail(ctx, bin, cfg.operatorMailCity(), key, "slack: owner delivery notice", body, true)
 		},
 	})
 }

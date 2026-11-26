@@ -32,12 +32,12 @@ type deadLetterMail struct {
 	pending string
 }
 
-func newDeadLetterAlerts(cityPath string) *deadLetterAlerts {
+func newDeadLetterAlerts(city string) *deadLetterAlerts {
 	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(path, reason string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		body := fmt.Sprintf("File: %s\nReason: %s", path, reason)
-		return sendOperatorMail(ctx, "gc", cityPath, "dead-letter:"+filepath.Base(path), "Slack inbound message could not be delivered", body, true)
+		return sendOperatorMail(ctx, "gc", city, "dead-letter:"+filepath.Base(path), "Slack inbound message could not be delivered", body, true)
 	}}
 }
 
@@ -61,13 +61,14 @@ func (a *deadLetterAlerts) notify(path, reason string) {
 				log.Printf("operator mail failed key=%q: %v", "dead-letter:"+filepath.Base(path), err)
 			}
 			a.mu.Lock()
-			if err == nil || mail.pending == "" {
+			if mail.pending == "" {
 				delete(a.inFlight, path)
 				close(mail.done)
 				a.mu.Unlock()
 				return
 			}
-			// A different write arrived while the failed send was running.
+			// A different write arrived while this send was running. Let gc
+			// determine whether the prior mail is still live.
 			reason, mail.pending = mail.pending, ""
 			a.mu.Unlock()
 		}

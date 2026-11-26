@@ -1737,7 +1737,7 @@ func main() {
 	// over cfg: every verified event_callback (either transport) feeds
 	// it, and the watchdog/backfill read from it. The deliver + alert
 	// hooks are attached below once the events handler exists. gp-3og.
-	cfg.deadLetterAlerts = newDeadLetterAlerts(cfg.cityPath)
+	cfg.deadLetterAlerts = newDeadLetterAlerts(cfg.operatorMailCity())
 	cfg.inboundLiveness = newInboundLiveness(cfg, newSlackHistoryClient(cfg.slackBotToken))
 	livenessHealth.Store(cfg.inboundLiveness)
 	internalDescr := cfg.internalListen
