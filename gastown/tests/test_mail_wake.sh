@@ -129,13 +129,34 @@ mail first | inbox
 run
 seen first
 mail one | inbox
-SEND_JSON="$duplicate" run
+GC_ORDER_OUTCOME_FILE="$PWD/outcome" SEND_JSON="$duplicate" run
 calls 2
 seen first
+jq -e '.outcome == "skipped" and (.reason | contains("notice"))' outcome >/dev/null || fail "missing archive instruction"
 # Archiving the read notice releases the dedup key.
 run
 sent '[mail-wake] 1 unread mail from worker'
 seen first one
+
+start mismatched
+mail first | inbox
+run
+{ mail one; mail other controller '' '[mail-wake] other'; } | inbox
+SEND_JSON='{"ok":true,"already_done":true,"id":"other"}' run
+calls 2
+seen first
+
+start interrupted_append
+mail one | inbox
+run
+# Simulate interruption after saving the confirmed batch, before completing
+# the append. The dedup key has since been released by an archive.
+printf o > .gc/mail-wake.seen
+run --check
+grep -Fq 'eligible=0' output || fail "preview should account for confirmed batch"
+run
+calls 1
+seen one
 
 start missing_confirmation
 mail one | inbox
@@ -164,7 +185,7 @@ SEND_JSON='{"ok":true,"id":"replacement","notified":true}' run
 seen one
 
 start overflow
-jq -n '{messages:[range(101) | {id:("message-" + tostring), from:("équipe-" + tostring),
+jq -n '{messages:[range(101) | {id:("message-" + tostring), from:("αβ" + tostring),
     subject:"update", read:false, created_at:"1970-01-01T00:16:40Z"}]}' > inbox
 run
 calls 2
@@ -173,7 +194,9 @@ import json
 from pathlib import Path
 args = json.loads(Path("calls").read_text().splitlines()[1])
 subject = args[args.index("-s") + 1]
-assert subject.startswith("[mail-wake] 101 unread mail from équipe-") and subject.endswith("...")
+full = "[mail-wake] 101 unread mail from " + ",".join(sorted(f"αβ{i}" for i in range(101)))
+assert full.encode()[497] & 0xc0 == 0x80  # the cut lands inside a UTF-8 character
+assert subject == full.encode()[:497].decode("utf-8", errors="ignore") + "..."
 assert len(subject.encode()) <= 500
 assert len(set(Path(".gc/mail-wake.seen").read_text().splitlines())) == 101
 PY
@@ -220,9 +243,12 @@ mail one | inbox
 INBOX_RC=1 run
 calls 1
 no_seen
-INBOX_RC=1 run --seed
+GC_ORDER_OUTCOME_FILE="$PWD/outcome" INBOX_RC=1 run
+jq -e '.outcome == "skipped"' outcome >/dev/null || fail "inbox failure invisible to scheduler"
+GC_ORDER_OUTCOME_FILE="$PWD/seed-outcome" INBOX_RC=1 run --seed
 calls 1
 no_seen
+[[ ! -e seed-outcome ]] || fail "manual seed wrote an order outcome"
 
 start dependencies
 mkdir no-jq
@@ -244,4 +270,4 @@ assert order["timeout"] == "90s"
 assert order["exec"] == '"$ORDER_DIR/scripts/mail-wake.sh"'
 PY
 
-echo '15 mail-wake cases passed'
+echo '17 mail-wake cases passed'
