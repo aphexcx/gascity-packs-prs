@@ -2418,6 +2418,76 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertIn("do not patch the launcher root", apply)
         self.assertIn("source anchor and implementation\nworktree", synthesize)
 
+    def test_review_loop_steps_state_the_review_rules(self) -> None:
+        """The starter review loop and the continuation repair stage carry the
+        review rules in their own step text, since no lane prompt reaches them.
+        The synthesis names each required fix's class and its other cases and
+        carries PRECONDITION items apart from required fixes. The fix step
+        fixes the whole class under one class-level test, lets no minor item
+        force another loop, and gives every finding one outcome. Both loops
+        state the same family stop with the exit value their own terminal
+        lines record, the same family test and the same NOT SHOWN rule."""
+        workflows = pathlib.Path(__file__).resolve().parents[1] / "assets" / "workflows"
+        synthesize = "build-basic-review/{target}.synthesize-review.md"
+        apply = "build-basic-review/{target}.apply-review-findings.md"
+        loop = "build-basic-review/{target}.build-basic-review-loop.md"
+        repair = "build-from-review-base/repair-review.md"
+        family_stop = (
+            "From round 3 onward, a blocking finding of the same family as an "
+            "earlier round's ends the loop with `gc.build.repair_status=family_stop`, "
+            "never another fix round."
+        )
+        different_fault = "A different guard, input or invariant is a different fault, even in the same file."
+        not_shown = (
+            "Past round 3, a finding is fixed only when it is reproduced (by a failing "
+            "test, or shown reachable in what this city runs) and sits in the changes "
+            "made since the previous round; the rest are listed as NOT SHOWN with "
+            "their file and line."
+        )
+        rules = (
+            (synthesize, "class", "Name the class of each required fix: the general fault, not the one case a lane reported."),
+            (synthesize, "class", "List with it the other cases of that class you can see in the change"),
+            (synthesize, "PRECONDITION", "classify each item as required fix, missing evidence, residual risk, or PRECONDITION."),
+            (synthesize, "PRECONDITION", "is a PRECONDITION, not a required fix: carry it with its precondition in one sentence."),
+            (apply, "class", "fix every case of its class in the change, not only the case the review named, "
+                             "and add one test at the class level that fails on any case of it."),
+            (apply, "PRECONDITION", "A residual risk or a PRECONDITION item never forces another loop"),
+            (apply, "PRECONDITION", "a lane whose only open items are residual risks or PRECONDITION items counts as approving"),
+            (apply, "outcome words", "exactly one outcome: FIXED (with the commit), WRONG (the reviewer was mistaken, "
+                                     "with the line that shows it), INTENDED, or DOES NOT MATTER."),
+            (apply, "family", different_fault),
+            (loop, "family stop", family_stop),
+            (loop, "family", "the same class of fault and the earlier class-level fix, stated in one sentence"),
+            (loop, "family", different_fault),
+            (loop, "NOT SHOWN", not_shown),
+            (repair, "family stop", family_stop),
+            (repair, "family", different_fault),
+            (repair, "NOT SHOWN", not_shown),
+            (repair, "NOT SHOWN", "When none is left to fix, open no further fix attempt and record the exhaustion exit below."),
+        )
+        texts = {name: " ".join((workflows / name).read_text(encoding="utf-8").split())
+                 for name in (synthesize, apply, loop, repair)}
+        for name, contract, sentence in rules:
+            with self.subTest(asset=name, contract=contract, sentence=sentence[:60]):
+                self.assertIn(sentence, texts[name])
+
+        # The family-stop sentence names the value the terminal lines record
+        # beside `gc.failure_class=review_family_stop`, read from those lines.
+        stated = set(re.findall(r"`gc\.build\.repair_status=(\w+)`", family_stop))
+        recorded = set()
+        for name in (apply, repair):
+            for paragraph in (workflows / name).read_text(encoding="utf-8").split("\n\n"):
+                flat = " ".join(paragraph.split())
+                if "gc.failure_class=review_family_stop" in flat and family_stop not in flat:
+                    recorded |= set(re.findall(r"`gc\.build\.repair_status=(\w+)`", flat))
+        self.assertEqual(stated, recorded)
+
+        # City-neutral step text: no date and no ordinal in any of these files.
+        for name, text in texts.items():
+            with self.subTest(asset=name, contract="city-neutral"):
+                self.assertNotRegex(text, r"\b\d{4}-\d{2}-\d{2}\b")
+                self.assertNotRegex(text, r"(?i)\b\d+(?:st|nd|rd|th)\b")
+
     def test_do_work_lane_case_hands_over_the_branch_never_the_directory(self) -> None:
         """When gc started the session in an agent lane (work_dir + pre_start),
         prepare-worktree (run operator) records the item's BRANCH on the source
