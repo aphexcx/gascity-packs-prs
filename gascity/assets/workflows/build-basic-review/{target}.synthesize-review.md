@@ -16,10 +16,10 @@ A lane may mark a finding an earlier round answered ANSWER ACCEPTED or ANSWER
 REJECTED. Read no review-fix summary and judge no answer: carry the lanes'
 marks. An ANSWER ACCEPTED entry is not a finding and takes none of the four
 classes above: carry it in one line with what was answered, the round of the
-answer and its outcome word. A finding a lane marks ANSWER REJECTED keeps its
-class, required fix or missing evidence, and carries the round of the answer
-and the lane's reason. When one lane accepts an answer and another rejects
-it, it is rejected.
+answer and its outcome word. A finding a lane marks ANSWER REJECTED keeps the
+class it has, of the four above, and carries the round of the answer and the
+lane's reason. When one lane accepts an answer and another rejects it, it is
+rejected.
 
 Also read `gc.build.code_review_context_path` from the workflow root bead. When
 you carry a finding forward, include the source anchor and implementation

@@ -65,17 +65,19 @@ that this pass neither fixes nor proves (below): each says why.
 
 In a round after the first that the family comparison above did not stop,
 read every review-fix summary listed under the review context's
-`## Earlier Review Rounds` before you settle a finding. A blocking finding of
-this round that an earlier summary answered (WRONG, INTENDED, DOES NOT
-MATTER, or FIXED by a proof command without a commit) has been rejected,
-whether or not a lane marked it ANSWER REJECTED. It takes one of three lines
-and no other: FIXED with a commit; for missing evidence, FIXED with a proof
-command that no earlier summary records for it; or a line without an outcome
-that gives the reviewer's reason and says why this pass neither fixes nor
-proves it. Never write WRONG, INTENDED or DOES NOT MATTER for it again, and
-never again FIXED by the same proof command without a commit. Each of the
-three sets `iterate` by the verdict rules below. An entry the synthesis carries as ANSWER ACCEPTED is not
-a finding of this round and takes no line in the summary.
+`## Earlier Review Rounds` before you settle a finding. A listed summary that
+is missing or cannot be read answers nothing: say so in this round's summary.
+A blocking finding of this round that an earlier summary answered (WRONG,
+INTENDED, DOES NOT MATTER, or FIXED by a proof command without a commit) has
+been rejected, whether or not a lane marked it ANSWER REJECTED. It takes one
+of three lines and no other: FIXED with a commit; for missing evidence, FIXED
+with a proof command that no earlier summary records for it; or a line
+without an outcome that gives the reviewer's reason and says why this pass
+neither fixes nor proves it. Never write WRONG, INTENDED or DOES NOT MATTER
+for it again, and never again FIXED by the same proof command without a
+commit. Each of the three sets `iterate` by the verdict rules below. An entry
+the synthesis carries as ANSWER ACCEPTED is not a finding of this round and
+takes no line in the summary.
 
 Record every review-fix summary this step writes, the no-op summary too, in
 the review context file at `gc.build.code_review_context_path` before this
@@ -86,10 +88,10 @@ not there yet, keep one line per round,
 round's review-fix summary has a path of its own, keyed by workflow, review
 loop and round like the input copies, and never overwrites an earlier
 round's. A retry of the same round rewrites that round's line and never adds
-a second. This write
-needs no branch and no commit: the context file lies under the build artifact
-root. The section is the loop's own, not a source anchor's record. A pass
-that ends on a terminal exit without a review-fix summary records nothing.
+a second. This write needs no branch and no commit: the context file lies
+under the build artifact root. The section is the loop's own, not a source
+anchor's record. A pass that ends on a terminal exit without a review-fix
+summary records nothing.
 
 Apply fixes to the implementation source anchor/worktree named in the review
 context, not to the launcher rig root. An unchanged root checkout is not itself
@@ -193,9 +195,10 @@ evidence, so the review lanes see it, or when a required fix or missing
 evidence remains. A required fix
 settled WRONG, INTENDED or DOES NOT MATTER sets `iterate` too: the review
 lanes, not this lane, retire a required fix. An unchanged root checkout is
-never a required fix and takes no line in the summary. In the case above where
-it is the only reported issue, it is the one exception to both rules: the
-verdict stays `done`, whatever verdict the lane that reported it recorded.
+never a required fix and takes no line in the summary. A lane that reported it
+and nothing else, or nothing else but residual risks or PRECONDITION items,
+counts as approving, whatever verdict it recorded; so when it is the only
+reported issue, the verdict stays `done`.
 
 For ordinary approval or iteration, close with `gc.outcome=pass`,
 `code_review.verdict=done|iterate`,

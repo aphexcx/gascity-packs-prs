@@ -32,10 +32,10 @@ the class, another line, another criterion), the answer is rejected: report
 the finding as ANSWER REJECTED with the round of the answer and say what it
 does not cover. A line that reads FIXED with a commit is no answer: judge the
 current commit as you would without it. A line without an outcome is no
-answer: the finding stands. A listed summary
-that is missing or cannot be read answers nothing: say so in your report and
-report as you would without it. An accepted answer is no reason for
-`iterate`: with no finding left but accepted answers, record `approve`.
+answer: the finding stands. A listed summary that is missing or cannot be
+read answers nothing: say so in your report and report as you would without
+it. An accepted answer is no reason for `iterate`: with no finding left but
+accepted answers, record `approve`.
 
 Write findings under the build artifact root. Required findings must be tied to
 specific changed files or artifacts and must explain the smallest useful fix.
