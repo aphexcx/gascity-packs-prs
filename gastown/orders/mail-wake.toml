@@ -1,0 +1,8 @@
+[order]
+description = "Ask the mayor to read mail that has waited three minutes"
+scope = "city"
+enabled = false
+trigger = "cooldown"
+interval = "3m"
+exec = '"$ORDER_DIR/scripts/mail-wake.sh"'
+timeout = "30s"

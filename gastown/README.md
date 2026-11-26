@@ -33,6 +33,17 @@ gc formula show mol-shutdown-dance
 The recipe must read warrant metadata from the claimed bead via
 `$GC_BEAD_ID` and must not declare a required `warrant_id` var.
 
+The city-wide `mail-wake` order is off by default. When enabled, it checks the
+mayor's unread mail every three minutes and sends one local notification for
+previously unannounced mail at least three minutes old. It records covered IDs
+in the city's append-only `.gc/mail-wake.seen`. With `gc`, `jq`, and Python 3
+on PATH, run the pack's `orders/scripts/mail-wake.sh --check` from the city
+directory to preview counts, or use `--seed` there to cover the existing backlog
+without sending. To opt in, copy the script and `orders/mail-wake.toml` into the
+same relative paths in that city, then change `enabled = false` to `true` in
+the local TOML. To turn it off, restore `false`. To roll back, remove those two
+local copies and retain the seen file for a future install.
+
 ## Merge strategies
 
 Work beads default to `metadata.merge_strategy=direct`: refinery lands the
