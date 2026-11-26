@@ -49,9 +49,9 @@ recorded review findings and implementation evidence until one of these happens:
 From round 3 onward, a blocking finding of the same family as an earlier
 round's ends the loop with `gc.build.repair_status=family_stop`, never another
 fix round. Past round 3, a finding is fixed only when it is reproduced (by a
-failing test, or shown reachable in what this city runs) and sits in the
-changes made since the previous round; the rest are listed as NOT SHOWN with
-their file and line. Pass the fix loop only the findings to fix, with the NOT
+failing test, or shown reachable in a deployment of this change) and sits in
+the changes made since the previous round; the rest are listed as NOT SHOWN
+with their file and line. Pass the fix loop only the findings to fix, with the NOT
 SHOWN ones listed apart in its findings input, and carry them into any
 terminal handoff. When none is left to fix, open no further fix attempt and
 record the exhaustion exit below, with the NOT SHOWN findings as its

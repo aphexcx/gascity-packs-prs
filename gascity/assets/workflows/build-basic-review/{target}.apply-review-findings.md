@@ -54,8 +54,9 @@ a residual risk only in a pass that already commits a required fix, when it is
 cheap, and list it otherwise.
 
 The review-fix summary carries one line per finding of this round, with
-exactly one outcome: FIXED (with the commit), WRONG (the reviewer was
-mistaken, with the line that shows it), INTENDED, or DOES NOT MATTER. A
+exactly one outcome: FIXED (with the commit, or for missing evidence the proof
+command and its result), WRONG (the reviewer was mistaken, with the line that
+shows it), INTENDED, or DOES NOT MATTER. A
 PRECONDITION item and a residual risk left unfixed take DOES NOT MATTER, the
 PRECONDITION with its precondition in one sentence. The only line without an
 outcome is a required fix this pass cannot settle, such as one with no
@@ -158,8 +159,9 @@ detached and shared with no one, so there is nothing to release.
 Set `code_review.verdict=done` only when this pass commits no fix and
 acceptance, test evidence, and simplicity all approve; a lane that reported
 only residual risks or PRECONDITION items counts as approving. Set
-`code_review.verdict=iterate` when this pass commits a fix, so the review lanes
-see it, or when a required fix or missing evidence remains. A required fix
+`code_review.verdict=iterate` when this pass commits a fix or supplies missing
+evidence, so the review lanes see it, or when a required fix or missing
+evidence remains. A required fix
 settled WRONG, INTENDED or DOES NOT MATTER sets `iterate` too: the review
 lanes, not this lane, retire a required fix.
 

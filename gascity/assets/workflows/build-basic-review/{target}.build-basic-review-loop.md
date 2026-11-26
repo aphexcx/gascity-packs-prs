@@ -19,8 +19,8 @@ class-level fix, stated in one sentence, would close the later one too. A
 different guard, input or invariant is a different fault, even in the same
 file. When the lane cannot tell, it is the same family. Past round 3, a
 finding is fixed only when it is reproduced (by a failing test, or shown
-reachable in what this city runs) and sits in the changes made since the
-previous round; the rest are listed as NOT SHOWN with their file and line.
+reachable in a deployment of this change) and sits in the changes made since
+the previous round; the rest are listed as NOT SHOWN with their file and line.
 
 Do not invoke provider-native subagents. Continue only through this Gas City
 graph loop.
