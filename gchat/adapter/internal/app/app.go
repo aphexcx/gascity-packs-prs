@@ -43,6 +43,7 @@ type Options struct {
 	mailTimeout  time.Duration
 	wakeTimeout  time.Duration
 	pollInterval time.Duration
+	inboundNow   func() time.Time
 	// KeyholderRetry shortens how often a managed credential re-asks a refusing
 	// key holder; zero keeps the 30s default. Tests set it.
 	KeyholderRetry time.Duration

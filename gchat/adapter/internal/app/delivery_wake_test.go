@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -127,7 +128,7 @@ func TestDeliveryWakeSlow(t *testing.T) {
 	}
 }
 
-func deliveryApplication(t *testing.T, dir string) (*fixture, func(string)) {
+func deliveryApplication(t *testing.T, dir string, now func() time.Time) (*fixture, func(string)) {
 	t.Helper()
 	f := newFixture(t, true)
 	t.Setenv("GC_BIN", filepath.Join(dir, "gc"))
@@ -144,7 +145,7 @@ func deliveryApplication(t *testing.T, dir string) (*fixture, func(string)) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		done <- RunWithOptions(ctx, f.cfg, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RetryDelay: time.Millisecond, pollInterval: 50 * time.Millisecond})
+		done <- RunWithOptions(ctx, f.cfg, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RetryDelay: time.Millisecond, pollInterval: 50 * time.Millisecond, inboundNow: now})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -171,7 +172,7 @@ func deliveryApplication(t *testing.T, dir string) (*fixture, func(string)) {
 
 func TestDeliveryWakeWire(t *testing.T) {
 	dir := deliveryCommands(t)
-	f, send := deliveryApplication(t, dir)
+	f, send := deliveryApplication(t, dir, nil)
 	f.gc.Configure(func(s *fakegc.Server) {
 		s.Health = func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, `{"uptime_sec":3600}`) }
 	})
@@ -186,27 +187,34 @@ func TestDeliveryWakeWire(t *testing.T) {
 	if n := len(f.gc.Inbound()); n != 3 {
 		t.Fatalf("total POSTs=%d want 3", n)
 	}
+	waitFor(t, 3*time.Second, func() bool {
+		l, err := ledger.Load(f.cfg.Endpoints.StateFile, true)
+		if err != nil {
+			return false
+		}
+		c := l.Unresolved["spaces/room/messages/lost"]
+		return c != nil && c.Attempts == 2 && c.Status == "unresolved" && c.Cause == "unknown" && c.Reason == "re-post not confirmed (no_answer); delivery unknown" && !c.RaisedEnd.IsZero()
+	})
 }
 
 func TestDeliveryWakeApart(t *testing.T) {
 	dir := deliveryCommands(t)
-	f, send := deliveryApplication(t, dir)
+	start := time.Now()
+	var advance atomic.Int64
+	f, send := deliveryApplication(t, dir, func() time.Time { return start.Add(time.Duration(advance.Load())) })
 	opened, release := make(chan struct{}), make(chan struct{})
 	defer close(release)
 	f.gc.Configure(func(s *fakegc.Server) {
-		s.Script = []wire.Delivery{{Status: "pending"}}
-		s.Posts = []fakegc.PostStep{{}, {Drop: true}, {After: func(*httptest.ResponseRecorder) { close(opened); <-release }}}
+		s.Posts = []fakegc.PostStep{{After: func(*httptest.ResponseRecorder) { close(opened); <-release }}}
 	})
-	send("receipt")
-	waitFor(t, 3*time.Second, func() bool { return len(f.gc.Inbound()) == 1 })
-	send("lost")
-	waitFor(t, 3*time.Second, func() bool { return len(f.gc.Inbound()) == 2 })
 	send("held")
 	select {
 	case <-opened:
 	case <-time.After(3 * time.Second):
 		t.Fatal("held POST did not start")
 	}
+	// This change only becomes due while its own POST holds the gate.
+	advance.Store(int64(3 * time.Minute))
 	waitFor(t, 2*time.Second, func() bool {
 		b, _ := os.ReadFile(filepath.Join(dir, "args"))
 		return strings.Contains(string(b), "--notify")
@@ -215,7 +223,7 @@ func TestDeliveryWakeApart(t *testing.T) {
 
 func TestDeliveryWakeReceiptWhileMailIsHeld(t *testing.T) {
 	dir := deliveryCommands(t)
-	f, send := deliveryApplication(t, dir)
+	f, send := deliveryApplication(t, dir, nil)
 	writeFile(t, filepath.Join(dir, "mode"), "hold")
 	defer writeFile(t, filepath.Join(dir, "release"), "")
 	f.gc.Configure(func(s *fakegc.Server) {
