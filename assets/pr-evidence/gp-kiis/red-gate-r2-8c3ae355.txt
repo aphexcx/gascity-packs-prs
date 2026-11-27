@@ -1,0 +1,17 @@
+.........F....F.......                                                   [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+
+      Skipping 2264 identical leading characters in diff, use -v to show
+      -  by itself: once its proof no longer fails at the reviewed head it is FIXED, with the head that fixed it, and while it still happens it takes the outcome or PRECONDITION it can have without a fix, or else is listed as OPEN with what shows it and its grade, for the mayor; list the rest, which nobody showed, as NOT SHOWN with their file and line. 3. Let no lone reviewer force a round. Before one reviewer's finding costs a round, have it shown: write a failing test that shows it, or have a second model che...
+
+      ...Full output truncated, use '-vv' to show
+<clone>/tests/test_gc_standing_notes_fragment.py:320: AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+E   AssertionError:  (an earlier head's fault that a failing test proves, say) buys none by itself and is listed as OPEN with what shows it and its grade, for the mayor
+    assert 0 <= -1
+<clone>/tests/test_gc_standing_notes_fragment.py:418: AssertionError:  (an earlier head's fault that a failing test proves, say) buys none by itself and is listed as OPEN with what shows it and its grade, for the mayor
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_note_is_exactly_the_six_rules_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_shows
+2 failed, 20 passed in 0.04s
+exit 1

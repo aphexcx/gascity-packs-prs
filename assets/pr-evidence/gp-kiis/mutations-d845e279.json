@@ -1,0 +1,194 @@
+[
+ {
+  "name": "m01 rule 5's depth sentence replaced (self-review survivor)",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "5. Let review depth follow risk. Docs, tests and small internal changes get\n   your own checks and one gate; a second model reads a PR's whole first head,\n   and later heads only on a risky path.",
+  "new": "5. Let review depth follow risk. Every change gets a full review of every\n   head by a second model."
+ },
+ {
+  "name": "m02 rule 5's depth sentence deleted (self-review survivor)",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "5. Let review depth follow risk. Docs, tests and small internal changes get\n   your own checks and one gate; a second model reads a PR's whole first head,\n   and later heads only on a risky path.",
+  "new": "5. Let review depth follow risk."
+ },
+ {
+  "name": "m03 an added sentence lets a second model buy a round at any round (self-review survivor)",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "   file and line.\n",
+  "new": "   file and line. A finding a second model confirms buys another round at\n   any round, the same family included.\n"
+ },
+ {
+  "name": "m04 an added sentence makes every minor block (self-review survivor)",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "minor in the same head when it is cheap, and list it otherwise.",
+  "new": "minor in the same head when it is cheap, and list it otherwise. Fix every\n   minor finding before your handoff."
+ },
+ {
+  "name": "m05 the family stop loses 'shown or not'",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": ", shown or\n   not, stops the PR",
+  "new": ", stops the PR"
+ },
+ {
+  "name": "m06 past round three, a second model's answer counts again",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "; a second model's answer alone\n   is not enough)",
+  "new": ")"
+ },
+ {
+  "name": "m07 an unclear family becomes a new family",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "when you cannot tell, it is the same family and you stop.",
+  "new": "when you cannot tell, it is a new family and you fix it."
+ },
+ {
+  "name": "m08 the stop moves to round four in the rule's heading",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "2. Stop at round three.",
+  "new": "2. Stop at round four."
+ },
+ {
+  "name": "m09 an outcome word renamed",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "DOES NOT MATTER",
+  "new": "OUT OF SCOPE"
+ },
+ {
+  "name": "m10 one city's measured number in the reason clause",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "costs a full read of the\nPR",
+  "new": "costs 2 million tokens per\nPR"
+ },
+ {
+  "name": "m11 the risk line written with its label",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "for the risk line of the PR body lines above",
+  "new": "for the Risk: line of the PR body lines above"
+ },
+ {
+  "name": "m12 a slash",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "answer real or not with the line",
+  "new": "answer real/not with the line"
+ },
+ {
+  "name": "m13 the worker may write the path list",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "and never invent one.",
+  "new": "and write one when none exists."
+ },
+ {
+  "name": "m14 the class fix shrinks to the one case",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "fix every case of that class in your\n   diff",
+  "new": "fix that case in your\n   diff"
+ },
+ {
+  "name": "m15 the failing-test way hidden in a template comment",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "write a failing test that shows it, or have a second\n   model check",
+  "new": "{{/* write a failing test that shows it, or */}}have a second\n   model check"
+ },
+ {
+  "name": "m16 the bead of record in a trimmed comment",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "## Review rules{{/* Bead of record: gp-kiis.",
+  "new": "## Review rules{{- /* Bead of record: gp-kiis."
+ },
+ {
+  "name": "m17 the README sentence moves the stop to round four",
+  "file": "gascity/README.md",
+  "old": "stopping a repeated family at round three",
+  "new": "stopping a repeated family at round four"
+ },
+ {
+  "name": "m18 the round definition deleted",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": " For these rules a round is one head\nof your PR sent to review, however many reviewers read it, counted from the\nround number the bead names, if any; the review records the role text asks\nfor still give each review its own number.",
+  "new": ""
+ },
+ {
+  "name": "m19 the rules win over the class",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "the class wins.",
+  "new": "these rules win."
+ },
+ {
+  "name": "m20 a stopped PR closed as done",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "and hand the PR to the\n   mayor as stopped, not done,",
+  "new": "and close the\n   bead as done,"
+ },
+ {
+  "name": "m21 rule 6 names the second note by its marker",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "of the PR body lines above",
+  "new": "of THE PR BODY LINES above"
+ },
+ {
+  "name": "m22 an unshown finding fixed anyway",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "and is not fixed blind:",
+  "new": "and is fixed anyway:"
+ },
+ {
+  "name": "m23 a date in the note",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "Until that list exists, your city's merge rule",
+  "new": "Until that list exists (as of 2026-11-19), your city's merge rule"
+ },
+ {
+  "name": "m24 a bead id in the rendered note",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "or a merge with the class filed as a bead.",
+  "new": "or a merge with the class filed as a bead such as gp-abc1."
+ },
+ {
+  "name": "m25 an added sentence reverses the class fix (codex round 1 survivor)",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "   on another line in the next round.\n",
+  "new": "   on another line in the next round. Only fix the case the reviewer pointed\n   out.\n"
+ },
+ {
+  "name": "m26 OPEN dropped from the outcome rule's listings",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "(SAME FAMILY, OPEN, NOT SHOWN or PRECONDITION)",
+  "new": "(SAME FAMILY, NOT SHOWN or PRECONDITION)"
+ },
+ {
+  "name": "m27 a listing given that the outcome rule does not name",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "list the rest as NOT SHOWN with their\n   file and line.",
+  "new": "list the rest as DEFERRED with their\n   file and line."
+ },
+ {
+  "name": "m28 reach judged in the worker's own city again",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "shown reachable where the changed code runs",
+  "new": "shown reachable in what your city runs"
+ },
+ {
+  "name": "m29 PRECONDITION judged by the worker's own city again",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "a right found nowhere the changed code runs",
+  "new": "a right your city does not have"
+ },
+ {
+  "name": "m30 an unknown deployment becomes a PRECONDITION",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "the finding is not a PRECONDITION.",
+  "new": "the finding is a PRECONDITION."
+ },
+ {
+  "name": "m31 the trigger narrowed to returned findings again",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "Whenever you send your PR to review or a review returns\nfindings on it, act by these rules",
+  "new": "Whenever a review returns findings on your PR, act on them\nby these rules"
+ },
+ {
+  "name": "m32 review records share the head's round number",
+  "file": "gascity/template-fragments/gc-standing-notes.template.md",
+  "old": "still give each review its own number.",
+  "new": "use the same round number."
+ }
+]

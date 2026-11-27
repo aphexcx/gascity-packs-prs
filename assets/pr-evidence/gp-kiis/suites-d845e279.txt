@@ -1,0 +1,86 @@
+# Suites at d845e279 (clean clones; the verify function of the base's verify skill)
+
+## verify python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests whatsapp/tests gchat/tests scripts/tests follow-through/tests -q -p no:cacheprovider
+3104 passed, 132 skipped, 2 warnings, 10746 subtests passed in 628.65s (0:10:28)
+exit 0 after 635s
+
+## verify make test-gascity 'PYTEST_ARGS=-q -p no:cacheprovider' (first run, kept as the result of record)
+1 failed, 1066 passed, 128 skipped, 10518 subtests passed in 391.74s (0:06:31)
+make: *** [test-gascity] Error 1
+exit 2 after 392s
+
+### Its one failure, as pytest printed it
+=================================== FAILURES ===================================
+_ PnpmShimGateRoundTests.test_a_signal_during_the_release_is_lost_and_nothing_is_left_standing _
+
+self = <test_toolchain_shims.PnpmShimGateRoundTests testMethod=test_a_signal_during_the_release_is_lost_and_nothing_is_left_standing>
+
+    def test_a_signal_during_the_release_is_lost_and_nothing_is_left_standing(self) -> None:
+        """Round 31: the mark that says "no longer mine" was cleared before
+        the rmdir, so a trapped signal between the two made cleanup skip the
+        removal and left the gate (or the lock) standing for every later
+        caller. The release runs with HUP/INT/TERM held: a TERM sent inside
+        it is lost, the command ends on its own status, nothing stands.
+        Twice: inside the gate's release after a reclaim, and inside the
+        lock's release after a mutate."""
+        proj = self.fx.project()
+        nm = proj / "node_modules"
+        lock = nm / ".gc-lane-deps.lock"
+        reclaim = nm / ".gc-lane-deps.lock.reclaim"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        # the reclaim's gate release is the first pause (~0 s in), the lock's the last
+        proc = subprocess.Popen(
+            [str(self.fx.shims / "pnpm"), "add", "x"], cwd=str(proj),
+            env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_IN_RELEASE="2"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        time.sleep(1)
+        self.assertTrue(reclaim.exists())           # inside the gate's release, holding it
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, err)   # the signal was lost, the mutate ran to its end
+        self.assertIn("moved aside a stale lane install lock", err)
+        self.assertEqual(self.fx.argv(), ["add x"])
+        self.assertFalse(reclaim.exists())
+        self.assertFalse(lock.exists())
+        self.fx.reset()
+        proc = subprocess.Popen(
+            [str(self.fx.shims / "pnpm"), "add", "y"], cwd=str(proj),
+            env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_IN_RELEASE="2", FAKE_PNPM_SLEEP="1"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        time.sleep(4)       # gate release (2 s) + pnpm (1 s): inside the lock's release now
+        self.assertTrue(lock.exists())
+        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(proc.pid))
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=60)
+>       self.assertEqual(proc.returncode, 0, err)
+E       AssertionError: 143 != 0 :
+
+gascity/tests/test_toolchain_shims.py:1127: AssertionError
+
+### The same test alone, three times at d845e279 and three at the base 7876f976, load beside each
+final run 1 at d845e279; load: 11.08 11.42 13.33
+1 passed in 13.97s
+final run 2 at d845e279; load: 10.86 11.35 13.27
+1 passed in 13.91s
+final run 3 at d845e279; load: 11.76 11.54 13.31
+1 passed in 13.93s
+base run 1 at 7876f976; load: 10.78 11.33 13.21
+1 passed in 13.97s
+base run 2 at 7876f976; load: 11.35 11.43 13.21
+1 passed in 13.92s
+base run 3 at 7876f976; load: 11.72 11.50 13.20
+1 passed in 14.04s
+
+## CI's gc step: GC_TEST_BIN=<gc> python3 -m pytest tests/test_gc_role_prompt_integration.py tests/test_pack_composition_warnings.py -q -p no:cacheprovider (env -i: PATH, HOME, TMPDIR, GC_TEST_BIN)
+103 passed in 411.28s (0:06:51)
+exit 0
+
+## verify make test-gascity, second run at d845e279
+......................................                        [100%]
+1067 passed, 128 skipped, 10518 subtests passed in 386.94s (0:06:26)
+exit 0 after 388s

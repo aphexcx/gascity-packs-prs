@@ -1,0 +1,13 @@
+.........F..........                                                     [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+
+      Skipping 977 identical leading characters in diff, use -v to show
+      - und, list each such finding in your handoff as SAME FAMILY with the round and the earlier finding it repeats, list every other finding of that round beside them as OPEN with what shows it or what would settle it, and hand the PR to the mayor as stopped, not done, for one decision on each repeated family: a check for the class built under its own tests, or a merge with the class filed as a bead. Each decision rules on its own family alone: every finding you list as OPEN keeps its own grade and needs its o...
+
+      ...Full output truncated, use '-vv' to show
+<clone>/tests/test_gc_standing_notes_fragment.py:312: AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_note_is_exactly_the_six_rules_of_its_bead
+1 failed, 19 passed in 0.03s
+exit 1

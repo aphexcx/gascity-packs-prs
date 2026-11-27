@@ -1,0 +1,17 @@
+.........F.F......                                                                                                                                                                               [100%]
+=============================================================================================== FAILURES ===============================================================================================
+E   AssertionError: assert 'THE REVIEW R... rule stands.' == 'THE REVIEW R... rule stands.'
+
+      - THE REVIEW RULES. Whenever you send your PR to review or a review returns findings on it, act by these rules: each review round costs a full read of the PR, so spend one only where it buys a fix. For these rules a round is one head of your PR sent to review, however many reviewers read it, counted from the round number the bead names, if any; the review records the role text asks for still give each review its own number. 1. Fix the whole class. When a review finds a blocking fault, name its class (the general fault, not the one case), fix every case of that class in ...
+
+      ...Full output truncated, use '-vv' to show
+<clone>/tests/test_gc_standing_notes_fragment.py:288: AssertionError: assert 'THE REVIEW R... rule stands.' == 'THE REVIEW R... rule stands.'
+E   assert <re.Match object; span=(1433, 1447), match='your city runs'> is None
+     +  where <re.Match object; span=(1433, 1447), match='your city runs'> = <function search at 0x<addr>>('\\byour city (?:runs|has|does not have)\\b', "THE REVIEW RULES. Whenever a review returns findings on your PR, act on them by these rules: each review round costs ...the risk line of the PR body lines above, and never invent one. Until that list exists, your city's merge rule stands.")
+     +    where <function search at 0x<addr>> = re.search
+<clone>/tests/test_gc_standing_notes_fragment.py:309: assert <re.Match object; span=(1433, 1447), match='your city runs'> is None
+======================================================================================= short test summary info ========================================================================================
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_note_is_exactly_the_six_rules_of_its_bead - AssertionError: assert 'THE REVIEW R... rule stands.' == 'THE REVIEW R... rule stands.'
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_judge_reach_where_the_changed_code_runs - assert <re.Match object; span=(1433, 1447), match='your city runs'> is None
+2 failed, 16 passed in 0.02s
+exit 1
