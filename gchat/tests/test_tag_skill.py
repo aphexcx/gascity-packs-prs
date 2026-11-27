@@ -21,6 +21,7 @@ def test_reply_section_says_whom_to_tag():
         "<users/1234567890>",
         "--body '<users/1234567890> ",
         "not as a typed `@Name` or an email address",
+        "gives the `users/ID` of each person who wrote there as `actor.id`",
     )
     missing = [phrase for phrase in phrases if phrase not in words]
     assert not missing, missing
@@ -31,7 +32,7 @@ def test_every_tag_the_skill_writes_uses_a_numeric_id():
     # underscores would be rewritten inside the tag. A numeric id cannot be.
     tags = re.findall(r"<users/([^>]*)>", tag_part())
     assert tags, "the tag part writes no tag"
-    assert all(tag == "ID" or tag.isdigit() for tag in tags), tags
+    assert all(tag == "ID" or re.fullmatch("[0-9]+", tag) for tag in tags), tags
     assert "stand in for ID" not in " ".join(tag_part().split())
 
 

@@ -567,10 +567,11 @@ func TestMentionFormPassesThrough(t *testing.T) {
 			}
 		})
 	}
-	// A message longer than Chat allows is divided at a space or a blank line,
-	// never inside a word, so a mention that straddles the limit moves whole
-	// into the next part. (Only a run of 32,000 bytes with no space or blank
-	// line could be cut by rune.)
+	// A message longer than Chat allows is divided at a blank line or a space
+	// where one fits, so a mention that straddles the limit in a message of
+	// words moves whole into the next part. Where Split finds no such point
+	// within a part (a long run without spaces, or a long code block), it cuts
+	// by rune and could divide a mention; the skill asks for short replies.
 	t.Run("across the part limit", func(t *testing.T) {
 		text := strings.Repeat("word ", 6399) + "and " + id + " can you approve it?"
 		if start := strings.Index(text, id); start >= 32000 || start+len(id) <= 32000 {
