@@ -542,6 +542,8 @@ reactions or peer riders. Failed posts and edits use persisted ladder backoff
 and log each distinct error once. Missing threads/channels/messages, removed
 bots, archived channels and permanent edit refusals end that incident's notice.
 
+For each message that gets a dead-letter row, one mail in the local mayor's mailbox and one request to gc for a turn of the local mayor; where an operator is named, one count-only mail to the operator's city for each pass that has new such messages; a mail command may run up to 120 seconds; a road that is down is tried again on the hold ladder for as long as the message is outstanding and less than a day old. The alarm works independently of `NEVER_SILENT`, checks for arrival before each send and leaves replay to the hold queue. An unknown local result is retried with the same key. If the first mail was created and archived before that retry, the mayor can receive a second mail for a message still outstanding. An ambiguous operator send is recorded and never retried. Remote mail and dedup behavior (Q3) are UNPROVEN, an operator turn (Q4) is UNPROVEN, and local mail and wake behavior (Q5) are UNPROVEN.
+
 These posts use `chat.postMessage`/`chat.update` outside the session act
 journal. They cannot count as session acknowledgement or own-thread evidence.
 The hourglass is removed on HOLD and restored after confirmed recovery of an
