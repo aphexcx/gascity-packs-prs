@@ -528,3 +528,47 @@ func TestStripHandle(t *testing.T) {
 		}
 	}
 }
+
+// A Chat mention is <users/ID> in the message text, where ID is the person's
+// Chat id or, for a message sent as a user, their email address. The send path
+// (server.prepare) runs StripHandle, then ToChat, then Split; the mention must
+// come out of it byte for byte. Every id and address here is made up.
+func TestMentionFormPassesThrough(t *testing.T) {
+	const id = "<users/1234567890>"
+	const email = "<users/alex.example@example.com>"
+	const underscored = "<users/alex_example@example.com>"
+	tests := []struct {
+		name, input, want, mention string
+	}{
+		{"alone", id, id, id},
+		{"alone by email", email, email, email},
+		{"alone by email with an underscore", underscored, underscored, underscored},
+		{"middle of a sentence", "Thanks for the draft, " + id + ", can you approve it today?", "Thanks for the draft, " + id + ", can you approve it today?", id},
+		{"first on the first line", id + " can you approve Friday?", id + " can you approve Friday?", id},
+		{"first on a later line", "The draft is ready.\n" + id + " can you approve it?", "The draft is ready.\n" + id + " can you approve it?", id},
+		{"first after the agent's handle", "mayor: " + id + " can you approve it?", id + " can you approve it?", id},
+		{"first in a list item", "- " + id + " to sign\n- the rest to read", "* " + id + " to sign\n* the rest to read", id},
+		{"after Markdown bold", "**Approval needed:** " + id + " please sign off.", "*Approval needed:* " + id + " please sign off.", id},
+		{"before Markdown bold", id + " can you sign off **today**?", id + " can you sign off *today*?", id},
+		{"inside Markdown bold", "**" + id + "**, can you sign off?", "*" + id + "*, can you sign off?", id},
+		{"before a Markdown link", id + " the plan is [here](https://example.com/plan).", id + " the plan is <https://example.com/plan|here>.", id},
+		{"after a Markdown link", "See [the plan](https://example.com/plan), " + id + ".", "See <https://example.com/plan|the plan>, " + id + ".", id},
+		{"by email beside bold and a link", "**Sign-off:** " + underscored + " see [the plan](https://example.com/plan).", "*Sign-off:* " + underscored + " see <https://example.com/plan|the plan>.", underscored},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stripped := StripHandle(tc.input, "mayor", "sess-1")
+			converted := ToChat(stripped)
+			if converted != tc.want {
+				t.Fatalf("ToChat(StripHandle(%q)) = %q, want %q", tc.input, converted, tc.want)
+			}
+			if got := strings.Count(converted, tc.mention); got != strings.Count(tc.input, tc.mention) {
+				t.Fatalf("mention %q appears %d times after conversion, %d before", tc.mention, got, strings.Count(tc.input, tc.mention))
+			}
+			parts := Split(converted, 32000)
+			if len(parts) != 1 || parts[0] != tc.want {
+				t.Fatalf("Split(%q) = %q, want the one part %q", converted, parts, tc.want)
+			}
+		})
+	}
+}
