@@ -187,8 +187,8 @@ needs. Tag nobody when your message asks nothing of anyone.
 Write a tag as `<users/ID>`, where ID is the person's numeric Chat id, not
 as a typed `@Name` or an email address. Their turn's `[from: ...]` line may
 show `<users/ID>`; when it shows an email, `gc gchat read` on the same space
-gives each sender's `users/ID` as `actor.id`. For example, to ask Alex
-Example (`users/1234567890`) to approve a date:
+gives the `users/ID` of each person who wrote there as `actor.id`. For
+example, to ask Alex Example (`users/1234567890`) to approve a date:
 
 ```bash
 gc gchat reply-current --to spaces/<id>/messages/<id> --body '<users/1234567890> can you approve Friday?'
