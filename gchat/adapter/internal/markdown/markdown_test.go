@@ -530,40 +530,36 @@ func TestStripHandle(t *testing.T) {
 }
 
 // A Chat mention is <users/ID> in the message text, where ID is the person's
-// Chat id or, for a message sent as a user, their email address. The send path
-// (server.prepare) runs StripHandle, then ToChat, then Split; the mention must
-// come out of it byte for byte. Every id and address here is made up.
+// numeric Chat id. The send path (server.prepare) runs StripHandle, then
+// ToChat, then Split; the mention must come out of it byte for byte. A numeric
+// id holds no Markdown marker; an email address in its place can (a pair of
+// underscores becomes bold), which is why the skill gives the id alone. The id
+// here is made up.
 func TestMentionFormPassesThrough(t *testing.T) {
 	const id = "<users/1234567890>"
-	const email = "<users/alex.example@example.com>"
-	const underscored = "<users/alex_example@example.com>"
-	tests := []struct {
-		name, input, want, mention string
-	}{
-		{"alone", id, id, id},
-		{"alone by email", email, email, email},
-		{"alone by email with an underscore", underscored, underscored, underscored},
-		{"middle of a sentence", "Thanks for the draft, " + id + ", can you approve it today?", "Thanks for the draft, " + id + ", can you approve it today?", id},
-		{"first on the first line", id + " can you approve Friday?", id + " can you approve Friday?", id},
-		{"first on a later line", "The draft is ready.\n" + id + " can you approve it?", "The draft is ready.\n" + id + " can you approve it?", id},
-		{"first after the agent's handle", "mayor: " + id + " can you approve it?", id + " can you approve it?", id},
-		{"first in a list item", "- " + id + " to sign\n- the rest to read", "* " + id + " to sign\n* the rest to read", id},
-		{"after Markdown bold", "**Approval needed:** " + id + " please sign off.", "*Approval needed:* " + id + " please sign off.", id},
-		{"before Markdown bold", id + " can you sign off **today**?", id + " can you sign off *today*?", id},
-		{"inside Markdown bold", "**" + id + "**, can you sign off?", "*" + id + "*, can you sign off?", id},
-		{"before a Markdown link", id + " the plan is [here](https://example.com/plan).", id + " the plan is <https://example.com/plan|here>.", id},
-		{"after a Markdown link", "See [the plan](https://example.com/plan), " + id + ".", "See <https://example.com/plan|the plan>, " + id + ".", id},
-		{"by email beside bold and a link", "**Sign-off:** " + underscored + " see [the plan](https://example.com/plan).", "*Sign-off:* " + underscored + " see <https://example.com/plan|the plan>.", underscored},
+	tests := []struct{ name, input, want string }{
+		{"alone", id, id},
+		{"middle of a sentence", "Thanks for the draft, " + id + ", can you approve it today?", "Thanks for the draft, " + id + ", can you approve it today?"},
+		{"first on the first line", id + " can you approve Friday?", id + " can you approve Friday?"},
+		{"first on a later line", "The draft is ready.\n" + id + " can you approve it?", "The draft is ready.\n" + id + " can you approve it?"},
+		{"first after the agent's handle", "mayor: " + id + " can you approve it?", id + " can you approve it?"},
+		{"first in a list item", "- " + id + " to sign\n- the rest to read", "* " + id + " to sign\n* the rest to read"},
+		{"in a heading", "# " + id + " can you approve it?", "*" + id + " can you approve it?*"},
+		{"after Markdown bold", "**Approval needed:** " + id + " please sign off.", "*Approval needed:* " + id + " please sign off."},
+		{"before Markdown bold", id + " can you sign off **today**?", id + " can you sign off *today*?"},
+		{"inside Markdown bold", "**" + id + "**, can you sign off?", "*" + id + "*, can you sign off?"},
+		{"beside Markdown underscores", "__Approval__ " + id + "__ __now__", "*Approval* " + id + "__ *now*"},
+		{"before a Markdown link", id + " the plan is [here](https://example.com/plan).", id + " the plan is <https://example.com/plan|here>."},
+		{"after a Markdown link", "See [the plan](https://example.com/plan), " + id + ".", "See <https://example.com/plan|the plan>, " + id + "."},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			stripped := StripHandle(tc.input, "mayor", "sess-1")
-			converted := ToChat(stripped)
+			converted := ToChat(StripHandle(tc.input, "mayor", "sess-1"))
 			if converted != tc.want {
 				t.Fatalf("ToChat(StripHandle(%q)) = %q, want %q", tc.input, converted, tc.want)
 			}
-			if got := strings.Count(converted, tc.mention); got != strings.Count(tc.input, tc.mention) {
-				t.Fatalf("mention %q appears %d times after conversion, %d before", tc.mention, got, strings.Count(tc.input, tc.mention))
+			if got, sent := strings.Count(converted, id), strings.Count(tc.input, id); got != sent {
+				t.Fatalf("mention appears %d times after conversion, %d before", got, sent)
 			}
 			parts := Split(converted, 32000)
 			if len(parts) != 1 || parts[0] != tc.want {
@@ -571,4 +567,22 @@ func TestMentionFormPassesThrough(t *testing.T) {
 			}
 		})
 	}
+	// A message longer than Chat allows is divided at a space or a blank line,
+	// never inside a word, so a mention that straddles the limit moves whole
+	// into the next part. (Only a run of 32,000 bytes with no space or blank
+	// line could be cut by rune.)
+	t.Run("across the part limit", func(t *testing.T) {
+		text := strings.Repeat("word ", 6399) + "and " + id + " can you approve it?"
+		if start := strings.Index(text, id); start >= 32000 || start+len(id) <= 32000 {
+			t.Fatalf("the mention spans %d..%d; it must straddle the limit", start, start+len(id))
+		}
+		converted := ToChat(StripHandle(text, "mayor", "sess-1"))
+		parts := Split(converted, 32000)
+		if len(parts) != 2 || strings.Join(parts, "") != text {
+			t.Fatalf("Split gave %d parts of %v bytes; want two that join to the text", len(parts), lengths(parts))
+		}
+		if strings.Contains(parts[0], "<users/") || !strings.HasPrefix(parts[1], id) {
+			t.Fatalf("the mention was divided: first part ends %q, second starts %q", parts[0][len(parts[0])-20:], parts[1][:20])
+		}
+	})
 }
