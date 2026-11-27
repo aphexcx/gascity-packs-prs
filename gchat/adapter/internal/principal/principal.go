@@ -12,15 +12,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"gchat-adapter/internal/provenance"
+	"gchat-adapter/internal/token"
+	"golang.org/x/oauth2"
 	api "google.golang.org/api/chat/v1"
+	"google.golang.org/api/googleapi"
 )
 
 // Lookup answers a Chat user's address from the directory, or "" with an error.
@@ -28,6 +33,8 @@ type Lookup func(ctx context.Context, userID string) (string, error)
 
 // Options configures a Resolver.
 type Options struct {
+	// Logger receives one warning per directory failure cause, when supplied.
+	Logger *WarningLog
 	// Owners are addresses (user@example.com) or Chat ids (users/123).
 	Owners []string
 	// OrganizationDomain is the organization's mail domain; empty means unknown.
@@ -44,6 +51,8 @@ type Resolver struct {
 	owners  map[string]bool
 	domain  string
 	lookup  Lookup
+	logger  *WarningLog
+	warned  map[string]bool
 	now     func() time.Time
 	ttl     time.Duration
 	mu      sync.Mutex
@@ -53,7 +62,8 @@ type Resolver struct {
 
 func New(o Options) *Resolver {
 	r := &Resolver{owners: map[string]bool{}, domain: strings.ToLower(strings.TrimSpace(o.OrganizationDomain)), lookup: o.Lookup,
-		now: o.Now, ttl: o.FailureTTL, address: map[string]string{}, failed: map[string]time.Time{}}
+		now: o.Now, ttl: o.FailureTTL, address: map[string]string{}, failed: map[string]time.Time{},
+		logger: o.Logger, warned: map[string]bool{}}
 	for _, owner := range o.Owners {
 		if owner = strings.ToLower(strings.TrimSpace(owner)); owner != "" {
 			r.owners[owner] = true
@@ -100,6 +110,17 @@ func (r *Resolver) Speaker(ctx context.Context, u *api.User, identityDomain stri
 	return s
 }
 
+type cacheTimeKey struct{}
+
+// BeforeFill captures the directory-cache decision time for this speaker.
+// A slow optional GET must not expire a cached failure within the same turn.
+func (r *Resolver) BeforeFill(ctx context.Context) context.Context {
+	if r.lookup == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, cacheTimeKey{}, r.now())
+}
+
 func (r *Resolver) resolve(ctx context.Context, id string) string {
 	if r.lookup == nil || id == "" {
 		return ""
@@ -111,26 +132,102 @@ func (r *Resolver) resolve(ctx context.Context, id string) string {
 	if known {
 		return address
 	}
-	if failed && r.now().Sub(failedAt) < r.ttl {
-		return ""
+	if failed {
+		at, ok := ctx.Value(cacheTimeKey{}).(time.Time)
+		if !ok {
+			at = r.now()
+		}
+		if at.Sub(failedAt) < r.ttl {
+			return ""
+		}
 	}
 	// Inbound holds its delivery gate while classifying a speaker. A stalled
 	// directory must not hold that gate indefinitely.
 	lookupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	address, err := r.lookup(lookupCtx, id)
+	var cause string
+	if r.logger != nil && (err != nil || address == "") {
+		cause = directoryCause(err)
+	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	warn := cause != "" && !r.warned[cause]
+	if warn {
+		r.warned[cause] = true
+	}
 	if err != nil {
 		r.failed[id] = r.now()
-		return ""
+		address = ""
+	} else {
+		delete(r.failed, id)
+		r.address[id] = address
 	}
-	delete(r.failed, id)
-	r.address[id] = address
+	r.mu.Unlock()
+	if warn {
+		r.logger.Report("", cause)
+	}
 	return address
 }
 
 var userID = regexp.MustCompile(`^users/(\d+)$`)
+
+var (
+	errBadID     = errors.New("not a Chat user id")
+	errNoAddress = errors.New("people.get: no address")
+)
+
+type directoryHTTPStatus int
+
+func (status directoryHTTPStatus) Error() string {
+	return fmt.Sprintf("people.get: HTTP %d", status)
+}
+
+// LookupHTTPStatus returns the status carried by a lookup or by its token
+// exchange. An ordinary transport error and its possibly private text are opaque.
+func LookupHTTPStatus(err error) int {
+	switch e := err.(type) {
+	case nil:
+		return 0
+	case directoryHTTPStatus:
+		return int(e)
+	case *googleapi.Error:
+		return e.Code
+	case *oauth2.RetrieveError:
+		if e.Response != nil {
+			return e.Response.StatusCode
+		}
+	case interface{ Unwrap() []error }:
+		for _, child := range e.Unwrap() {
+			if status := LookupHTTPStatus(child); status != 0 {
+				return status
+			}
+		}
+	case interface{ Unwrap() error }:
+		return LookupHTTPStatus(e.Unwrap())
+	default:
+		return token.KeyholderHTTPStatus(err)
+	}
+	return 0
+}
+
+func directoryCause(err error) string {
+	if status := LookupHTTPStatus(err); status != 0 {
+		return "http_" + strconv.Itoa(status)
+	}
+	var netErr net.Error
+	switch {
+	case err == nil:
+		return "not_found"
+	case errors.Is(err, errBadID):
+		return "bad_id"
+	case errors.Is(err, errNoAddress):
+		return "no_address"
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()):
+		return "timeout"
+	default:
+		return "error"
+	}
+}
 
 // DirectoryLookup reads a person's primary address from the People API with
 // the authenticated client; peopleBase is the API root. A user outside the
@@ -140,7 +237,7 @@ func DirectoryLookup(client *http.Client, peopleBase string) Lookup {
 	return func(ctx context.Context, id string) (string, error) {
 		m := userID.FindStringSubmatch(id)
 		if m == nil {
-			return "", fmt.Errorf("not a Chat user id: %q", id)
+			return "", fmt.Errorf("%w: %q", errBadID, id)
 		}
 		// people.get takes ReadSourceType values only: PROFILE answers for a
 		// Workspace user with directory.readonly. The DIRECTORY_* names belong to
@@ -160,7 +257,7 @@ func DirectoryLookup(client *http.Client, peopleBase string) Lookup {
 		case http.StatusNotFound:
 			return "", nil
 		default:
-			return "", fmt.Errorf("people.get: HTTP %d", res.StatusCode)
+			return "", directoryHTTPStatus(res.StatusCode)
 		}
 		var person struct {
 			EmailAddresses []struct {
@@ -183,6 +280,6 @@ func DirectoryLookup(client *http.Client, peopleBase string) Lookup {
 				return e.Value, nil
 			}
 		}
-		return "", errors.New("people.get: no address")
+		return "", errNoAddress
 	}
 }

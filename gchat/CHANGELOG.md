@@ -104,6 +104,8 @@
   records. Saved cursors retain their outage, and never-read spaces report no
   false history loss. Rollback keeps cursors and recognizes the skipped records.
 
+- Fill incomplete senders before classification and log each lookup failure cause once per source. The cost is one GET for each new sender, bounded at 3 seconds, inside the gate (no call for a message or a reaction of a sender the cache holds), and a sender is asked again after 1 hour, a failed one after 10 minutes. Whether the message and membership GETs return both fields is UNPROVEN, and the rule can classify a sender whose name is still missing.
+
 ## 0.5.0 — 2026-11-09
 
 - Prefer a prebuilt adapter on PATH (or GC_GCHAT_ADAPTER_BIN) before building;

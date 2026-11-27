@@ -35,6 +35,14 @@ const (
 
 var ErrNeedsSignIn = errors.New("OAuth credential needs sign-in")
 
+// ErrLookupCredential marks a permanent refusal on the optional lookup path.
+// Lookup callers can stop retrying without initiating a credential hold.
+var ErrLookupCredential = errors.New("lookup credential refused")
+
+// ErrLookupLifetime means the cached bearer cannot cover this optional request's
+// deadline. Required work can still use the original bearer immediately.
+var ErrLookupLifetime = errors.New("credential lifetime shorter than lookup budget")
+
 var errMalformedJSON = errors.New("malformed JSON")
 var errInvalidCredential = errors.New("invalid credential file")
 
@@ -166,6 +174,65 @@ func (s *Source) Client(ctx context.Context) (*http.Client, error) {
 	return authenticatedClient(ctx, s.token, s.invalidateSent), nil
 }
 
+type senderLookupBudgetKey struct{}
+
+// WithSenderLookupTimeout bounds the sender fill and reserves its effective
+// deadline against the bearer lifetime. A directory GET needs only a valid bearer.
+func WithSenderLookupTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	deadline, _ := ctx.Deadline()
+	return context.WithValue(ctx, senderLookupBudgetKey{}, deadline), cancel
+}
+
+// LookupClient authenticates optional reads on the shared refresh gate. Only a
+// successful refresh can update the cached credential. A failed lookup cannot
+// put required work on hold, including by expiring its bearer after a 401.
+func (s *Source) LookupClient(ctx context.Context) *http.Client {
+	client := authenticatedClient(ctx, func(ctx context.Context) (*oauth2.Token, error) {
+		tok, err := s.acquire(ctx, false)
+		if errors.Is(err, ErrNeedsSignIn) {
+			return nil, errors.Join(ErrLookupCredential, err)
+		}
+		if deadline, ok := ctx.Value(senderLookupBudgetKey{}).(time.Time); ok && err == nil && !tok.Expiry.IsZero() {
+			// Test the remaining budget with oauth2's own early-expiry margin.
+			// Never modify the shared token or refresh it early for a lookup.
+			projected := *tok
+			projected.Expiry = projected.Expiry.Add(-time.Until(deadline))
+			if !projected.Valid() {
+				return nil, ErrLookupLifetime
+			}
+		}
+		return tok, err
+	}, nil)
+	client.Transport = lookupTransport{client.Transport}
+	return client
+}
+
+type lookupTransport struct{ http.RoundTripper }
+
+func (t lookupTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.RoundTripper.RoundTrip(req)
+	if err == nil && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		// The SDK prefers an error code in JSON over the response's status.
+		// Optional reads need only the wire status and retry headers.
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
+		resp.Body = http.NoBody
+		resp.ContentLength = 0
+	}
+	return resp, err
+}
+
+// KeyholderHTTPStatus exposes a typed issuer status without its response text.
+func KeyholderHTTPStatus(err error) int {
+	var holder keyholderError
+	if errors.As(err, &holder) {
+		return holder.status
+	}
+	return 0
+}
+
 // TokenSource adapts Source to oauth2's context-free interface. The supplied ctx
 // bounds every Token call on this adapter, including its wait for a refresh.
 // HTTP callers should use Client to acquire tokens with each request's context.
@@ -183,6 +250,10 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 }
 
 func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
+	return s.acquire(ctx, true)
+}
+
+func (s *Source) acquire(ctx context.Context, required bool) (*oauth2.Token, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -225,14 +296,16 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 			s.mu.Unlock()
 			continue
 		}
-		if errors.Is(err, ErrNeedsSignIn) {
+		if required && errors.Is(err, ErrNeedsSignIn) {
 			s.state = NeedsSignIn
 		}
 		if err == nil {
 			s.current, s.state = tok, Ready
 		}
 		s.mu.Unlock()
-		if err == nil {
+		// Identity discovery is separate from installing a refreshed token. It
+		// can rebuild the generation and belongs to the required client or Watch.
+		if required && err == nil {
 			s.learnIdentity(ctx, tok)
 		}
 		if err != nil {
@@ -247,6 +320,18 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 			case errors.Is(err, context.DeadlineExceeded):
 				return nil, context.DeadlineExceeded
 			default:
+				if !required {
+					// Preserve only the status for optional diagnostics. Neither
+					// a response body nor an unrecognized issuer code is safe to log.
+					var holder keyholderError
+					if errors.As(err, &holder) {
+						return nil, keyholderError{status: holder.status}
+					}
+					var oauth *oauth2.RetrieveError
+					if errors.As(err, &oauth) && oauth.Response != nil {
+						return nil, &oauth2.RetrieveError{Response: &http.Response{StatusCode: oauth.Response.StatusCode}}
+					}
+				}
 				if s.managed {
 					return nil, fmt.Errorf("key holder token failed: %s", sanitizedCause(err))
 				}

@@ -254,6 +254,8 @@ learned from the first one it sends. Bots and deleted users are always
 external. Invisible characters are removed from the text and counted in a
 trailing `[N hidden characters removed]` line; `gc gchat read` history
 returns the text without the frame.
+Filling an incomplete sender costs one GET for each new sender, bounded at 3 seconds, inside the gate (no call for a message or a reaction of a sender the cache holds), and a sender is asked again after 1 hour, a failed one after 10 minutes.
+Whether the message and membership GETs return both fields is UNPROVEN, and the rule can classify a sender whose name is still missing.
 
 All keys except `GCHAT_TOKEN_FILE` are required, with `GCHAT_OAUTH_CLIENT_FILE`
 replaced by `GCHAT_TOKEN_SOURCE=keyholder` and `GCHAT_KEYHOLDER_SOCKET` for

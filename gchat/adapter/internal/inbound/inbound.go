@@ -49,6 +49,7 @@ type Options struct {
 	// no owners, no organization, no directory: everyone is external until
 	// the identity's own Workspace domain is learned from its own messages.
 	Principals *principal.Resolver
+	SenderFill *SenderFill
 	Logger     puller.Logger
 	// Save optionally replaces Ledger.Save. It runs with LedgerMu held and must
 	// durably save the supplied snapshot without retaining or modifying it.
@@ -954,13 +955,15 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 			}
 		}
 	}
+	filled, speakerCtx := p.fillSender(ctx, c, l.IdentityDomainID)
+	m = filled.Message
 	// The identity's own messages tell which Workspace domain is the
 	// organization; a sender in it is a colleague even without an address.
 	learnedDomain := ""
 	if state.Mine && m.Sender != nil && m.Sender.DomainId != "" && m.Sender.DomainId != l.IdentityDomainID {
 		learnedDomain = m.Sender.DomainId
 	}
-	speaker := p.opts.Principals.Speaker(ctx, m.Sender, l.IdentityDomainID)
+	speaker := p.opts.Principals.Speaker(speakerCtx, m.Sender, l.IdentityDomainID)
 	// The message's own name is the item the key holder can verify at the
 	// source when the agent acts on it (boxboxbox-google mail --for).
 	speaker.Item = provenance.ChatItem(m.Name)
@@ -999,9 +1002,8 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 	framed := false
 	if c.Kind == "message.deleted" && !state.Mine {
 		w.Text = "deleted"
-		// Google reports a deletion without its sender; the original turn
-		// carries both the actor and the frame.
-		if base != nil {
+		// Without a cached sender for this deletion, preserve the original actor and frame.
+		if base != nil && m == c.Message {
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(base.Event), &original) == nil {
 				w.Actor = original.Actor
@@ -1050,7 +1052,9 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		return p.resume(ctx, id)
 	}
 	parent := strings.Split(r.Name, "/reactions/")[0]
-	speaker := p.opts.Principals.Speaker(ctx, r.User, l.IdentityDomainID)
+	filled, speakerCtx := p.fillSender(ctx, c, l.IdentityDomainID)
+	r = filled.Reaction
+	speaker := p.opts.Principals.Speaker(speakerCtx, r.User, l.IdentityDomainID)
 	state := l.Messages[parent]
 	if state == nil {
 		m, err := p.opts.Chat.GetMessage(ctx, parent)

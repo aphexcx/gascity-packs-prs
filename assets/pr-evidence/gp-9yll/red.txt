@@ -1,0 +1,234 @@
+?   	gchat-adapter/internal/arrival	[no test files]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/fakes/fakegc	0.234s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/ack	0.239s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/gcclient	0.243s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/config	0.248s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/events	0.302s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/chat	0.308s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/catchup	0.313s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/fakes/fakegoogle	0.318s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/cmd/gc-gchat-adapter	0.324s [no tests to run]
+=== RUN   TestSenderFillWiring
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/redact	0.064s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/wire	0.073s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/stopwatch	0.079s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/markdown	0.085s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/provenance	0.089s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/neversilent	0.095s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/media	0.100s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/token	0.110s [no tests to run]
+=== RUN   TestDirectoryCause
+    directory_cause_test.go:41: lookups 30 log
+    directory_cause_test.go:54: cause "http_403":
+    directory_cause_test.go:54: cause "not_found":
+    directory_cause_test.go:54: cause "no_address":
+    directory_cause_test.go:54: cause "timeout":
+    directory_cause_test.go:54: cause "bad_id":
+    directory_cause_test.go:54: cause "error":
+    directory_cause_test.go:58: log
+--- FAIL: TestDirectoryCause (0.01s)
+=== RUN   TestDirectoryCauseNoLogger
+--- PASS: TestDirectoryCauseNoLogger (0.00s)
+FAIL
+FAIL	gchat-adapter/internal/principal	0.151s
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/ledger	0.168s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/test/contract	0.176s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/server	0.182s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/internal/puller	0.187s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	gchat-adapter/test/e2e	0.192s [no tests to run]
+=== RUN   TestSenderFillBound
+    sender_fill_cache_test.go:42: bounded=false requests=0 log=
+--- FAIL: TestSenderFillBound (0.19s)
+=== RUN   TestSenderFillCallerCanceled
+    sender_fill_cache_test.go:54: interrupted Handle = 1, <nil>; log
+--- FAIL: TestSenderFillCallerCanceled (0.06s)
+=== RUN   TestSenderFillCache
+=== RUN   TestSenderFillCache/failed=false
+    sender_fill_cache_test.go:86: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external | item gchat:spaces/room/messages/0]\nhello"
+--- FAIL: TestSenderFillCache/failed=false (0.04s)
+=== RUN   TestSenderFillCache/failed=true
+    sender_fill_cache_test.go:89: at 0s calls=[]
+--- FAIL: TestSenderFillCache/failed=true (0.04s)
+    sender_fill_cache_test.go:106: initial: []
+--- FAIL: TestSenderFillCache (0.13s)
+=== RUN   TestSenderFillEligibility
+    sender_fill_test.go:35: own message taught domain ""
+    sender_fill_test.go:41: turns = [{ProviderMessageID:spaces/example/messages/other Conversation:{ScopeID:examplecity Provider:gchat AccountID:default ConversationID:spaces/example ParentConversationID: Kind:dm} Actor:{ID:users/1 DisplayName:users/1 IsBot:false} Text:[from: <users/1> | external | item gchat:spaces/example/messages/other]
+        other ExplicitTarget: ReplyToMessageID:spaces/example/threads/other Attachments:[] DedupKey: ReceivedAt:2026-11-25 18:31:08.309806 +0000 UTC}]
+--- PASS: TestSenderFillEligibility (0.57s)
+=== RUN   TestSenderFillDeletion
+=== RUN   TestSenderFillDeletion/history=false/cold
+--- FAIL: TestSenderFillWiring (1.35s)
+FAIL
+FAIL	gchat-adapter/internal/app	1.676s
+--- PASS: TestSenderFillDeletion/history=false/cold (0.21s)
+=== RUN   TestSenderFillDeletion/history=false/warm
+    sender_fill_cache_test.go:151: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external | item gchat:spaces/room/messages/target]\ndeleted"
+--- FAIL: TestSenderFillDeletion/history=false/warm (0.18s)
+=== RUN   TestSenderFillDeletion/history=false/expired
+--- PASS: TestSenderFillDeletion/history=false/expired (0.22s)
+=== RUN   TestSenderFillDeletion/history=true/cold
+--- PASS: TestSenderFillDeletion/history=true/cold (0.12s)
+=== RUN   TestSenderFillDeletion/history=true/warm
+    sender_fill_cache_test.go:151: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external | item gchat:spaces/room/messages/target]"
+--- FAIL: TestSenderFillDeletion/history=true/warm (0.16s)
+=== RUN   TestSenderFillDeletion/history=true/expired
+--- PASS: TestSenderFillDeletion/history=true/expired (0.17s)
+--- FAIL: TestSenderFillDeletion (1.06s)
+=== RUN   TestSenderFillLog
+    sender_fill_cache_test.go:176: missing/duplicate "source=message cause=http_403" in
+    sender_fill_cache_test.go:176: missing/duplicate "source=member cause=http_403" in
+    sender_fill_cache_test.go:176: missing/duplicate "source=message cause=error" in
+    sender_fill_cache_test.go:180: log =
+--- FAIL: TestSenderFillLog (0.86s)
+=== RUN   TestSenderFillMissingDisplayName
+    sender_fill_cache_test.go:200: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external | item gchat:spaces/room/messages/0]\nhello"
+--- FAIL: TestSenderFillMissingDisplayName (0.05s)
+=== RUN   TestSenderFillFrames
+=== RUN   TestSenderFillFrames/message.created/replay=false/old=false
+    sender_fill_test.go:146: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external | item gchat:spaces/room/messages/one]\nhello"
+--- FAIL: TestSenderFillFrames/message.created/replay=false/old=false (0.05s)
+=== RUN   TestSenderFillFrames/message.updated/replay=false/old=false
+    sender_fill_test.go:146: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external | item gchat:spaces/room/messages/one]\nhello"
+--- FAIL: TestSenderFillFrames/message.updated/replay=false/old=false (0.05s)
+=== RUN   TestSenderFillFrames/reaction.created/replay=false/old=false
+    sender_fill_test.go:146: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external]\nreaction created: + on spaces/room/messages/one"
+--- FAIL: TestSenderFillFrames/reaction.created/replay=false/old=false (0.05s)
+=== RUN   TestSenderFillFrames/reaction.created/replay=true/old=false
+    sender_fill_test.go:146: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[catch-up]\n[from: <users/1> | external]\nreaction created: + on spaces/room/messages/one"
+--- FAIL: TestSenderFillFrames/reaction.created/replay=true/old=false (0.05s)
+=== RUN   TestSenderFillFrames/message.created/replay=false/old=true
+    sender_fill_test.go:146: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external | item gchat:spaces/room/messages/one]"
+--- FAIL: TestSenderFillFrames/message.created/replay=false/old=true (0.03s)
+=== RUN   TestSenderFillFrames/keep_delivered_fields
+    sender_fill_test.go:163: actor and frame = {ID:users/1 DisplayName:Delivered IsBot:false} "[from: Delivered <users/1> | external | item gchat:spaces/room/messages/one]\nhello"
+--- FAIL: TestSenderFillFrames/keep_delivered_fields (0.05s)
+=== RUN   TestSenderFillFrames/learn_identity_then_classify_teammate
+    sender_fill_test.go:172: learned domain = ""
+--- FAIL: TestSenderFillFrames/learn_identity_then_classify_teammate (0.02s)
+--- FAIL: TestSenderFillFrames (0.30s)
+=== RUN   TestSenderFillTrust
+=== RUN   TestSenderFillTrust/message.created/transport
+--- PASS: TestSenderFillTrust/message.created/transport (0.10s)
+=== RUN   TestSenderFillTrust/message.created/timeout
+--- PASS: TestSenderFillTrust/message.created/timeout (0.10s)
+=== RUN   TestSenderFillTrust/message.created/missing_user
+--- PASS: TestSenderFillTrust/message.created/missing_user (0.10s)
+=== RUN   TestSenderFillTrust/message.created/different_user
+--- PASS: TestSenderFillTrust/message.created/different_user (0.14s)
+=== RUN   TestSenderFillTrust/message.created/no_domain
+--- PASS: TestSenderFillTrust/message.created/no_domain (0.10s)
+=== RUN   TestSenderFillTrust/message.created/anonymous
+--- PASS: TestSenderFillTrust/message.created/anonymous (0.10s)
+=== RUN   TestSenderFillTrust/message.created/bot
+--- PASS: TestSenderFillTrust/message.created/bot (0.11s)
+=== RUN   TestSenderFillTrust/message.created/keep_name_on_failure
+--- PASS: TestSenderFillTrust/message.created/keep_name_on_failure (0.10s)
+=== RUN   TestSenderFillTrust/message.created/401
+--- PASS: TestSenderFillTrust/message.created/401 (0.10s)
+=== RUN   TestSenderFillTrust/message.created/403
+--- PASS: TestSenderFillTrust/message.created/403 (0.10s)
+=== RUN   TestSenderFillTrust/message.created/404
+--- PASS: TestSenderFillTrust/message.created/404 (0.10s)
+=== RUN   TestSenderFillTrust/message.created/429
+--- PASS: TestSenderFillTrust/message.created/429 (0.10s)
+=== RUN   TestSenderFillTrust/message.created/500
+--- PASS: TestSenderFillTrust/message.created/500 (0.11s)
+=== RUN   TestSenderFillTrust/message.created/different_cached_user
+--- PASS: TestSenderFillTrust/message.created/different_cached_user (0.14s)
+=== RUN   TestSenderFillTrust/message.created/expired_entry
+--- PASS: TestSenderFillTrust/message.created/expired_entry (0.14s)
+=== RUN   TestSenderFillTrust/reaction.created/transport
+--- PASS: TestSenderFillTrust/reaction.created/transport (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/timeout
+--- PASS: TestSenderFillTrust/reaction.created/timeout (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/missing_user
+--- PASS: TestSenderFillTrust/reaction.created/missing_user (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/different_user
+--- PASS: TestSenderFillTrust/reaction.created/different_user (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/no_domain
+--- PASS: TestSenderFillTrust/reaction.created/no_domain (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/anonymous
+--- PASS: TestSenderFillTrust/reaction.created/anonymous (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/bot
+--- PASS: TestSenderFillTrust/reaction.created/bot (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/keep_name_on_failure
+--- PASS: TestSenderFillTrust/reaction.created/keep_name_on_failure (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/401
+--- PASS: TestSenderFillTrust/reaction.created/401 (0.11s)
+=== RUN   TestSenderFillTrust/reaction.created/403
+--- PASS: TestSenderFillTrust/reaction.created/403 (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/404
+--- PASS: TestSenderFillTrust/reaction.created/404 (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/429
+--- PASS: TestSenderFillTrust/reaction.created/429 (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/500
+--- PASS: TestSenderFillTrust/reaction.created/500 (0.10s)
+=== RUN   TestSenderFillTrust/reaction.created/different_cached_user
+--- PASS: TestSenderFillTrust/reaction.created/different_cached_user (0.14s)
+=== RUN   TestSenderFillTrust/reaction.created/expired_entry
+--- PASS: TestSenderFillTrust/reaction.created/expired_entry (0.15s)
+--- PASS: TestSenderFillTrust (3.29s)
+=== RUN   TestSenderFillExternalDomain
+    sender_fill_test.go:235: actor and frame = {ID:users/1 DisplayName:users/1 IsBot:false} "[from: <users/1> | external | item gchat:spaces/room/messages/one]\nhello"
+--- FAIL: TestSenderFillExternalDomain (0.05s)
+=== RUN   TestSenderFillCauses
+    sender_fill_test.go:256: message.created no_user:
+    sender_fill_test.go:256: message.created other_user:
+    sender_fill_test.go:256: message.created not_a_person:
+    sender_fill_test.go:256: message.created no_domain_id:
+    sender_fill_test.go:256: message.created timeout:
+    sender_fill_test.go:256: message.created http_429:
+    sender_fill_test.go:256: reaction.created no_user:
+    sender_fill_test.go:256: reaction.created other_user:
+    sender_fill_test.go:256: reaction.created not_a_person:
+    sender_fill_test.go:256: reaction.created no_domain_id:
+    sender_fill_test.go:256: reaction.created timeout:
+    sender_fill_test.go:256: reaction.created http_429:
+--- FAIL: TestSenderFillCauses (0.64s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	7.411s

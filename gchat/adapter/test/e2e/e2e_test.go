@@ -963,7 +963,15 @@ func scenariosRecovery(t *testing.T) {
 		if len(s.Backlog) != 0 || !s.FrozenUpper.IsZero() || s.MessageCursor.IsZero() || !s.EventCursor.Equal(s.MessageCursor) {
 			t.Fatalf("backlog did not finish: %+v", s)
 		}
-		if f.countRequest("GET /v1/spaces/room/messages") < 2 {
+		pages := 0
+		f.google.Configure(func(g *fakegoogle.Server) {
+			for _, page := range g.HistoryRequests {
+				if page.Space == "spaces/room" {
+					pages++
+				}
+			}
+		})
+		if pages < 2 {
 			t.Fatal("history not paginated")
 		}
 	})
