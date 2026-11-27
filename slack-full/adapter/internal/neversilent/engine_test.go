@@ -2,6 +2,7 @@ package neversilent
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -268,6 +269,37 @@ func TestMailRetriesPersistAndDoNotRepeatSuccessfulSend(t *testing.T) {
 	f.poll()
 	if len(f.mails) != 2 || f.mails[0].Key != f.mails[1].Key {
 		t.Fatal("mail marks or stable key broken")
+	}
+}
+
+func TestLocalMailKeySurvivesUpgradeAndRestart(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
+			f := setup(t)
+			const conversation = "example-conversation"
+			msg := Message{ID: "example-message", Created: f.now, Conversation: conversation}
+			mark := ownerMark{Message: msg, Posted: true, At: f.now, Line: DownLine}
+			episode := fmt.Sprintf("%x", sha256.Sum256([]byte(msg.ID+msg.Created.Format(time.RFC3339Nano))))
+			want := "slack-silent:" + episode
+			if legacy {
+				mark.LocalMail.Tried = f.now.Add(-MailRetry)
+				want = "slack-owner-notice:" + episode
+			}
+			f.check(f.e.change(func(s *state) { s.Owners[conversation] = mark }))
+			var keys []string
+			f.opts.SendLocal = func(_ context.Context, _ Message, _, key string) error {
+				keys = append(keys, key)
+				return errors.New("mail refused")
+			}
+			for range 2 {
+				f.restart()
+				f.poll()
+				f.now = f.now.Add(MailRetry)
+			}
+			if len(keys) != 2 || keys[0] != want || keys[1] != want {
+				t.Fatalf("mail keys = %q, want %q twice", keys, want)
+			}
+		})
 	}
 }
 

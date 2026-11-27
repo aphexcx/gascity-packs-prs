@@ -59,7 +59,7 @@ func newNoticeHoldFixture(t *testing.T, mode string) *noticeHoldFixture {
 	}))
 	t.Cleanup(srv.Close)
 	f.cfg = recoveryTestConfig(t, srv.URL)
-	f.opts = neversilent.Options{Enabled: true, Path: filepath.Join(f.cfg.cityPath, "notices.json"), HealthFile: filepath.Join(f.cfg.cityPath, "health.json"), OperatorContext: "example-operator", City: "example-city", Channel: "slack", Now: func() time.Time { return f.now }, Post: func(context.Context, neversilent.Message, string) error { f.lines++; return nil }, Send: func(_ context.Context, m neversilent.Mail) error { f.mails = append(f.mails, m); return nil }, SendLocal: func(context.Context, neversilent.Message, string) error { return nil }}
+	f.opts = neversilent.Options{Enabled: true, Path: filepath.Join(f.cfg.cityPath, "notices.json"), HealthFile: filepath.Join(f.cfg.cityPath, "health.json"), OperatorContext: "example-operator", City: "example-city", Channel: "slack", Now: func() time.Time { return f.now }, Post: func(context.Context, neversilent.Message, string) error { f.lines++; return nil }, Send: func(_ context.Context, m neversilent.Mail) error { f.mails = append(f.mails, m); return nil }, SendLocal: func(context.Context, neversilent.Message, string, string) error { return nil }}
 	var err error
 	f.cfg.neverSilent, err = neversilent.New(f.opts)
 	if err != nil {

@@ -3,6 +3,7 @@ package neversilent
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -65,6 +66,7 @@ type ownerMark struct {
 }
 
 type mailMark struct {
+	Key   string    `json:"key,omitempty"`
 	Sent  bool      `json:"sent"`
 	Tried time.Time `json:"tried,omitempty"`
 }
@@ -99,7 +101,7 @@ type Options struct {
 	Now                                                                 func() time.Time
 	Post                                                                func(context.Context, Message, string) error
 	Send                                                                func(context.Context, Mail) error
-	SendLocal                                                           func(context.Context, Message, string) error
+	SendLocal                                                           func(context.Context, Message, string, string) error
 	Log                                                                 func(string)
 }
 
@@ -619,10 +621,24 @@ func (e *Engine) sendLocal(ctx context.Context, now time.Time) error {
 		if !mark.Posted || mark.LocalMail.Sent || now.Sub(mark.At) > MailLifetime || (!mark.LocalMail.Tried.IsZero() && now.Sub(mark.LocalMail.Tried) < MailRetry) {
 			continue
 		}
-		if err := e.change(func(s *state) { m := s.Owners[conversation]; m.LocalMail.Tried = now; s.Owners[conversation] = m }); err != nil {
+		key := mark.LocalMail.Key
+		if key == "" {
+			prefix := "slack-silent:"
+			if !mark.LocalMail.Tried.IsZero() {
+				// A pre-upgrade attempt may already have reached the mailbox.
+				prefix = "slack-owner-notice:"
+			}
+			episode := sha256.Sum256([]byte(mark.Message.ID + mark.Message.Created.Format(time.RFC3339Nano)))
+			key = fmt.Sprintf("%s%x", prefix, episode)
+		}
+		if err := e.change(func(s *state) {
+			m := s.Owners[conversation]
+			m.LocalMail.Key, m.LocalMail.Tried = key, now
+			s.Owners[conversation] = m
+		}); err != nil {
 			return err
 		}
-		if err := e.effect(func() error { return e.opts.SendLocal(ctx, mark.Message, mark.Line) }); err != nil {
+		if err := e.effect(func() error { return e.opts.SendLocal(ctx, mark.Message, mark.Line, key) }); err != nil {
 			e.opts.Log("never-silent: local owner notice mail failed; retry in one minute")
 			continue
 		}

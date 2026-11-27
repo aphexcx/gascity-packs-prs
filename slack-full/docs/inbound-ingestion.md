@@ -67,7 +67,7 @@ that arrived between initial acceptance and a delayed conclusion.
 
 After checking rendered input and session acts, three minutes without proof
 appends `delivered_unseen`. Each observer pass sends at most one
-`gc mail send mayor --dedup ...` per channel, with a count in the subject and
+`gc mail send mayor --notify --dedup ... --json` per channel, with a count in the subject and
 each message timestamp, thread and receipt in the body. Target sessions stay
 in the journal so delayed fanout cannot enlarge a retry's mail payload.
 Fanout targets share one line per uncovered message. Before mail, the journal saves
@@ -86,7 +86,13 @@ Any completion retaining pairs beyond those confirmed by this pass is marked
 has proof, `sent` stays false. This retains ambiguous acceptance; it does not
 claim that the original attempt was confirmed.
 New attempts record the exact message/target coverage and attempt time immediately
-before notification. Each eligible retry atomically replaces its sidecar before
+before notification. A new mail uses `slack-ingest:<channel>:<message ts>`,
+for one distinct timestamp. A batch with several uses the first timestamp in
+lexical order and appends `:<batch digest>` so another batch that shares that
+timestamp cannot suppress its other lines. Its attempt sidecar
+keeps the mailbox key across an uncertain send, even when proof subsequently
+arrives for that timestamp. An uncertain pre-upgrade send keeps its old key.
+Each eligible retry atomically replaces its sidecar before
 sending. Recovery keeps only
 the union of attempts not definitely refused. A refused A+B plan followed by
 an ambiguous B-only retry keeps B, leaving never-mailed A eligible for a later
@@ -147,7 +153,7 @@ source records until those individual completion rows are durable, even if a
 previous day's failed mail succeeds after its observation horizon. Failed mail is retried
 on the next eligible pass and logged; a channel's state-write failure is collected
 without preventing other channels from mailing.
-The mail command and each target's transcript fetch have ten-second limits.
+The observer allows 10 seconds for each target's transcript fetch and 60 seconds for the notifying mail command.
 The normal alert latency is the three-minute window plus one polling pass.
 The controlled busy-session proof needed 2m16s for the first queued input to
 render after the held tool call, so a two-minute window was too short.
@@ -169,6 +175,21 @@ format without qualifying session acts also produces `delivered_unseen`;
 absence of proof is not a claim that
 the message was definitely lost. The existing dead-letter file continues to
 represent failed transport handoffs.
+
+The local never-silent owner notice asks for a turn with
+`slack-silent:<episode id>`, using the existing digest of the tracked message ID
+and its creation time. A retry of a local notice first attempted before
+upgrade retains its original key. After a new inbound loss is written to disk, the
+adapter also asks for a turn with `dead-letter:<file name>:<first message ts>`.
+Each append uses the timestamp of its first record. Distinct losses in one
+channel get separate mails, and a repeat of the same loss shares its live
+mailbox entry. The mail contains the path and the delivery reason. Provider
+response bodies stay in the file. The three notifying sends allow up to
+60 seconds for gc to request the turn. Check the adapter log
+for `operator mail` with `id`, `notified`, `key` and `already_done`. A missing
+notification flag reads as false. If gc rejects either alert flag as unknown,
+the adapter logs the fallback and makes one plain send. A dead-letter mail
+failure is logged once and leaves the file available for recovery.
 
 Transport recovery is separate from this observer: the durable HOLD queue
 retries only definite non-delivery, polls outstanding receipts, and excludes

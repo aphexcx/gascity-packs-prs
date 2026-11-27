@@ -69,6 +69,7 @@ type inboundJournalRecord struct {
 	AlertVersion       int                      `json:"alert_version,omitempty"`
 	AlertCoverage      []ingestionAlertCoverage `json:"alert_coverage,omitempty"`
 	AlertSelection     []ingestionAlertCoverage `json:"-"` // exact message/target pairs in this mail
+	MailKey            string                   `json:"-"` // from this attempt's sidecar
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,12 +10,109 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
 )
+
+// Each distinct loss can request its turn independently. Overlapping writes
+// for the same key share a worker that rechecks gc's mailbox after the send.
+type deadLetterAlerts struct {
+	mu       sync.Mutex
+	inFlight map[string]*deadLetterMail
+	send     func(path, key, reason string) error
+}
+
+type deadLetterMail struct {
+	done    chan struct{}
+	pending *deadLetterNotice
+}
+
+type deadLetterNotice struct {
+	path, reason string
+}
+
+func newDeadLetterAlerts(city string) *deadLetterAlerts {
+	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(path, key, reason string) error {
+		body := fmt.Sprintf("File: %s\nReason: %s", path, reason)
+		return sendOperatorMail(context.Background(), "gc", city, key, "Slack inbound message could not be delivered", body, true)
+	}}
+}
+
+func (a *deadLetterAlerts) notify(path, firstMessageTS, reason string) {
+	if a == nil {
+		return
+	}
+	key := "dead-letter:" + filepath.Base(path) + ":" + firstMessageTS
+	a.mu.Lock()
+	if mail := a.inFlight[key]; mail != nil {
+		mail.pending = &deadLetterNotice{path: path, reason: reason}
+		a.mu.Unlock()
+		return
+	}
+	mail := &deadLetterMail{done: make(chan struct{})}
+	a.inFlight[key] = mail
+	a.mu.Unlock()
+	go func() {
+		for {
+			err := a.send(path, key, reason)
+			if err != nil {
+				log.Printf("operator mail failed key=%q: %v", key, err)
+			}
+			a.mu.Lock()
+			if mail.pending == nil {
+				delete(a.inFlight, key)
+				close(mail.done)
+				a.mu.Unlock()
+				return
+			}
+			path, reason = mail.pending.path, mail.pending.reason
+			mail.pending = nil
+			a.mu.Unlock()
+		}
+	}()
+}
+
+func (a *deadLetterAlerts) wait() {
+	a.mu.Lock()
+	var active []chan struct{}
+	for _, mail := range a.inFlight {
+		active = append(active, mail.done)
+	}
+	a.mu.Unlock()
+	for _, done := range active {
+		<-done
+	}
+}
+
+// A stored rejection can include a provider response quoting user input.
+// Mail the recorded status or adapter-authored reason and leave external
+// diagnostics in the private file.
+func deadLetterMailReason(reason string) string {
+	if legacyPayloadRefusal(reason, true) {
+		code, _ := strconv.Atoi(reason[:3])
+		return strings.TrimSpace(fmt.Sprintf("%d %s", code, http.StatusText(code)))
+	}
+	for _, cause := range []error{errReceiptFollowUpLost, errReceiptFollowUpStuck, errDeliveryUnvouched} {
+		if strings.HasPrefix(reason, cause.Error()) {
+			return cause.Error()
+		}
+	}
+	const held = "unvouched delivery held for "
+	if duration, ok := strings.CutPrefix(reason, held); ok {
+		if _, err := time.ParseDuration(strings.TrimSuffix(duration, "; older delivery still outstanding")); err == nil {
+			return reason
+		}
+	}
+	switch reason {
+	case "verify by hand: no pollable receipt", "verify by hand: delivery proof unavailable", "verify by hand: receipt gate is off":
+		return reason
+	}
+	return "delivery refused (see file for details)"
+}
 
 // --- inbound delivery failure classes + dead letters (gp-xnc) ---------------
 

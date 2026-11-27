@@ -499,6 +499,7 @@ type config struct {
 	// SLACK_INBOUND_DEAD_LETTER_DIR; default
 	// <GC_CITY_PATH>/.gc/slack/inbound_dead_letter.
 	inboundDeadLetterDir string
+	deadLetterAlerts     *deadLetterAlerts
 	// inboundFileTTL is the maximum age (mtime-based) of files in
 	// inboundFileStore before the in-process janitor deletes them.
 	// Empty or zero disables the janitor entirely.
@@ -1736,6 +1737,7 @@ func main() {
 	// over cfg: every verified event_callback (either transport) feeds
 	// it, and the watchdog/backfill read from it. The deliver + alert
 	// hooks are attached below once the events handler exists. gp-3og.
+	cfg.deadLetterAlerts = newDeadLetterAlerts(cfg.operatorMailCity())
 	cfg.inboundLiveness = newInboundLiveness(cfg, newSlackHistoryClient(cfg.slackBotToken))
 	livenessHealth.Store(cfg.inboundLiveness)
 	internalDescr := cfg.internalListen
@@ -2323,6 +2325,7 @@ func main() {
 	//     is recorded, not re-posted. Bounded so a wedged gc cannot
 	//     hold the exit.
 	cfg.receiptFollowUps.drain(shutdownReceiptFollowUpTimeout)
+	cfg.deadLetterAlerts.wait()
 	// 5. Seal the spool as the very last step (gp-9e7 round 3, 2c):
 	//    every spool write runs entirely under the spool mutex, so the
 	//    seal JOINS any write still in flight — e.g. a straggler event
@@ -7107,6 +7110,9 @@ func inboundDeadLetterSink(deliverCfg config) func(string, []pendingChannelInbou
 					channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
 			}
 			return false
+		}
+		if len(batch) > 0 {
+			deliverCfg.deadLetterAlerts.notify(path, batch[0].inbound.ProviderMessageID, deadLetterMailReason(rejectionReasonText(cause)))
 		}
 		deliverCfg.postFailures.clear("dead-letter:" + channel)
 		if err := deliverCfg.inboundRecovery.importDeadLetters(); err != nil {

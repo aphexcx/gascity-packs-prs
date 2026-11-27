@@ -17,7 +17,7 @@ func TestIngestionMailExecDeduplicatesFanoutAndRetriesFailure(t *testing.T) {
 	dir := t.TempDir()
 	argsPath := filepath.Join(dir, "args")
 	// Exercise exec.CommandContext and its exact argv without sending mail.
-	script := "#!/bin/sh\nprintf '%s\\000' \"$@\" >> \"$INGESTION_TEST_ARGS\"\nexit \"$INGESTION_TEST_EXIT\"\n"
+	script := "#!/bin/sh\nprintf '%s\\000' \"$@\" >> \"$INGESTION_TEST_ARGS\"\nprintf '%s\\n' '{\"id\":\"example-mail\",\"notified\":true}'\nexit \"$INGESTION_TEST_EXIT\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestIngestionMailExecDeduplicatesFanoutAndRetriesFailure(t *testing.T) {
 		}
 	}
 	now = at.Add(ingestionWindow + time.Second)
-	o := &ingestionObserver{cfg: config{inboundJournal: j, cityPath: "/fixture/city"}, now: func() time.Time { return now },
+	o := &ingestionObserver{cfg: config{inboundJournal: j, cityPath: "/fixture/city", cityName: "example-registered"}, now: func() time.Time { return now },
 		fetch: func(context.Context, string) ([]json.RawMessage, error) { return nil, nil }}
 	o.notify = o.mailUnseen
 	if err := o.step(context.Background()); err == nil {
@@ -68,16 +68,22 @@ func TestIngestionMailExecDeduplicatesFanoutAndRetriesFailure(t *testing.T) {
 	args := strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00")
 	// One failed channel batch, then one successful shared receipt alert;
 	// late observation must never call the executable again.
-	if len(args) != 2*11 {
+	if len(args) != 2*13 {
 		t.Fatalf("unexpected mail calls/argv: %q", args)
 	}
-	for i := 0; i < len(args); i += 11 {
-		if !reflect.DeepEqual(args[i:i+6], []string{"--city", "/fixture/city", "mail", "send", "mayor", "--dedup"}) ||
-			args[i+6] != args[6] || !strings.HasPrefix(args[i+6], "slack-ingestion:") ||
-			args[i+7] != "-s" || args[i+8] != "Slack delivered_unseen: 3 lines in C1" || args[i+9] != "-m" ||
-			!strings.Contains(args[i+10], "message_ts=100.1") || !strings.Contains(args[i+10], "message_ts=100.2") ||
-			!strings.Contains(args[i+10], "message_ts=100.3") || strings.Contains(args[i+10], "private payload") {
-			t.Fatalf("incorrect alert invocation: %q", args[i:i+11])
+	var planID string
+	for _, row := range ingestionJournalRows(t, j) {
+		if row.Phase == "ingestion_batch" {
+			planID = row.AlertBatch.ID
+		}
+	}
+	for i := 0; i < len(args); i += 13 {
+		if !reflect.DeepEqual(args[i:i+6], []string{"--city", "/fixture/city", "mail", "send", "mayor", "-s"}) ||
+			args[i+6] != "Slack delivered_unseen: 3 lines in C1" || args[i+7] != "-m" ||
+			!strings.Contains(args[i+8], "message_ts=100.1") || !strings.Contains(args[i+8], "message_ts=100.2") ||
+			!strings.Contains(args[i+8], "message_ts=100.3") || strings.Contains(args[i+8], "private payload") ||
+			!reflect.DeepEqual(args[i+9:i+13], []string{"--dedup", "slack-ingest:C1:100.1:" + planID, "--notify", "--json"}) {
+			t.Fatalf("incorrect alert invocation: %q", args[i:i+13])
 		}
 	}
 }

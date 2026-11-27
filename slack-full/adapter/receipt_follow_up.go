@@ -882,6 +882,7 @@ func deadLetterHeldAliasLoss(cfg config, inbound externalInboundMessage, session
 		log.Printf("receipt follow-up: chan=%s alias dead-letter write FAILED (dir %q): %v", channel, cfg.inboundDeadLetterDir, err)
 		return false
 	}
+	cfg.deadLetterAlerts.notify(path, inbound.ProviderMessageID, deadLetterMailReason(rejectionReasonText(cause)))
 	log.Printf("receipt follow-up: chan=%s lost injection for session=%s handle=%s written to dead-letter file %s — re-inject alias_body by hand",
 		channel, sanitizeReceiptLogValue(sessionID, receiptLogValueLimit), sanitizeReceiptLogValue(handle, receiptLogValueLimit), path)
 	if err := cfg.inboundRecovery.importDeadLetters(); err != nil {
@@ -906,6 +907,9 @@ func deadLetterHeldLoss(cfg config, channel string, batch []pendingChannelInboun
 	if err != nil {
 		log.Printf("receipt follow-up: chan=%s dead-letter write FAILED (dir %q): %v", channel, cfg.inboundDeadLetterDir, err)
 		return false
+	}
+	if len(batch) > 0 {
+		cfg.deadLetterAlerts.notify(path, batch[0].inbound.ProviderMessageID, deadLetterMailReason(rejectionReasonText(cause)))
 	}
 	log.Printf("receipt follow-up: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand",
 		channel, len(batch), path)

@@ -26,6 +26,64 @@ func ingestionReadAttempt(t *testing.T, j *inboundJournal, id string) ingestionA
 	return state
 }
 
+func TestIngestionMailKeyOverlappingBatches(t *testing.T) {
+	at := time.Unix(100, 0).UTC()
+	first := ingestionTestRecord("100.1", at, "first")
+	singleKey := ingestionMailKey([]inboundJournalRecord{first}, "")
+	first.ReceiptID = "example-late-receipt"
+	second := ingestionTestRecord("100.2", at, "second")
+	third := ingestionTestRecord("100.3", at, "third")
+	secondKey := ingestionMailKey([]inboundJournalRecord{first, second}, "")
+	thirdKey := ingestionMailKey([]inboundJournalRecord{first, third}, "")
+	if singleKey != "slack-ingest:C1:100.1" || secondKey == singleKey || thirdKey == singleKey || secondKey == thirdKey {
+		t.Fatalf("mail keys for overlapping batches: %q, %q, %q", singleKey, secondKey, thirdKey)
+	}
+}
+
+func TestIngestionMailKeyAfterRestart(t *testing.T) {
+	at := time.Unix(100, 0).UTC()
+	rows := []inboundJournalRecord{ingestionTestRecord("100.2", at, "second"), ingestionTestRecord("100.1", at, "first")}
+	for _, mode := range []string{"ambiguous", "legacy", "refused"} {
+		t.Run(mode, func(t *testing.T) {
+			now := func() time.Time { return at }
+			j := &inboundJournal{dir: t.TempDir(), now: now}
+			o := &ingestionObserver{cfg: config{inboundJournal: j}, now: now}
+			plan, _, err := o.prepareAlertBatch("C1", rows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			state, err := o.beginAlertAttempt(plan, rows)
+			if err != nil || state.MailKey != "slack-ingest:C1:100.1:"+plan.ID {
+				t.Fatalf("first attempt: key=%s err=%v", state.MailKey, err)
+			}
+			want := state.MailKey
+			switch mode {
+			case "legacy":
+				state.MailKey = "" // Written before mail keys were kept in the sidecar.
+				want = "slack-ingestion:" + plan.ID
+			case "refused":
+				state.Refused = true
+				want = "slack-ingest:C1:100.2"
+			}
+			if err := j.writeAlertAttempt(state); err != nil {
+				t.Fatal(err)
+			}
+			o.cfg.inboundJournal = &inboundJournal{dir: j.dir, now: now}
+			if _, err := o.pending(); err != nil {
+				t.Fatal(err)
+			}
+			plan, subset, err := o.prepareAlertBatch("C1", rows[:1])
+			if err != nil || len(subset) != 1 {
+				t.Fatalf("recovered plan: %d rows, %v", len(subset), err)
+			}
+			retry, err := o.beginAlertAttempt(plan, subset)
+			if err != nil || retry.MailKey != want {
+				t.Fatalf("retry: key=%s want=%s err=%v", retry.MailKey, want, err)
+			}
+		})
+	}
+}
+
 func TestIngestionAttemptLegacySixThousandReceipts(t *testing.T) {
 	at := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	now := at
