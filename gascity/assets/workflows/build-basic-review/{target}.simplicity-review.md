@@ -15,6 +15,28 @@ command.
 
 Contract: `gc.work_dir` is the launcher rig root, not the implementation worktree.
 
+After reading the review context and before writing any finding, read its
+`## Earlier Review Rounds` section when it has one, and every review-fix
+summary that section lists, whatever its round; round 1 has none. For each
+finding you would report, look for its line in those summaries; when several
+rounds carry a line for one finding, the latest round's line counts. A line
+whose outcome names no commit (WRONG, INTENDED, DOES NOT MATTER, or FIXED by
+a proof command and its result) is an answer: check it against the current
+commit, by the line or reason it gives or by the proof command and its
+result, which you may run again. When the answer holds, do not report the
+finding: list it once in your report as ANSWER ACCEPTED with the round of the
+answer and its outcome word. When it does not hold, report the finding as
+ANSWER REJECTED with the round of the answer and the reason the answer fails.
+When you cannot tell whether the answer covers what you see (another case of
+the class, another line, another criterion), the answer is rejected: report
+the finding as ANSWER REJECTED with the round of the answer and say what it
+does not cover. A line that reads FIXED with a commit is no answer: judge the
+current commit as you would without it. A line without an outcome is no
+answer: the finding stands. A listed summary that is missing or cannot be
+read answers nothing: say so in your report and report as you would without
+it. An accepted answer is no reason for `iterate`: with no finding left but
+accepted answers, record `approve`.
+
 Write findings under the build artifact root. Required findings must be tied to
 specific changed files or artifacts and must explain the smallest useful fix.
 
