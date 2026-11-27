@@ -78,7 +78,7 @@ dialogs, slash commands and multiple identities are outside this version.
 - [ ] A Google Cloud project in the company's Workspace, with the Google Chat API, Google Workspace Events API and Cloud Pub/Sub API enabled.
 - [ ] OAuth consent screen: user type Internal; an app name chosen with care.
 - [ ] Chat API configuration (Google Chat API, Configuration tab): application name (25 characters at most), an avatar URL (HTTPS, square PNG or JPEG, 256 pixels or more) and a description (40 characters at most); interactive features left off. Google requires this before any create, update or delete call, even as a user, and attributes those writes to this name.
-- [ ] Markup syntax (same Configuration tab): either value. Google gives a newly created Chat app Markdown and an older one Chat, and every message the adapter sends states Chat markup (`MARKUP_SYNTAX_CHAT`), so its formatting and `<users/ID>` tags read the same under both.
+- [ ] Markup syntax (same Configuration tab): either value. Google gives a newly created Chat app Markdown and an older one Chat, and every message the adapter sends states Chat markup (`MARKUP_SYNTAX_CHAT`), so its formatting and `<users/ID>` tags read the same under both. Numbered lists and tables have no Chat markup, so they show as plain text, as in every city saved as Chat.
 - [ ] An OAuth client of type Desktop app; its JSON placed on the city machine at the path in `GCHAT_OAUTH_CLIENT_FILE` (mode 600), never sent through chat.
 - [ ] A Pub/Sub topic; `chat-api-push@system.gserviceaccount.com` granted Pub/Sub Publisher on it.
 - [ ] A pull subscription on the topic, acknowledgement deadline 60 seconds.
