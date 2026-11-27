@@ -1,0 +1,10 @@
+============================= test session starts ==============================
+collecting ... collected 4 items
+
+gchat/tests/test_tag_skill.py::test_reply_section_says_whom_to_tag PASSED [ 25%]
+gchat/tests/test_tag_skill.py::test_every_tag_the_skill_writes_uses_a_numeric_id PASSED [ 50%]
+gchat/tests/test_tag_skill.py::test_skill_gives_no_tag_of_everyone PASSED [ 75%]
+gchat/tests/test_join_skill.py::test_join_skill_names_the_owner_decision PASSED [100%]
+
+============================== 4 passed in 0.01s ===============================
+rc=0

@@ -1,0 +1,25 @@
+F...                                                                     [100%]
+=================================== FAILURES ===================================
+_____________________ test_reply_section_says_whom_to_tag ______________________
+
+    def test_reply_section_says_whom_to_tag():
+        section = skill_text().split("## How to reply", 1)[1].split("\n## ", 1)[0]
+        words = " ".join(section.split())
+        phrases = (
+            "**Whom to tag.** Tag the one person whose answer or action your message needs."
+            " Tag nobody when your message asks nothing of anyone.",
+            "<users/1234567890>",
+            "--body '<users/1234567890> ",
+            "not as a typed `@Name` or an email address",
+            "gives the `users/ID` of each person who wrote there as `actor.id`",
+        )
+        missing = [phrase for phrase in phrases if phrase not in words]
+>       assert not missing, missing
+E       AssertionError: ['gives the `users/ID` of each person who wrote there as `actor.id`']
+E       assert not ['gives the `users/ID` of each person who wrote there as `actor.id`']
+
+gchat/tests/test_tag_skill.py:27: AssertionError
+=========================== short test summary info ============================
+FAILED gchat/tests/test_tag_skill.py::test_reply_section_says_whom_to_tag - A...
+1 failed, 3 passed in 0.05s
+rc=1

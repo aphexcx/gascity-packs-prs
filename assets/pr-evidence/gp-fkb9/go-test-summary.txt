@@ -1,0 +1,64 @@
+verify -C gchat/adapter go test -count=1 -json -timeout=30m ./...  at ebae8d3c15c7b4f99b60edbf0cbaef1e7e6faa7d
+exit=1
+
+packages: 23 pass, 2 fail, 1 skip (no test files)
+top-level tests: 892 pass, 3 fail, 2 skip
+subtests: 1885 pass, 8 fail, 0 skip
+
+per package:
+  pass gchat-adapter/cmd/gc-gchat-adapter (25.147s)
+  pass gchat-adapter/internal/ack (6.676s)
+  fail gchat-adapter/internal/app (697.428s)
+  skip gchat-adapter/internal/arrival (0s)
+  pass gchat-adapter/internal/catchup (191.328s)
+  pass gchat-adapter/internal/chat (5.187s)
+  pass gchat-adapter/internal/config (13.74s)
+  pass gchat-adapter/internal/events (12.99s)
+  pass gchat-adapter/internal/fakes/fakegc (2.067s)
+  pass gchat-adapter/internal/fakes/fakegoogle (2.265s)
+  pass gchat-adapter/internal/gcclient (1.873s)
+  fail gchat-adapter/internal/inbound (222.986s)
+  pass gchat-adapter/internal/ledger (6.92s)
+  pass gchat-adapter/internal/markdown (1.917s)
+  pass gchat-adapter/internal/media (0.541s)
+  pass gchat-adapter/internal/neversilent (21.483s)
+  pass gchat-adapter/internal/principal (30.274s)
+  pass gchat-adapter/internal/provenance (0.192s)
+  pass gchat-adapter/internal/puller (29.616s)
+  pass gchat-adapter/internal/redact (2.168s)
+  pass gchat-adapter/internal/server (162.611s)
+  pass gchat-adapter/internal/stopwatch (0.676s)
+  pass gchat-adapter/internal/token (10.562s)
+  pass gchat-adapter/internal/wire (0.241s)
+  pass gchat-adapter/test/contract (0.407s)
+  pass gchat-adapter/test/e2e (741.596s)
+
+failures (each passes alone 5 of 5 at this head and at START; see isolated-head.txt, isolated-start.txt):
+  gchat-adapter/internal/app TestRevokedTokenReplacementResumes (5.89s)
+  gchat-adapter/internal/app TestCredentialGenerationRefresh/refresh_recovers (5.3s)
+  gchat-adapter/internal/app TestCredentialGenerationRefresh (6.38s)
+  gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/message_space/401 (0.2s)
+  gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/message_space/408 (0.14s)
+  gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/401 (0.21s)
+  gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/403 (0.22s)
+  gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/408 (0.27s)
+  gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_parent/409 (0.21s)
+  gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind/reaction_space/401 (0.22s)
+  gchat-adapter/internal/inbound TestLookupHoldCarriesCredentialKind (2.37s)
+
+TestMentionFormPassesThrough in this run:
+  pass TestMentionFormPassesThrough/alone
+  pass TestMentionFormPassesThrough/middle_of_a_sentence
+  pass TestMentionFormPassesThrough/first_on_the_first_line
+  pass TestMentionFormPassesThrough/first_on_a_later_line
+  pass TestMentionFormPassesThrough/first_after_the_agent's_handle
+  pass TestMentionFormPassesThrough/first_in_a_list_item
+  pass TestMentionFormPassesThrough/in_a_heading
+  pass TestMentionFormPassesThrough/after_Markdown_bold
+  pass TestMentionFormPassesThrough/before_Markdown_bold
+  pass TestMentionFormPassesThrough/inside_Markdown_bold
+  pass TestMentionFormPassesThrough/beside_Markdown_underscores
+  pass TestMentionFormPassesThrough/before_a_Markdown_link
+  pass TestMentionFormPassesThrough/after_a_Markdown_link
+  pass TestMentionFormPassesThrough/across_the_part_limit
+  pass TestMentionFormPassesThrough

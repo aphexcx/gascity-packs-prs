@@ -1,0 +1,41 @@
+FF..                                                                     [100%]
+=================================== FAILURES ===================================
+_____________________ test_reply_section_says_whom_to_tag ______________________
+
+    def test_reply_section_says_whom_to_tag():
+        section = skill_text().split("## How to reply", 1)[1].split("\n## ", 1)[0]
+        words = " ".join(section.split())
+        phrases = (
+            "**Whom to tag.** Tag the one person whose answer or action your message needs."
+            " Tag nobody when your message asks nothing of anyone.",
+            "<users/1234567890>",
+            "--body '<users/1234567890> ",
+            "not as a typed `@Name` or an email address",
+        )
+        missing = [phrase for phrase in phrases if phrase not in words]
+>       assert not missing, missing
+E       AssertionError: ['not as a typed `@Name` or an email address']
+E       assert not ['not as a typed `@Name` or an email address']
+
+gchat/tests/test_tag_skill.py:26: AssertionError
+______________ test_every_tag_the_skill_writes_uses_a_numeric_id _______________
+
+    def test_every_tag_the_skill_writes_uses_a_numeric_id():
+        # The send path converts Markdown: an email address holding a pair of
+        # underscores would be rewritten inside the tag. A numeric id cannot be.
+        tags = re.findall(r"<users/([^>]*)>", tag_part())
+        assert tags, "the tag part writes no tag"
+        assert all(tag == "ID" or tag.isdigit() for tag in tags), tags
+>       assert "stand in for ID" not in " ".join(tag_part().split())
+E       assert 'stand in for ID' not in "Tag the one...Friday?' ```"
+E         
+E         'stand in for ID' is contained here:
+E            that can stand in for ID. `gc gchat read` on the same space gives each sender as `actor.id`. For example, to ask Alex Example (`users/1234567890`) to approve a date: ```bash gc gchat reply-current --to spaces/<id>/messages/<id> --body '<users/1234567890> can you approve Friday?' ```
+E         ?           +++++++++++++++
+
+gchat/tests/test_tag_skill.py:35: AssertionError
+=========================== short test summary info ============================
+FAILED gchat/tests/test_tag_skill.py::test_reply_section_says_whom_to_tag - A...
+FAILED gchat/tests/test_tag_skill.py::test_every_tag_the_skill_writes_uses_a_numeric_id
+2 failed, 2 passed in 0.12s
+rc=1
