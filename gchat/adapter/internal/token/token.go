@@ -629,7 +629,10 @@ func authenticatedClient(ctx context.Context, token func(context.Context) (*oaut
 	}
 	// Request contexts bound API calls; a total client timeout would also cut
 	// off large media bodies after the headers have already arrived.
-	return &http.Client{Transport: &tokenTransport{token: token, base: base, oauthClient: client, invalidate: invalidate}}
+	return &http.Client{
+		Transport:     &tokenTransport{token: token, base: base, oauthClient: client, invalidate: invalidate},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 type tokenTransport struct {

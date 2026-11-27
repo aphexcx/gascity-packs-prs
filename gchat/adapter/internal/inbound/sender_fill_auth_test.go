@@ -101,14 +101,13 @@ func TestSenderFillAuthenticationStatus(t *testing.T) {
 }
 
 func TestSenderFillResourceStatus(t *testing.T) {
-	// A typed error body can describe a different status than the resource
-	// actually returned. The warning should use only the HTTP response status.
-	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		fmt.Fprint(w, `{"error":{"code":404}}`)
-	}))
-	defer resource.Close()
+	for _, status := range []int{http.StatusForbidden, http.StatusFound} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) { testSenderFillResourceStatus(t, status) })
+	}
+}
+
+func resourceTokenSource(t *testing.T, base string) *token.Source {
+	t.Helper()
 	dir := t.TempDir()
 	client, file := filepath.Join(dir, "client"), filepath.Join(dir, "credential")
 	if err := os.WriteFile(client, []byte(`{"installed":{"client_id":"example","client_secret":"example"}}`), 0600); err != nil {
@@ -117,26 +116,53 @@ func TestSenderFillResourceStatus(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"access_token":"example"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	ep := config.Endpoints{ChatAPIBase: resource.URL, OAuthAuthURL: resource.URL, OAuthTokenURL: resource.URL}
+	ep := config.Endpoints{ChatAPIBase: base, OAuthAuthURL: base, OAuthTokenURL: base}
 	source, err := token.New(client, file, ep, token.Scopes)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return source
+}
+
+func testSenderFillResourceStatus(t *testing.T, status int) {
+	// A typed error body can describe a different status than the resource
+	// actually returned. The warning should use only the HTTP response status.
+	resource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/unused" {
+			t.Error("lookup followed the redirect")
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if status == http.StatusFound {
+			w.Header().Set("Location", "/unused")
+			w.Header().Set("Retry-After", "120")
+		}
+		w.WriteHeader(status)
+		fmt.Fprint(w, `{"error":{"code":404}}`)
+	}))
+	defer resource.Close()
+	ep := config.Endpoints{ChatAPIBase: resource.URL}
+	source := resourceTokenSource(t, resource.URL)
 	lookup, err := chat.New(t.Context(), source.LookupClient(t.Context()), ep)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := fillSetup(t, true)
+	f, baseline := fillSetup(t, true), fillSetup(t, false)
 	f.opts.SenderFill.source = lookup
 	for _, kind := range []string{"message.created", "reaction.created"} {
 		for i := 1; i <= 2; i++ {
 			id := fmt.Sprintf("users/%d", i)
-			f.deliver(t, fillChange(kind, fmt.Sprint(i), space, &api.User{Name: id}), false)
+			change := fillChange(kind, fmt.Sprint(i), space, &api.User{Name: id})
+			if f.deliver(t, change, false) != baseline.deliver(t, change, false) {
+				t.Fatal("failed lookup changed the delivered frame")
+			}
 		}
 		f.now = f.now.Add(11 * time.Minute)
+		baseline.now = f.now
 	}
 	for _, source := range []string{"message", "member"} {
-		if strings.Count(f.log.String(), "source="+source+" cause=http_403") != 1 {
+		if strings.Count(f.log.String(), fmt.Sprintf("source=%s cause=http_%d", source, status)) != 1 {
 			t.Errorf("wrong HTTP cause for %s: %s", source, f.log.String())
 		}
 	}

@@ -1907,17 +1907,33 @@ func TestSpaceInventoryForbiddenRetriesMessage(t *testing.T) {
 
 func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
-		for _, status := range []int{401, 403, 408, 409, 503, 429} {
+		for _, status := range []int{302, 401, 403, 408, 409, 503, 429} {
 			t.Run(fmt.Sprintf("%s/%d", path, status), func(t *testing.T) {
 				f := setup(t)
 				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if status == http.StatusFound {
+						if r.URL.Path == "/unused" {
+							t.Error("required read followed the redirect")
+							w.WriteHeader(http.StatusNotFound)
+							return
+						}
+						w.Header().Set("Location", "/unused")
+					}
 					w.WriteHeader(status)
 					_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": status, "message": "Request had insufficient authentication scopes. PRIVATE SCOPE CONTENT"}})
 				}))
 				defer s.Close()
 				f.opts.Config.Endpoints.ChatAPIBase = s.URL
+				client := http.DefaultClient
 				var err error
-				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+				if status == http.StatusFound {
+					source := resourceTokenSource(t, s.URL)
+					client, err = source.Client(t.Context())
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				f.opts.Chat, err = chat.New(context.Background(), client, f.opts.Config.Endpoints)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1938,7 +1954,7 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 				defer cancel()
 				out, err := f.p.Handle(ctx, ev)
 				auth := status == 401 || status == 403
-				kind := map[int]string{401: "auth", 403: "auth", 408: "transient", 409: "transient", 503: "transient", 429: "rate_limited"}[status]
+				kind := map[int]string{302: "transient", 401: "auth", 403: "auth", 408: "transient", 409: "transient", 503: "transient", 429: "rate_limited"}[status]
 				if out != puller.Nack || err == nil || errors.Is(err, ErrCredentials) != auth {
 					t.Fatalf("hold = %v, %v; credentials=%v", out, err, auth)
 				}
