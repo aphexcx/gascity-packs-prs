@@ -1,0 +1,241 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"cloud.google.com/go/pubsub/v2"
+	"gchat-adapter/internal/fakes/fakegc"
+	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/inbound"
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/wire"
+	api "google.golang.org/api/chat/v1"
+)
+
+// UNPROVEN: the fake models the mail result, deduplication on retry and
+// nudge's exit status. Its files count actual invocations and mail creations.
+func deliveryCommands(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("GC_BIN", filepath.Join(dir, "gc"))
+	t.Setenv("WAKE_TEST_DIR", dir)
+	script := `#!/bin/sh
+cd "$WAKE_TEST_DIR" || exit 1
+printf '%s\n' "$@" >> args
+case "$1" in
+mail)
+  echo mail >> calls
+  [ -f mail ] || echo made >> mail
+  mode=$(cat mode)
+  case "$mode" in
+    mail_timeout) echo duplicate > mode; exec sleep 10 ;;
+    mail_exit) echo secret-output >&2; exit 1 ;;
+    mail_no_result) echo secret-output; exit 0 ;;
+    empty) exit 0 ;;
+    false) echo '{"ok":false}'; exit 0 ;;
+    slow) sleep 0.12 ;;
+    hold) while [ ! -f release ]; do sleep 0.02; done ;;
+    missing|wake_timeout|wake_exit) echo '{"ok":true}'; exit 0 ;;
+    duplicate) echo '{"ok":true,"already_done":true}'; exit 0 ;;
+  esac
+  echo '{"ok":true,"notified":true}'
+  ;;
+session)
+  echo wake >> calls
+  case "$(cat mode)" in
+    wake_timeout) echo duplicate > mode; exec sleep 10 ;;
+    wake_exit) echo duplicate > mode; echo secret-output >&2; exit 1 ;;
+  esac
+  ;;
+*) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestDeliveryWakeSlow(t *testing.T) {
+	for _, tc := range []struct {
+		mode, cause string
+		calls       []string
+	}{
+		{"slow", "", []string{"mail"}}, {"missing", "", []string{"mail", "wake"}},
+		{"mail_timeout", "mail_timeout", []string{"mail", "mail", "wake"}},
+		{"wake_timeout", "wake_timeout", []string{"mail", "wake", "mail", "wake"}},
+		{"wake_exit", "wake_exit", []string{"mail", "wake", "mail", "wake"}},
+		{"empty", "mail_no_result", []string{"mail"}}, {"false", "mail_no_result", []string{"mail"}},
+		{"mail_no_result", "mail_no_result", []string{"mail"}}, {"mail_exit", "mail_exit", []string{"mail"}},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			dir := deliveryCommands(t)
+			writeFile(t, filepath.Join(dir, "mode"), tc.mode)
+			opts := Options{mailTimeout: 500 * time.Millisecond, wakeTimeout: 150 * time.Millisecond}
+			if tc.mode == "mail_timeout" {
+				opts.mailTimeout = 150 * time.Millisecond
+			}
+			a := raiseApp(opts)
+			r := inbound.Raise{ID: "example-change", Body: "example body"}
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			err := a.raiseDelivery(ctx, r)
+			if (tc.cause == "") != (err == nil) || (err != nil && err.Error() != tc.cause) {
+				t.Fatalf("failure cause=%v want %q", err, tc.cause)
+			}
+			if len(tc.calls) > 2 {
+				if err := a.raiseDelivery(t.Context(), r); err != nil {
+					t.Fatal(err)
+				}
+			}
+			read := func(name string) string {
+				b, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return string(b)
+			}
+			if got := strings.Fields(read("calls")); !slices.Equal(got, tc.calls) {
+				t.Fatalf("calls=%v want %v", got, tc.calls)
+			}
+			if got := read("mail"); got != "made\n" {
+				t.Fatalf("mail creations=%q", got)
+			}
+			args := read("args")
+			want := "mail\nsend\nsupport\n--dedup\ngchat:examplecity:example:" + r.DedupKey() + "\n--notify\n--json\n-s\ngchat: delivery\n-m\nexample body\n"
+			if !strings.HasPrefix(args, want) {
+				t.Fatalf("mail arguments=%q", args)
+			}
+			if slices.Contains(tc.calls, "wake") && !strings.Contains(args, "session\nnudge\nsupport\ngchat: a delivery notice is waiting in your mail\n") {
+				t.Fatalf("wake arguments=%q", args)
+			}
+		})
+	}
+}
+
+func deliveryApplication(t *testing.T, dir string) (*fixture, func(string)) {
+	t.Helper()
+	f := newFixture(t, true)
+	f.cfg.Secrets.GCAPIBase = f.gc.URL()
+	f.google.Configure(func(g *fakegoogle.Server) {
+		g.Spaces["spaces/room"] = &api.Space{Name: "spaces/room", SpaceType: "SPACE"}
+	})
+	l := ledger.New()
+	l.IdentityUserID = fakegoogle.UserID
+	if err := l.Save(f.cfg.Endpoints.StateFile); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "mode"), "ok")
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithOptions(ctx, f.cfg, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), RetryDelay: time.Millisecond, pollInterval: 50 * time.Millisecond})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("application failed to stop")
+		}
+	})
+	f.health(t, "ready", 5*time.Second)
+	return f, func(name string) {
+		data := fmt.Sprintf(`{"message":{"name":"spaces/room/messages/%s","text":"hello","sender":{"name":"users/222","type":"HUMAN"},"createTime":%q,"thread":{"name":"spaces/room/threads/one"}}}`, name, time.Now().UTC().Format(time.RFC3339Nano))
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		_, err := f.pub.Publish(ctx, &pubsub.Message{Data: []byte(data), Attributes: map[string]string{"ce-type": "google.workspace.chat.message.v1.created", "ce-id": name}}).Get(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDeliveryWakeWire(t *testing.T) {
+	dir := deliveryCommands(t)
+	f, send := deliveryApplication(t, dir)
+	f.gc.Configure(func(s *fakegc.Server) {
+		s.Health = func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, `{"uptime_sec":3600}`) }
+	})
+	send("sign")
+	waitFor(t, 3*time.Second, func() bool { return len(f.gc.Inbound()) == 1 })
+	f.gc.Configure(func(s *fakegc.Server) { s.Posts = []fakegc.PostStep{{Drop: true, HTTPStatus: 500}, {Drop: true}} })
+	send("lost")
+	waitFor(t, 3*time.Second, func() bool {
+		b, _ := os.ReadFile(filepath.Join(dir, "args"))
+		return strings.Contains(string(b), "--notify\n--json\n")
+	})
+	if n := len(f.gc.Inbound()); n != 3 {
+		t.Fatalf("total POSTs=%d want 3", n)
+	}
+}
+
+func TestDeliveryWakeApart(t *testing.T) {
+	dir := deliveryCommands(t)
+	f, send := deliveryApplication(t, dir)
+	opened, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	f.gc.Configure(func(s *fakegc.Server) {
+		s.Script = []wire.Delivery{{Status: "pending"}}
+		s.Posts = []fakegc.PostStep{{}, {Drop: true}, {After: func(*httptest.ResponseRecorder) { close(opened); <-release }}}
+	})
+	send("receipt")
+	waitFor(t, 3*time.Second, func() bool { return len(f.gc.Inbound()) == 1 })
+	send("lost")
+	waitFor(t, 3*time.Second, func() bool { return len(f.gc.Inbound()) == 2 })
+	send("held")
+	select {
+	case <-opened:
+	case <-time.After(3 * time.Second):
+		t.Fatal("held POST did not start")
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		b, _ := os.ReadFile(filepath.Join(dir, "args"))
+		return strings.Contains(string(b), "--notify")
+	})
+}
+
+func TestDeliveryWakeReceiptWhileMailIsHeld(t *testing.T) {
+	dir := deliveryCommands(t)
+	f, send := deliveryApplication(t, dir)
+	writeFile(t, filepath.Join(dir, "mode"), "hold")
+	defer writeFile(t, filepath.Join(dir, "release"), "")
+	f.gc.Configure(func(s *fakegc.Server) {
+		s.Script = []wire.Delivery{{Status: "pending"}}
+		s.Posts = []fakegc.PostStep{{}, {Drop: true}}
+	})
+	send("receipt")
+	waitFor(t, 3*time.Second, func() bool { return len(f.gc.Inbound()) == 1 })
+	send("lost")
+	waitFor(t, 3*time.Second, func() bool {
+		b, _ := os.ReadFile(filepath.Join(dir, "calls"))
+		return strings.Contains(string(b), "mail")
+	})
+	l, err := ledger.Load(f.cfg.Endpoints.StateFile, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := l.Changes["spaces/room/messages/receipt"]
+	if c == nil || c.Status != "pending" || c.ReceiptID == "" {
+		t.Fatal("pending receipt missing")
+	}
+	f.gc.SetReceipt(c.ReceiptID, wire.ReceiptResponse{State: "concluded", Delivery: wire.Delivery{Status: "delivered"}})
+	waitFor(t, 2*time.Second, func() bool {
+		l, err := ledger.Load(f.cfg.Endpoints.StateFile, true)
+		return err == nil && l.Changes[c.ID] != nil && l.Changes[c.ID].Status == "committed"
+	})
+}

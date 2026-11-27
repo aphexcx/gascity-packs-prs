@@ -24,10 +24,12 @@ import (
 )
 
 type Client struct {
-	base, city  string
-	http        *http.Client
-	onRefusedMu sync.RWMutex
-	onRefused   func(error)
+	base, city     string
+	http           *http.Client
+	inboundTimeout time.Duration
+	healthTimeout  time.Duration
+	onRefusedMu    sync.RWMutex
+	onRefused      func(error)
 }
 
 // SetConnectionRefusedHandler lets the registrar observe failures from every
