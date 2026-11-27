@@ -13,10 +13,13 @@ import (
 	"gchat-adapter/internal/wire"
 )
 
-// Every way the service puts a message into Chat (a gc reply, a reply in a
-// thread, a direct message, a reply split in two, the publish and upload
-// commands, and the adapter's own notice) states MARKUP_SYNTAX_CHAT, the
-// syntax the converter writes and the one in which <users/ID> is a mention.
+// Each way this test drives the service to put a message into Chat (a gc
+// reply, a reply in a thread, a direct message, a reply split in two, the
+// publish and upload commands, and the adapter's own notice) states
+// MARKUP_SYNTAX_CHAT, the syntax the converter writes and the one in which
+// <users/ID> is a mention. The recovery sweep and the owner-notice client are
+// not driven here; they reach the same two creates, which the chat package's
+// test covers.
 func TestEverySendPathStatesChatMarkupSyntax(t *testing.T) {
 	f := setup(t)
 	f.gc.Bind(conversation("spaces/room"), "session")

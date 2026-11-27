@@ -8,8 +8,9 @@
 
 - Every message the adapter sends states Chat markup syntax
   (`MARKUP_SYNTAX_CHAT`), so its formatting and `<users/ID>` tags read the
-  same in a Google Cloud project created before Google's Markdown default and
-  in one created after. The rest of each request is unchanged (gp-ifrg).
+  same whichever syntax the project's Chat app saved. Google's default is
+  Markdown for a newly created Chat app or a project with none saved, and Chat
+  for an existing app. The rest of each request is unchanged (gp-x8tx).
 
 - Remove saved attachments when a message deletion is learned, and files of
   attachments an accepted edit took away. Cleanup retries survive restart;

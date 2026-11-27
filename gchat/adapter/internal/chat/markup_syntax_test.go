@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,10 +19,15 @@ import (
 )
 
 // createBodies keeps the body of every message create the client sends, byte
-// for byte, then passes the request on to the fake Google server.
+// for byte, and its query, then passes the request on to the fake Google server.
 type createBodies struct {
 	mu     sync.Mutex
-	bodies [][]byte
+	bodies []createRequest
+}
+
+type createRequest struct {
+	body  []byte
+	query url.Values
 }
 
 var messageCreatePath = regexp.MustCompile(`^/v1/spaces/[^/]+/messages$`)
@@ -34,7 +40,7 @@ func (r *createBodies) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 		r.mu.Lock()
-		r.bodies = append(r.bodies, b)
+		r.bodies = append(r.bodies, createRequest{body: b, query: req.URL.Query()})
 		r.mu.Unlock()
 		req = req.Clone(req.Context())
 		req.Body = io.NopCloser(bytes.NewReader(b))
@@ -42,7 +48,7 @@ func (r *createBodies) RoundTrip(req *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-func (r *createBodies) take() [][]byte {
+func (r *createBodies) take() []createRequest {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	b := r.bodies
@@ -90,58 +96,73 @@ func TestEveryCreateStatesChatMarkupSyntax(t *testing.T) {
 
 	const text = "*bold* _italic_ ~strike~ `code` <https://example.com|a link> and a tag <users/1234567890>"
 	const notice = "I can't read your message right now."
+	const fallback = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+	// want is the body each create sent before the syntax was stated, spelled
+	// out by hand from the fields the creates set then (text, thread,
+	// attachments); requestID and reply are the query the creates set, which
+	// stating the syntax does not touch.
 	cases := []struct {
-		name string
-		send func() error
-		want googlechat.Message // the body as it was before, without the syntax
+		name      string
+		send      func() error
+		want      googlechat.Message
+		requestID string
+		reply     string
 	}{{
 		name: "notice",
 		send: func() error { _, _, err := c.CreateNotice(ctx, "spaces/room", notice, "", true); return err },
 		want: googlechat.Message{Text: notice},
 	}, {
-		name: "notice in a thread",
-		send: func() error { _, _, err := c.CreateNotice(ctx, "spaces/room", notice, thread, true); return err },
-		want: googlechat.Message{Text: notice, Thread: &googlechat.Thread{Name: thread}},
+		name:  "notice in a thread",
+		send:  func() error { _, _, err := c.CreateNotice(ctx, "spaces/room", notice, thread, true); return err },
+		want:  googlechat.Message{Text: notice, Thread: &googlechat.Thread{Name: thread}},
+		reply: fallback,
 	}, {
-		name: "message",
-		send: func() error { _, _, err := c.CreateMessage(ctx, "spaces/room", text, "", "top", true); return err },
-		want: googlechat.Message{Text: text},
+		name:      "message",
+		send:      func() error { _, _, err := c.CreateMessage(ctx, "spaces/room", text, "", "top", true); return err },
+		want:      googlechat.Message{Text: text},
+		requestID: "top",
 	}, {
 		name: "message in a thread",
 		send: func() error {
 			_, _, err := c.CreateMessage(ctx, "spaces/room", text, thread, "reply", true)
 			return err
 		},
-		want: googlechat.Message{Text: text, Thread: &googlechat.Thread{Name: thread}},
+		want:      googlechat.Message{Text: text, Thread: &googlechat.Thread{Name: thread}},
+		requestID: "reply",
+		reply:     fallback,
 	}, {
-		name: "message in a direct message",
-		send: func() error { _, _, err := c.CreateMessage(ctx, "spaces/dm", text, "", "dm", false); return err },
-		want: googlechat.Message{Text: text},
+		name:      "message in a direct message",
+		send:      func() error { _, _, err := c.CreateMessage(ctx, "spaces/dm", text, "", "dm", false); return err },
+		want:      googlechat.Message{Text: text},
+		requestID: "dm",
 	}, {
 		name: "message with a file",
 		send: func() error {
 			_, _, err := c.CreateMessageWithAttachments(ctx, "spaces/room", "file", "", "file", true, files)
 			return err
 		},
-		want: googlechat.Message{Text: "file", Attachment: files},
+		want:      googlechat.Message{Text: "file", Attachment: files},
+		requestID: "file",
 	}, {
 		name: "message with a file and its time",
 		send: func() error {
 			_, _, _, err := c.CreateMessageWithAttachmentsAndTime(ctx, "spaces/room", text, thread, "timed", true, files)
 			return err
 		},
-		want: googlechat.Message{Text: text, Attachment: files, Thread: &googlechat.Thread{Name: thread}},
+		want:      googlechat.Message{Text: text, Attachment: files, Thread: &googlechat.Thread{Name: thread}},
+		requestID: "timed",
+		reply:     fallback,
 	}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.send(); err != nil {
 				t.Fatal(err)
 			}
-			bodies := rec.take()
-			if len(bodies) != 1 {
-				t.Fatalf("creates sent = %d, want 1", len(bodies))
+			sent := rec.take()
+			if len(sent) != 1 {
+				t.Fatalf("creates sent = %d, want 1", len(sent))
 			}
-			got := bytes.TrimSpace(bodies[0])
+			got := bytes.TrimSpace(sent[0].body)
 			var fields map[string]any
 			if err := json.Unmarshal(got, &fields); err != nil {
 				t.Fatalf("%s: %v", got, err)
@@ -158,6 +179,10 @@ func TestEveryCreateStatesChatMarkupSyntax(t *testing.T) {
 			}
 			if !bytes.Equal(got, wantBody) {
 				t.Fatalf("body\n got %s\nwant %s", got, wantBody)
+			}
+			q := sent[0].query
+			if q.Get("requestId") != tc.requestID || q.Get("messageReplyOption") != tc.reply {
+				t.Fatalf("query %s, want requestId %q and messageReplyOption %q", q.Encode(), tc.requestID, tc.reply)
 			}
 		})
 	}

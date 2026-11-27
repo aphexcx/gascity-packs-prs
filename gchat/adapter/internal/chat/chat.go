@@ -29,8 +29,8 @@ type Space = googlechat.Space
 // chatMarkup is the markup syntax every message the client creates states.
 // The markdown package writes Chat markup (*bold*, <url|label>), and a tag
 // <users/ID> is a mention only in that syntax. A message that states none
-// takes the project's saved syntax, which is Markdown in a newly created Chat
-// app or when none is saved (Google's page "Format messages"), so it is stated.
+// takes the project's saved syntax, by default Markdown for a newly created
+// Chat app and when none is saved (Google's "Format messages"), so it states it.
 const chatMarkup = "MARKUP_SYNTAX_CHAT"
 
 // Client belongs to one authenticated identity. Do not reuse it after switching
