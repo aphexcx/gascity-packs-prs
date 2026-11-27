@@ -82,6 +82,8 @@ func newAlarmFixture(t *testing.T, operator bool) *alarmFixture {
 	}
 	t.Setenv("NEVER_SILENT_OPERATOR_AGENT", "fixture-agent")
 	f := &alarmFixture{t: t, dir: dir, cfg: config{cityName: "fixture", cityPath: dir, inboundRecovery: r}, now: now}
+	f.cfg.deadLetterAlerts = newDeadLetterAlerts(dir)
+	r.deadLetterAlerts = f.cfg.deadLetterAlerts
 	f.mode("local", "ok")
 	f.mode("operator", "ok")
 	f.restart()
@@ -90,6 +92,7 @@ func newAlarmFixture(t *testing.T, operator bool) *alarmFixture {
 
 func (f *alarmFixture) restart() {
 	f.a = newDeadLetterAlarm(f.cfg)
+	f.cfg.deadLetterAlerts.alarm = f.a
 	f.a.now = func() time.Time { return *f.now }
 	f.t.Setenv("ALARM_RECORDS", f.a.path)
 }
@@ -201,6 +204,126 @@ func TestDeadLetterAlarmOnce(t *testing.T) {
 	f.count("operator", 1)
 	if f.args("local")[0][6] != f.args("local")[1][6] || len(strings.Fields(f.file("local.mails"))) != 1 {
 		t.Fatal("retry changed key or created another mail")
+	}
+}
+
+func TestDeadLetterLocalReceipt(t *testing.T) {
+	for _, first := range []string{"writer", "alarm", "alarm-only"} {
+		for _, restart := range []bool{false, true} {
+			for _, result := range []string{"accepted", "refused", "lost"} {
+				t.Run(fmt.Sprintf("%s/restart=%t/%s", first, restart, result), func(t *testing.T) {
+					testDeadLetterReceipt(t, first, restart, result)
+				})
+			}
+		}
+	}
+}
+
+func testDeadLetterReceipt(t *testing.T, first string, restart bool, result string) {
+	f := newAlarmFixture(t, false)
+	// Each accepted mail is archived immediately, releasing its mailbox key.
+	alarmWrite(t, filepath.Join(f.dir, "gc"), `#!/bin/sh
+set -eu
+cd "$ALARM_FIXTURE"
+[ "$1" = --city ] && [ "$2" = "$ALARM_FIXTURE" ] && [ "$3 $4 $5" = "mail send mayor" ]
+mode=$(cat local.mode)
+[ "$mode" != refused ] || exit 1
+echo mail >> events
+for arg do
+  if [ "$arg" = --notify ]; then echo turn >> events; fi
+done
+[ "$mode" != lost ] || exit 0
+echo '{"ok":true,"id":"example-mail","notified":true}'
+`)
+	t.Setenv("PATH", f.dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	count := func(want int) {
+		t.Helper()
+		events := f.file("events")
+		mails, turns := strings.Count(events, "mail\n"), strings.Count(events, "turn\n")
+		t.Logf("mails=%d turn_requests=%d", mails, turns)
+		if mails != want || turns != want {
+			t.Fatalf("want %d of each", want)
+		}
+	}
+	e := f.add("C1", "100.1")
+	key := recoveryKey(e.Inbound)
+	r := f.cfg.inboundRecovery
+	r.put(key, e)
+	write := func() {
+		r.retire(key, e)
+		r.deadLetterAlerts.wait()
+	}
+	f.mode("local", result)
+	if first == "writer" {
+		write()
+	} else {
+		f.pass()
+	}
+	if result == "refused" {
+		count(0)
+	} else {
+		count(1)
+	}
+	if restart {
+		var err error
+		r, err = newInboundRecovery(r.path, r.deadDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.now = func() time.Time { return *f.now }
+		f.cfg.inboundRecovery = r
+		f.cfg.deadLetterAlerts = newDeadLetterAlerts(f.dir)
+		r.deadLetterAlerts = f.cfg.deadLetterAlerts
+		f.restart()
+	}
+	f.mode("local", "accepted")
+	*f.now = f.now.Add(20 * time.Second)
+	if first == "alarm" {
+		write()
+	}
+	f.pass()
+	f.pass() // The message stays outstanding.
+	want := 1
+	if result == "lost" {
+		want = 2 // At-least-once by design when acceptance was never recorded.
+	}
+	count(want)
+}
+
+func TestDeadLetterWriteBeforeImport(t *testing.T) {
+	for _, order := range []string{"receipt-before-import", "import-during-send"} {
+		t.Run(order, func(t *testing.T) {
+			f := newAlarmFixture(t, true)
+			e := f.add("C1", "100.1")
+			started, finish := make(chan struct{}), make(chan struct{})
+			alerts := f.cfg.deadLetterAlerts
+			alerts.send = func(path, key, reason string) (operatorMailReceipt, error) {
+				close(started)
+				<-finish
+				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+			}
+			alerts.notify("C1.jsonl", e.Inbound, "delivery refused")
+			<-started
+			if order == "receipt-before-import" {
+				close(finish)
+				alerts.wait()
+				f.pass()
+				f.count("operator", 0)
+				f.put("room", e)
+			} else {
+				f.put("room", e)
+				f.pass()
+				close(finish)
+				alerts.wait()
+			}
+			f.pass()
+			f.pass()
+			f.count("local", 0)
+			op := f.one("operator")
+			if !strings.Contains(op[len(op)-1], "local_wake: asked\n") {
+				t.Fatal("operator summary did not report the accepted turn request")
+			}
+		})
 	}
 }
 

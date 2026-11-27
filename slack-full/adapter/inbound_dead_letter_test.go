@@ -120,21 +120,22 @@ func TestDeadLetterConcurrentWriteChecksMailboxAgain(t *testing.T) {
 			a := newDeadLetterAlerts(t.TempDir())
 			started, finish := make(chan struct{}), make(chan struct{})
 			var attempts []string
-			a.send = func(path, key, reason string) error {
+			a.send = func(path, key, reason string) (operatorMailReceipt, error) {
 				attempts = append(attempts, reason)
 				if len(attempts) == 1 {
 					close(started)
 					<-finish
 					if outcome == "refused" {
-						return errors.New("mail refused")
+						return operatorMailReceipt{}, errors.New("mail refused")
 					}
 				}
-				return nil
+				return operatorMailReceipt{ID: "example-mail"}, nil
 			}
-			a.notify("example.jsonl", "100.1", "first")
+			msg := testPending("example", "100.1", "").inbound
+			a.notify("example.jsonl", msg, "first")
 			<-started
-			a.notify("example.jsonl", "100.1", "second")
-			a.notify("example.jsonl", "100.1", "third")
+			a.notify("example.jsonl", msg, "second")
+			a.notify("example.jsonl", msg, "third")
 			close(finish)
 			a.wait()
 			want := []string{"first", "third"}
@@ -150,13 +151,13 @@ func TestDeadLetterDistinctLossesDrainTogether(t *testing.T) {
 	const count = 3
 	started := make(chan string, count)
 	release := make(chan struct{})
-	alerts.send = func(path, key, reason string) error {
+	alerts.send = func(path, key, reason string) (operatorMailReceipt, error) {
 		started <- key
 		<-release
-		return nil
+		return operatorMailReceipt{ID: "example-mail"}, nil
 	}
 	for _, ts := range []string{"100.1", "100.2", "100.3"} {
-		alerts.notify("example.jsonl", ts, "delivery refused")
+		alerts.notify("example.jsonl", testPending("example", ts, "").inbound, "delivery refused")
 	}
 	drained := make(chan struct{})
 	go func() {
@@ -201,7 +202,7 @@ echo '{"id":"example-mail","notified":true}'
 	t.Cleanup(func() { log.SetOutput(old) })
 
 	alerts := newDeadLetterAlerts(dir)
-	alerts.notify("example.jsonl", "100.1", "delivery refused")
+	alerts.notify("example.jsonl", testPending("example", "100.1", "").inbound, "delivery refused")
 	alerts.wait()
 	if !strings.Contains(logs.String(), `id="example-mail" notified=true key="dead-letter:example.jsonl:100.1" already_done=false`) {
 		t.Fatalf("missing turn request after gc waited for the busy session: %s", &logs)

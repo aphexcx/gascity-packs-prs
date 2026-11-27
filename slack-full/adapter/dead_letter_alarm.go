@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -63,14 +64,17 @@ type deadLetterAlarm struct {
 	path, bin, operator, agent string
 	limit, interval            time.Duration
 	now                        func() time.Time
+	mu                         sync.Mutex // protects records and pending local sends
 	records                    map[string]alarmRecord
+	sending                    map[string]chan struct{}
 	dirty                      bool
 }
 
 func newDeadLetterAlarm(cfg config) *deadLetterAlarm {
 	a := &deadLetterAlarm{cfg: cfg, now: time.Now, limit: alarmCommandLimit, interval: alarmPassInterval,
 		bin: os.Getenv("GC_BIN"), operator: os.Getenv("NEVER_SILENT_OPERATOR_CONTEXT"), agent: os.Getenv("NEVER_SILENT_OPERATOR_AGENT"),
-		path: filepath.Join(filepath.Dir(cfg.inboundRecovery.path), alarmRecordsFile), records: make(map[string]alarmRecord)}
+		path: filepath.Join(filepath.Dir(cfg.inboundRecovery.path), alarmRecordsFile), records: make(map[string]alarmRecord),
+		sending: make(map[string]chan struct{})}
 	if a.bin == "" {
 		a.bin = "gc"
 	}
@@ -170,7 +174,60 @@ func (a *deadLetterAlarm) save() bool {
 	return true
 }
 
+func (a *deadLetterAlarm) newRecord(now time.Time) alarmRecord {
+	op := "owed"
+	if a.operator == "" {
+		op = "not_configured"
+	}
+	return alarmRecord{Raised: now, Operator: op}
+}
+
+// Called with mu held. Release the reservation only once the result is visible.
+func (a *deadLetterAlarm) reserveLocal(key string) func() {
+	done := make(chan struct{})
+	a.sending[key] = done
+	return func() {
+		delete(a.sending, key)
+		close(done)
+	}
+}
+
+func (a *deadLetterAlarm) mailWritten(key string, send func() (operatorMailReceipt, error)) error {
+	if a == nil {
+		_, err := send()
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for a.sending[key] != nil {
+		done := a.sending[key]
+		a.mu.Unlock()
+		<-done
+		a.mu.Lock()
+	}
+	if a.records[key].LocalMailed {
+		return nil
+	}
+	release := a.reserveLocal(key)
+	defer release()
+	a.mu.Unlock()
+	receipt, err := send()
+	a.mu.Lock()
+	if err == nil && receipt.accepted() {
+		r, ok := a.records[key]
+		if !ok {
+			r = a.newRecord(a.now())
+		}
+		r.LocalMailed, r.LocalAsked = true, receipt.Notified
+		a.records[key] = r
+		a.save()
+	}
+	return err
+}
+
 func (a *deadLetterAlarm) pass(ctx context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	now := a.now()
 	set := a.cfg.inboundRecovery.deadLetterAlarmSet(now)
 	changed := false
@@ -180,7 +237,14 @@ func (a *deadLetterAlarm) pass(ctx context.Context) {
 			changed = true
 			continue
 		}
-		if _, present := set[key]; !present && !r.Closed {
+		// A write can mail before recovery imports the row. Keep that receipt
+		// until the scanner sees it or retention expires. Remote escalation
+		// becomes eligible only when the message is actually outstanding.
+		_, present := set[key]
+		if present && r.LocalMailed {
+			r.LocalEnded = true
+		}
+		if !present && (!r.LocalMailed || r.LocalEnded) {
 			r.Closed = true
 		}
 		if !r.Closed {
@@ -198,11 +262,7 @@ func (a *deadLetterAlarm) pass(ctx context.Context) {
 	}
 	for key := range set {
 		if _, ok := a.records[key]; !ok {
-			op := "owed"
-			if a.operator == "" {
-				op = "not_configured"
-			}
-			a.records[key] = alarmRecord{Raised: now, Operator: op}
+			a.records[key] = a.newRecord(now)
 			changed = true
 		}
 	}
@@ -214,7 +274,7 @@ func (a *deadLetterAlarm) pass(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if r.Closed || r.LocalMailed || r.LocalNext.After(a.now()) {
+		if r.Closed || r.LocalMailed || a.sending[key] != nil || r.LocalNext.After(a.now()) {
 			continue
 		}
 		if !a.localMail(ctx, key, r) {
@@ -243,6 +303,8 @@ func (a *deadLetterAlarm) localMail(ctx context.Context, key string, r alarmReco
 	}
 	body := fmt.Sprintf("channel: %s\nthread_ts: %s\nmessage_ts: %s\nheld_since: %s\ndead_lettered_at: %s\nstate: %s\ncomposer: %s\noperator: %s\nlook: gc slack status\nredrive: gc slack inbound-redrive --conversation-id %s\nonly after you have read this message in Slack and answered it yourself (this delivers nothing and closes the alarm): gc slack inbound-redrive --conversation-id %s --acknowledge %s",
 		m.channel, m.thread, m.ts, m.held.UTC().Format(time.RFC3339), m.row.UTC().Format(time.RFC3339), m.state, m.composer, a.operatorSetting(), m.channel, m.channel, m.ts)
+	release := a.reserveLocal(key)
+	defer release()
 	out, err, timedOut := a.command(ctx, "--city", a.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-dead:"+ingestionDigest(key), "--notify", "--json", "-s", "slack: a message did not reach the session", "-m", body)
 	r.LocalEnded = true
 	if err == nil {
@@ -270,6 +332,9 @@ func (a *deadLetterAlarm) localMail(ctx context.Context, key string, r alarmReco
 }
 
 func (a *deadLetterAlarm) command(ctx context.Context, args ...string) ([]byte, error, bool) {
+	// The pass owns mu. Let unrelated write-time sends run while gc replies.
+	a.mu.Unlock()
+	defer a.mu.Lock()
 	limited, cancel := context.WithTimeout(ctx, a.limit)
 	defer cancel()
 	cmd := exec.CommandContext(limited, a.bin, args...)
@@ -416,10 +481,10 @@ func (a *deadLetterAlarm) operatorBody(keys []string, set map[string]alarmMessag
 }
 
 func runDeadLetterAlarm(ctx context.Context, cfg config) {
-	if cfg.inboundRecovery == nil || cfg.inboundRecovery.path == "" {
+	if cfg.deadLetterAlerts == nil || cfg.deadLetterAlerts.alarm == nil {
 		return
 	}
-	a := newDeadLetterAlarm(cfg)
+	a := cfg.deadLetterAlerts.alarm
 	ticker := time.NewTicker(a.interval)
 	defer ticker.Stop()
 	for ctx.Err() == nil {

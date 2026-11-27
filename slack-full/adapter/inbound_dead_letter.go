@@ -19,11 +19,12 @@ import (
 )
 
 // Each distinct loss can request its turn independently. Overlapping writes
-// for the same key share a worker that rechecks gc's mailbox after the send.
+// for the same message share a worker that checks its receipt before retrying.
 type deadLetterAlerts struct {
 	mu       sync.Mutex
 	inFlight map[string]*deadLetterMail
-	send     func(path, key, reason string) error
+	send     func(path, key, reason string) (operatorMailReceipt, error)
+	alarm    *deadLetterAlarm
 }
 
 type deadLetterMail struct {
@@ -36,17 +37,18 @@ type deadLetterNotice struct {
 }
 
 func newDeadLetterAlerts(city string) *deadLetterAlerts {
-	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(path, key, reason string) error {
+	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(path, key, reason string) (operatorMailReceipt, error) {
 		body := fmt.Sprintf("File: %s\nReason: %s", path, reason)
-		return sendOperatorMail(context.Background(), "gc", city, key, "Slack inbound message could not be delivered", body, true)
+		return sendNotifyingOperatorMail(context.Background(), "gc", city, key, "Slack inbound message could not be delivered", body)
 	}}
 }
 
-func (a *deadLetterAlerts) notify(path, firstMessageTS, reason string) {
+func (a *deadLetterAlerts) notify(path string, inbound externalInboundMessage, reason string) {
 	if a == nil {
 		return
 	}
-	key := "dead-letter:" + filepath.Base(path) + ":" + firstMessageTS
+	key := recoveryKey(inbound)
+	ts := inbound.ProviderMessageID
 	a.mu.Lock()
 	if mail := a.inFlight[key]; mail != nil {
 		mail.pending = &deadLetterNotice{path: path, reason: reason}
@@ -58,9 +60,12 @@ func (a *deadLetterAlerts) notify(path, firstMessageTS, reason string) {
 	a.mu.Unlock()
 	go func() {
 		for {
-			err := a.send(path, key, reason)
+			mailKey := "dead-letter:" + filepath.Base(path) + ":" + ts
+			err := a.alarm.mailWritten(key, func() (operatorMailReceipt, error) {
+				return a.send(path, mailKey, reason)
+			})
 			if err != nil {
-				log.Printf("operator mail failed key=%q: %v", key, err)
+				log.Printf("operator mail failed key=%q: %v", mailKey, err)
 			}
 			a.mu.Lock()
 			if mail.pending == nil {

@@ -1520,7 +1520,7 @@ func (r *inboundRecovery) retire(key string, e inboundRecoveryEntry) {
 	r.put(key, e)
 	if !e.Retiring {
 		path := filepath.Join(r.deadDir, safePathComponent(e.Inbound.Conversation.ConversationID)+".jsonl")
-		r.deadLetterAlerts.notify(path, e.Inbound.ProviderMessageID, deadLetterMailReason(e.Reason))
+		r.deadLetterAlerts.notify(path, e.Inbound, deadLetterMailReason(e.Reason))
 		log.Printf("inbound HOLD: LOSS chan=%s ts=%s receipt=%s dead-lettered after %d attempt(s) over %s file=%s", e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID, receiptLogID(e.OriginalReceiptID), e.Attempts, r.now().Sub(e.HeldAt), path)
 	}
 	if !e.Retiring && r.finished != nil {
