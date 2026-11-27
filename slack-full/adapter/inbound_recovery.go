@@ -2216,6 +2216,68 @@ func (r *inboundRecovery) updateNotices() {
 
 type inboundRecoveryCounts struct{ Held, Dead, ByHand int }
 
+// deadLetterAlarmSet copies only the coordinates, times and classifications
+// needed by mail. No mutable entry or payload escapes the recovery lock.
+func (r *inboundRecovery) deadLetterAlarmSet(now time.Time) map[string]alarmMessage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lines := make(map[string]alarmMessage)
+	// Equal-class room and handle copies need a stable representative.
+	slots := make([]string, 0, len(r.state.Entries))
+	for slot := range r.state.Entries {
+		slots = append(slots, slot)
+	}
+	sort.Strings(slots)
+	for _, slot := range slots {
+		e := r.state.Entries[slot]
+		key := recoveryKey(e.Inbound)
+		m := lines[key]
+		row := e.DeadLetteredAt
+		if row.IsZero() {
+			row = e.HeldAt
+		}
+		if m.row.IsZero() || row.Before(m.row) {
+			m.row = row
+		}
+		if m.held.IsZero() || e.HeldAt.Before(m.held) {
+			m.held = e.HeldAt
+		}
+		class := recoveryCountClass(e)
+		if class > m.class {
+			m.class = class
+			m.channel, m.ts, m.thread = e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID, e.Inbound.ReplyToMessageID
+			if m.thread == "" {
+				m.thread = m.ts
+			}
+			m.composer = "none"
+			if e.ComposerHold != nil && e.ComposerHold.State != "" {
+				m.composer = e.ComposerHold.State
+			}
+		}
+		if class >= 2 && !e.LastHeldAnswerAt.IsZero() {
+			m.marked = true
+		}
+		lines[key] = m
+	}
+	for key, m := range lines {
+		age := now.Sub(m.row)
+		if m.class < 2 || age >= alarmRowHorizon {
+			delete(lines, key)
+			continue
+		}
+		switch {
+		case m.class == 3 || r.replayMaxAge == 0 || age > r.replayMaxAge:
+			m.state = "hand_check"
+		case m.marked:
+			m.state = "retrying"
+		default:
+			m.state = "waiting"
+		}
+		lines[key] = m
+	}
+	return lines
+}
+
 func recoveryCountClass(e inboundRecoveryEntry) int {
 	if !e.DeliveredAt.IsZero() || !e.AcknowledgedAt.IsZero() || e.Reaction || e.Inbound.Actor.IsBot {
 		return 0

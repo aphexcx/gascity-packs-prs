@@ -1,0 +1,359 @@
+red
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+dead_letter_alarm_test.go:324: local calls = 0, want 1
+FAIL TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+FAIL TestDeadLetterAlarmRoads
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/clock
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/plain
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/manual
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/aged
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+FAIL TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+43 passed, 8 failed, 0 skipped
+
+red-alone
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/clock
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/plain
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/manual
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/aged
+dead_letter_alarm_test.go:420: local arguments or body differ
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+FAIL TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+45 passed, 6 failed, 0 skipped
+
+green
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+PASS TestDeadLetterAlarmWords/clock
+PASS TestDeadLetterAlarmWords/plain
+PASS TestDeadLetterAlarmWords/manual
+PASS TestDeadLetterAlarmWords/aged
+PASS TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+PASS TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+51 passed, 0 failed, 0 skipped
+
+S1
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/clock
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/plain
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/manual
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/aged
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+FAIL TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+45 passed, 6 failed, 0 skipped
+
+S2
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/clock
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/plain
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/manual
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/aged
+dead_letter_alarm_test.go:420: local arguments or body differ
+FAIL TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+FAIL TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+45 passed, 6 failed, 0 skipped
+
+S3
+PASS TestDeadLetterAlarmSet/dead
+PASS TestDeadLetterAlarmSet/hand
+PASS TestDeadLetterAlarmSet/held
+PASS TestDeadLetterAlarmSet/pasted
+PASS TestDeadLetterAlarmSet/acknowledged
+PASS TestDeadLetterAlarmSet/reaction
+PASS TestDeadLetterAlarmSet/bot
+PASS TestDeadLetterAlarmSet/old
+PASS TestDeadLetterAlarmSet/room-and-handle
+PASS TestDeadLetterAlarmSet/replay-refused
+PASS TestDeadLetterAlarmSet
+PASS TestDeadLetterAlarmOnce
+PASS TestDeadLetterAlarmArchive/unarchived
+PASS TestDeadLetterAlarmArchive/archive-between-lost-result-and-retry
+PASS TestDeadLetterAlarmArchive/arrived-before-retry
+PASS TestDeadLetterAlarmArchive
+PASS TestDeadLetterAlarmArrived/before-pass
+PASS TestDeadLetterAlarmArrived/before-operator
+PASS TestDeadLetterAlarmArrived/replay-row
+PASS TestDeadLetterAlarmArrived
+PASS TestDeadLetterAlarmRoads/success
+PASS TestDeadLetterAlarmRoads/local-refused
+PASS TestDeadLetterAlarmRoads/wake-absent
+PASS TestDeadLetterAlarmRoads/empty
+PASS TestDeadLetterAlarmRoads/non-json
+PASS TestDeadLetterAlarmRoads/ok-false
+PASS TestDeadLetterAlarmRoads/operator-refused
+PASS TestDeadLetterAlarmRoads/operator-unsupported
+PASS TestDeadLetterAlarmRoads/operator-context
+PASS TestDeadLetterAlarmRoads/remote-ambiguous
+PASS TestDeadLetterAlarmRoads/operator-timeout
+PASS TestDeadLetterAlarmRoads/not-configured
+PASS TestDeadLetterAlarmRoads/both-refused-for-a-day
+PASS TestDeadLetterAlarmRoads
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/clock
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/plain
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/manual
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/aged
+dead_letter_alarm_test.go:426: operator arguments or body differ
+FAIL TestDeadLetterAlarmWords/off
+PASS TestDeadLetterAlarmWords/batch-and-earliest-retry
+FAIL TestDeadLetterAlarmWords
+PASS TestDeadLetterAlarmApart
+PASS TestDeadLetterAlarmBack/retrying
+PASS TestDeadLetterAlarmBack/waiting
+PASS TestDeadLetterAlarmBack/hand_check
+PASS TestDeadLetterAlarmBack
+PASS TestDeadLetterAlarmRestart/in-flight-local
+PASS TestDeadLetterAlarmRestart/in-flight-operator
+PASS TestDeadLetterAlarmRestart/damaged-records
+PASS TestDeadLetterAlarmRestart
+PASS TestDeadLetterAlarmWire
+45 passed, 6 failed, 0 skipped

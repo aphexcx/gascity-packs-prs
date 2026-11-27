@@ -92,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the once-per-channel how-to is per adapter lifetime, not per agent session.
   See SETUP.md.
 
+- **Dead-letter alarms.** For each message that gets a dead-letter row, one mail in the local mayor's mailbox and one request to gc for a turn of the local mayor; where an operator is named, one count-only mail to the operator's city for each pass that has new such messages; a mail command may run up to 120 seconds; a road that is down is tried again on the hold ladder for as long as the message is outstanding and less than a day old. Arrival closes the alarm. An ambiguous operator send ends its retry. Remote mail behavior (Q3) is UNPROVEN, an operator turn (Q4) is UNPROVEN, and local mail and wake behavior (Q5) are UNPROVEN.
+
 ### Changed
 
 - Test fixtures now use invented names (gp-tu0b).

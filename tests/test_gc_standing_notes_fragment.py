@@ -1,5 +1,5 @@
 """Static checks on the `gc-standing-notes` template fragment (gp-rj21; the
-PR body lines, gp-hdn2).
+PR body lines, gp-hdn2; the review rules, gp-kiis).
 
 A city opts in with one line after its `gc-role-worker` call; the rendered
 order and the byte-identical render without the line are proven against a
@@ -28,7 +28,11 @@ PLAIN_CALL = '{{ template "gc-standing-notes" . }}'
 # below refuses it: it would eat the whitespace next to it.
 TEMPLATE_COMMENT = re.compile(r"\{\{/\*.*?\*/\}\}", re.S)
 # Each note's heading, in the fragment's order, with its bead of record.
-NOTES = (("## Deepening note", "gp-gsww"), ("## PR body lines", "gp-hdn2"))
+NOTES = (
+    ("## Deepening note", "gp-gsww"),
+    ("## PR body lines", "gp-hdn2"),
+    ("## Review rules", "gp-kiis"),
+)
 # The PR body lines' labels, in the order the body carries them, and the
 # three lines as the note shows them, each label with its own instruction:
 # text swapped between two labels fails.
@@ -68,6 +72,21 @@ def deepening_note() -> str:
 
 def pr_body_lines_note() -> str:
     return note("THE PR BODY LINES")
+
+
+def review_rules_note() -> str:
+    """THE REVIEW RULES whole, from its heading to the end of the define, on
+    one line: text between the heading and the marker, or after the last
+    rule, reaches a worker as surely as a rule does. The note is the define's
+    last; a note added after it lands inside this text until the boundary
+    moves with it. Template comments never count."""
+    text = renderable(fragment())
+    heading = "\n## Review rules"
+    assert text.count(heading) == 1
+    assert text.count("THE REVIEW RULES") == 1
+    body = text.split(heading, 1)[1]
+    assert body.count("{{- end }}") == 1
+    return flat(heading + body.split("{{- end }}", 1)[0])
 
 
 def test_fragment_defines_exactly_one_template() -> None:
@@ -194,6 +213,237 @@ def test_pr_body_lines_note_carries_every_fact_of_its_bead() -> None:
     assert note.count("On the revert line") == 1
 
 
+# THE REVIEW RULES as the note says them, whole and in order, one part per
+# sentence, under the fact of its bead each part carries. The note must be
+# exactly these parts: a sentence added anywhere fails, even one that names
+# no rule's subject, and so does a clause hidden in a template comment.
+REVIEW_RULES = (
+    # The heading: text between it and the marker reaches a worker too.
+    "## Review rules",
+    # When the rules apply (on sending a PR to review as well as on its
+    # findings), why, and what a round is for them, apart from the numbers
+    # the role text's review records give each review.
+    "THE REVIEW RULES.",
+    "Whenever you send your PR to review or a review returns findings on it, act by these "
+    "rules: each review round costs a full read of the PR, so spend one only where it buys "
+    "a fix.",
+    "For these rules a round is one head of your PR sent to review, however many reviewers "
+    "read it, counted from the round number the bead names, if any; the review records the "
+    "role text asks for still give each review its own number.",
+    # 1. The class fix and its one test.
+    "1. Fix the whole class.",
+    "When a review finds a blocking fault, name its class (the general fault, not the one "
+    "case), fix every case of that class in your diff, and add one test at the class level; "
+    "your handoff names the class, its cases and the test.",
+    "A case fixed alone can bring the same finding back on another line in the next round.",
+    # 2. A repeated family stops the PR from round three, shown or not: each
+    # repeated family listed; every other finding of the round keeps an
+    # outcome or PRECONDITION it can have without a fix, and the rest are
+    # OPEN, never NOT SHOWN, with what shows each or would settle it; one
+    # decision per family; each decision rules on its own family alone, and
+    # every OPEN finding anywhere keeps its own grade and needs its own
+    # outcome before any merge, from a later head or the mayor's ruling on
+    # it, a minor's follow-up counting; what THE SAME FAMILY is; past round
+    # three, in a round that does not stop the PR, only a reproduction in the
+    # round's own changes buys a round, and a second model's answer is not
+    # one; a finding shown any other way is FIXED, with the head that fixed
+    # it, once it no longer happens at the reviewed head, and otherwise takes
+    # the outcome or PRECONDITION it can have without a fix, or else is OPEN
+    # with its proof and grade; never NOT SHOWN, which is for what nobody
+    # showed.
+    "2. Stop at round three.",
+    "From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding "
+    "of an earlier round of this PR, shown or not, stops the PR: fix nothing more in that "
+    "round, list each such finding in your handoff as SAME FAMILY with the round and the "
+    "earlier finding it repeats, give every other finding of that round the outcome or "
+    "PRECONDITION it can have without a fix, list the rest beside them as OPEN, never NOT "
+    "SHOWN, with what shows each or what would settle it, and hand the PR to the mayor as "
+    "stopped, not done, for one decision on each repeated family: a check for the class "
+    "built under its own tests, or a merge with the class filed as a bead.",
+    "Each decision rules on its own family alone: every finding you list as OPEN keeps its "
+    "own grade and needs its own outcome before any merge, from a later head or the mayor's "
+    "ruling on that one finding, a minor's follow-up counting as its outcome.",
+    "THE SAME FAMILY means the finding names the same class as the earlier one, and the "
+    "earlier one's class-level fix, written in one sentence, would close it too; when you "
+    "cannot tell, it is the same family and you stop.",
+    "Past round three, in a round that does not stop the PR, only a finding reproduced in "
+    "that round's own changes (a failing test, or shown reachable where the changed code "
+    "runs; a second model's answer alone is not enough) buys another round; a finding shown "
+    "any other way "
+    "(an earlier head's fault that a failing test proves, say) buys none by itself: once it "
+    "no longer happens at the reviewed head (its proof no longer fails there) it is FIXED, "
+    "with the head that fixed it, and otherwise it takes the outcome or "
+    "PRECONDITION it can have without a fix, or else is listed as OPEN with what shows it and "
+    "its grade, for the mayor; list the rest, which nobody showed, as NOT SHOWN with their "
+    "file and line.",
+    # 3. No lone reviewer forces a round: a failing test, or a second model's
+    # check of that one finding with the line; else NOT SHOWN, never a blind fix.
+    "3. Let no lone reviewer force a round.",
+    "Before one reviewer's finding costs a round, have it shown: write a failing test that "
+    "shows it, or have a second model check that one finding and answer real or not with the "
+    "line that shows it.",
+    "A finding shown by neither after an honest try is listed as NOT SHOWN with what you "
+    "tried, and is not fixed blind: one model's reading is a suspicion, not a fault.",
+    # 4. Minors never block; a real, unintended minor left for later is OPEN
+    # with its follow-up; every finding gets one of the four outcomes or the
+    # listing a rule gave it; PRECONDITION only for what no place running the
+    # changed code has.
+    "4. Never let a minor finding block, and give every finding an outcome.",
+    "Fix a minor in the same head when it is cheap; a real, unintended minor you leave "
+    "unfixed is listed as OPEN with its follow-up's reference.",
+    "Your handoff carries one line per finding of every round with its outcome: FIXED (with "
+    "the commit), WRONG (with the line that shows the reviewer was mistaken), INTENDED, or "
+    "DOES NOT MATTER, or else the listing these rules give it (SAME FAMILY, OPEN, NOT SHOWN "
+    "or PRECONDITION).",
+    "A finding that needs a runtime, a provider or a right found nowhere the changed code "
+    "runs is listed as PRECONDITION with the precondition in one sentence; it does not "
+    "block, and you do not build for it.",
+    "When you cannot tell where the changed code runs, the finding is not a PRECONDITION.",
+    # 5. Depth follows risk; the city sets it by the review class the bead
+    # names, which wins wherever it asks more than a rule here.
+    "5. Let review depth follow risk.",
+    "Docs, tests and small internal changes get your own checks and one gate; a second model "
+    "reads a PR's whole first head, and later heads only on a risky path.",
+    "Your city or its mayor sets the depth by the review class the bead names: follow it, "
+    "and where it asks more of you than any rule here (every finding fixed, say), the class "
+    "wins.",
+    # 6. The city's written path list, by the name the PR body lines give
+    # it: read for the risk line, never invented.
+    "6. Take the merge list from its owner.",
+    "Your city's written list of paths by risk tier, kept by its founder or owner, says "
+    "which paths need a person's word before a merge: read it for the risk line of the PR "
+    "body lines above, and never invent one.",
+    "Until that list exists, your city's merge rule stands.",
+)
+
+
+def test_review_rules_note_is_exactly_the_six_rules_of_its_bead() -> None:
+    assert review_rules_note() == " ".join(REVIEW_RULES)
+
+
+def test_review_rules_give_every_finding_a_word_for_the_handoff() -> None:
+    """Every listing a rule gives a finding (`as SAME FAMILY`, `as OPEN`, ...)
+    is one that the outcome rule names beside the four outcomes, and it names
+    no other: no finding the rules produce is left without a word."""
+    note = review_rules_note()
+    given = set(re.findall(r"\bas ((?:[A-Z]+ )*[A-Z]{2,})\b", note))
+    named = note.split("or else the listing these rules give it (", 1)[1].split(")", 1)[0]
+    assert set(re.split(r", | or ", named)) == given
+    # The four outcomes, each once in one list that carries them; a FIXED
+    # given anywhere else names the head that fixed it, as the list's FIXED
+    # names the commit.
+    outcomes = note.split("with its outcome: ", 1)[1].split(", or else the listing", 1)[0]
+    for outcome in ("FIXED", "WRONG", "INTENDED", "DOES NOT MATTER"):
+        assert outcomes.count(outcome) == 1, outcome
+    for outcome in ("WRONG", "INTENDED", "DOES NOT MATTER"):
+        assert note.count(outcome) == 1, outcome
+    assert note.count("FIXED") == (note.count("FIXED (with the commit)")
+                                   + note.count("FIXED, with the head that fixed it"))
+
+
+def test_review_rules_list_as_not_shown_only_what_nobody_showed() -> None:
+    """NOT SHOWN states the evidence, never which round or head brought the
+    fault in: each clause that gives it names its findings as ones nobody
+    showed, so a finding a failing test proves is never listed NOT SHOWN,
+    whichever head of the PR it came from."""
+    clauses = re.split(r"(?<=[.;])\s+", review_rules_note())
+    giving = [clause for clause in clauses if "as NOT SHOWN" in clause]
+    assert giving
+    for clause in giving:
+        assert re.search(r"\b(?:shown by neither|nobody showed)\b", clause), clause
+
+
+def test_review_rules_let_a_decision_on_a_family_dispose_of_that_family_alone() -> None:
+    """Wherever the rules offer the mayor a merge, the sentence that follows
+    keeps every finding listed OPEN at its own grade and owed its own
+    outcome before any merge, from a later head or a ruling on that one
+    finding: a ruling on one repeated finding never waives another."""
+    sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+    offers = [index for index, sentence in enumerate(sentences) if re.search(r"\bor a merge\b", sentence)]
+    assert offers
+    for index in offers:
+        assert "one decision on each repeated family" in sentences[index], sentences[index]
+        assert index + 1 < len(sentences), sentences[index]
+        limit = sentences[index + 1]
+        for clause in ("its own family alone", "every finding you list as OPEN", "keeps its own grade",
+                       "needs its own outcome before any merge",
+                       "from a later head or the mayor's ruling on that one finding"):
+            assert clause in limit, (sentences[index], clause)
+
+
+def test_review_rules_give_each_finding_of_a_stopped_round_one_word() -> None:
+    """A stop says which word wins: the stop's OPEN is never NOT SHOWN, so a
+    blocker nobody could show or settle keeps its grade and its merge gate,
+    and every other sentence that gives NOT SHOWN is rule 3's honest try or
+    is held to a round that does not stop the PR."""
+    sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+    stops = [sentence for sentence in sentences if "stops the PR:" in sentence]
+    assert len(stops) == 1
+    assert "as OPEN, never NOT SHOWN," in stops[0]
+    assert "PRECONDITION it can have without a fix" in stops[0]
+    for sentence in sentences:
+        if "as NOT SHOWN" in sentence:
+            assert ("shown by neither" in sentence
+                    or sentence.startswith("Past round three, in a round that does not stop the PR,")), sentence
+
+
+def test_review_rules_never_list_open_a_finding_the_reviewed_head_no_longer_shows() -> None:
+    """Walk the sequence on the note's own words. Head one brings a fault in
+    and head two fixes it; in round four, which no repeated family stops, a
+    reviewer sends head one's failing test, and it passes at head four. The
+    finding is FIXED, with the head that fixed it, and OPEN, which asks the
+    mayor for an outcome before any merge, is for every other case.
+    The same clause gives a fault that still fails only under a provider
+    found nowhere the changed code runs its PRECONDITION before any OPEN.
+    Both words turn on one fact, whether the fault still happens at the
+    reviewed head, so a finding gets exactly one, whatever shows it: a
+    second model's line settles it as a test does. The stop's sentence gives
+    the same order (the stopped-round test), and rule 4's OPEN is for a minor
+    left unfixed, which still happens."""
+    sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+    # Round four, and no finding repeats an earlier round's family: the stop
+    # is not this round's sentence; the one for a round past three that does
+    # not stop the PR is.
+    governing = [sentence for sentence in sentences
+                 if sentence.startswith("Past round three, in a round that does not stop the PR,")]
+    assert len(governing) == 1
+    # Head one's test reproduces nothing in round four's own changes, so the
+    # finding is one shown any other way: the clause from there to the NOT
+    # SHOWN list gives its word, and the earlier head's test is its example.
+    clause = governing[0].split("a finding shown any other way", 1)[1]
+    clause = clause.split("; list the rest, which nobody showed", 1)[0]
+    assert clause.startswith(" (an earlier head's fault that a failing test proves, say) buys none by itself")
+    assert clause.count("as OPEN") == 1
+    opened = clause.index("as OPEN")
+    # The test passes at head four: the fault no longer happens at the
+    # reviewed head, so FIXED, with the head that fixed it, before the
+    # clause ever reaches OPEN.
+    fixed = clause.find("once it no longer happens at the reviewed head (its proof no longer "
+                        "fails there) it is FIXED, with the head that fixed it")
+    assert 0 <= fixed < opened, clause
+    # Still failing, but only where the changed code never runs: rule 4's
+    # PRECONDITION, or any outcome it can have without a fix, comes first;
+    # OPEN is what is left of everything not shown gone, the same fact's
+    # other side.
+    still = clause.find("otherwise it takes the outcome or PRECONDITION it "
+                        "can have without a fix, or else")
+    assert fixed < still < opened, clause
+
+
+def test_review_rules_judge_reach_where_the_changed_code_runs() -> None:
+    """A pack's change runs in every city that imports it: whether a finding
+    is reachable, or needs what no deployment has, is judged where the changed
+    code runs, never by the worker's own city alone."""
+    note = review_rules_note()
+    assert re.search(r"\byour city (?:runs|has|does not have)\b", note) is None
+    assert note.count("the changed code runs") == 3
+
+
+def test_review_rules_carry_no_number_but_the_rule_numbers() -> None:
+    """A count measured in one city is that city's evidence, not a rule."""
+    assert re.findall(r"\d+", review_rules_note()) == ["1", "2", "3", "4", "5", "6"]
+
+
 def test_pr_body_lines_placement_leaves_room_for_the_closing_trailers() -> None:
     """Every place that says where the three lines go says it one way: after
     every other section, with the body's closing trailer or sign-off lines
@@ -283,6 +533,32 @@ def test_readme_documents_the_templatefirst_call_line_and_why() -> None:
         "Its second note is THE PR BODY LINES",
         "`Testing:`, `Risk:` and `How to revert:`, after every other section, "
         "with only trailer or sign-off lines below them",
+        "Its third note is THE REVIEW RULES",
+        "stopping a repeated family at round three",
     ):
         assert clause in words, f"README Standing notes lacks: {clause!r}"
     assert words.index(CALL_LINE) < words.index(f"never as `{PLAIN_CALL}`")
+
+
+def test_review_rules_keep_open_a_shown_finding_whose_state_at_the_reviewed_head_nobody_can_tell() -> None:
+    """The gate's sequence: head one shows a fault, head two changes the
+    code, and in a later round whose changes are docs only a reviewer sends
+    head one's proof; nobody can tell whether the fault still happens at the
+    reviewed head. It was shown, so it is not NOT SHOWN; it is not shown
+    gone, so it is not FIXED; the branch that ends in OPEN, with what shows
+    it and its grade, must reach it, so a proven blocker keeps its ruling
+    before any merge."""
+    sentences = re.split(r"(?<=\.)\s+", review_rules_note())
+    governing = [sentence for sentence in sentences
+                 if sentence.startswith("Past round three, in a round that does not stop the PR,")]
+    assert len(governing) == 1
+    clause = governing[0].split("a finding shown any other way", 1)[1]
+    clause = clause.split("; list the rest, which nobody showed", 1)[0]
+    after_fixed = clause.split("FIXED, with the head that fixed it, and ", 1)[1]
+    # The branch that leads to OPEN is the whole rest, not only what is
+    # known to still happen, and OPEN is an order, not a choice: the whole
+    # fallback is pinned here, apart from the whole-note pin, so a rewording
+    # that makes it optional fails this test even when that pin moves with it.
+    assert after_fixed == ("otherwise it takes the outcome or PRECONDITION it can have without "
+                           "a fix, or else is listed as OPEN with what shows it and its grade, "
+                           "for the mayor"), after_fixed

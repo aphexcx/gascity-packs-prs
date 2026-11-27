@@ -1,0 +1,23 @@
+.........F.FF.......                                                     [100%]
+=================================== FAILURES ===================================
+E   AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+
+      Skipping 1282 identical leading characters in diff, use -v to show
+      -  a bead. That decision rules on the repeated family alone: every finding listed OPEN beside it keeps its own grade and needs its own outcome, each blocking one before any merge. THE SAME FAMILY means the finding names the same class as the earlier one, and the earlier one's class-level fix, written in one sentence, would close it too; when you cannot tell, it is the same family and you stop. Past round three, only a finding reproduced in that round's own changes (a failing test, or shown reachable where...
+
+      ...Full output truncated, use '-vv' to show
+<clone>/tests/test_gc_standing_notes_fragment.py:307: AssertionError: assert '## Review ru... rule stands.' == '## Review ru... rule stands.'
+E   AssertionError: list the rest as NOT SHOWN with their file and line.
+    assert None
+     +  where None = <function search at 0x<addr>>('\\b(?:shown by neither|nobody showed)\\b', 'list the rest as NOT SHOWN with their file and line.')
+     +    where <function search at 0x<addr>> = re.search
+<clone>/tests/test_gc_standing_notes_fragment.py:332: AssertionError: list the rest as NOT SHOWN with their file and line.
+E   AssertionError: ('From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding of an earlier round of this ...or one decision: a check for the class built under its own tests, or a merge with the class filed as a bead.', 'alone')
+    assert 'alone' in "THE SAME FAMILY means the finding names the same class as the earlier one, and the earlier one's class-level fix, written in one sentence, would close it too; when you cannot tell, it is the same family and you stop."
+<clone>/tests/test_gc_standing_notes_fragment.py:347: AssertionError: ('From review round three on, a blocking finding of THE SAME FAMILY as a blocking finding of an earlier round of this ...or one decision: a check for the class built under its own tests, or a merge with the class filed as a bead.', 'alone')
+=========================== short test summary info ============================
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_note_is_exactly_the_six_rules_of_its_bead
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_list_as_not_shown_only_what_nobody_showed
+FAILED tests/test_gc_standing_notes_fragment.py::test_review_rules_let_a_decision_on_a_family_dispose_of_that_family_alone
+3 failed, 17 passed in 0.03s
+exit 1

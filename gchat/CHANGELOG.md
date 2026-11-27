@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The authenticated Google API clients for required calls, optional lookups
+  and replacement credential validation now return the first redirect as a
+  failed call. P1 (UNPROVEN) assumes Chat, People and Workspace Events
+  answer ordinary requests directly. P2 (UNPROVEN) assumes media downloads
+  also answer directly. A redirected download produces an unavailable
+  attachment note.
+
 - The skill tells an agent to tag the one person whose answer or action its
   message needs, as `<users/ID>` with their numeric Chat id, and nobody when
   it asks nothing of anyone. That Chat then notifies them is UNPROVEN (gp-fkb9).
