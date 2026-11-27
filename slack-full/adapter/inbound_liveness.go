@@ -1183,10 +1183,12 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 			}
 			continue
 		}
-		l.cfg.deadLetterAlerts.notify(path, records[0].Inbound, records[0].Reason)
 		log.Printf("inbound liveness: channel=%s %d undelivered inbound record(s) dead-lettered to %s — never delivered to gc", channel, len(records), path)
 		if err := l.cfg.inboundRecovery.importDeadLetters(); err != nil {
 			log.Printf("inbound liveness: dead-letter index refresh: %v", err)
+		}
+		for _, rec := range records {
+			l.cfg.deadLetterAlerts.notify(path, rec.Inbound, rec.Reason)
 		}
 		if l.alert != nil {
 			go l.postAlert(fmt.Sprintf(":warning: gc-slack-adapter: %d inbound record(s) in <#%s> could not be delivered to gc within %s and went to the inbound dead letter (%s). Re-post them by hand.", len(records), channel, l.cfg.backfillMaxWindow, path))

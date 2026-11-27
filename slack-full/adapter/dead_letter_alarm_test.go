@@ -225,7 +225,9 @@ func testDeadLetterReceipt(t *testing.T, first string, restart bool, result stri
 	alarmWrite(t, filepath.Join(f.dir, "gc"), `#!/bin/sh
 set -eu
 cd "$ALARM_FIXTURE"
-[ "$1" = --city ] && [ "$2" = "$ALARM_FIXTURE" ] && [ "$3 $4 $5" = "mail send mayor" ]
+[ "$1" = --city ]
+[ "$2" = "$ALARM_FIXTURE" ]
+[ "$3 $4 $5" = "mail send mayor" ]
 mode=$(cat local.mode)
 [ "$mode" != refused ] || exit 1
 echo mail >> events
@@ -290,6 +292,131 @@ echo '{"ok":true,"id":"example-mail","notified":true}'
 	count(want)
 }
 
+func TestDeadLetterUnattributedReceiptAfterRestart(t *testing.T) {
+	for _, first := range []string{"parent", "range"} {
+		t.Run(first, func(t *testing.T) {
+			f := newAlarmFixture(t, false)
+			r := f.cfg.inboundRecovery
+			parent := f.add("C1", "100.1")
+			missing := parent
+			missing.ManualRecovery = true
+			missing.Inbound.ReplyToMessageID = parent.Inbound.ProviderMessageID
+			missing.Inbound.DedupKey = "slack-thread-100.1-99.1"
+			parentKey := recoveryKey(parent.Inbound)
+			rangeKey := parentKey + "|manual:" + missing.Inbound.DedupKey
+			if first == "parent" {
+				r.put(parentKey, parent)
+			} else {
+				r.put(rangeKey, missing)
+			}
+			f.pass()
+			args := f.one("local")
+			if err := os.Remove(filepath.Join(f.dir, args[6])); err != nil {
+				t.Fatal(err)
+			}
+			r.put(parentKey, parent)
+			r.put(rangeKey, missing)
+			reopened, err := newInboundRecovery(r.path, r.deadDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.cfg.inboundRecovery = reopened
+			f.restart()
+			f.pass()
+			f.count("local", 1)
+			calls := 0
+			f.cfg.deadLetterAlerts.send = func(string, string) (operatorMailReceipt, error) {
+				calls++
+				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+			}
+			f.cfg.deadLetterAlerts.notify("C1.jsonl", parent.Inbound, "delivery refused")
+			f.cfg.deadLetterAlerts.wait()
+			// At-least-once by design: the parent gets its first mail after a
+			// range receipt, or one duplicate after its own archived receipt.
+			if calls != 1 {
+				t.Fatalf("first receipt for %s: parent writer sent %d mails, want 1", first, calls)
+			}
+			f.pass()
+			f.count("local", 1)
+		})
+	}
+}
+
+func TestDeadLetterRangeCannotBorrowParentOrSiblingReceipt(t *testing.T) {
+	for _, first := range []string{"parent", "sibling"} {
+		t.Run(first, func(t *testing.T) {
+			f := newAlarmFixture(t, false)
+			e := f.add("C1", "100.1")
+			e.Inbound.ReplyToMessageID = "100.1"
+			if first == "sibling" {
+				e.ManualRecovery = true
+				e.Inbound.DedupKey = "slack-thread-100.1-98.1"
+			}
+			f.put("first", e)
+			f.pass()
+			f.one("local")
+			var keys []string
+			f.cfg.deadLetterAlerts.send = func(key, body string) (operatorMailReceipt, error) {
+				keys = append(keys, key)
+				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+			}
+			for _, cursor := range []string{"99.1", "99.2"} {
+				e.ManualRecovery = true
+				e.Inbound.DedupKey = "slack-thread-100.1-" + cursor
+				f.put(cursor, e)
+				f.cfg.deadLetterAlerts.notify("C1.jsonl", e.Inbound, "unread replies after "+cursor)
+				f.cfg.deadLetterAlerts.wait()
+			}
+			if len(keys) != 2 || keys[0] == keys[1] {
+				t.Fatalf("two distinct ranges need two mailbox keys, got %v", keys)
+			}
+			f.pass()
+			f.count("local", 1)
+		})
+	}
+}
+
+func TestDeadLetterReceiptUsesConfiguredMailbox(t *testing.T) {
+	for _, first := range []string{"alarm", "writer"} {
+		t.Run(first, func(t *testing.T) {
+			f := newAlarmFixture(t, false)
+			f.cfg.cityPath = ""
+			f.cfg.deadLetterAlerts = newDeadLetterAlerts(f.cfg.operatorMailCity())
+			f.restart()
+			alarmWrite(t, filepath.Join(f.dir, "gc"), `#!/bin/sh
+set -eu
+[ "$1" = --city ]
+[ "$2" = fixture ]
+[ "$3 $4 $5" = "mail send mayor" ]
+printf '%s\n' "$@" >> "$ALARM_FIXTURE/received"
+echo '{"ok":true,"id":"example-mail","notified":true}'
+`)
+			other := t.TempDir()
+			alarmWrite(t, filepath.Join(other, "gc"), "#!/bin/sh\nexit 1\n")
+			t.Setenv("PATH", other)
+			e := f.add("C1", "100.1")
+			e.Inbound.ReplyToMessageID = "99.1"
+			f.put(recoveryKey(e.Inbound), e)
+			if first == "alarm" {
+				f.pass()
+			}
+			f.cfg.deadLetterAlerts.notify("C1.jsonl", e.Inbound, "delivery refused")
+			f.cfg.deadLetterAlerts.wait()
+			// Inspect the first send before a later scan could mask its failure.
+			body := f.file("received")
+			for _, want := range []string{"--notify\n", "channel: C1", "thread_ts: 99.1", "message_ts: 100.1", "read this message in Slack", "--acknowledge 100.1"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("mail missing %q", want)
+				}
+			}
+			f.pass()
+			if n := strings.Count(f.file("received"), "--notify\n"); n != 1 {
+				t.Fatalf("turn requests to configured mayor = %d, want 1", n)
+			}
+		})
+	}
+}
+
 func TestDeadLetterWriteBeforeImport(t *testing.T) {
 	for _, order := range []string{"receipt-before-import", "import-during-send"} {
 		t.Run(order, func(t *testing.T) {
@@ -297,7 +424,7 @@ func TestDeadLetterWriteBeforeImport(t *testing.T) {
 			e := f.add("C1", "100.1")
 			started, finish := make(chan struct{}), make(chan struct{})
 			alerts := f.cfg.deadLetterAlerts
-			alerts.send = func(path, key, reason string) (operatorMailReceipt, error) {
+			alerts.send = func(key, body string) (operatorMailReceipt, error) {
 				close(started)
 				<-finish
 				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil

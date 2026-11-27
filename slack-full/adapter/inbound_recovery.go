@@ -2216,6 +2216,27 @@ func (r *inboundRecovery) updateNotices() {
 
 type inboundRecoveryCounts struct{ Held, Dead, ByHand int }
 
+// A group receipt has no cursor. Room and alias copies of one Slack message
+// share it, but a parent and each lost range of replies are separate losses.
+// Keep settled rows in this check: they may explain a receipt still on disk.
+func (r *inboundRecovery) canAttributeAlarmReceipt(inbound externalInboundMessage) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	wantRange := isDeadLetterReplyRange(inbound)
+	matched := !wantRange // Ordinary writes can precede import of their row.
+	for _, e := range r.state.Entries {
+		other := e.Inbound
+		if other.Conversation.ConversationID != inbound.Conversation.ConversationID || other.ProviderMessageID != inbound.ProviderMessageID {
+			continue
+		}
+		if isDeadLetterReplyRange(other) != wantRange || (wantRange && other.DedupKey != inbound.DedupKey) {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}
+
 // deadLetterAlarmSet copies only the coordinates, times and classifications
 // needed by mail. No mutable entry or payload escapes the recovery lock.
 func (r *inboundRecovery) deadLetterAlarmSet(now time.Time) map[string]alarmMessage {

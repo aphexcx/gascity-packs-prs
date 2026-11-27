@@ -72,12 +72,9 @@ type deadLetterAlarm struct {
 
 func newDeadLetterAlarm(cfg config) *deadLetterAlarm {
 	a := &deadLetterAlarm{cfg: cfg, now: time.Now, limit: alarmCommandLimit, interval: alarmPassInterval,
-		bin: os.Getenv("GC_BIN"), operator: os.Getenv("NEVER_SILENT_OPERATOR_CONTEXT"), agent: os.Getenv("NEVER_SILENT_OPERATOR_AGENT"),
+		bin: localMailBinary(), operator: os.Getenv("NEVER_SILENT_OPERATOR_CONTEXT"), agent: os.Getenv("NEVER_SILENT_OPERATOR_AGENT"),
 		path: filepath.Join(filepath.Dir(cfg.inboundRecovery.path), alarmRecordsFile), records: make(map[string]alarmRecord),
 		sending: make(map[string]chan struct{})}
-	if a.bin == "" {
-		a.bin = "gc"
-	}
 	if a.agent == "" {
 		a.agent = "mayor"
 	}
@@ -192,20 +189,21 @@ func (a *deadLetterAlarm) reserveLocal(key string) func() {
 	}
 }
 
-func (a *deadLetterAlarm) mailWritten(key string, send func() (operatorMailReceipt, error)) error {
+func (a *deadLetterAlarm) mailWritten(inbound externalInboundMessage, send func() (operatorMailReceipt, error)) error {
 	if a == nil {
 		_, err := send()
 		return err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	key := recoveryKey(inbound)
 	for a.sending[key] != nil {
 		done := a.sending[key]
 		a.mu.Unlock()
 		<-done
 		a.mu.Lock()
 	}
-	if a.records[key].LocalMailed {
+	if a.records[key].LocalMailed && a.cfg.inboundRecovery.canAttributeAlarmReceipt(inbound) {
 		return nil
 	}
 	release := a.reserveLocal(key)
@@ -213,7 +211,7 @@ func (a *deadLetterAlarm) mailWritten(key string, send func() (operatorMailRecei
 	a.mu.Unlock()
 	receipt, err := send()
 	a.mu.Lock()
-	if err == nil && receipt.accepted() {
+	if err == nil && receipt.accepted() && a.cfg.inboundRecovery.canAttributeAlarmReceipt(inbound) {
 		r, ok := a.records[key]
 		if !ok {
 			r = a.newRecord(a.now())
@@ -286,6 +284,10 @@ func (a *deadLetterAlarm) pass(ctx context.Context) {
 	}
 }
 
+func deadLetterRecoveryGuidance(channel, ts string) string {
+	return fmt.Sprintf("look: gc slack status\nredrive: gc slack inbound-redrive --conversation-id %s\nonly after you have read this message in Slack and answered it yourself (this delivers nothing and closes the alarm): gc slack inbound-redrive --conversation-id %s --acknowledge %s", channel, channel, ts)
+}
+
 func (a *deadLetterAlarm) localMail(ctx context.Context, key string, r alarmRecord) bool {
 	r.LocalTries++
 	r.LocalNext = a.now().Add(retryLadderDelay(inboundHoldBackoff, r.LocalTries-1, 0))
@@ -301,11 +303,11 @@ func (a *deadLetterAlarm) localMail(ctx context.Context, key string, r alarmReco
 		a.records[key] = before
 		return a.save()
 	}
-	body := fmt.Sprintf("channel: %s\nthread_ts: %s\nmessage_ts: %s\nheld_since: %s\ndead_lettered_at: %s\nstate: %s\ncomposer: %s\noperator: %s\nlook: gc slack status\nredrive: gc slack inbound-redrive --conversation-id %s\nonly after you have read this message in Slack and answered it yourself (this delivers nothing and closes the alarm): gc slack inbound-redrive --conversation-id %s --acknowledge %s",
-		m.channel, m.thread, m.ts, m.held.UTC().Format(time.RFC3339), m.row.UTC().Format(time.RFC3339), m.state, m.composer, a.operatorSetting(), m.channel, m.channel, m.ts)
+	body := fmt.Sprintf("channel: %s\nthread_ts: %s\nmessage_ts: %s\nheld_since: %s\ndead_lettered_at: %s\nstate: %s\ncomposer: %s\noperator: %s\n%s",
+		m.channel, m.thread, m.ts, m.held.UTC().Format(time.RFC3339), m.row.UTC().Format(time.RFC3339), m.state, m.composer, a.operatorSetting(), deadLetterRecoveryGuidance(m.channel, m.ts))
 	release := a.reserveLocal(key)
 	defer release()
-	out, err, timedOut := a.command(ctx, "--city", a.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-dead:"+ingestionDigest(key), "--notify", "--json", "-s", "slack: a message did not reach the session", "-m", body)
+	out, err, timedOut := a.command(ctx, "--city", a.cfg.operatorMailCity(), "mail", "send", "mayor", "--dedup", "slack-dead:"+ingestionDigest(key), "--notify", "--json", "-s", "slack: a message did not reach the session", "-m", body)
 	r.LocalEnded = true
 	if err == nil {
 		for line := range bytes.Lines(out) {

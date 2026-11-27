@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -83,7 +82,7 @@ fi
 			var want strings.Builder
 			for _, ts := range timestamps {
 				want.WriteString(strings.Join([]string{"--city", "example-target", "mail", "send", "mayor", "-s", "Slack inbound message could not be delivered",
-					"-m", "File: " + path + "\nReason: 422 Unprocessable Entity", "--dedup", keyPrefix + ts, "--notify", "--json", ""}, "\x00"))
+					"-m", "File: " + path + "\nReason: 422 Unprocessable Entity\nchannel: " + channel + "\nthread_ts: " + ts + "\nmessage_ts: " + ts + "\n" + deadLetterRecoveryGuidance(channel, ts), "--dedup", keyPrefix + ts, "--notify", "--json", ""}, "\x00"))
 			}
 			if string(argv) != want.String() {
 				t.Fatalf("unexpected dead-letter argv %q", argv)
@@ -120,8 +119,8 @@ func TestDeadLetterConcurrentWriteChecksMailboxAgain(t *testing.T) {
 			a := newDeadLetterAlerts(t.TempDir())
 			started, finish := make(chan struct{}), make(chan struct{})
 			var attempts []string
-			a.send = func(path, key, reason string) (operatorMailReceipt, error) {
-				attempts = append(attempts, reason)
+			a.send = func(key, body string) (operatorMailReceipt, error) {
+				attempts = append(attempts, body)
 				if len(attempts) == 1 {
 					close(started)
 					<-finish
@@ -138,9 +137,8 @@ func TestDeadLetterConcurrentWriteChecksMailboxAgain(t *testing.T) {
 			a.notify("example.jsonl", msg, "third")
 			close(finish)
 			a.wait()
-			want := []string{"first", "third"}
-			if !slices.Equal(attempts, want) {
-				t.Fatalf("attempts = %v, want %v", attempts, want)
+			if len(attempts) != 2 || !strings.Contains(attempts[0], "Reason: first\n") || !strings.Contains(attempts[1], "Reason: third\n") {
+				t.Fatalf("expected the first and latest notices, got %v", attempts)
 			}
 		})
 	}
@@ -151,7 +149,7 @@ func TestDeadLetterDistinctLossesDrainTogether(t *testing.T) {
 	const count = 3
 	started := make(chan string, count)
 	release := make(chan struct{})
-	alerts.send = func(path, key, reason string) (operatorMailReceipt, error) {
+	alerts.send = func(key, body string) (operatorMailReceipt, error) {
 		started <- key
 		<-release
 		return operatorMailReceipt{ID: "example-mail"}, nil
