@@ -180,7 +180,7 @@ func getJSON(ctx context.Context, tok *oauth2.Token, rawURL string, out any) err
 		return err
 	}
 	tok.SetAuthHeader(req)
-	res, err := http.DefaultClient.Do(req)
+	res, err := refusingRedirects(http.DefaultClient).Do(req)
 	if err != nil {
 		return err
 	}

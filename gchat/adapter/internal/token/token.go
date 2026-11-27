@@ -456,7 +456,7 @@ func (s *Source) refresh(ctx context.Context, current *oauth2.Token) (*oauth2.To
 	defer cancel()
 	next := s.mint
 	if next == nil {
-		ts := s.config.TokenSource(ctx, current)
+		ts := s.config.TokenSource(tokenEndpointContext(ctx), current)
 		next = func(context.Context) (*oauth2.Token, error) { return ts.Token() }
 	}
 	for attempt := 0; ; attempt++ {
@@ -629,10 +629,50 @@ func authenticatedClient(ctx context.Context, token func(context.Context) (*oaut
 	}
 	// Request contexts bound API calls; a total client timeout would also cut
 	// off large media bodies after the headers have already arrived.
-	return &http.Client{
-		Transport:     &tokenTransport{token: token, base: base, oauthClient: client, invalidate: invalidate},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	return refusingRedirects(&http.Client{
+		Transport: &tokenTransport{token: token, base: base, oauthClient: client, invalidate: invalidate},
+	})
+}
+
+func tokenEndpointContext(ctx context.Context) context.Context {
+	client, _ := ctx.Value(oauth2.HTTPClient).(*http.Client)
+	if client == nil {
+		client = http.DefaultClient
 	}
+	return context.WithValue(ctx, oauth2.HTTPClient, refusingRedirects(client))
+}
+
+func refusingRedirects(client *http.Client) *http.Client {
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return &http.Client{
+		Transport:     refusedRedirectTransport{base},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Jar:           client.Jar,
+		Timeout:       client.Timeout,
+	}
+}
+
+type refusedRedirectTransport struct{ http.RoundTripper }
+
+func (t refusedRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.RoundTripper.RoundTrip(req)
+	if err != nil || resp == nil || resp.Header.Get("Location") == "" {
+		return resp, err
+	}
+	switch resp.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		// The Google API and OAuth libraries interpret error bodies. A refused
+		// redirect must be classified by its original HTTP status alone.
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
+		resp.Body = http.NoBody
+		resp.ContentLength = 0
+	}
+	return resp, nil
 }
 
 type tokenTransport struct {
@@ -824,7 +864,7 @@ func runAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 	}
 	exchangeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	tok, err := cfg.Exchange(exchangeCtx, response.code, oauth2.VerifierOption(verifier))
+	tok, err := cfg.Exchange(tokenEndpointContext(exchangeCtx), response.code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		// oauth2 can flatten body-read failures and include response bodies in
 		// other errors. Preserve cancellation sentinels, never endpoint text.

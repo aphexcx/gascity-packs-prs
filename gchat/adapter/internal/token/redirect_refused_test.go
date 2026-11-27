@@ -40,6 +40,11 @@ func checkRefusedRedirect(t *testing.T, clientName, method, location string, sta
 	t.Helper()
 	const first = "https://first.invalid/resource"
 	calls := 0
+	responseText := `{"error":{"code":404}}`
+	if location == "" {
+		responseText = "upload incomplete"
+	}
+	wireBody := &closeTrackingBody{Reader: strings.NewReader(responseText)}
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
 		if r.Body != nil {
@@ -55,12 +60,13 @@ func checkRefusedRedirect(t *testing.T, clientName, method, location string, sta
 			}
 		}
 		header := make(http.Header)
+		header.Set("Retry-After", "60")
 		if location == "" {
 			header.Set("Range", "bytes=0-11")
 		} else {
 			header.Set("Location", location)
 		}
-		return &http.Response{StatusCode: status, Header: header, Body: http.NoBody}, nil
+		return &http.Response{StatusCode: status, Header: header, Body: wireBody, ContentLength: int64(len(responseText))}, nil
 	})
 	ctx := context.WithValue(t.Context(), oauth2.HTTPClient, &http.Client{Transport: transport})
 	source := &Source{state: Ready, current: &oauth2.Token{AccessToken: "fixture"}}
@@ -101,7 +107,18 @@ func checkRefusedRedirect(t *testing.T, clientName, method, location string, sta
 	if calls != 1 || resp.StatusCode != status || resp.Header.Get("Location") != location {
 		t.Fatalf("got %d requests, status %d, Location %q", calls, resp.StatusCode, resp.Header.Get("Location"))
 	}
-	if location == "" && resp.Header.Get("Range") != "bytes=0-11" {
-		t.Fatalf("resumable upload returned Range %q", resp.Header.Get("Range"))
+	if resp.Header.Get("Retry-After") != "60" {
+		t.Fatal("lost Retry-After")
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if location == "" {
+		if resp.Header.Get("Range") != "bytes=0-11" || string(got) != responseText || wireBody.closed {
+			t.Fatal("changed a resumable upload response")
+		}
+	} else if len(got) != 0 || !wireBody.closed || resp.ContentLength != 0 {
+		t.Fatal("refused response must have an empty body and close the wire body")
 	}
 }
