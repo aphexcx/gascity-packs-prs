@@ -1,0 +1,51 @@
++ git merge-base --is-ancestor b774e4a045a3d102f06294ed7b27ba57a9209fb5 7ad24d107a8117265fd123c66eabbd666bab1863
++ printf 'exit %d\n' 0
+exit 0
++ git grep -n 'GC.Inbound(ctx' 7ad24d107a8117265fd123c66eabbd666bab1863 -- gchat/adapter ':!*_test.go'
+7ad24d107a8117265fd123c66eabbd666bab1863:gchat/adapter/internal/inbound/inbound.go:1290:		r, err := p.opts.GC.Inbound(ctx, w)
++ git grep -c 'p.resume(' 7ad24d107a8117265fd123c66eabbd666bab1863 -- gchat/adapter ':!*_test.go'
+7ad24d107a8117265fd123c66eabbd666bab1863:gchat/adapter/internal/inbound/inbound.go:6
++ git grep -n '"mail", "send", identity.Agent' 7ad24d107a8117265fd123c66eabbd666bab1863 -- gchat/adapter ':!*_test.go'
+7ad24d107a8117265fd123c66eabbd666bab1863:gchat/adapter/internal/app/operations.go:240:	return exec.CommandContext(ctx, bin, "mail", "send", identity.Agent, "--dedup", key, "-s", subject, "-m", r.Body).Run()
++ git grep -n 'POST response unavailable; delivery unknown' 7ad24d107a8117265fd123c66eabbd666bab1863 -- gchat/adapter ':!*_test.go'
+7ad24d107a8117265fd123c66eabbd666bab1863:gchat/adapter/internal/inbound/inbound.go:1326:			if err := p.unresolved(id, "POST response unavailable; delivery unknown"); err != nil {
++ git diff --quiet 7ad24d107a8117265fd123c66eabbd666bab1863 d0e3d60f134b67f34c2c09752ab35895d50d5bcf -- gchat/adapter/internal/ledger gchat/adapter/internal/neversilent gchat/adapter/internal/provenance gchat/adapter/internal/principal gchat/adapter/internal/token gchat/adapter/internal/puller gchat/adapter/internal/config gchat/adapter/internal/chat gchat/adapter/internal/server gchat/adapter/go.mod gchat/adapter/go.sum gchat/pack.toml gchat/commands gchat/skills gchat/doctor gchat/city-fragment.toml gchat/adapter/internal/catchup
++ printf 'original A4 exit %d\n' 1
+original A4 exit 1
++ git diff --name-only 7ad24d107a8117265fd123c66eabbd666bab1863 d0e3d60f134b67f34c2c09752ab35895d50d5bcf -- gchat/adapter/internal/catchup
+gchat/adapter/internal/catchup/catchup.go
+gchat/adapter/internal/catchup/history.go
+gchat/adapter/internal/catchup/unanswered_retirement_test.go
++ git diff --quiet 7ad24d107a8117265fd123c66eabbd666bab1863 d0e3d60f134b67f34c2c09752ab35895d50d5bcf -- gchat/adapter/internal/ledger gchat/adapter/internal/neversilent gchat/adapter/internal/provenance gchat/adapter/internal/principal gchat/adapter/internal/token gchat/adapter/internal/puller gchat/adapter/internal/config gchat/adapter/internal/chat gchat/adapter/internal/server gchat/adapter/go.mod gchat/adapter/go.sum gchat/pack.toml gchat/commands gchat/skills gchat/doctor gchat/city-fragment.toml
++ printf 'A4 with authorized exception exit %d\n' 0
+A4 with authorized exception exit 0
++ set +x
+A5: diff of the report function, extracted from each tree by the same awk range
+A5 exit 0
++ git diff --numstat 7ad24d107a8117265fd123c66eabbd666bab1863 d0e3d60f134b67f34c2c09752ab35895d50d5bcf -- gchat/adapter
+5	1	gchat/adapter/internal/app/app.go
+298	0	gchat/adapter/internal/app/delivery_wake_test.go
+53	4	gchat/adapter/internal/app/operations.go
+3	3	gchat/adapter/internal/app/raise_test.go
+24	3	gchat/adapter/internal/app/workers.go
+2	2	gchat/adapter/internal/catchup/catchup.go
+1	1	gchat/adapter/internal/catchup/history.go
+116	0	gchat/adapter/internal/catchup/unanswered_retirement_test.go
+107	0	gchat/adapter/internal/fakes/fakegc/fakegc.go
+54	8	gchat/adapter/internal/gcclient/gcclient.go
+72	0	gchat/adapter/internal/gcclient/unanswered_test.go
+60	20	gchat/adapter/internal/inbound/history.go
+139	30	gchat/adapter/internal/inbound/inbound.go
+18	1	gchat/adapter/internal/inbound/raise.go
+77	0	gchat/adapter/internal/inbound/retry_bound_notice_test.go
+554	0	gchat/adapter/internal/inbound/unanswered_test.go
+1	1	gchat/adapter/test/e2e/e2e_test.go
++ git diff -U0 7ad24d107a8117265fd123c66eabbd666bab1863 d0e3d60f134b67f34c2c09752ab35895d50d5bcf -- gchat/adapter/internal/app/raise_test.go gchat/adapter/test/e2e/e2e_test.go
++ awk '/^diff --git/{print} /^@@/{print}'
+diff --git a/gchat/adapter/internal/app/raise_test.go b/gchat/adapter/internal/app/raise_test.go
+@@ -31 +31 @@ func TestDeliveryRaiseMailsTheIdentityAgentWithPerLifeDedup(t *testing.T) {
+@@ -49 +49 @@ func TestDeliveryRaiseMailsTheIdentityAgentWithPerLifeDedup(t *testing.T) {
+@@ -80 +80 @@ func TestEndedDeliveryMailHasItsOwnDedupKey(t *testing.T) {
+diff --git a/gchat/adapter/test/e2e/e2e_test.go b/gchat/adapter/test/e2e/e2e_test.go
+@@ -76 +76 @@ func newFixture(t *testing.T) *fixture {
++ set +x

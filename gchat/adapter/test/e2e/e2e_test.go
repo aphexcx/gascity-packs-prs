@@ -73,7 +73,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	stub := filepath.Join(dir, "gc")
-	write(t, stub, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$GC_STUB_LOG\"\nexit 0\n")
+	write(t, stub, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$GC_STUB_LOG\"\necho '{\"ok\":true,\"notified\":true}'\nexit 0\n")
 	if err := os.Chmod(stub, 0700); err != nil {
 		t.Fatal(err)
 	}

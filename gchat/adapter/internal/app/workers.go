@@ -91,7 +91,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 		lookup = principal.DirectoryLookup(lookupHTTP, a.cfg.Endpoints.PeopleAPIBase)
 	}
 	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup, Logger: a.lookupWarnings})
-	proc, err := inbound.New(inbound.Options{Ack: a.arrival, NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, SenderFill: inbound.NewSenderFill(lookupChat, a.lookupWarnings), Logger: a.log, RetryDelay: a.opts.RetryDelay, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
+	proc, err := inbound.New(inbound.Options{Ack: a.arrival, NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, SenderFill: inbound.NewSenderFill(lookupChat, a.lookupWarnings), Logger: a.log, RetryDelay: a.opts.RetryDelay, Now: a.opts.inboundNow, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
 	if err != nil {
 		return err
 	}
@@ -141,6 +141,20 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	a.health("catching-up", "recovering retained history")
 	workers.Go(func() { m.RenewLoop(ctx) })
 	workers.Go(func() { a.poll(ctx, proc, fatal) })
+	workers.Go(func() {
+		t := time.NewTicker(a.deliveryTick())
+		defer t.Stop()
+		// Give the immediate recovery pass its first chance to settle old
+		// intents. A slow or blocked POST cannot delay this first tick.
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				proc.RaiseDue(ctx)
+			}
+		}
+	})
 	workers.Go(func() { fatal <- a.catchup(ctx, r, m, &caught) })
 	monitor := time.NewTicker(time.Second)
 	defer monitor.Stop()
@@ -354,12 +368,19 @@ func (a *application) frozenHistory() bool {
 	return false
 }
 
+func (a *application) deliveryTick() time.Duration {
+	if a.opts.pollInterval > 0 {
+		return a.opts.pollInterval
+	}
+	return 5 * time.Second
+}
+
 func (a *application) poll(ctx context.Context, p *inbound.Processor, fatal chan<- error) {
-	t := time.NewTicker(5 * time.Second)
+	t := time.NewTicker(a.deliveryTick())
 	defer t.Stop()
 	var lastLog time.Time
 	for {
-		err := p.Poll(ctx)
+		err := p.Pass(ctx)
 		if err != nil && strings.Contains(err.Error(), "gc temporarily unavailable") {
 			a.gcDown.Store(true)
 		}

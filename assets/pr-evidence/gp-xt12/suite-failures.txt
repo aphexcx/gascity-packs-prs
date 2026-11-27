@@ -1,0 +1,42 @@
+Initial full module
+Exit 1. Test events: 2,874 passed, six failed, two skipped. Packages: 23 passed, two failed, one had no tests.
+TestCommandPreparationFailureSettlesExistingIntent
+TestCommandPreparationFailureSettlesExistingIntent/not-ready
+  server_test.go:2080: preparation failure: {ConversationID: SpaceName: Thread: InReplyTo: Delivered:false Recorded:false MessageID: Key:preparation Reason:context deadline exceeded FailureKind: RetryAfter:0} context deadline exceeded
+TestFirstStartCountsAndToldRetiredDeliveries
+TestFirstStartCountsAndToldRetiredDeliveries/cursor
+  history_retirement_test.go:116: no-mail start sent 1 mails
+TestFirstStartCountsAndToldRetiredDeliveries/restore-cursor
+  history_retirement_test.go:116: no-mail start sent 1 mails
+TestNeverSilentCredentialsArriveAfterFirstPoll
+  never_silent_startup_test.go:150: without credentials: owner lines=0 operator mails=1
+  never_silent_startup_test.go:154: credentials ready, registration still 503: owner lines=1 operator mails=1
+  testing.go:1619: TempDir RemoveAll cleanup: unlinkat <local path> directory not empty
+
+Concurrent full module
+Exit 1. Test events: 2,874 passed, ten failed, two skipped. Packages: 22 passed, three failed, one had no tests.
+TestDeliveryWakeSlow
+TestDeliveryWakeSlow/mail_timeout
+  delivery_wake_test.go:103: mail_timeout
+TestExpiredDirectCommandFailureSurvivesRestart
+TestExpiredDirectCommandFailureSurvivesRestart/no-session
+  server_test.go:1925: deadline result: 500 {ConversationID: SpaceName: Thread: InReplyTo: Delivered:false Recorded:false MessageID: Key: Reason: FailureKind: RetryAfter:0}
+TestExpiredDirectCommandFailureSurvivesRestart/unbound
+  server_test.go:1925: deadline result: 500 {ConversationID: SpaceName: Thread: InReplyTo: Delivered:false Recorded:false MessageID: Key: Reason: FailureKind: RetryAfter:0}
+TestFreshTokenIdentityDeliversFirstDM
+  app_test.go:517: condition did not become true
+TestLookupHoldCarriesCredentialKind
+TestLookupHoldCarriesCredentialKind/reaction_parent/302
+  inbound_test.go:1962: unsafe or unclassified hold: inbound: reaction parent lookup failed: transient
+TestNeverSilentGateLockLoss
+TestNeverSilentGateLockLoss/no-credentials/missing
+  never_silent_gate_test.go:148: replacement unchanged=true owner lines=0 operator mails=1
+  never_silent_gate_test.go:150: watch wrote state or emitted effects after lock loss
+
+Concurrent race run
+Exit 1. Four packages passed and one failed. The original text-mode run reported failures only.
+--- FAIL: TestRevokedTokenReplacementResumes (6.53s)
+    app_test.go:346: health did not become ready in 5s: {State:initializing Reason:connecting and reconciling subscriptions}
+--- FAIL: TestShutdownCheckpointsBeforeDrainingStalledRequestBody (8.33s)
+    --- FAIL: TestShutdownCheckpointsBeforeDrainingStalledRequestBody/post-drain-save (5.74s)
+        shutdown_test.go:63: condition did not become true

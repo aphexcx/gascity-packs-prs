@@ -31,6 +31,11 @@ type Server struct {
 	Script       []wire.Delivery
 	NextDelivery string
 	Receipts     map[string]wire.ReceiptResponse
+	// UNPROVEN: these scripted boundaries model the claim, the receipt sign,
+	// process uptime and work continuing after the HTTP client leaves.
+	Health  func(http.ResponseWriter, *http.Request)
+	Posts   []PostStep
+	fanouts map[string]int
 	// Bindings maps each active conversation binding to its owning session.
 	// Outbound fixtures must populate this before publishing. Use Bind for
 	// synchronized updates while clients are running.
@@ -69,6 +74,10 @@ func New(t testing.TB) *Server {
 
 func (s *Server) URL() string { return s.http.URL }
 func (s *Server) Close()      { s.http.Close() }
+
+// StopAccepting leaves the active response intact while refusing new dials.
+func (s *Server) StopAccepting() { _ = s.http.Listener.Close() }
+
 func (s *Server) Configure(fn func(*Server)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -213,6 +222,15 @@ type receiptResponse struct {
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == "/health" {
+		s.mu.Lock()
+		health := s.Health
+		s.mu.Unlock()
+		if health != nil {
+			health(w, r)
+			return
+		}
+	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) < 5 || parts[0] != "v0" || parts[1] != "city" || parts[3] != "extmsg" {
 		fail(w, 404, "route not found")
@@ -241,6 +259,87 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.outbound(w, r, city)
 		return
 	}
+	step := PostStep{}
+	if path == "inbound" && r.Method == http.MethodPost {
+		s.mu.Lock()
+		if len(s.Posts) > 0 {
+			step, s.Posts = s.Posts[0], s.Posts[1:]
+		}
+		s.mu.Unlock()
+		if step.AfterClientLeft != nil {
+			// Preserve the request before closing the socket. The scripted
+			// handler can now finish its work after the client's call ended.
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				return
+			}
+			conn, _, err := http.NewResponseController(w).Hijack()
+			if err != nil {
+				panic(err)
+			}
+			_ = conn.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			<-step.AfterClientLeft
+			out := httptest.NewRecorder()
+			s.serveExtmsg(out, r, city, path, step)
+			if step.After != nil {
+				step.After(out)
+			}
+			return
+		}
+		if step.After != nil || step.Drop {
+			// Buffer the response so the request can outlive its client,
+			// without serializing health or the next claim behind it.
+			out := httptest.NewRecorder()
+			defer func() {
+				if step.After != nil {
+					step.After(out)
+				}
+				if step.Drop {
+					panic(http.ErrAbortHandler)
+				}
+				for key, values := range out.Header() {
+					w.Header()[key] = values
+				}
+				w.WriteHeader(out.Code)
+				_, _ = w.Write(out.Body.Bytes())
+			}()
+			s.serveExtmsg(out, r, city, path, step)
+			return
+		}
+	}
+	s.serveExtmsg(w, r, city, path, step)
+}
+
+// PostStep can reject before claiming, or delay or lose the response after
+// the claim decision. After runs outside the claim lock.
+type PostStep struct {
+	HTTPStatus      int
+	Drop            bool
+	After           func(*httptest.ResponseRecorder)
+	AfterClientLeft <-chan struct{}
+}
+
+// Restart clears process-local receipts and claims, retaining observation
+// history so a test can count fan-outs across both processes.
+func (s *Server) Restart(health func(http.ResponseWriter, *http.Request)) {
+	s.Configure(func(s *Server) {
+		clear(s.dedup)
+		clear(s.Receipts)
+		clear(s.receiptKeys)
+		clear(s.receiptCities)
+		clear(s.concludedAt)
+		s.Health = health
+	})
+}
+
+func (s *Server) Fanouts(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fanouts[id]
+}
+
+func (s *Server) serveExtmsg(w http.ResponseWriter, r *http.Request, city, path string, step PostStep) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.observeReceipts()
@@ -281,6 +380,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.inbound = append(s.inbound, message)
+		if step.HTTPStatus != 0 {
+			fail(w, step.HTTPStatus, "scripted response before claim")
+			return
+		}
 		// DedupKey is intentionally ignored; gc keys on conversation and message.
 		keyBytes, _ := json.Marshal(struct {
 			City         string
@@ -304,6 +407,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			respond(w, 200, previous)
 			return
 		}
+		if s.fanouts == nil {
+			s.fanouts = make(map[string]int)
+		}
+		s.fanouts[message.ProviderMessageID]++
 		var answer wire.Delivery
 		if len(s.Script) > 0 {
 			answer = clone(s.Script[0])

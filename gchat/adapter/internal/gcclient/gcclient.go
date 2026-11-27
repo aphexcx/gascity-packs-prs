@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -23,11 +24,18 @@ import (
 	"gchat-adapter/internal/wire"
 )
 
+const (
+	inboundPostTimeout = 120 * time.Second
+	healthCheckTimeout = 5 * time.Second
+)
+
 type Client struct {
-	base, city  string
-	http        *http.Client
-	onRefusedMu sync.RWMutex
-	onRefused   func(error)
+	base, city     string
+	http           *http.Client
+	inboundTimeout time.Duration
+	healthTimeout  time.Duration
+	onRefusedMu    sync.RWMutex
+	onRefused      func(error)
 }
 
 // SetConnectionRefusedHandler lets the registrar observe failures from every
@@ -39,14 +47,15 @@ func (c *Client) SetConnectionRefusedHandler(fn func(error)) {
 	c.onRefused = fn
 }
 
-// New constructs a client for a gc API base URL and city. Each call respects
-// its context and has a 35-second ceiling, allowing gc's 30-second publish
-// callback deadline to expire before the client's own timeout.
+// New constructs a client for a gc API base URL and city. Registration,
+// receipt and outbound calls keep their 35-second ceiling, allowing gc's
+// 30-second publish callback deadline to expire before the client's timeout.
 // A redirect is a non-2xx error, not permission to replay a mutation or send it
 // to another endpoint.
 func New(base, city string) *Client {
 	return &Client{
 		base: strings.TrimRight(base, "/"), city: city,
+		inboundTimeout: inboundPostTimeout, healthTimeout: healthCheckTimeout,
 		http: &http.Client{
 			Timeout:       35 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -230,6 +239,34 @@ func (c *Client) Receipt(ctx context.Context, id string) (wire.ReceiptResponse, 
 	return result, err
 }
 
+// Uptime reads process age from this client's API origin. Any unavailable
+// or unusable answer leaves the processor without a same-process proof.
+func (c *Client) Uptime(ctx context.Context) (time.Duration, bool) {
+	ctx, cancel := context.WithTimeout(ctx, c.healthTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/health", nil)
+	if err != nil {
+		return 0, false
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, false
+	}
+	const maxHealthBytes = 64 << 10
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxHealthBytes+1))
+	var health struct {
+		Seconds int64 `json:"uptime_sec"`
+	}
+	if err != nil || len(b) > maxHealthBytes || json.Unmarshal(b, &health) != nil || health.Seconds <= 0 || health.Seconds > math.MaxInt64/int64(time.Second) {
+		return 0, false
+	}
+	return time.Duration(health.Seconds) * time.Second, true
+}
+
 func (c *Client) Outbound(ctx context.Context, req wire.OutboundRequest) (wire.OutboundResult, error) {
 	var result wire.OutboundResult
 	err := c.call(ctx, http.MethodPost, "outbound", req, &result)
@@ -248,6 +285,15 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 		reader = bytes.NewReader(data)
 	}
 	endpoint := c.base + "/v0/city/" + url.PathEscape(c.city) + "/extmsg/" + path
+	client := c.http
+	if method == http.MethodPost && path == "inbound" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.inboundTimeout)
+		defer cancel()
+		// Use the same transport and redirect policy. The shared client's
+		// shorter timeout would otherwise win over this request's deadline.
+		client = &http.Client{Transport: client.Transport, CheckRedirect: client.CheckRedirect, Jar: client.Jar}
+	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return fmt.Errorf("gc %s %s: create request: %w", method, path, err)
@@ -260,7 +306,7 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 		sum := sha256.Sum256(data)
 		req.Header.Set("Idempotency-Key", fmt.Sprintf("gchat-register-%x", sum))
 	}
-	resp, err := c.http.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, syscall.ECONNREFUSED) {
 			c.onRefusedMu.RLock()

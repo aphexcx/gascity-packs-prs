@@ -28,7 +28,7 @@ func TestDeliveryRaiseMailsTheIdentityAgentWithPerLifeDedup(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "mail-args")
 	// The fake gc records its arguments, one per line; no real mail is sent.
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GCHAT_TEST_MAIL_ARGS\"\nexit \"${GCHAT_TEST_MAIL_EXIT:-0}\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GCHAT_TEST_MAIL_ARGS\"\necho '{\"ok\":true,\"notified\":true}'\nexit \"${GCHAT_TEST_MAIL_EXIT:-0}\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestDeliveryRaiseMailsTheIdentityAgentWithPerLifeDedup(t *testing.T) {
 	}
 	// printf splits the multi-line body over lines; the fixed arguments come first.
 	args := strings.Split(string(b), "\n")
-	want := []string{"mail", "send", "support", "--dedup", fmt.Sprintf("gchat:examplecity:example:delivery:%x", sha256.Sum256([]byte(r.ID+"\x002026-11-10T20:22:58.123456789Z"))), "-s", "gchat: delivery", "-m", "line one", "line two"}
+	want := []string{"mail", "send", "support", "--dedup", fmt.Sprintf("gchat:examplecity:example:delivery:%x", sha256.Sum256([]byte(r.ID+"\x002026-11-10T20:22:58.123456789Z"))), "--notify", "--json", "-s", "gchat: delivery", "-m", "line one", "line two"}
 	if len(args) < len(want) || !slices.Equal(args[:len(want)], want) {
 		t.Fatalf("mail arguments:\n got %q\nwant %q", args, want)
 	}
@@ -77,7 +77,7 @@ func TestDeliveryRaiseUsesTheNotifyHookAndReportsItsFailure(t *testing.T) {
 // live key of the life before it never drops the replay's mails.
 func TestEndedDeliveryMailHasItsOwnDedupKey(t *testing.T) {
 	dir := t.TempDir()
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GCHAT_TEST_MAIL_ARGS\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GCHAT_TEST_MAIL_ARGS\"\necho '{\"ok\":true,\"notified\":true}'\n"
 	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

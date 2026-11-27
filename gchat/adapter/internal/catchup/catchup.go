@@ -191,8 +191,8 @@ func (r *Runner) FreezeFrom(ctx context.Context, now time.Time, foundBy string) 
 					l.Spaces[space.Name] = s
 				}
 				s.StartFirstRead(b.at, r.opts.Now().UTC(), r.opts.Config.JoinReachback(), foundBy, b.source)
-				inbound.RetireSpaceHistory(l, r.opts.Config, space.Name, r.opts.Logger)
-				firstSeen = append(firstSeen, s.FirstSeenFields(space.Name))
+				retired := inbound.RetireSpaceHistory(l, r.opts.Config, space.Name, r.opts.Logger)
+				firstSeen = append(firstSeen, append(s.FirstSeenFields(space.Name), "retired_deliveries", len(retired)))
 			}
 			if s.Wake == "" {
 				s.Wake = string(r.opts.Config.Wake(space.Name))

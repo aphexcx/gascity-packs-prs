@@ -1,9 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -225,11 +228,20 @@ func sleep(ctx context.Context, d time.Duration) error {
 // a mail that says the message ended has its own key, and a replay's mails
 // are never dropped for a key of the life before it.
 func (a *application) raiseDelivery(ctx context.Context, r inbound.Raise) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	const mailTimeout = 120 * time.Second
+	const wakeTimeout = 60 * time.Second
+	mailLimit, wakeLimit := a.opts.mailTimeout, a.opts.wakeTimeout
+	if mailLimit == 0 {
+		mailLimit = mailTimeout
+	}
+	if wakeLimit == 0 {
+		wakeLimit = wakeTimeout
+	}
+	mailCtx, cancelMail := context.WithTimeout(ctx, mailLimit)
+	defer cancelMail()
 	const subject = "gchat: delivery"
 	if a.opts.Notify != nil {
-		return a.opts.Notify(ctx, subject, r.Body)
+		return a.opts.Notify(mailCtx, subject, r.Body)
 	}
 	identity := a.cfg.Identity()
 	key := fmt.Sprintf("gchat:%s:%s:%s", a.cfg.Secrets.CityName, identity.Name, r.DedupKey())
@@ -237,5 +249,42 @@ func (a *application) raiseDelivery(ctx context.Context, r inbound.Raise) error 
 	if bin == "" {
 		bin = "gc"
 	}
-	return exec.CommandContext(ctx, bin, "mail", "send", identity.Agent, "--dedup", key, "-s", subject, "-m", r.Body).Run()
+	cmd := exec.CommandContext(mailCtx, bin, "mail", "send", identity.Agent, "--dedup", key, "--notify", "--json", "-s", subject, "-m", r.Body)
+	// A descendant can outlive gc with an inherited output descriptor.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	// ErrWaitDelay by itself means gc exited successfully. Its result line
+	// still has to confirm the mail, exactly as on an ordinary successful exit.
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
+		if mailCtx.Err() == context.DeadlineExceeded {
+			return inbound.RaiseFailure("mail_timeout")
+		}
+		return inbound.RaiseFailure("mail_exit")
+	}
+	cancelMail()
+	for line := range bytes.Lines(out) {
+		var result struct {
+			OK       bool `json:"ok"`
+			Notified bool `json:"notified"`
+			Data     struct {
+				Notified bool `json:"notified"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(line, &result) != nil || !result.OK {
+			continue
+		}
+		if result.Notified || result.Data.Notified {
+			return nil
+		}
+		wakeCtx, cancelWake := context.WithTimeout(ctx, wakeLimit)
+		defer cancelWake()
+		if err := exec.CommandContext(wakeCtx, bin, "session", "nudge", identity.Agent, "gchat: a delivery notice is waiting in your mail").Run(); err != nil {
+			if wakeCtx.Err() == context.DeadlineExceeded {
+				return inbound.RaiseFailure("wake_timeout")
+			}
+			return inbound.RaiseFailure("wake_exit")
+		}
+		return nil
+	}
+	return inbound.RaiseFailure("mail_no_result")
 }

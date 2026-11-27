@@ -1,0 +1,8 @@
+    retirement_probe_test.go:62: before first read: unresolved/unknown attempts=1 fan-outs=1 notices=0
+    retirement_probe_test.go:85: after reload and one hour: unresolved/unknown end-mark=true notices=1 retired=0
+pass TestUnansweredPostNoticeAcrossLiveFirstRead/control
+    retirement_probe_test.go:62: before first read: unresolved/unknown attempts=1 fan-outs=1 notices=0
+    retirement_probe_test.go:85: after reload and one hour: committed/before_history_floor end-mark=false notices=0 retired=1
+    retirement_probe_test.go:87: unanswered POST lost its only notice
+fail TestUnansweredPostNoticeAcrossLiveFirstRead/first_read_before_raise
+fail TestUnansweredPostNoticeAcrossLiveFirstRead

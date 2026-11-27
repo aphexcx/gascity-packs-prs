@@ -1,0 +1,52 @@
+merge-base --is-ancestor BASE HEAD 0
+grep inbound 0
+grep resume 0
+grep mail 0
+grep reason 0
+HEAD:gchat/adapter/internal/inbound/inbound.go:1290:		r, err := p.opts.GC.Inbound(ctx, w)
+HEAD:gchat/adapter/internal/inbound/inbound.go:6
+HEAD:gchat/adapter/internal/app/operations.go:240:	return exec.CommandContext(ctx, bin, "mail", "send", identity.Agent, "--dedup", key, "-s", subject, "-m", r.Body).Run()
+HEAD:gchat/adapter/internal/inbound/inbound.go:1326:			if err := p.unresolved(id, "POST response unavailable; delivery unknown"); err != nil {
+A4 original 1
+A4 with sixth ruling exception 0
+A5 report 0
+C-1-red 1
+V3 red 1
+C-1 0
+withdrawal 0
+C-1 sixth ruling 0
+C-2 sixth ruling 0
+C-5 sixth ruling 0
+A2 without uptime 1
+A2 without sign 1
+A2 retained proof 1
+A2 premature mark 1
+retirement green 0
+command preparation isolated 0
+cursor startup isolated 0
+first poll isolated 0
+C-2 final 0
+C-5 final 0
+C-1 final 0
+C-6 0
+Earlier concurrent full module 1
+Earlier concurrent changed-package race 1
+Earlier full Python handoff 1
+Python signal test isolated 0
+Shutdown race isolated 0
+Revoked token race isolated 0
+Gate lock isolated 0
+Wake command isolated 0
+Fresh token isolated 0
+Lookup hold isolated 0
+Expired command isolated 0
+Reachable handoff 0
+Inherited-output test before review fix 1
+Inherited-output test after review fix 0
+Final C-2 0
+Final C-5 0
+Final C-1 0
+Final C-3 with serialized packages 0
+Full Python handoff repeat 0
+Final C-4 with serialized internal packages 0
+Final C-4 end-to-end fixture 0

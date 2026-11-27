@@ -39,7 +39,11 @@ type Options struct {
 	// Notify sends a single operator notification per incident. Tests replace it.
 	Notify func(context.Context, string, string) error
 	// RetryDelay is for inbound's bounded delivery retries; zero keeps its 1s default.
-	RetryDelay time.Duration
+	RetryDelay   time.Duration
+	mailTimeout  time.Duration
+	wakeTimeout  time.Duration
+	pollInterval time.Duration
+	inboundNow   func() time.Time
 	// KeyholderRetry shortens how often a managed credential re-asks a refusing
 	// key holder; zero keeps the 30s default. Tests set it.
 	KeyholderRetry time.Duration

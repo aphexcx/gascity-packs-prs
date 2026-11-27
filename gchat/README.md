@@ -531,6 +531,8 @@ fragment mark. `stuck` counts deliveries waiting two minutes or more since
 they were recorded, or, while pending, since their latest POST if later.
 The adapter mails the identity's agent (`[[identity]].agent`,
 default `mayor`) about such a message, with the subject `gchat: delivery`.
+Every delivery mail asks gc for a turn of that agent. A notice the dedup key
+suppressed costs one line in the agent's session.
 When several messages of a space wait, only the first of them is mailed: the
 others wait behind it, and its mail says how many did when it was sent. The
 mail is not sent again when that count changes. A message that waited behind
@@ -559,8 +561,10 @@ outage, gets two minutes from each pending POST before a waiting mail is due.
 An upgrade does not clear marks on a replay already in flight under an older
 adapter: those marks keep their earlier suppression rules. Replays requested
 on this version start the new mail allowance.
-The mail never carries the message's text, its sender or gc's error text. A
-mail that fails is tried again a minute later. The retry state lives in the
+The mail never carries the message's text, its sender or gc's error text.
+The adapter records it after gc confirms the mail and the wake has been
+requested. The mail command may run up to 120 seconds and its wake command
+up to 60. A failed try is retried a minute later. The retry state lives in the
 ledger: after a restart the next POST still waits for its time, and a POST
 that was in flight when the adapter stopped is unresolved as `interrupted
 POST; delivery unknown`.
@@ -576,10 +580,25 @@ resolve the waiting rows before a roll back. This follow-up adds no ledger
 fields. Adapter 0.5.0 still reads it, but drops the retry and mail fields on
 save and does not implement the replay mail or pending-age rules.
 
+An inbound post may hold the adapter's gate up to 120 seconds instead of 35,
+and with a re-post up to 245. If the latest answered post supplied a receipt,
+an unanswered post triggers one GET of gc's `/health`, bounded at 5 seconds.
+Without a receipt sign there is no health check. For one re-post, gc's
+uptime must place its start at least five seconds before both posts. Without
+that proof the first post ends unknown. A restart while a re-post is pending
+loses this memory. A failed, held or partial receipt can then lead to another
+post. If the first post also delivers late and gc loses its claim, a duplicate
+turn is possible. The claim by message ID (P1), receipt as its sign (P2), and
+same-process health check (P3) are UNPROVEN, as are mail notification and
+deduplication (P6) and the wake command (P7).
+
 An unresolved delivery stays in the ledger and is never automatically
 reposted. Read its ID, reason and cause in `status`; verify whether the turn
 arrived, then use `resolve ID --accept` to treat it as delivered or `--replay`
 to post it again. Replay can duplicate a turn whose first outcome is unknown.
+If a space's history is retired before an unknown delivery's notice goes
+out, the notice stays due. Retirement redacts the stored turn, so only
+acceptance is available for that historical delivery.
 A replay is posted at once and takes its place in its space's order by the
 time of the replay. Its answer reports `landed`, or `waiting` and why, using
 the result of that pass; a message with no gc route reports `not_routed`.
@@ -600,7 +619,7 @@ terminal reason omits `; retry pending`.
 | `not_delivered` (or another waiting cause) with `delivery retries exhausted` | gc answered one of the message's POSTs `partial`, or `held` with a `partial` member, so the adapter stopped at the fourth POST, or at that answer when it came later: a fragment may be in the terminal. | Look at the session; `--accept` if the agent has the message. Otherwise clear any fragment left in the agent's input box, then `--replay`. A replay into a box that still holds the fragment meets `draft_deferred` and waits up to 24 hours. It gets its own waiting mail after two minutes; `gc gchat status` shows it. |
 | `behind_earlier` | It waited 24 hours behind an earlier message of its space and was never posted. | Settle the earlier message, then `--replay`. |
 | `held` | gc holds a paste it cannot finish without an operator. | Look at the session before anything else; `--accept` if the message is there, else `--replay`. |
-| `unknown` | The outcome is not known: a lost POST response, an interrupted POST, a rejected POST, a receipt past its deadline or concluded pending without a whole paste, a status the adapter does not know, no answer from gc at all for 24 hours (`not delivered within the retry bound` while gc was down), or a record adapter 0.5.0 left between two saves (`delivery retries exhausted`; gc's last answer was not recorded). The reason says which. | Check whether the turn arrived; `--accept` if it did, `--replay` if not. |
+| `unknown` | The outcome is not known: a lost POST response, `re-post not confirmed (WORD); delivery unknown`, an interrupted POST, a rejected POST, a receipt past its deadline or concluded pending without a whole paste, a status the adapter does not know, no answer from gc at all for 24 hours (`not delivered within the retry bound` while gc was down), or a record adapter 0.5.0 left between two saves (`delivery retries exhausted`; gc's last answer was not recorded). The reason says which. | Check whether the turn arrived; `--accept` if it did, `--replay` if not. |
 | `withdrawn` | The sender deleted or edited the message before it was delivered. | Nothing; an edit arrives as its own message. It is mailed only when a waiting mail went out for it, to say it will not be delivered. |
 | none | Unresolved before causes were recorded. | Check, then accept or replay; it is not mailed. |
 
