@@ -33,6 +33,28 @@ gc formula show mol-shutdown-dance
 The recipe must read warrant metadata from the claimed bead via
 `$GC_BEAD_ID` and must not declare a required `warrant_id` var.
 
+The city-wide `mail-wake` order is off by default. When enabled, it checks the
+mayor's unread mail every three minutes and sends one local notification for
+previously unannounced mail at least three minutes old. While the last confirmed
+notice is unread, later mail stays pending. Once that notice leaves the unread
+inbox, the next tick announces the eligible pending IDs under their own dedup
+key, even if the mayor kept the old notice. The order appends IDs to
+`.gc/mail-wake.seen` after GC confirms the notification and saves the batch in
+`.gc/mail-wake.confirmed` so it can finish an interrupted append. A duplicate
+reply leaves the batch pending. Inspect the holder named in `gc events --type
+order.skipped --since 1h` before handling it.
+
+The order requires `gc`, `jq`, Python 3.7+, and a mail provider that supports
+`--dedup`, such as GC's built-in provider. Its test suite requires Python 3.11+
+for TOML parsing. Run the pack's `orders/scripts/mail-wake.sh --check` from the city
+directory to preview counts, or use `--seed` there to cover the existing backlog
+without sending. If it prints `inbox unavailable`, retry the seed before enabling.
+To opt in, copy the script and `orders/mail-wake.toml` into the
+same relative paths in that city, then change `enabled = false` to `true` in
+the local TOML. To turn it off, restore `false`. To roll back, remove those two
+local copies and retain both `.gc/mail-wake.seen` and `.gc/mail-wake.confirmed`
+for a future install.
+
 ## Merge strategies
 
 Work beads default to `metadata.merge_strategy=direct`: refinery lands the

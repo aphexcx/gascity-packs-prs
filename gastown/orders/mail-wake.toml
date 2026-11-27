@@ -1,0 +1,9 @@
+[order]
+description = "Ask the mayor to read mail that has waited three minutes"
+scope = "city"
+enabled = false
+trigger = "cooldown"
+interval = "3m"
+exec = '"$ORDER_DIR/scripts/mail-wake.sh"'
+# GC can wait 30 seconds for an idle recipient before queuing a turn.
+timeout = "90s"
