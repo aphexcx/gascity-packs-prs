@@ -82,7 +82,7 @@ fi
 			var want strings.Builder
 			for _, ts := range timestamps {
 				want.WriteString(strings.Join([]string{"--city", "example-target", "mail", "send", "mayor", "-s", "Slack inbound message could not be delivered",
-					"-m", "File: " + path + "\nReason: 422 Unprocessable Entity\nchannel: " + channel + "\nthread_ts: " + ts + "\nmessage_ts: " + ts + "\n" + deadLetterRecoveryGuidance(channel, ts), "--dedup", keyPrefix + ts, "--notify", "--json", ""}, "\x00"))
+					"-m", "File: " + path + "\nReason: 422 Unprocessable Entity\nchannel: " + channel + "\nthread_ts: " + ts + "\nmessage_ts: " + ts + "\n" + deadLetterRecoveryGuidance(channel, ts, unreadReplyRange{}), "--dedup", keyPrefix + ts, "--notify", "--json", ""}, "\x00"))
 			}
 			if string(argv) != want.String() {
 				t.Fatalf("unexpected dead-letter argv %q", argv)

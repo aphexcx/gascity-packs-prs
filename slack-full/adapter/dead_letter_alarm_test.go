@@ -376,6 +376,63 @@ func TestDeadLetterRangeCannotBorrowParentOrSiblingReceipt(t *testing.T) {
 	}
 }
 
+func TestDeadLetterListingAndLatestReplyDoNotShareReceipt(t *testing.T) {
+	for _, first := range []string{"listing", "latest"} {
+		t.Run(first, func(t *testing.T) {
+			f := newAlarmFixture(t, false)
+			latest := f.add("C1", "101.1")
+			latest.Inbound.ReplyToMessageID = "100.1"
+			listing := latest
+			listing.ManualRecovery = true
+			listing.Reason = "inbound liveness: a thread's listing hold aged out of the backfill window (1h0m0s) — the replies of thread 100.1 above 99.1 and up to this ts were never read (the pending set was full and the reads failed every probe); read them from Slack"
+			rows := []inboundRecoveryEntry{listing, latest}
+			if first == "latest" {
+				rows[0], rows[1] = rows[1], rows[0]
+			}
+			f.put("first", rows[0])
+			f.pass()
+			f.one("local")
+			f.put("second", rows[1])
+			f.restart()
+			sent := 0
+			f.cfg.deadLetterAlerts.send = func(key, body string) (operatorMailReceipt, error) {
+				sent++
+				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+			}
+			f.cfg.deadLetterAlerts.notify("C1.jsonl", rows[1].Inbound, rows[1].Reason)
+			f.cfg.deadLetterAlerts.wait()
+			if sent != 1 {
+				t.Fatalf("%s mailed first: writer sent %d mails for the other loss, want 1", first, sent)
+			}
+		})
+	}
+}
+
+func TestDeadLetterAlarmMailIdentifiesUnreadReplies(t *testing.T) {
+	f := newAlarmFixture(t, false)
+	e := f.add("C1", "100.1")
+	e.ManualRecovery = true
+	e.Inbound.ReplyToMessageID = "100.1"
+	e.Inbound.DedupKey = "slack-thread-100.1-99.1"
+	f.put("range", e)
+	f.pass()
+	args := f.one("local")
+	body := args[len(args)-1]
+	if !strings.Contains(body, "replies") || !strings.Contains(body, "99.1") {
+		t.Fatalf("alarm mail omitted the unread range: %s", body)
+	}
+	sent := 0
+	f.cfg.deadLetterAlerts.send = func(key, body string) (operatorMailReceipt, error) {
+		sent++
+		return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+	}
+	f.cfg.deadLetterAlerts.notify("C1.jsonl", e.Inbound, "unread replies after 99.1")
+	f.cfg.deadLetterAlerts.wait()
+	if sent != 0 {
+		t.Fatalf("writer repeated the sole range's accepted alarm mail %d times", sent)
+	}
+}
+
 func TestDeadLetterReceiptUsesConfiguredMailbox(t *testing.T) {
 	for _, first := range []string{"alarm", "writer"} {
 		t.Run(first, func(t *testing.T) {
@@ -566,7 +623,9 @@ func TestDeadLetterAlarmRoads(t *testing.T) {
 			previous := log.Writer()
 			log.SetOutput(&logs)
 			defer log.SetOutput(previous)
-			f.a.limit = 250 * time.Millisecond
+			// A successful fixture CLI also starts a shell and archives a key.
+			// Give it time to finish; the hanging command sleeps for 30s.
+			f.a.limit = 2 * time.Second
 			f.put("room", f.add("C1", "100.1"))
 			f.pass()
 			*f.now = f.now.Add(19 * time.Second)

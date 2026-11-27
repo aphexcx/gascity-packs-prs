@@ -46,11 +46,30 @@ func newDeadLetterAlerts(city string) *deadLetterAlerts {
 	}}
 }
 
-// Unread reply ranges use the parent's message timestamp and a cursor-specific
-// dedup key assigned by deadLetterRetiredHolds.
-func isDeadLetterReplyRange(inbound externalInboundMessage) bool {
-	return inbound.ReplyToMessageID == inbound.ProviderMessageID &&
-		strings.HasPrefix(inbound.DedupKey, "slack-thread-"+inbound.ProviderMessageID+"-")
+const listingHoldReasonPrefix = "inbound liveness: a thread's listing hold aged out of the backfill window"
+
+type unreadReplyRange struct {
+	present       bool
+	thread, after string
+}
+
+// The existing liveness rows store a pending thread's cursor in the dedup
+// key. A listing hold shares the latest reply's key and stores its cursor
+// only in the adapter-authored reason.
+func deadLetterReplyRange(inbound externalInboundMessage, reason string) unreadReplyRange {
+	thread := inbound.ReplyToMessageID
+	after, found := strings.CutPrefix(inbound.DedupKey, "slack-thread-"+thread+"-")
+	if thread != inbound.ProviderMessageID || !found {
+		if !strings.HasPrefix(reason, listingHoldReasonPrefix+" (") {
+			return unreadReplyRange{}
+		}
+		_, rest, _ := strings.Cut(reason, " — the replies of thread "+thread+" above ")
+		after, _, _ = strings.Cut(rest, " and up to this ts")
+	}
+	if _, _, ok := splitSlackTS(after); !ok {
+		after = ""
+	}
+	return unreadReplyRange{present: true, thread: thread, after: after}
 }
 
 func (a *deadLetterAlerts) notify(path string, inbound externalInboundMessage, reason string) {
@@ -64,12 +83,14 @@ func (a *deadLetterAlerts) notify(path string, inbound externalInboundMessage, r
 		thread = ts
 	}
 	mailKey := "dead-letter:" + filepath.Base(path) + ":" + ts
-	if isDeadLetterReplyRange(inbound) {
-		key += "|manual:" + inbound.DedupKey
-		mailKey += ":" + inbound.DedupKey
+	replies := deadLetterReplyRange(inbound, reason)
+	if replies.present {
+		rangeKey := ingestionDigest(replies.thread + "|" + replies.after + "|" + inbound.DedupKey)
+		key += "|range:" + rangeKey
+		mailKey += ":range:" + rangeKey
 	}
 	channel := inbound.Conversation.ConversationID
-	body := fmt.Sprintf("File: %s\nReason: %s\nchannel: %s\nthread_ts: %s\nmessage_ts: %s\n%s", path, reason, channel, thread, ts, deadLetterRecoveryGuidance(channel, ts))
+	body := fmt.Sprintf("File: %s\nReason: %s\nchannel: %s\nthread_ts: %s\nmessage_ts: %s\n%s", path, reason, channel, thread, ts, deadLetterRecoveryGuidance(channel, ts, replies))
 	a.mu.Lock()
 	if mail := a.inFlight[key]; mail != nil {
 		mail.pending = &body
@@ -81,7 +102,7 @@ func (a *deadLetterAlerts) notify(path string, inbound externalInboundMessage, r
 	a.mu.Unlock()
 	go func() {
 		for {
-			err := a.alarm.mailWritten(inbound, func() (operatorMailReceipt, error) {
+			err := a.alarm.mailWritten(inbound, replies, func() (operatorMailReceipt, error) {
 				return a.send(mailKey, body)
 			})
 			if err != nil {

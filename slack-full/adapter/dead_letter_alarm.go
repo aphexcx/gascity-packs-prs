@@ -31,6 +31,7 @@ const (
 
 type alarmMessage struct {
 	channel, ts, thread, state, composer string
+	replies                              unreadReplyRange
 	row, held                            time.Time
 	class                                int
 	marked                               bool
@@ -189,7 +190,7 @@ func (a *deadLetterAlarm) reserveLocal(key string) func() {
 	}
 }
 
-func (a *deadLetterAlarm) mailWritten(inbound externalInboundMessage, send func() (operatorMailReceipt, error)) error {
+func (a *deadLetterAlarm) mailWritten(inbound externalInboundMessage, replies unreadReplyRange, send func() (operatorMailReceipt, error)) error {
 	if a == nil {
 		_, err := send()
 		return err
@@ -203,7 +204,7 @@ func (a *deadLetterAlarm) mailWritten(inbound externalInboundMessage, send func(
 		<-done
 		a.mu.Lock()
 	}
-	if a.records[key].LocalMailed && a.cfg.inboundRecovery.canAttributeAlarmReceipt(inbound) {
+	if a.records[key].LocalMailed && a.cfg.inboundRecovery.canAttributeAlarmReceipt(inbound, replies) {
 		return nil
 	}
 	release := a.reserveLocal(key)
@@ -211,7 +212,7 @@ func (a *deadLetterAlarm) mailWritten(inbound externalInboundMessage, send func(
 	a.mu.Unlock()
 	receipt, err := send()
 	a.mu.Lock()
-	if err == nil && receipt.accepted() && a.cfg.inboundRecovery.canAttributeAlarmReceipt(inbound) {
+	if err == nil && receipt.accepted() && a.cfg.inboundRecovery.canAttributeAlarmReceipt(inbound, replies) {
 		r, ok := a.records[key]
 		if !ok {
 			r = a.newRecord(a.now())
@@ -284,7 +285,14 @@ func (a *deadLetterAlarm) pass(ctx context.Context) {
 	}
 }
 
-func deadLetterRecoveryGuidance(channel, ts string) string {
+func deadLetterRecoveryGuidance(channel, ts string, replies unreadReplyRange) string {
+	if replies.present {
+		after := ""
+		if replies.after != "" {
+			after = " after " + replies.after
+		}
+		return fmt.Sprintf("look: gc slack status\nread the unread replies in Slack thread %s%s and answer them before acknowledging: gc slack inbound-redrive --conversation-id %s --acknowledge %s", replies.thread, after, channel, ts)
+	}
 	return fmt.Sprintf("look: gc slack status\nredrive: gc slack inbound-redrive --conversation-id %s\nonly after you have read this message in Slack and answered it yourself (this delivers nothing and closes the alarm): gc slack inbound-redrive --conversation-id %s --acknowledge %s", channel, channel, ts)
 }
 
@@ -304,7 +312,7 @@ func (a *deadLetterAlarm) localMail(ctx context.Context, key string, r alarmReco
 		return a.save()
 	}
 	body := fmt.Sprintf("channel: %s\nthread_ts: %s\nmessage_ts: %s\nheld_since: %s\ndead_lettered_at: %s\nstate: %s\ncomposer: %s\noperator: %s\n%s",
-		m.channel, m.thread, m.ts, m.held.UTC().Format(time.RFC3339), m.row.UTC().Format(time.RFC3339), m.state, m.composer, a.operatorSetting(), deadLetterRecoveryGuidance(m.channel, m.ts))
+		m.channel, m.thread, m.ts, m.held.UTC().Format(time.RFC3339), m.row.UTC().Format(time.RFC3339), m.state, m.composer, a.operatorSetting(), deadLetterRecoveryGuidance(m.channel, m.ts, m.replies))
 	release := a.reserveLocal(key)
 	defer release()
 	out, err, timedOut := a.command(ctx, "--city", a.cfg.operatorMailCity(), "mail", "send", "mayor", "--dedup", "slack-dead:"+ingestionDigest(key), "--notify", "--json", "-s", "slack: a message did not reach the session", "-m", body)

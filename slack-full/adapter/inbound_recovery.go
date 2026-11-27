@@ -2219,17 +2219,19 @@ type inboundRecoveryCounts struct{ Held, Dead, ByHand int }
 // A group receipt has no cursor. Room and alias copies of one Slack message
 // share it, but a parent and each lost range of replies are separate losses.
 // Keep settled rows in this check: they may explain a receipt still on disk.
-func (r *inboundRecovery) canAttributeAlarmReceipt(inbound externalInboundMessage) bool {
+func (r *inboundRecovery) canAttributeAlarmReceipt(inbound externalInboundMessage, replies unreadReplyRange) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	wantRange := isDeadLetterReplyRange(inbound)
-	matched := !wantRange // Ordinary writes can precede import of their row.
+	if replies.present && replies.after == "" {
+		return false
+	}
+	matched := !replies.present // Ordinary writes can precede import of their row.
 	for _, e := range r.state.Entries {
 		other := e.Inbound
 		if other.Conversation.ConversationID != inbound.Conversation.ConversationID || other.ProviderMessageID != inbound.ProviderMessageID {
 			continue
 		}
-		if isDeadLetterReplyRange(other) != wantRange || (wantRange && other.DedupKey != inbound.DedupKey) {
+		if deadLetterReplyRange(other, e.Reason) != replies {
 			return false
 		}
 		matched = true
@@ -2267,6 +2269,7 @@ func (r *inboundRecovery) deadLetterAlarmSet(now time.Time) map[string]alarmMess
 		if class > m.class {
 			m.class = class
 			m.channel, m.ts, m.thread = e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID, e.Inbound.ReplyToMessageID
+			m.replies = deadLetterReplyRange(e.Inbound, e.Reason)
 			if m.thread == "" {
 				m.thread = m.ts
 			}

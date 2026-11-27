@@ -1130,7 +1130,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 		reason := fmt.Sprintf("inbound liveness: held replay aged out of the backfill window (%s) after %d attempt(s) — never delivered to gc; re-post by hand", l.cfg.backfillMaxWindow, r.held.Attempts)
 		switch {
 		case r.held.Listing:
-			reason = fmt.Sprintf("inbound liveness: a thread's listing hold aged out of the backfill window (%s) — the replies of thread %s above %s and up to this ts were never read (the pending set was full and the reads failed every probe); read them from Slack", l.cfg.backfillMaxWindow, r.held.Msg.ThreadTS, r.held.Cursor)
+			reason = fmt.Sprintf(listingHoldReasonPrefix+" (%s) — the replies of thread %s above %s and up to this ts were never read (the pending set was full and the reads failed every probe); read them from Slack", l.cfg.backfillMaxWindow, r.held.Msg.ThreadTS, r.held.Cursor)
 		case !r.known:
 			reason += " (the message text was not recorded with the hold; read it from Slack at this ts)"
 		case r.held.TextDropped:
