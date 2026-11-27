@@ -1231,11 +1231,12 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		if c == nil || c.Status != "intent" {
 			return nil
 		}
-		if superseded(l, c) {
-			return p.unresolved(id, reasonWithdrawn)
-		}
+		// A later revision cannot tell us whether an unanswered POST landed.
 		if c.Attempts > 0 && c.Reason != reasonRetry {
 			return p.unresolved(id, "interrupted POST; delivery unknown")
+		}
+		if superseded(l, c) {
+			return p.unresolved(id, reasonWithdrawn)
 		}
 		if c.Reason == reasonRetry && c.Attempts >= firstPOSTs && c.Cause == "" {
 			// Written by adapter 0.5.0 between the save that put a fourth "not

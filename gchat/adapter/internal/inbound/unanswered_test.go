@@ -66,6 +66,66 @@ func checkEnd(t *testing.T, rf *retryFixture, reason string, attempts int) {
 	}
 }
 
+func TestUnansweredPostDeletedAfterFanout(t *testing.T) {
+	checkInterruptedPostNotice(t, "message.deleted", fakegc.PostStep{Drop: true}, 1)
+}
+
+func TestUnansweredPostDeletedWithoutFanout(t *testing.T) {
+	checkInterruptedPostNotice(t, "message.deleted", fakegc.PostStep{Drop: true, HTTPStatus: 500}, 0)
+}
+
+func TestUnansweredPostEditedBeforeRecovery(t *testing.T) {
+	checkInterruptedPostNotice(t, "message.updated", fakegc.PostStep{Drop: true}, 1)
+}
+
+func TestUnansweredPostInterruptedWithoutDeletion(t *testing.T) {
+	checkInterruptedPostNotice(t, "", fakegc.PostStep{Drop: true}, 1)
+}
+
+func checkInterruptedPostNotice(t *testing.T, laterEvent string, step fakegc.PostStep, wantFanouts int) {
+	t.Helper()
+	rf := retrySetup(t)
+	postSteps(rf, step)
+	// Lose the process after the POST, before its end is saved. Recovery
+	// reads the same intent whether or not the fake actually took the turn.
+	interrupted := false
+	rf.p.opts.Save = func(l *ledger.Ledger) error {
+		if c := l.Changes[messageName]; c != nil && c.Status == "unresolved" {
+			interrupted = true
+			return errors.New("stop before saving the end")
+		}
+		return l.Save(rf.opts.LedgerPath)
+	}
+	if _, err := rf.p.Handle(t.Context(), event("lost", "message.created", message())); err == nil || !interrupted {
+		t.Fatalf("interruption = %v", err)
+	}
+	rf.restart(t)
+	c := rf.change(t, messageName)
+	if c.Status != "intent" || c.Attempts != 1 || !c.Raised.IsZero() || !c.RaisedEnd.IsZero() {
+		t.Fatal("expected a persisted attempt without a reply or notice")
+	}
+	if laterEvent != "" {
+		rf.clock.Add(time.Second)
+		m := message()
+		m.LastUpdateTime = "2026-10-22T10:01:00Z"
+		handle(t, rf.fixture, event("later", laterEvent, m))
+	}
+	rf.poll(t)
+	rf.clock.Add(time.Hour)
+	rf.poll(t)
+	c = rf.change(t, messageName)
+	if c.Status != "unresolved" || c.Cause != causeUnknown || c.Reason != "interrupted POST; delivery unknown" || c.Attempts != 1 {
+		t.Fatalf("recovered %s/%s/%q, attempts=%d", c.Status, c.Cause, c.Reason, c.Attempts)
+	}
+	notices := rf.raises.list()
+	if len(notices) != 1 || notices[0].ID != messageName || !notices[0].Ended || c.RaisedEnd.IsZero() || rf.p.mailDue(rf.l, &c, rf.clock.Now()) {
+		t.Fatalf("end mark=%v notices=%d", c.RaisedEnd, len(notices))
+	}
+	if got := rf.gc.Fanouts(messageName); got != wantFanouts {
+		t.Fatalf("fan-outs = %d, want %d", got, wantFanouts)
+	}
+}
+
 func TestUnansweredPostHealthRequiresReceiptSign(t *testing.T) {
 	for _, signed := range []bool{false, true} {
 		name := "no_sign_one_post_and_one_notice"
