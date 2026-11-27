@@ -38,7 +38,7 @@ case "$1" in
 mail)
   echo mail >> calls
   [ -f mail ] || echo made >> mail
-  mode=$(cat mode)
+  read -r mode < mode
   case "$mode" in
     mail_timeout) echo duplicate > mode; exec sleep 10 ;;
     mail_exit) echo secret-output >&2; exit 1 ;;
@@ -54,7 +54,8 @@ mail)
   ;;
 session)
   echo wake >> calls
-  case "$(cat mode)" in
+  read -r mode < mode
+  case "$mode" in
     wake_timeout) echo duplicate > mode; exec sleep 10 ;;
     wake_exit) echo duplicate > mode; echo secret-output >&2; exit 1 ;;
   esac
@@ -123,6 +124,50 @@ func TestDeliveryWakeSlow(t *testing.T) {
 			}
 			if slices.Contains(tc.calls, "wake") && !strings.Contains(args, "session\nnudge\nsupport\ngchat: a delivery notice is waiting in your mail\n") {
 				t.Fatalf("wake arguments=%q", args)
+			}
+		})
+	}
+}
+
+func TestDeliveryWakeInheritedOutput(t *testing.T) {
+	for _, mode := range []string{"timeout", "confirmed"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("WAKE_TEST_DIR", dir)
+			t.Setenv("WAKE_TEST_PARENT", mode)
+			bin := filepath.Join(dir, "gc")
+			t.Setenv("GC_BIN", bin)
+			script := `#!/bin/sh
+cd "$WAKE_TEST_DIR" || exit 1
+(while [ ! -f release ] && [ -d "$WAKE_TEST_DIR" ]; do sleep 0.05; done; : > closed) &
+: > opened
+if [ "$WAKE_TEST_PARENT" = timeout ]; then exec sleep 20; fi
+echo '{"ok":true,"notified":true}'
+`
+			if err := os.WriteFile(bin, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			app := raiseApp(Options{mailTimeout: 3 * time.Second})
+			result := make(chan error, 1)
+			go func() { result <- app.raiseDelivery(t.Context(), inbound.Raise{ID: "example"}) }()
+			defer func() {
+				writeFile(t, filepath.Join(dir, "release"), "")
+				waitFor(t, 5*time.Second, func() bool {
+					_, err := os.Stat(filepath.Join(dir, "closed"))
+					return err == nil
+				})
+			}()
+			waitFor(t, 3*time.Second, func() bool {
+				_, err := os.Stat(filepath.Join(dir, "opened"))
+				return err == nil
+			})
+			select {
+			case err := <-result:
+				if mode == "confirmed" && err != nil || mode == "timeout" && err != inbound.RaiseFailure("mail_timeout") {
+					t.Fatalf("mail result = %v", err)
+				}
+			case <-time.After(6 * time.Second):
+				t.Fatal("mail still waits for output from a descendant")
 			}
 		})
 	}

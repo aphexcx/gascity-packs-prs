@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -248,8 +249,13 @@ func (a *application) raiseDelivery(ctx context.Context, r inbound.Raise) error 
 	if bin == "" {
 		bin = "gc"
 	}
-	out, err := exec.CommandContext(mailCtx, bin, "mail", "send", identity.Agent, "--dedup", key, "--notify", "--json", "-s", subject, "-m", r.Body).Output()
-	if err != nil {
+	cmd := exec.CommandContext(mailCtx, bin, "mail", "send", identity.Agent, "--dedup", key, "--notify", "--json", "-s", subject, "-m", r.Body)
+	// A descendant can outlive gc with an inherited output descriptor.
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	// ErrWaitDelay by itself means gc exited successfully. Its result line
+	// still has to confirm the mail, exactly as on an ordinary successful exit.
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		if mailCtx.Err() == context.DeadlineExceeded {
 			return inbound.RaiseFailure("mail_timeout")
 		}
