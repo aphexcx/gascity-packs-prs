@@ -1,0 +1,225 @@
+Tests-first commit; C-1, exit 1
+SKIP gchat-adapter/internal/arrival
+PASS gchat-adapter/internal/neversilent
+PASS gchat-adapter/internal/ack
+PASS gchat-adapter/internal/fakes/fakegc
+PASS gchat-adapter/internal/provenance
+PASS gchat-adapter/internal/markdown
+PASS gchat-adapter/internal/media
+PASS gchat-adapter/internal/config
+PASS gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds/register
+FAIL gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds/inbound
+PASS gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds/receipt
+PASS gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds/outbound
+FAIL gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds
+PASS gchat-adapter/internal/redact
+PASS gchat-adapter/internal/wire
+PASS gchat-adapter/internal/stopwatch
+PASS gchat-adapter/internal/token
+FAIL gchat-adapter/internal/gcclient TestUnansweredPostReadsSlowAnswer
+FAIL gchat-adapter/internal/gcclient
+PASS gchat-adapter/internal/principal
+PASS gchat-adapter/cmd/gc-gchat-adapter
+PASS gchat-adapter/internal/ledger
+PASS gchat-adapter/internal/catchup
+PASS gchat-adapter/internal/events
+PASS gchat-adapter/internal/chat
+PASS gchat-adapter/test/contract
+PASS gchat-adapter/internal/fakes/fakegoogle
+PASS gchat-adapter/internal/puller
+PASS gchat-adapter/internal/server
+PASS gchat-adapter/test/e2e
+FAIL gchat-adapter/internal/inbound TestUnansweredPostOneTurn/pending_then_delivered
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/slow
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/missing
+FAIL gchat-adapter/internal/inbound TestUnansweredPostOneTurn/pending_then_failed
+FAIL gchat-adapter/internal/inbound TestUnansweredPostOneTurn/unclaimed_after_disconnect
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/gc_restarted_after_delivery
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/first
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/old_answer_replaces_sign
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/processor_rebuilt
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_fraction
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_younger_than_sign
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_within_post_margin
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_absent
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_missing_age
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_zero
+FAIL gchat-adapter/internal/inbound TestUnansweredPostOneTurn
+FAIL gchat-adapter/internal/inbound TestUnansweredPostEnds/no_route
+FAIL gchat-adapter/internal/inbound TestUnansweredPostEnds/failed
+FAIL gchat-adapter/internal/inbound TestUnansweredPostEnds/held
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/mail_timeout
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/wake_timeout
+FAIL gchat-adapter/internal/inbound TestUnansweredPostEnds/partial
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/wake_exit
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/empty
+FAIL gchat-adapter/internal/inbound TestUnansweredPostEnds/http_500
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/false
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/mail_no_result
+FAIL gchat-adapter/internal/inbound TestUnansweredPostEnds/no_answer
+FAIL gchat-adapter/internal/inbound TestUnansweredPostEnds
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow/mail_exit
+FAIL gchat-adapter/internal/app TestDeliveryWakeSlow
+PASS gchat-adapter/internal/inbound TestUnansweredPostLegacyExceptionInterruptedReplay
+PASS gchat-adapter/internal/inbound TestUnansweredPostSecondLegacyExceptionSavedIntent
+PASS gchat-adapter/internal/inbound TestUnansweredPostCurrentReplayMarks
+FAIL gchat-adapter/internal/inbound TestUnansweredPostOrder
+FAIL gchat-adapter/internal/inbound TestUnansweredPostDurableAttempts
+FAIL gchat-adapter/internal/inbound
+FAIL gchat-adapter/internal/app TestDeliveryWakeWire
+FAIL gchat-adapter/internal/app TestDeliveryWakeApart
+FAIL gchat-adapter/internal/app TestDeliveryWakeReceiptWhileMailIsHeld
+FAIL gchat-adapter/internal/app
+test pass=16 fail=29 skip=0
+package pass=22 fail=3 skip=1
+
+Interrupted deletion and edit before the fix, exit 1
+FAIL gchat-adapter/internal/inbound TestUnansweredPostDeletedAfterFanout
+FAIL gchat-adapter/internal/inbound TestUnansweredPostDeletedWithoutFanout
+FAIL gchat-adapter/internal/inbound TestUnansweredPostEditedBeforeRecovery
+PASS gchat-adapter/internal/inbound TestUnansweredPostInterruptedWithoutDeletion
+FAIL gchat-adapter/internal/inbound
+test pass=1 fail=3 skip=0
+package pass=0 fail=1 skip=0
+
+Live first-read probe before the retirement fix, exit 1
+PASS gchat-adapter/internal/catchup TestUnansweredPostNoticeAcrossLiveFirstRead/control
+FAIL gchat-adapter/internal/catchup TestUnansweredPostNoticeAcrossLiveFirstRead/first_read_before_raise
+FAIL gchat-adapter/internal/catchup TestUnansweredPostNoticeAcrossLiveFirstRead
+FAIL gchat-adapter/internal/catchup
+test pass=1 fail=2 skip=0
+package pass=0 fail=1 skip=0
+
+Inherited output descriptors before the fix, exit 1
+FAIL gchat-adapter/internal/app TestDeliveryWakeInheritedOutput/timeout
+FAIL gchat-adapter/internal/app TestDeliveryWakeInheritedOutput/confirmed
+FAIL gchat-adapter/internal/app TestDeliveryWakeInheritedOutput
+FAIL gchat-adapter/internal/app
+test pass=0 fail=3 skip=0
+package pass=0 fail=1 skip=0
+
+Inherited output descriptors after the fix, exit 0
+PASS gchat-adapter/internal/app TestDeliveryWakeInheritedOutput/timeout
+PASS gchat-adapter/internal/app TestDeliveryWakeInheritedOutput/confirmed
+PASS gchat-adapter/internal/app TestDeliveryWakeInheritedOutput
+PASS gchat-adapter/internal/app
+test pass=3 fail=0 skip=0
+package pass=1 fail=0 skip=0
+
+C-1 on the final implementation, exit 0
+SKIP gchat-adapter/internal/arrival
+PASS gchat-adapter/internal/ack
+PASS gchat-adapter/internal/stopwatch
+PASS gchat-adapter/internal/media
+PASS gchat-adapter/internal/config
+PASS gchat-adapter/internal/neversilent
+PASS gchat-adapter/internal/redact
+PASS gchat-adapter/internal/wire
+PASS gchat-adapter/internal/provenance
+PASS gchat-adapter/internal/fakes/fakegc
+PASS gchat-adapter/internal/markdown
+PASS gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds/register
+PASS gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds/inbound
+PASS gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds/receipt
+PASS gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds/outbound
+PASS gchat-adapter/internal/gcclient TestUnansweredPostRequestBounds
+PASS gchat-adapter/internal/token
+PASS gchat-adapter/cmd/gc-gchat-adapter
+PASS gchat-adapter/test/contract
+PASS gchat-adapter/internal/events
+PASS gchat-adapter/internal/fakes/fakegoogle
+PASS gchat-adapter/internal/ledger
+PASS gchat-adapter/internal/chat
+PASS gchat-adapter/internal/catchup TestUnansweredPostNoticeAcrossLiveFirstRead/control
+PASS gchat-adapter/internal/server
+PASS gchat-adapter/internal/principal
+PASS gchat-adapter/internal/puller
+PASS gchat-adapter/internal/gcclient TestUnansweredPostReadsSlowAnswer
+PASS gchat-adapter/test/e2e
+PASS gchat-adapter/internal/gcclient TestUnansweredPostHealthDeadline
+PASS gchat-adapter/internal/gcclient
+PASS gchat-adapter/internal/catchup TestUnansweredPostNoticeAcrossLiveFirstRead/first_read_before_raise
+PASS gchat-adapter/internal/inbound TestUnansweredPostSameLifeRetryBoundNotice/with_waiting_notice
+PASS gchat-adapter/internal/catchup TestUnansweredPostNoticeAcrossLiveFirstRead/first_read_during_post
+PASS gchat-adapter/internal/catchup TestUnansweredPostNoticeAcrossLiveFirstRead
+PASS gchat-adapter/internal/catchup
+PASS gchat-adapter/internal/inbound TestUnansweredPostSameLifeRetryBoundNotice/without_waiting_notice
+PASS gchat-adapter/internal/inbound TestUnansweredPostSameLifeRetryBoundNotice
+PASS gchat-adapter/internal/inbound TestUnansweredPostDeletedAfterFanout
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/slow
+PASS gchat-adapter/internal/inbound TestUnansweredPostDeletedWithoutFanout
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/missing
+PASS gchat-adapter/internal/inbound TestUnansweredPostEditedBeforeRecovery
+PASS gchat-adapter/internal/inbound TestUnansweredPostInterruptedWithoutDeletion
+PASS gchat-adapter/internal/inbound TestUnansweredPostHealthRequiresReceiptSign/no_sign_one_post_and_one_notice
+PASS gchat-adapter/internal/inbound TestUnansweredPostHealthRequiresReceiptSign/sign_one_probe_and_one_repost
+PASS gchat-adapter/internal/inbound TestUnansweredPostHealthRequiresReceiptSign
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/pending_then_delivered
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/pending_then_failed
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/unclaimed_after_disconnect
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/gc_restarted_after_delivery
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/first
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/old_answer_replaces_sign
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/processor_rebuilt
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_younger_than_sign
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_within_post_margin
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_absent
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/mail_timeout
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_missing_age
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_zero
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn/health_fraction
+PASS gchat-adapter/internal/inbound TestUnansweredPostOneTurn
+PASS gchat-adapter/internal/inbound TestUnansweredPostEnds/no_route
+PASS gchat-adapter/internal/inbound TestUnansweredPostEnds/failed
+PASS gchat-adapter/internal/inbound TestUnansweredPostEnds/held
+PASS gchat-adapter/internal/inbound TestUnansweredPostEnds/partial
+PASS gchat-adapter/internal/inbound TestUnansweredPostEnds/http_500
+PASS gchat-adapter/internal/inbound TestUnansweredPostEnds/unreachable
+PASS gchat-adapter/internal/inbound TestUnansweredPostEnds/no_answer
+PASS gchat-adapter/internal/inbound TestUnansweredPostEnds
+PASS gchat-adapter/internal/inbound TestUnansweredPostLegacyExceptionInterruptedReplay
+PASS gchat-adapter/internal/inbound TestUnansweredPostSecondLegacyExceptionSavedIntent
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/wake_timeout
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/wake_exit
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/empty
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/false
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/mail_no_result
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow/mail_exit
+PASS gchat-adapter/internal/app TestDeliveryWakeSlow
+PASS gchat-adapter/internal/inbound TestUnansweredPostCurrentReplayMarks
+PASS gchat-adapter/internal/inbound TestUnansweredPostExistingLedger
+PASS gchat-adapter/internal/inbound TestDeliveryWakeFailureLog/mail_timeout
+PASS gchat-adapter/internal/inbound TestDeliveryWakeFailureLog/mail_exit
+PASS gchat-adapter/internal/inbound TestDeliveryWakeFailureLog/mail_no_result
+PASS gchat-adapter/internal/inbound TestDeliveryWakeFailureLog/wake_timeout
+PASS gchat-adapter/internal/inbound TestDeliveryWakeFailureLog/wake_exit
+PASS gchat-adapter/internal/inbound TestDeliveryWakeFailureLog
+PASS gchat-adapter/internal/inbound TestUnansweredPostOrder/delivered
+PASS gchat-adapter/internal/inbound TestUnansweredPostOrder/failed
+PASS gchat-adapter/internal/inbound TestUnansweredPostOrder/pending
+PASS gchat-adapter/internal/inbound TestUnansweredPostOrder
+PASS gchat-adapter/internal/inbound TestUnansweredPostDurableAttempts/delivered
+PASS gchat-adapter/internal/inbound TestUnansweredPostDurableAttempts/pending_delivered
+PASS gchat-adapter/internal/inbound TestUnansweredPostDurableAttempts/pending_failed
+PASS gchat-adapter/internal/inbound TestUnansweredPostDurableAttempts/gc_restarted
+PASS gchat-adapter/internal/inbound TestUnansweredPostDurableAttempts/no_answer
+PASS gchat-adapter/internal/inbound TestUnansweredPostDurableAttempts
+PASS gchat-adapter/internal/inbound
+PASS gchat-adapter/internal/app TestDeliveryWakeInheritedOutput/timeout
+PASS gchat-adapter/internal/app TestDeliveryWakeInheritedOutput/confirmed
+PASS gchat-adapter/internal/app TestDeliveryWakeInheritedOutput
+PASS gchat-adapter/internal/app TestDeliveryWakeWire
+PASS gchat-adapter/internal/app TestDeliveryWakeApart
+PASS gchat-adapter/internal/app TestDeliveryWakeReceiptWhileMailIsHeld
+PASS gchat-adapter/internal/app
+test pass=79 fail=0 skip=0
+package pass=25 fail=0 skip=1
+
+Existing withdrawal and supersession controls, exit 0
+PASS gchat-adapter/internal/inbound TestSupersededIntentNeverRepostsOldText/message.updated
+PASS gchat-adapter/internal/inbound TestSupersededIntentNeverRepostsOldText/message.deleted
+PASS gchat-adapter/internal/inbound TestSupersededIntentNeverRepostsOldText
+PASS gchat-adapter/internal/inbound TestWithdrawnAndOldUnresolvedChangesAreNotRaised
+PASS gchat-adapter/internal/inbound
+test pass=4 fail=0 skip=0
+package pass=1 fail=0 skip=0
