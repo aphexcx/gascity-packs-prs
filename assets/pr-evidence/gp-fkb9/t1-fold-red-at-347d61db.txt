@@ -28,7 +28,7 @@ ______________ test_every_tag_the_skill_writes_uses_a_numeric_id _______________
         assert all(tag == "ID" or tag.isdigit() for tag in tags), tags
 >       assert "stand in for ID" not in " ".join(tag_part().split())
 E       assert 'stand in for ID' not in "Tag the one...Friday?' ```"
-E         
+E
 E         'stand in for ID' is contained here:
 E            that can stand in for ID. `gc gchat read` on the same space gives each sender as `actor.id`. For example, to ask Alex Example (`users/1234567890`) to approve a date: ```bash gc gchat reply-current --to spaces/<id>/messages/<id> --body '<users/1234567890> can you approve Friday?' ```
 E         ?           +++++++++++++++
