@@ -1927,7 +1927,7 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 				client := http.DefaultClient
 				var err error
 				if status == http.StatusFound {
-					source := resourceTokenSource(t, f.opts.Config.Endpoints)
+					source := resourceTokenSource(t, s.URL)
 					client, err = source.Client(t.Context())
 					if err != nil {
 						t.Fatal(err)

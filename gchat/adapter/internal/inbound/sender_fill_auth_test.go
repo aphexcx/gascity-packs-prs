@@ -106,7 +106,7 @@ func TestSenderFillResourceStatus(t *testing.T) {
 	}
 }
 
-func resourceTokenSource(t *testing.T, ep config.Endpoints) *token.Source {
+func resourceTokenSource(t *testing.T, base string) *token.Source {
 	t.Helper()
 	dir := t.TempDir()
 	client, file := filepath.Join(dir, "client"), filepath.Join(dir, "credential")
@@ -116,6 +116,7 @@ func resourceTokenSource(t *testing.T, ep config.Endpoints) *token.Source {
 	if err := os.WriteFile(file, []byte(`{"access_token":"example"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
+	ep := config.Endpoints{ChatAPIBase: base, OAuthAuthURL: base, OAuthTokenURL: base}
 	source, err := token.New(client, file, ep, token.Scopes)
 	if err != nil {
 		t.Fatal(err)
@@ -141,8 +142,8 @@ func testSenderFillResourceStatus(t *testing.T, status int) {
 		fmt.Fprint(w, `{"error":{"code":404}}`)
 	}))
 	defer resource.Close()
-	ep := config.Endpoints{ChatAPIBase: resource.URL, OAuthAuthURL: resource.URL, OAuthTokenURL: resource.URL}
-	source := resourceTokenSource(t, ep)
+	ep := config.Endpoints{ChatAPIBase: resource.URL}
+	source := resourceTokenSource(t, resource.URL)
 	lookup, err := chat.New(t.Context(), source.LookupClient(t.Context()), ep)
 	if err != nil {
 		t.Fatal(err)
