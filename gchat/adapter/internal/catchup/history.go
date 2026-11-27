@@ -77,7 +77,7 @@ func startSpaceWithReport(l *ledger.Ledger, cfg *config.Config, name string, s *
 			item.Change.EventTime = item.At
 		}
 		if item.Malformed == "" && inbound.HistorySkipCause(l, item.Change) != "" {
-			inbound.RetireQueuedHistory(l, item.Change)
+			inbound.RetireQueuedHistory(l, cfg, item.Change)
 			added := inbound.RetainHistorySkip(l, cfg, item.Change, now, inbound.HistorySpeaker(l, cfg, item.Change), true, l.IdentityUserID)
 			if added && item.Change.ActTime().IsZero() && log != nil {
 				log.Warn("inbound act has no usable history time", "space", name, "kind", item.Change.Kind)

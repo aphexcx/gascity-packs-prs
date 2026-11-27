@@ -566,7 +566,7 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 		if noticeWholePaste(d) {
 			at := p.opts.Now()
 			if err := p.update(func(l *ledger.Ledger) {
-				if c := l.Changes[id]; c != nil {
+				if c := l.Changes[id]; c != nil && c.Status == "pending" {
 					c.NoticeDelivered = true
 					markUnresolved(l, id, c, reasonHeld, at)
 				}
@@ -1332,7 +1332,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 					return noticeErr
 				}
 				if err := p.update(func(l *ledger.Ledger) {
-					if c := l.Changes[id]; c != nil {
+					if c := l.Changes[id]; c != nil && c.Status == "intent" {
 						c.Attempts--
 						c.Reason = "retry"
 					}
@@ -1425,7 +1425,7 @@ func (p *Processor) repostOutcome(id string, d wire.Delivery) error {
 		return err
 	}
 	if err := p.update(func(l *ledger.Ledger) {
-		if c := l.Changes[id]; c != nil {
+		if c := l.Changes[id]; acceptingResult(c) {
 			if d.ReceiptID != "" {
 				c.ReceiptID = d.ReceiptID
 			}
@@ -1512,7 +1512,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 	exhausted := false
 	err := p.update(func(l *ledger.Ledger) {
 		c := l.Changes[id]
-		if c == nil {
+		if !acceptingResult(c) {
 			return
 		}
 		if d.ReceiptID != "" {
@@ -1600,7 +1600,7 @@ func (p *Processor) unresolved(id, reason string) error {
 	recorded := false
 	err := p.update(func(l *ledger.Ledger) {
 		c := l.Changes[id]
-		if c == nil {
+		if !acceptingResult(c) {
 			return
 		}
 		markUnresolved(l, id, c, reason, p.opts.Now())
@@ -1611,6 +1611,12 @@ func (p *Processor) unresolved(id, reason string) error {
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reason)
 	}
 	return err
+}
+
+// A first inventory read can retire a delivery while its request is open.
+// The late result must not revive the historical turn or replace its notice.
+func acceptingResult(c *ledger.ChangeState) bool {
+	return c != nil && (c.Status == "intent" || c.Status == "pending")
 }
 
 // markUnresolved runs inside an update; Changes and Unresolved hold the record.

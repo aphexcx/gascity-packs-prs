@@ -144,12 +144,14 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	workers.Go(func() {
 		t := time.NewTicker(a.deliveryTick())
 		defer t.Stop()
+		// Give the immediate recovery pass its first chance to settle old
+		// intents. A slow or blocked POST cannot delay this first tick.
 		for {
-			proc.RaiseDue(ctx)
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				proc.RaiseDue(ctx)
 			}
 		}
 	})

@@ -83,7 +83,7 @@ func historyUser(c puller.Change) *api.User {
 // load-time migration retains its frame-only skip. A handled queue row can
 // still have an intent, receipt or unresolved record that Poll would resume.
 // Never erase an already committed delivery or another revision of the item.
-func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
+func RetireQueuedHistory(l *ledger.Ledger, cfg *config.Config, c puller.Change) {
 	if HistorySkipCause(l, c) == "" {
 		return
 	}
@@ -106,14 +106,64 @@ func RetireQueuedHistory(l *ledger.Ledger, c puller.Change) {
 		id = c.Reaction.Name + "#" + strings.TrimPrefix(c.Kind, "reaction.")
 	}
 	if old := l.Changes[id]; old != nil && old.Kind == c.Kind && old.Status != "committed" {
-		delete(l.Changes, id)
-		delete(l.Unresolved, id)
+		if !preserveHistoryNotice(l, cfg, old) {
+			delete(l.Changes, id)
+			delete(l.Unresolved, id)
+		}
 		if c.Kind == "message.deleted" {
 			if state := l.Messages[c.Message.Name]; state != nil {
 				state.Deleted = false
 			}
 		}
 	}
+}
+
+// Keep the original notice key across a restart. A retired turn has no wire
+// message ID: its frame can be inspected but cannot be replayed as a POST.
+func preserveHistoryNotice(l *ledger.Ledger, cfg *config.Config, c *ledger.ChangeState) bool {
+	if !c.RaisedEnd.IsZero() {
+		return false
+	}
+	switch c.Status {
+	case "unresolved":
+		if c.Cause != causeUnknown || (c.Reason == reasonRetryBound && waitingMailed(c)) {
+			return false
+		}
+	case "intent":
+		if c.Attempts == 0 || c.Reason == reasonRetry {
+			return false
+		}
+		c.Reason = "interrupted POST; delivery unknown"
+	case "pending":
+		if c.ReceiptID == "" {
+			return false
+		}
+		c.Reason = "receipt unavailable or unknown"
+	default:
+		return false
+	}
+	c.Event = redactedHistoryEvent(l, cfg, c, "")
+	c.ProvenanceFramed = true
+	c.Status, c.Cause = "unresolved", causeUnknown
+	c.NextAttempt = time.Time{}
+	l.Unresolved[c.ID] = c
+	return true
+}
+
+func redactedHistoryEvent(l *ledger.Ledger, cfg *config.Config, old *ledger.ChangeState, wireID string) string {
+	var w wire.InboundMessage
+	_ = json.Unmarshal([]byte(old.Event), &w)
+	frame, framed := provenance.FrameOf(w.Text)
+	if !old.ProvenanceFramed || !framed {
+		user := &api.User{Name: w.Actor.ID, DisplayName: w.Actor.DisplayName}
+		frame = provenance.Frame(HistorySpeaker(l, cfg, puller.Change{Message: &api.Message{Sender: user}}))
+	}
+	w.Text, w.Attachments, w.ProviderMessageID = frame, nil, wireID
+	if old.CatchUp {
+		w.Text = "[catch-up]\n" + w.Text
+	}
+	raw, _ := json.Marshal(w)
+	return string(raw)
 }
 
 // RetireSpaceHistory handles attempts that outlived their catch-up queue row.
@@ -131,24 +181,19 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 			(!strings.HasPrefix(old.Kind, "message.") && !strings.HasPrefix(old.Kind, "reaction.")) {
 			continue
 		}
-		var w wire.InboundMessage
-		_ = json.Unmarshal([]byte(old.Event), &w)
-		frame, framed := provenance.FrameOf(w.Text)
-		if !old.ProvenanceFramed || !framed {
-			user := &api.User{Name: w.Actor.ID, DisplayName: w.Actor.DisplayName}
-			frame = provenance.Frame(HistorySpeaker(l, cfg, puller.Change{Message: &api.Message{Sender: user}}))
+		if old.Kind == "message.deleted" {
+			if state := l.Messages[old.Message]; state != nil {
+				state.Deleted = false
+			}
 		}
-		w.Text, w.Attachments = frame, nil
-		if old.CatchUp {
-			w.Text = "[catch-up]\n" + w.Text
+		if preserveHistoryNotice(l, cfg, old) {
+			continue
 		}
 		retained := *old
 		if old.Kind != "message.created" {
 			retained.ID += "#history#" + old.Kind + "#" + old.Created.UTC().Format(time.RFC3339Nano)
 		}
-		w.ProviderMessageID = retained.ID
-		raw, _ := json.Marshal(w)
-		retained.Event = string(raw)
+		retained.Event = redactedHistoryEvent(l, cfg, old, retained.ID)
 		retained.Status, retained.Reason, retained.Cause = "committed", "local", "before_history_floor"
 		retained.ReceiptID, retained.NextAttempt = "", time.Time{}
 		retained.ProvenanceFramed = true
@@ -164,11 +209,6 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 		l.Changes[retained.ID] = &retained
 		l.Counters["history_delivery_retired:"+space]++
 		retired = append(retired, old.Message)
-		if old.Kind == "message.deleted" {
-			if state := l.Messages[old.Message]; state != nil {
-				state.Deleted = false
-			}
-		}
 	}
 	return retired
 }
