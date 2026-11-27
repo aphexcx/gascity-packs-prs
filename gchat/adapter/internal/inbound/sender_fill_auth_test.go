@@ -106,6 +106,23 @@ func TestSenderFillResourceStatus(t *testing.T) {
 	}
 }
 
+func resourceTokenSource(t *testing.T, ep config.Endpoints) *token.Source {
+	t.Helper()
+	dir := t.TempDir()
+	client, file := filepath.Join(dir, "client"), filepath.Join(dir, "credential")
+	if err := os.WriteFile(client, []byte(`{"installed":{"client_id":"example","client_secret":"example"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(`{"access_token":"example"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := token.New(client, file, ep, token.Scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
+}
+
 func testSenderFillResourceStatus(t *testing.T, status int) {
 	// A typed error body can describe a different status than the resource
 	// actually returned. The warning should use only the HTTP response status.
@@ -124,19 +141,8 @@ func testSenderFillResourceStatus(t *testing.T, status int) {
 		fmt.Fprint(w, `{"error":{"code":404}}`)
 	}))
 	defer resource.Close()
-	dir := t.TempDir()
-	client, file := filepath.Join(dir, "client"), filepath.Join(dir, "credential")
-	if err := os.WriteFile(client, []byte(`{"installed":{"client_id":"example","client_secret":"example"}}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(file, []byte(`{"access_token":"example"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
 	ep := config.Endpoints{ChatAPIBase: resource.URL, OAuthAuthURL: resource.URL, OAuthTokenURL: resource.URL}
-	source, err := token.New(client, file, ep, token.Scopes)
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := resourceTokenSource(t, ep)
 	lookup, err := chat.New(t.Context(), source.LookupClient(t.Context()), ep)
 	if err != nil {
 		t.Fatal(err)

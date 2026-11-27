@@ -2,6 +2,7 @@ package token
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,9 @@ func TestAuthenticatedClientRefusesRedirect(t *testing.T) {
 			}
 		}
 	}
+	t.Run("required/resume_incomplete/308/PUT", func(t *testing.T) {
+		checkRefusedRedirect(t, "required", http.MethodPut, "", http.StatusPermanentRedirect)
+	})
 }
 
 func checkRefusedRedirect(t *testing.T, clientName, method, location string, status int) {
@@ -44,13 +48,19 @@ func checkRefusedRedirect(t *testing.T, clientName, method, location string, sta
 		if calls != 1 || r.URL.String() != first || r.Method != method {
 			return nil, fmt.Errorf("unexpected request %d to %s", calls, r.URL)
 		}
-		if method == http.MethodPost {
+		if method != http.MethodGet {
 			data, err := io.ReadAll(r.Body)
 			if err != nil || string(data) != "fixture body" {
 				t.Fatal("first request did not carry the expected body")
 			}
 		}
-		return &http.Response{StatusCode: status, Header: http.Header{"Location": {location}}, Body: http.NoBody}, nil
+		header := make(http.Header)
+		if location == "" {
+			header.Set("Range", "bytes=0-11")
+		} else {
+			header.Set("Location", location)
+		}
+		return &http.Response{StatusCode: status, Header: header, Body: http.NoBody}, nil
 	})
 	ctx := context.WithValue(t.Context(), oauth2.HTTPClient, &http.Client{Transport: transport})
 	source := &Source{state: Ready, current: &oauth2.Token{AccessToken: "fixture"}}
@@ -64,11 +74,19 @@ func checkRefusedRedirect(t *testing.T, clientName, method, location string, sta
 	} else {
 		client = source.LookupClient(ctx)
 	}
-	if client.CheckRedirect == nil {
-		t.Fatal("authenticated client has no redirect policy")
-	}
+	// Stop any attempted follow-up before it reaches the authenticated transport.
+	authenticated := client.Transport
+	client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != first {
+			if r.Body != nil {
+				r.Body.Close()
+			}
+			return nil, errors.New("client attempted a redirect")
+		}
+		return authenticated.RoundTrip(r)
+	})
 	var body io.Reader
-	if method == http.MethodPost {
+	if method != http.MethodGet {
 		body = strings.NewReader("fixture body")
 	}
 	req, err := http.NewRequestWithContext(ctx, method, first, body)
@@ -82,5 +100,8 @@ func checkRefusedRedirect(t *testing.T, clientName, method, location string, sta
 	defer resp.Body.Close()
 	if calls != 1 || resp.StatusCode != status || resp.Header.Get("Location") != location {
 		t.Fatalf("got %d requests, status %d, Location %q", calls, resp.StatusCode, resp.Header.Get("Location"))
+	}
+	if location == "" && resp.Header.Get("Range") != "bytes=0-11" {
+		t.Fatalf("resumable upload returned Range %q", resp.Header.Get("Range"))
 	}
 }

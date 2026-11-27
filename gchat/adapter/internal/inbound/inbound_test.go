@@ -1911,13 +1911,29 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", path, status), func(t *testing.T) {
 				f := setup(t)
 				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if status == http.StatusFound {
+						if r.URL.Path == "/unused" {
+							t.Error("required read followed the redirect")
+							w.WriteHeader(http.StatusNotFound)
+							return
+						}
+						w.Header().Set("Location", "/unused")
+					}
 					w.WriteHeader(status)
 					_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": status, "message": "Request had insufficient authentication scopes. PRIVATE SCOPE CONTENT"}})
 				}))
 				defer s.Close()
 				f.opts.Config.Endpoints.ChatAPIBase = s.URL
+				client := http.DefaultClient
 				var err error
-				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+				if status == http.StatusFound {
+					source := resourceTokenSource(t, f.opts.Config.Endpoints)
+					client, err = source.Client(t.Context())
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				f.opts.Chat, err = chat.New(context.Background(), client, f.opts.Config.Endpoints)
 				if err != nil {
 					t.Fatal(err)
 				}
