@@ -161,6 +161,14 @@ func TestEveryCreateStatesChatMarkupSyntax(t *testing.T) {
 		want:      googlechat.Message{Text: "file", Attachment: files},
 		requestID: "file",
 	}, {
+		name: "file with no text",
+		send: func() error {
+			_, _, err := c.CreateMessageWithAttachments(ctx, "spaces/room", "", "", "file-only", true, files)
+			return err
+		},
+		want:      googlechat.Message{Attachment: files},
+		requestID: "file-only",
+	}, {
 		name: "message with a file and its time",
 		send: func() error {
 			_, _, _, err := c.CreateMessageWithAttachmentsAndTime(ctx, "spaces/room", text, thread, "timed", true, files)
