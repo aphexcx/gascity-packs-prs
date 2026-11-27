@@ -596,6 +596,9 @@ An unresolved delivery stays in the ledger and is never automatically
 reposted. Read its ID, reason and cause in `status`; verify whether the turn
 arrived, then use `resolve ID --accept` to treat it as delivered or `--replay`
 to post it again. Replay can duplicate a turn whose first outcome is unknown.
+If a space's history is retired before an unknown delivery's notice goes
+out, the notice stays due. Retirement redacts the stored turn, so only
+acceptance is available for that historical delivery.
 A replay is posted at once and takes its place in its space's order by the
 time of the replay. Its answer reports `landed`, or `waiting` and why, using
 the result of that pass; a message with no gc route reports `not_routed`.
