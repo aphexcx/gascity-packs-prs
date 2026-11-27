@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The authenticated Google API clients for required calls, optional lookups
+  and replacement credential validation now return the first redirect as a
+  failed call. P1 (UNPROVEN) assumes Chat, People and Workspace Events
+  answer ordinary requests directly. P2 (UNPROVEN) assumes media downloads
+  also answer directly. A redirected download produces an unavailable
+  attachment note.
+
 - Remove saved attachments when a message deletion is learned, and files of
   attachments an accepted edit took away. Cleanup retries survive restart;
   past deletions are left alone at an update. Nothing expires by age or is
