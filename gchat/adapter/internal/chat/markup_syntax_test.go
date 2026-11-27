@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sync"
 	"testing"
 
@@ -83,6 +84,10 @@ func TestEveryCreateStatesChatMarkupSyntax(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, dmThread, err := c.CreateMessage(ctx, "spaces/dm", "seed", "", "dm-seed", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "source.txt")
 	if err := os.WriteFile(path, []byte("hello media"), 0600); err != nil {
 		t.Fatal(err)
@@ -136,6 +141,18 @@ func TestEveryCreateStatesChatMarkupSyntax(t *testing.T) {
 		want:      googlechat.Message{Text: text},
 		requestID: "dm",
 	}, {
+		name: "message in a thread of a direct message",
+		send: func() error {
+			_, _, err := c.CreateMessage(ctx, "spaces/dm", text, dmThread, "dm-reply", false)
+			return err
+		},
+		want:      googlechat.Message{Text: text, Thread: &googlechat.Thread{Name: dmThread}},
+		requestID: "dm-reply",
+	}, {
+		name: "notice in a thread of a direct message",
+		send: func() error { _, _, err := c.CreateNotice(ctx, "spaces/dm", notice, dmThread, false); return err },
+		want: googlechat.Message{Text: notice, Thread: &googlechat.Thread{Name: dmThread}},
+	}, {
 		name: "message with a file",
 		send: func() error {
 			_, _, err := c.CreateMessageWithAttachments(ctx, "spaces/room", "file", "", "file", true, files)
@@ -180,10 +197,19 @@ func TestEveryCreateStatesChatMarkupSyntax(t *testing.T) {
 			if !bytes.Equal(got, wantBody) {
 				t.Fatalf("body\n got %s\nwant %s", got, wantBody)
 			}
+			// An empty want means the parameter is absent, not present and empty.
 			q := sent[0].query
-			if q.Get("requestId") != tc.requestID || q.Get("messageReplyOption") != tc.reply {
+			if !slices.Equal(q["requestId"], present(tc.requestID)) || !slices.Equal(q["messageReplyOption"], present(tc.reply)) {
 				t.Fatalf("query %s, want requestId %q and messageReplyOption %q", q.Encode(), tc.requestID, tc.reply)
 			}
 		})
 	}
+}
+
+// present is a query parameter's values: none for "", else the one value.
+func present(v string) []string {
+	if v == "" {
+		return nil
+	}
+	return []string{v}
 }

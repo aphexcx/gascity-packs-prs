@@ -10,7 +10,9 @@
   (`MARKUP_SYNTAX_CHAT`), so its formatting and `<users/ID>` tags read the
   same whichever syntax the project's Chat app saved. Google's default is
   Markdown for a newly created Chat app or a project with none saved, and Chat
-  for an existing app. The rest of each request is unchanged (gp-x8tx).
+  for an existing app. The rest of each request is unchanged. In a project
+  saved as Markdown, numbered lists and tables now show as plain text, as they
+  already did in one saved as Chat (gp-x8tx).
 
 - Remove saved attachments when a message deletion is learned, and files of
   attachments an accepted edit took away. Cleanup retries survive restart;

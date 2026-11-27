@@ -29,7 +29,7 @@ A mention of one person is `<users/{user}>` in the message's text, where `{user}
 
 ### Q2. The send path
 
-A numeric-id tag reaches Google byte for byte in any message that Split does not cut by rune, except inside a Markdown link's title, which ToChat drops with the tag: `[plan](https://example.com "ask <users/1234567890>")` becomes `<https://example.com|plan>`. A tag written as a Markdown link's target is not byte for byte either: `[x](<users/1234567890>)` becomes the Chat link `<users/1234567890|x>`.
+A numeric-id tag reaches Google byte for byte in any message that Split does not cut by rune, except inside a Markdown link's title or target. ToChat drops a title with the tag in it: `[plan](https://example.com "ask <users/1234567890>")` becomes `<https://example.com|plan>`. It rewrites a target into its own link form: `[x](<users/1234567890>)` becomes `<users/1234567890|x>`.
 
 - **The commands.** gchat/commands/send.sh:66-83 reads the body (`--body` or `--body-file`) raw, with `jq -Rs`, into the JSON `text`. reply-current.sh, publish.sh and upload.sh are each one line, `exec sh send.sh <mode> "$@"` (line 4). common.sh:35-39 posts it with `--data-binary @-`.
 - **The server.** gchat/adapter/internal/server/server.go:846 copies `cmd.Text` into `PublishRequest.Text` unchanged. normalize (server.go:420-445) does not touch the text.
