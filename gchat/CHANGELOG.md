@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- The skill tells an agent to tag, as `<users/ID>`, the one person whose
-  answer or action its message needs, and nobody when it asks nothing of
-  anyone. That Chat then notifies the person is UNPROVEN (gp-fkb9).
+- The skill tells an agent to tag the one person whose answer or action its
+  message needs, as `<users/ID>` with their numeric Chat id, and nobody when
+  it asks nothing of anyone. That Chat then notifies them is UNPROVEN (gp-fkb9).
 
 - Remove saved attachments when a message deletion is learned, and files of
   attachments an accepted edit took away. Cleanup retries survive restart;
