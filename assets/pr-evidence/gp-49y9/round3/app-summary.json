@@ -1,0 +1,46 @@
+{
+  "merge-app": {
+    "runs": 20,
+    "passing_runs": 20,
+    "failed_runs": 0,
+    "top_level_passes": 1620,
+    "subtest_passes": 2840,
+    "skips": 0,
+    "seconds": 10841.146,
+    "failed_tests": {},
+    "leaf_failures": {},
+    "sources": [
+      "be5a7add42870f7795f2197ab96f6f3dbfcafaf7"
+    ]
+  },
+  "final-app": {
+    "runs": 20,
+    "passing_runs": 10,
+    "failed_runs": 10,
+    "top_level_passes": 1610,
+    "subtest_passes": 2835,
+    "skips": 0,
+    "seconds": 11529.899,
+    "failed_tests": {
+      "TestSubscriptionRefusalRetriesWithoutSignIn/404": 1,
+      "TestSubscriptionRefusalRetriesWithoutSignIn": 1,
+      "TestFreshTokenIdentityDeliversFirstDM": 1,
+      "TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded": 4,
+      "TestShutdownCheckpointsBeforeDrainingStalledRequestBody": 4,
+      "TestMissingTokenReplacementResumes": 2,
+      "TestRevokedTokenReplacementResumes": 1,
+      "TestManagedSourceLateIdentityReachesRunningClient": 1
+    },
+    "leaf_failures": {
+      "TestSubscriptionRefusalRetriesWithoutSignIn/404": 1,
+      "TestFreshTokenIdentityDeliversFirstDM": 1,
+      "TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded": 4,
+      "TestMissingTokenReplacementResumes": 2,
+      "TestRevokedTokenReplacementResumes": 1,
+      "TestManagedSourceLateIdentityReachesRunningClient": 1
+    },
+    "sources": [
+      "32228ffd052970c40472cfb080a64399b7dc63d7"
+    ]
+  }
+}

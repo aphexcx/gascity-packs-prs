@@ -1,0 +1,18 @@
+{
+  "source": "52e91dbe5902fb98daeb8e3ff3150cb80b8d9527",
+  "unchanged_archived_files": 153,
+  "tests": {
+    "TestFromLineWholeClassIsDelivered": {
+      "fail": 108,
+      "pass": 18
+    },
+    "TestNoticeFollowsEveryEnrolledMember": {
+      "fail": 26,
+      "pass": 2
+    },
+    "TestQuoteMergedHeadersWholeDisplayClass": {
+      "fail": 43366,
+      "pass": 1259
+    }
+  }
+}

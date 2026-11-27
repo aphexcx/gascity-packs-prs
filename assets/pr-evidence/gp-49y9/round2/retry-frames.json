@@ -1,0 +1,40 @@
+{
+  "TestRetryNeverSendsWithdrawnText/merged_member/message.deleted": [
+    "POST 0 id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+    "POST 1 id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/merged_member/message.updated": [
+    "POST 0 id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ncurrent-text\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+    "POST 1 id=spaces/room/messages/m001#updated#2026-11-01T10:00:10Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nedited: current-text\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/merged_owner/message.deleted": [
+    "POST 0 id=spaces/room/messages/m001 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\"",
+    "POST 1 id=spaces/room/messages/m002#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ndeleted\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/merged_owner/message.updated": [
+    "POST 0 id=spaces/room/messages/m002 text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nbody-001\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\ncurrent-text\"",
+    "POST 1 id=spaces/room/messages/m002#updated#2026-11-01T10:00:10Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nedited: current-text\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/folded/message.deleted": [
+    "POST 0 id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/folded/message.updated": [
+    "POST 0 id=spaces/room/messages/m001#updated#2026-11-01T10:00:10Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nedited: current-text\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/edit_owner/message.deleted": [
+    "POST 0 id=spaces/room/messages/m002 text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+    "POST 1 id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/edit_owner/message.updated": [
+    "POST 0 id=spaces/room/messages/m001#updated#2026-11-01T10:00:09Z text=\"[2 messages in this room, oldest first. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nedited: current-text\"",
+    "POST 1 id=spaces/room/messages/m001#updated#2026-11-01T10:00:18Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nedited: current-text\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/catchup/message.deleted": [
+    "POST 0 id=spaces/room/messages/m002 text=\"[catch-up]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+    "POST 1 id=spaces/room/messages/m001#deleted text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ndeleted\""
+  ],
+  "TestRetryNeverSendsWithdrawnText/catchup/message.updated": [
+    "POST 0 id=spaces/room/messages/m002 text=\"[catch-up: 2 messages, oldest first; 2026-11-01 10:00 to 2026-11-01 10:00 UTC. Each has its own from line.]\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\ncurrent-text\\n[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\\nbody-002\"",
+    "POST 1 id=spaces/room/messages/m001#updated#2026-11-01T10:00:09Z text=\"[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m001]\\nedited: current-text\""
+  ]
+}

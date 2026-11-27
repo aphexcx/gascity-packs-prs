@@ -1,0 +1,12 @@
+[
+  {
+    "run": 1,
+    "test": "TestObservedIdentityReplacesContradictedLedgerIdentity",
+    "output": [
+      "=== RUN   TestObservedIdentityReplacesContradictedLedgerIdentity",
+      "2026/11/13 20:38:50 WARN chat identity user ID mismatch; rebuild the client before deleting reactions expected_user_id=users/999 observed_user_id=users/123456789",
+      "    app_test.go:365: Post \"http://adapter/publish\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+      "--- FAIL: TestObservedIdentityReplacesContradictedLedgerIdentity (3.09s)"
+    ]
+  }
+]

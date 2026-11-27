@@ -106,6 +106,7 @@ type Settings struct {
 	CatchupBudget     int        `toml:"catchup_budget,omitzero"`       // per space per pass, default 50
 	FirstStartHistory *string    `toml:"first_start_history,omitempty"` // optional history window, at most one week
 	JoinReachback     string     `toml:"join_reachback,omitempty"`      // duration, default 5m, maximum 60m
+	CoalesceWindow    *string    `toml:"coalesce_window,omitempty"`
 }
 
 type Config struct {
@@ -355,6 +356,15 @@ func (c *Config) CatchupBudget() int {
 	return 50
 }
 
+// CoalesceWindow is validated at load and refreshed with other settings.
+func (c *Config) CoalesceWindow() time.Duration {
+	if c.Settings.CoalesceWindow == nil {
+		return 8 * time.Second
+	}
+	d, _ := time.ParseDuration(*c.Settings.CoalesceWindow)
+	return d
+}
+
 // FirstStartWindow is used only when creating or moving a history floor.
 // Load validates the duration before a Config is used by the service or CLI.
 func (c *Config) FirstStartWindow() time.Duration {
@@ -444,6 +454,15 @@ func (c *Config) validateSettings(mediaMaxBytes int64, mediaMaxAttachments int, 
 		d, err := time.ParseDuration(c.Settings.JoinReachback)
 		if err != nil || d < 0 || d > time.Hour {
 			return fmt.Errorf("join_reachback must be a duration between 0s and 60m")
+		}
+	}
+	if c.Settings.CoalesceWindow != nil {
+		d, err := time.ParseDuration(*c.Settings.CoalesceWindow)
+		if err != nil {
+			return fmt.Errorf("coalesce_window must be a Go duration: %w", err)
+		}
+		if d < 0 || d > time.Minute {
+			return fmt.Errorf("coalesce_window must be between 0s and 60s")
 		}
 	}
 	return nil

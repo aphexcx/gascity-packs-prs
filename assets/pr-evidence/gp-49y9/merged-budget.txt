@@ -1,0 +1,171 @@
+=== RUN   TestTurnFixedBytesBudget
+=== RUN   TestTurnFixedBytesBudget/1
+    coalesce_budget_test.go:118: BYTES members=1 words=40 adapter_fixed=113 whole_fixed=452 total=492
+    coalesce_budget_test.go:119: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345]
+        Can you send me the rent roll for March?
+
+        Message id: spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345 (in thread spaces/AAAA_XXXXXX/threads/abcDEF12345)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345 --body-file <path>
+        </system-reminder>
+--- PASS: TestTurnFixedBytesBudget/1 (0.00s)
+=== RUN   TestTurnFixedBytesBudget/2
+    coalesce_budget_test.go:118: BYTES members=2 words=48 adapter_fixed=296 whole_fixed=635 total=683
+    coalesce_budget_test.go:119: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [2 messages in this room, oldest first. Each has its own from line.]
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m1aaaaaaaaa.m1aaaaaaaaa]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m2aaaaaaaaa.m2aaaaaaaaa]
+        The plumber is confirmed for unit 4.
+
+        Message id: spaces/AAAA_XXXXXX/messages/m2aaaaaaaaa.m2aaaaaaaaa (in thread spaces/AAAA_XXXXXX/threads/m2aaaaaaaaa)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/m2aaaaaaaaa.m2aaaaaaaaa --body-file <path>
+        </system-reminder>
+--- PASS: TestTurnFixedBytesBudget/2 (0.00s)
+=== RUN   TestTurnFixedBytesBudget/5
+    coalesce_budget_test.go:118: BYTES members=5 words=97 adapter_fixed=646 whole_fixed=985 total=1082
+    coalesce_budget_test.go:119: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [5 messages in this room, oldest first. Each has its own from line.]
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m1aaaaaaaaa.m1aaaaaaaaa]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m2aaaaaaaaa.m2aaaaaaaaa]
+        The plumber is confirmed for unit 4.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/m3aaaaaaaaa.m3aaaaaaaaa]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/m4aaaaaaaaa.m4aaaaaaaaa]
+        I will let the tenant know.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa]
+        Perfect.
+
+        Message id: spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa (in thread spaces/AAAA_XXXXXX/threads/m5aaaaaaaaa)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa --body-file <path>
+        </system-reminder>
+--- PASS: TestTurnFixedBytesBudget/5 (0.00s)
+=== RUN   TestTurnFixedBytesBudget/50
+    coalesce_budget_test.go:118: BYTES members=50 words=970 adapter_fixed=5174 whole_fixed=5513 total=6483
+    coalesce_budget_test.go:119: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [50 messages in this room, oldest first. Each has its own from line.]
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra005]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra010]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra015]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra020]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra025]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra030]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra035]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra040]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra045]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m1aaaaaaaaa.m1aaaaaaaaa]
+        Morning all.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra006]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra011]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra016]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra021]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra026]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra031]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra036]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra041]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra046]
+        The plumber is confirmed for unit 4.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m2aaaaaaaaa.m2aaaaaaaaa]
+        The plumber is confirmed for unit 4.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra007]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra012]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra017]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra022]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra027]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra032]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra037]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra042]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra047]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/m3aaaaaaaaa.m3aaaaaaaaa]
+        Great, thanks.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra008]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra013]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra018]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra023]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra028]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra033]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra038]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra043]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/extra048]
+        I will let the tenant know.
+        [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/m4aaaaaaaaa.m4aaaaaaaaa]
+        I will let the tenant know.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra009]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra014]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra019]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra024]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra029]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra034]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra039]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra044]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/extra049]
+        Perfect.
+        [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa]
+        Perfect.
+
+        Message id: spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa (in thread spaces/AAAA_XXXXXX/threads/m5aaaaaaaaa)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa --body-file <path>
+        </system-reminder>
+--- PASS: TestTurnFixedBytesBudget/50 (0.12s)
+--- PASS: TestTurnFixedBytesBudget (0.12s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.328s

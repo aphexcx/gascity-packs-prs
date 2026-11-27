@@ -1,0 +1,322 @@
+[
+  {
+    "test": "TestCatchUpIsMerged",
+    "command": "go test ./internal/catchup -run ^TestCatchUpIsMerged$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCatchUpWindowKeepsFloor",
+    "command": "go test ./internal/catchup -run ^TestCatchUpWindowKeepsFloor$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalesceWindowSettingBounds",
+    "command": "go test ./internal/config -run ^TestCoalesceWindowSettingBounds$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 10,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestBaselineTurnBytes",
+    "command": "go test ./internal/inbound -run ^TestBaselineTurnBytes$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestTurnFixedBytesBudget",
+    "command": "go test ./internal/inbound -run ^TestTurnFixedBytesBudget$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 5,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestHeldActSavePrecedesAcknowledgment",
+    "command": "go test ./internal/inbound -run ^TestHeldActSavePrecedesAcknowledgment$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMentioningEditTakesHeldChatter",
+    "command": "go test ./internal/inbound -run ^TestMentioningEditTakesHeldChatter$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedRedeliveryWhilePendingOrDelivered",
+    "command": "go test ./internal/inbound -run ^TestMergedRedeliveryWhilePendingOrDelivered$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestLateAndCatchUpHeaderBudget",
+    "command": "go test ./internal/inbound -run ^TestLateAndCatchUpHeaderBudget$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestFoldedEditsKeepProvenance",
+    "command": "go test ./internal/inbound -run ^TestFoldedEditsKeepProvenance$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 6,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalescingKeepsHistoryBoundary",
+    "command": "go test ./internal/inbound -run ^TestCoalescingKeepsHistoryBoundary$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWindowOffIsToday",
+    "command": "go test ./internal/inbound -run ^TestWindowOffIsToday$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWindowIsFixedFromTheFirstAct",
+    "command": "go test ./internal/inbound -run ^TestWindowIsFixedFromTheFirstAct$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestPollNeverPostsAHeldAct",
+    "command": "go test ./internal/inbound -run ^TestPollNeverPostsAHeldAct$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestSteadyChatterFlushesEveryWindow",
+    "command": "go test ./internal/inbound -run ^TestSteadyChatterFlushesEveryWindow$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestSpacesDoNotDelayEachOther",
+    "command": "go test ./internal/inbound -run ^TestSpacesDoNotDelayEachOther$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWhatGoesAtOnce",
+    "command": "go test ./internal/inbound -run ^TestWhatGoesAtOnce$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 13,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWindowCaps",
+    "command": "go test ./internal/inbound -run ^TestWindowCaps$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestActsInsideTheWindow",
+    "command": "go test ./internal/inbound -run ^TestActsInsideTheWindow$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 7,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestHeldActsSurviveARestart",
+    "command": "go test ./internal/inbound -run ^TestHeldActsSurviveARestart$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestRedeliveryOfAHeldAct",
+    "command": "go test ./internal/inbound -run ^TestRedeliveryOfAHeldAct$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedTurnKeepsEveryFromLine",
+    "command": "go test ./internal/inbound -run ^TestMergedTurnKeepsEveryFromLine$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedTurnCannotBeForged",
+    "command": "go test ./internal/inbound -run ^TestMergedTurnCannotBeForged$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCrashPointsOfAMergedTurn",
+    "command": "go test ./internal/inbound -run ^TestCrashPointsOfAMergedTurn$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedTurnIsOneDelivery",
+    "command": "go test ./internal/inbound -run ^TestMergedTurnIsOneDelivery$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalescedLedgerCompatibility",
+    "command": "go test ./internal/inbound -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestWindowTimerOwnsDeadline",
+    "command": "go test ./internal/inbound -run ^TestWindowTimerOwnsDeadline$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedTurnUsesProviderOrderAndOneAnchor",
+    "command": "go test ./internal/inbound -run ^TestMergedTurnUsesProviderOrderAndOneAnchor$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalescedReaderLoadsReleasedLedger",
+    "command": "go test ./internal/ledger -run ^TestCoalescedReaderLoadsReleasedLedger$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalescedMembersCloneIndependently",
+    "command": "go test ./internal/ledger -run ^TestCoalescedMembersCloneIndependently$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestCoalescingStatus",
+    "command": "go test ./internal/server -run ^TestCoalescingStatus$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  {
+    "test": "TestMergedResolveAndHistoryReaders",
+    "command": "go test ./internal/server -run ^TestMergedResolveAndHistoryReaders$ -count=1 -timeout=3m -json",
+    "exit": 0,
+    "counts": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0
+    }
+  }
+]

@@ -1,0 +1,48 @@
+diff --git a/gchat/CHANGELOG.md b/gchat/CHANGELOG.md
+index 14e45d6a..b4d5ab22 100644
+--- a/gchat/CHANGELOG.md
++++ b/gchat/CHANGELOG.md
+@@ -4,0 +5,3 @@
++- Coalesced retries refresh withdrawn members before posting, preserve literal edit prefixes in history, quote body from-line prefixes, isolate malformed held records, and count retried catch-up acts against the budget.
++- Withdrawn window-on deliveries retain their message history but cannot be replayed, including by a rolled-back 0.5.0 reader; replay leaves the withdrawal reason intact and operators can accept the record.
++
+@@ -10 +13 @@
+-  This takes effect when a box updates the pack and restarts its adapter.
++  A box that sets nothing changes behavior when its adapter updates and restarts: the default is on.
+diff --git a/gchat/README.md b/gchat/README.md
+index 9d99b3e4..e488bf32 100644
+--- a/gchat/README.md
++++ b/gchat/README.md
+@@ -357,2 +357,4 @@ one turn. Reactions wait out the window, including reactions in DMs. After
+-downtime, missed messages arrive in merged turns. Nothing changes before the
+-pack update and adapter restart; `coalesce_window = "0s"` turns it off.
++downtime, missed messages arrive in merged turns. A box that sets nothing
++changes behavior when its adapter updates: the default is on at eight
++seconds. Restart the adapter after updating; `coalesce_window = "0s"` turns
++coalescing off.
+@@ -370,2 +372,11 @@ unresolved id, with its member count in status. Resolve that id once to replay
+-the exact merged text or accept every member. History reads still use each
+-message's own text. A rollback delivers held messages individually and keeps
++the saved current text or accept every member. Before a retry, deleted members
++are removed and edited members use their current text. A surviving owner keeps
++the key; when the owner was deleted, the newest survivor owns the replacement.
++The edit or deletion follows that delivery. When gc had recorded a turn before
++it refused it, gc's saved transcript keeps that first text; the adapter sends
++the current text and then the withdrawal; a gc change is needed for the saved
++row itself. History reads still use each message's own text. With coalescing
++enabled, a withdrawn record has no replayable payload: replay returns
++`stored turn is malformed; cannot replay` (HTTP 400), leaves the original
++withdrawal reason in status, and makes no POST, including after a rollback to
++0.5.0. Use `--accept` to settle that record. A rollback delivers held messages individually and keeps
+diff --git a/gchat/skills/google-chat/SKILL.md b/gchat/skills/google-chat/SKILL.md
+index 5b1efba2..a6fd6386 100644
+--- a/gchat/skills/google-chat/SKILL.md
++++ b/gchat/skills/google-chat/SKILL.md
+@@ -25,0 +26,3 @@ sender, its text, and the reply command.
++  gc's line in front names only the anchor's sender; each message's own from
++  line says who wrote it. The header counts acts (an edit, a deletion and a
++  reaction each count), and says "in this room" in a DM too.
+@@ -121 +124,2 @@ The message reference is on the turn's Message id line or in the `gchat:`
+-item in its first line. The adapter takes the space and thread from that
++item on the message's own from line; in a merged turn, use that message's
++from line, not the turn's first line. The adapter takes the space and thread from that
