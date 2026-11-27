@@ -1973,6 +1973,73 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 	}
 }
 
+func TestRequiredReadHoldsOnRefusedRedirect(t *testing.T) {
+	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
+		t.Run(path, func(t *testing.T) {
+			f := setup(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/unused" {
+					t.Error("required read followed the redirect")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Location", "/unused")
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(http.StatusFound)
+				io.WriteString(w, `{"error":{"code":404}}`)
+			}))
+			defer server.Close()
+			f.opts.Config.Endpoints.ChatAPIBase = server.URL
+			client, err := resourceTokenSource(t, server.URL).Client(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := client.Transport
+			client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				resp, err := base.RoundTrip(r)
+				if err == nil && resp.StatusCode == http.StatusFound && resp.Body != http.NoBody {
+					// Check the boundary before allowing the SDK to interpret the response.
+					defer resp.Body.Close()
+					data, err := io.ReadAll(resp.Body)
+					if err != nil || len(data) != 0 {
+						t.Error("required client exposed the refused redirect body")
+						return nil, errors.New("unexpected redirect body")
+					}
+					resp.Body = http.NoBody
+				}
+				return resp, err
+			})
+			f.opts.Chat, err = chat.New(t.Context(), client, f.opts.Config.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Space = nil
+			ev := event("redirect-hold", "message.created", m)
+			if path != "message_space" {
+				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/one"}, EventTime: time.Now().UTC()}}
+				if path == "reaction_space" {
+					f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			out, err := f.p.Handle(ctx, ev)
+			var apiErr *googleapi.Error
+			if out != puller.Nack || !errors.As(err, &apiErr) || apiErr.Code != http.StatusFound {
+				t.Fatalf("expected a hold on HTTP 302, got %v, %v", out, err)
+			}
+			if len(f.l.Changes) != 0 || len(f.gc.Inbound()) != 0 || f.l.Transport.Seen("pubsub:redirect-hold") {
+				t.Fatal("held lookup consumed the change")
+			}
+		})
+	}
+}
+
 func TestLookupHoldPreservesTokenError(t *testing.T) {
 	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
 		t.Run(path, func(t *testing.T) {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Required Google API reads now keep a message or reaction on hold when a
+  redirect body gives a different error code. The adapter discards that body
+  for required calls, optional lookups and replacement credential checks.
+  Token refresh, sign-in code exchange and managed identity lookups now
+  refuse redirects. P1 and P2 below remain UNPROVEN.
+
 - The authenticated Google API clients for required calls, optional lookups
   and replacement credential validation now return the first redirect as a
   failed call. P1 (UNPROVEN) assumes Chat, People and Workspace Events
