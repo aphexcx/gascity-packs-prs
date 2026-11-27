@@ -44,7 +44,7 @@ mail)
     mail_no_result) echo secret-output; exit 0 ;;
     empty) exit 0 ;;
     false) echo '{"ok":false}'; exit 0 ;;
-    slow) sleep 0.12 ;;
+    slow) sleep 0.5 ;;
     hold) while [ ! -f release ]; do sleep 0.02; done ;;
     missing|wake_timeout|wake_exit) echo '{"ok":true}'; exit 0 ;;
     duplicate) echo '{"ok":true,"already_done":true}'; exit 0 ;;
@@ -82,13 +82,16 @@ func TestDeliveryWakeSlow(t *testing.T) {
 		t.Run(tc.mode, func(t *testing.T) {
 			dir := deliveryCommands(t)
 			writeFile(t, filepath.Join(dir, "mode"), tc.mode)
-			opts := Options{mailTimeout: 500 * time.Millisecond, wakeTimeout: 150 * time.Millisecond}
+			opts := Options{mailTimeout: 5 * time.Second, wakeTimeout: 5 * time.Second}
 			if tc.mode == "mail_timeout" {
-				opts.mailTimeout = 150 * time.Millisecond
+				opts.mailTimeout = 2 * time.Second
+			}
+			if tc.mode == "wake_timeout" {
+				opts.wakeTimeout = 2 * time.Second
 			}
 			a := raiseApp(opts)
 			r := inbound.Raise{ID: "example-change", Body: "example body"}
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Second)
 			defer cancel()
 			err := a.raiseDelivery(ctx, r)
 			if (tc.cause == "") != (err == nil) || (err != nil && err.Error() != tc.cause) {
@@ -127,6 +130,7 @@ func TestDeliveryWakeSlow(t *testing.T) {
 func deliveryApplication(t *testing.T, dir string) (*fixture, func(string)) {
 	t.Helper()
 	f := newFixture(t, true)
+	t.Setenv("GC_BIN", filepath.Join(dir, "gc"))
 	f.cfg.Secrets.GCAPIBase = f.gc.URL()
 	f.google.Configure(func(g *fakegoogle.Server) {
 		g.Spaces["spaces/room"] = &api.Space{Name: "spaces/room", SpaceType: "SPACE"}

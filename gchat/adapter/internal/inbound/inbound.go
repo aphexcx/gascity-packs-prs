@@ -136,6 +136,9 @@ func (r Raise) DedupKey() string {
 type Processor struct {
 	opts Options
 	gate chan struct{}
+	// Both are used only under gate. A new generation starts without proof.
+	receiptPost time.Time
+	unanswered  map[string]time.Time
 	// wait is the in-gate wait of the first POSTs; tests replace it.
 	wait func(context.Context, time.Duration) error
 	// raiseMu serializes the raise phase of concurrent polls. raiseTried
@@ -187,7 +190,7 @@ func New(opts Options) (*Processor, error) {
 	if opts.Save == nil {
 		opts.Save = func(l *ledger.Ledger) error { return l.Save(opts.LedgerPath) }
 	}
-	return &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{}}, nil
+	return &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{}, unanswered: make(map[string]time.Time)}, nil
 }
 
 // Handle is a puller.Handler. Pending receipts are durable recovery obligations,
@@ -424,6 +427,8 @@ func (p *Processor) Pass(ctx context.Context) error {
 		case "concluded":
 			if r.Delivery.Status == "pending" {
 				err = p.concludedPending(id, r.Delivery)
+			} else if life, ok := p.unanswered[id]; ok && life.Equal(c.Created) && isRepostFailure(r.Delivery.Status) {
+				err = p.repostOutcome(id, r.Delivery)
 			} else {
 				err = p.outcome(id, r.Delivery)
 				if err == nil {
@@ -1269,29 +1274,54 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		if json.Unmarshal([]byte(c.Event), &w) != nil || w.ProviderMessageID != id {
 			return p.unresolved(id, "stored turn is malformed")
 		}
-		// Persist the attempt before crossing the process boundary. A crash or
-		// lost response after this point is ambiguous, never safe to repost.
-		attempted := false
-		if err := p.update(func(l *ledger.Ledger) {
-			if c := l.Changes[id]; c != nil {
-				c.Attempts++
-				c.Reason = ""
-				c.Posted = p.opts.Now().UTC()
-				// This POST uses the next attempt; a later "not delivered" sets a new one.
-				c.NextAttempt = time.Time{}
-				attempted = true
+		for repost := false; ; repost = true {
+			if life, seen := p.unanswered[id]; seen && life.Equal(c.Created) && !repost {
+				return p.unresolved(id, "interrupted POST; delivery unknown")
 			}
-		}); err != nil {
-			return err
-		}
-		if !attempted {
-			return nil
-		}
-		r, err := p.opts.GC.Inbound(ctx, w)
-		if err != nil {
+			if repost && ctx.Err() != nil {
+				return p.unresolved(id, "POST response unavailable; delivery unknown")
+			}
+			attempted, err := p.saveAttempt(id, c.Created)
+			if err != nil || !attempted {
+				return err
+			}
+			started := p.opts.Now()
+			r, err := p.opts.GC.Inbound(ctx, w)
+			if err == nil {
+				p.receiptPost = time.Time{}
+				if r.Delivery.ReceiptID != "" {
+					p.receiptPost = started
+				}
+				if repost {
+					return p.repostOutcome(id, r.Delivery)
+				}
+				if err := p.outcome(id, r.Delivery); err != nil {
+					return err
+				}
+				break
+			}
 			var responseErr *gcclient.HTTPError
 			answered := errors.As(err, &responseErr)
+			if answered {
+				p.receiptPost = time.Time{}
+			}
 			var op *net.OpError
+			if repost {
+				word, kind := "no_answer", "other"
+				switch {
+				case answered:
+					word = fmt.Sprintf("http_%d", responseErr.StatusCode)
+					if responseErr.StatusCode >= 500 || stoppedCity(responseErr) {
+						kind = "unreachable"
+					}
+				case errors.As(err, &op) && op.Op == "dial":
+					word, kind = "unreachable", "unreachable"
+				}
+				if err := p.opts.NeverSilent.Result(id, kind, nil); err != nil {
+					return err
+				}
+				return p.unconfirmed(id, word)
+			}
 			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429 || responseErr.StatusCode == 408 || stoppedCity(responseErr))) || (errors.As(err, &op) && op.Op == "dial") {
 				kind := "other"
 				if (answered && (responseErr.StatusCode >= 500 || stoppedCity(responseErr))) || (op != nil && op.Op == "dial") {
@@ -1323,13 +1353,14 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			if answered && responseErr.StatusCode >= 300 && responseErr.StatusCode < 400 {
 				return p.unresolved(id, fmt.Sprintf("gc answered HTTP %d; delivery unknown", responseErr.StatusCode))
 			}
+			if ctx.Err() == nil && p.canRepost(ctx, started) {
+				p.unanswered[id] = c.Created
+				continue
+			}
 			if err := p.unresolved(id, "POST response unavailable; delivery unknown"); err != nil {
 				return err
 			}
 			return ctx.Err()
-		}
-		if err := p.outcome(id, r.Delivery); err != nil {
-			return err
 		}
 		if later {
 			return nil
@@ -1340,6 +1371,73 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 func stoppedCity(err *gcclient.HTTPError) bool {
 	return err.StatusCode == 404 && (err.Code() == "city-not-found" ||
 		(err.Problem != nil && strings.HasPrefix(err.Problem.Detail, "not_found: city not found or not running")))
+}
+
+// saveAttempt makes a crash after either POST ambiguous. Only the same
+// active call, holding fresh proof, may immediately cross that boundary again.
+func (p *Processor) saveAttempt(id string, life time.Time) (bool, error) {
+	attempted := false
+	err := p.update(func(l *ledger.Ledger) {
+		c := l.Changes[id]
+		if c == nil || c.Status != "intent" || !c.Created.Equal(life) {
+			return
+		}
+		c.Attempts++
+		c.Reason = ""
+		c.Posted = p.opts.Now().UTC()
+		c.NextAttempt = time.Time{}
+		attempted = true
+	})
+	return attempted, err
+}
+
+func (p *Processor) canRepost(ctx context.Context, started time.Time) bool {
+	if p.receiptPost.IsZero() {
+		return false
+	}
+	uptime, ok := p.opts.GC.Uptime(ctx)
+	if !ok || ctx.Err() != nil {
+		return false
+	}
+	const processMargin = 5 * time.Second
+	earliest := p.opts.Now().Add(-uptime).Add(processMargin)
+	return !started.Before(earliest) && !p.receiptPost.Before(earliest)
+}
+
+func isRepostFailure(status string) bool {
+	return status == "failed" || status == "held" || status == "partial"
+}
+
+func (p *Processor) unconfirmed(id, word string) error {
+	return p.unresolved(id, "re-post not confirmed ("+word+"); delivery unknown")
+}
+
+func (p *Processor) repostOutcome(id string, d wire.Delivery) error {
+	if d.Status == "delivered" || (d.Status == "pending" && d.ReceiptID != "") {
+		return p.outcome(id, d)
+	}
+	kind := d.Status
+	if kind == "held" && !fragment(d) {
+		kind = "failed"
+	}
+	if err := p.opts.NeverSilent.Result(id, kind, deliverySessions(d)); err != nil {
+		return err
+	}
+	if err := p.update(func(l *ledger.Ledger) {
+		if c := l.Changes[id]; c != nil {
+			if d.ReceiptID != "" {
+				c.ReceiptID = d.ReceiptID
+			}
+			c.Fragment = c.Fragment || fragment(d)
+		}
+	}); err != nil {
+		return err
+	}
+	if isRepostFailure(d.Status) || d.Status == "no_route" {
+		return p.unconfirmed(id, d.Status)
+	}
+	// An incomplete or unrecognized success body supplied no usable answer.
+	return p.unconfirmed(id, "no_answer")
 }
 
 // reasonCode admits only short ASCII tokens into durable reasons and logs.
@@ -1455,6 +1553,9 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 	if err == nil && status == "no_route" {
 		err = p.opts.NeverSilent.Stop(id, true)
 	}
+	if err == nil && (status == "delivered" || status == "no_route") {
+		delete(p.unanswered, id)
+	}
 	return err
 }
 
@@ -1505,6 +1606,7 @@ func (p *Processor) unresolved(id, reason string) error {
 		recorded = true
 	})
 	if err == nil && recorded {
+		delete(p.unanswered, id)
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reason)
 	}
 	return err

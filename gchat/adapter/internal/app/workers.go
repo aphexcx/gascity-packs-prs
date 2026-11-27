@@ -141,6 +141,18 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	a.health("catching-up", "recovering retained history")
 	workers.Go(func() { m.RenewLoop(ctx) })
 	workers.Go(func() { a.poll(ctx, proc, fatal) })
+	workers.Go(func() {
+		t := time.NewTicker(a.deliveryTick())
+		defer t.Stop()
+		for {
+			proc.RaiseDue(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	})
 	workers.Go(func() { fatal <- a.catchup(ctx, r, m, &caught) })
 	monitor := time.NewTicker(time.Second)
 	defer monitor.Stop()
@@ -354,12 +366,19 @@ func (a *application) frozenHistory() bool {
 	return false
 }
 
+func (a *application) deliveryTick() time.Duration {
+	if a.opts.pollInterval > 0 {
+		return a.opts.pollInterval
+	}
+	return 5 * time.Second
+}
+
 func (a *application) poll(ctx context.Context, p *inbound.Processor, fatal chan<- error) {
-	t := time.NewTicker(5 * time.Second)
+	t := time.NewTicker(a.deliveryTick())
 	defer t.Stop()
 	var lastLog time.Time
 	for {
-		err := p.Poll(ctx)
+		err := p.Pass(ctx)
 		if err != nil && strings.Contains(err.Error(), "gc temporarily unavailable") {
 			a.gcDown.Store(true)
 		}

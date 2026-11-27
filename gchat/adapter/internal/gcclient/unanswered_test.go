@@ -50,3 +50,23 @@ func TestUnansweredPostReadsSlowAnswer(t *testing.T) {
 		t.Fatalf("slow answer = %q, %v", result.Delivery.Status, err)
 	}
 }
+
+func TestUnansweredPostHealthDeadline(t *testing.T) {
+	c := New("http://gc.invalid", "examplecity")
+	if c.healthTimeout != 5*time.Second {
+		t.Fatalf("health deadline = %v", c.healthTimeout)
+	}
+	c.healthTimeout = 25 * time.Millisecond
+	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/health" || r.Method != http.MethodGet {
+			t.Fatalf("unexpected health request %s %s", r.Method, r.URL.Path)
+		}
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if _, proof := c.Uptime(ctx); proof || ctx.Err() != nil {
+		t.Fatal("health timeout should end the probe before its parent")
+	}
+}

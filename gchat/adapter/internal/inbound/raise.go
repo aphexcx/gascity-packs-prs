@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -10,6 +11,14 @@ import (
 
 	"gchat-adapter/internal/ledger"
 )
+
+// RaiseFailure describes a delivery command failure without its output or arguments.
+type RaiseFailure string
+
+func (e RaiseFailure) Error() string { return string(e) }
+
+// RaiseDue lets the application drive notices independently of receipt polling.
+func (p *Processor) RaiseDue(ctx context.Context) { p.raise(ctx) }
 
 // raise reports what is due at the end of a poll pass (mailDue), oldest
 // first. It runs outside the gate and the ledger lock, makes at most
@@ -56,7 +65,15 @@ func (p *Processor) raise(ctx context.Context) {
 		}
 		if err := p.opts.Raise(ctx, p.report(current, c, now)); err != nil {
 			p.raiseTried[c.ID] = p.opts.Now()
-			p.opts.Logger.Warn("inbound delivery raise failed; retrying in a minute", "change", c.ID)
+			cause := RaiseFailure("mail_exit")
+			var failure RaiseFailure
+			if errors.As(err, &failure) {
+				switch failure {
+				case "mail_timeout", "mail_exit", "mail_no_result", "wake_timeout", "wake_exit":
+					cause = failure
+				}
+			}
+			p.opts.Logger.Warn("inbound delivery raise failed; retrying in a minute", "change", c.ID, "cause", string(cause))
 			continue
 		}
 		at := p.opts.Now().UTC()

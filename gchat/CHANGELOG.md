@@ -113,6 +113,16 @@
 
 - Fill incomplete senders before classification and log each lookup failure cause once per source. The cost is one GET for each new sender, bounded at 3 seconds, inside the gate (no call for a message or a reaction of a sender the cache holds), and a sender is asked again after 1 hour, a failed one after 10 minutes. Whether the message and membership GETs return both fields is UNPROVEN, and the rule can classify a sender whose name is still missing.
 
+- An inbound post may hold the adapter's gate up to 120 seconds instead of 35,
+  and with a re-post up to 245. One GET of gc's `/health`, bounded at 5 seconds,
+  follows an unanswered post only if the latest answered post supplied a
+  receipt. At most one more post of a message is made on
+  the receipt and uptime proof. The notice's mail command may run up to
+  120 seconds and its wake command up to 60. Every `gchat: delivery` mail now
+  asks gc for a turn of the agent. A notice the dedup key suppressed costs one
+  line in the agent's session. Claim by message ID (P1), the sign (P2), uptime
+  (P3), mail notification and deduplication (P6), and wake (P7) are UNPROVEN.
+
 ## 0.5.0 — 2026-11-09
 
 - Prefer a prebuilt adapter on PATH (or GC_GCHAT_ADAPTER_BIN) before building;

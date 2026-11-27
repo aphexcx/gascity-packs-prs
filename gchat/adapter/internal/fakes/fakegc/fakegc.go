@@ -74,6 +74,10 @@ func New(t testing.TB) *Server {
 
 func (s *Server) URL() string { return s.http.URL }
 func (s *Server) Close()      { s.http.Close() }
+
+// StopAccepting leaves the active response intact while refusing new dials.
+func (s *Server) StopAccepting() { _ = s.http.Listener.Close() }
+
 func (s *Server) Configure(fn func(*Server)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -262,6 +266,27 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			step, s.Posts = s.Posts[0], s.Posts[1:]
 		}
 		s.mu.Unlock()
+		if step.AfterClientLeft != nil {
+			// Preserve the request before closing the socket. The scripted
+			// handler can now finish its work after the client's call ended.
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				return
+			}
+			conn, _, err := http.NewResponseController(w).Hijack()
+			if err != nil {
+				panic(err)
+			}
+			_ = conn.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			<-step.AfterClientLeft
+			out := httptest.NewRecorder()
+			s.serveExtmsg(out, r, city, path, step)
+			if step.After != nil {
+				step.After(out)
+			}
+			return
+		}
 		if step.After != nil || step.Drop {
 			// Buffer the response so the request can outlive its client,
 			// without serializing health or the next claim behind it.
@@ -289,9 +314,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 // PostStep can reject before claiming, or delay or lose the response after
 // the claim decision. After runs outside the claim lock.
 type PostStep struct {
-	HTTPStatus int
-	Drop       bool
-	After      func(*httptest.ResponseRecorder)
+	HTTPStatus      int
+	Drop            bool
+	After           func(*httptest.ResponseRecorder)
+	AfterClientLeft <-chan struct{}
 }
 
 // Restart clears process-local receipts and claims, retaining observation

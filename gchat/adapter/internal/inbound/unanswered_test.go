@@ -1,11 +1,16 @@
 package inbound
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,12 +66,62 @@ func checkEnd(t *testing.T, rf *retryFixture, reason string, attempts int) {
 	}
 }
 
+func TestUnansweredPostHealthRequiresReceiptSign(t *testing.T) {
+	for _, signed := range []bool{false, true} {
+		name := "no_sign_one_post_and_one_notice"
+		if signed {
+			name = "sign_one_probe_and_one_repost"
+		}
+		t.Run(name, func(t *testing.T) {
+			rf := retrySetup(t)
+			if signed {
+				handle(t, rf.fixture, otherEvent("sign"))
+			}
+			var probes atomic.Int32
+			rf.gc.Configure(func(s *fakegc.Server) {
+				s.Health = func(w http.ResponseWriter, _ *http.Request) {
+					probes.Add(1)
+					fmt.Fprint(w, `{"uptime_sec":3600}`)
+				}
+			})
+			before := len(rf.gc.Inbound())
+			postSteps(rf, fakegc.PostStep{HTTPStatus: 500, Drop: true})
+			handle(t, rf.fixture, event("lost", "message.created", message()))
+			rf.poll(t)
+			rf.clock.Add(time.Hour)
+			rf.poll(t)
+			c := rf.change(t, messageName)
+			posts, notices := len(rf.gc.Inbound())-before, len(rf.raises.list())
+			if signed {
+				if posts != 2 || probes.Load() != 1 || notices != 0 || c.Status != "committed" || c.Reason != "delivered" || rf.gc.Fanouts(messageName) != 1 {
+					t.Fatalf("posts=%d probes=%d notices=%d end=%s/%s fan-outs=%d", posts, probes.Load(), notices, c.Status, c.Reason, rf.gc.Fanouts(messageName))
+				}
+			} else if posts != 1 || probes.Load() != 0 || notices != 1 || c.Status != "unresolved" || c.Cause != "unknown" || c.Reason != lostAnswer || c.RaisedEnd.IsZero() {
+				t.Fatalf("posts=%d probes=%d notices=%d end=%s/%s/%s mark=%v", posts, probes.Load(), notices, c.Status, c.Cause, c.Reason, c.RaisedEnd)
+			}
+		})
+	}
+}
+
 func TestUnansweredPostOneTurn(t *testing.T) {
 	for _, status := range []string{"delivered", "failed"} {
 		t.Run("pending_then_"+status, func(t *testing.T) {
 			rf := signedProcessor(t)
 			rf.script(wire.Delivery{Status: "pending"})
-			postSteps(rf, fakegc.PostStep{Drop: true})
+			release, claimed := make(chan struct{}), make(chan struct{})
+			finishFirst := sync.OnceFunc(func() { close(release) })
+			defer finishFirst()
+			postSteps(rf, fakegc.PostStep{AfterClientLeft: release, After: func(*httptest.ResponseRecorder) { close(claimed) }})
+			rf.gc.Configure(func(s *fakegc.Server) {
+				s.Health = func(w http.ResponseWriter, r *http.Request) {
+					finishFirst()
+					select {
+					case <-claimed:
+						fmt.Fprint(w, `{"uptime_sec":3600}`)
+					case <-r.Context().Done():
+					}
+				}
+			})
 			handle(t, rf.fixture, event("lost", "message.created", message()))
 			c := rf.change(t, messageName)
 			if c.Status != "pending" || c.ReceiptID == "" || c.Attempts != 2 {
@@ -93,8 +148,23 @@ func TestUnansweredPostOneTurn(t *testing.T) {
 	}
 	t.Run("unclaimed_after_disconnect", func(t *testing.T) {
 		rf := signedProcessor(t)
-		postSteps(rf, fakegc.PostStep{HTTPStatus: 500, Drop: true})
+		release := make(chan struct{})
+		finished := make(chan int, 1)
+		finishFirst := sync.OnceFunc(func() { close(release) })
+		defer finishFirst()
+		postSteps(rf, fakegc.PostStep{AfterClientLeft: release, HTTPStatus: 500, After: func(out *httptest.ResponseRecorder) {
+			finished <- out.Code
+		}})
 		handle(t, rf.fixture, event("lost", "message.created", message()))
+		finishFirst()
+		select {
+		case code := <-finished:
+			if code != 500 {
+				t.Fatalf("late first response = %d", code)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("first handler did not finish after disconnect")
+		}
 		rf.clock.Add(time.Hour)
 		rf.poll(t)
 		c := rf.change(t, messageName)
@@ -149,11 +219,19 @@ func TestUnansweredPostOneTurn(t *testing.T) {
 }
 
 func TestUnansweredPostEnds(t *testing.T) {
-	for _, word := range []string{"no_route", "failed", "held", "partial", "http_500", "no_answer"} {
+	for _, word := range []string{"no_route", "failed", "held", "partial", "http_500", "unreachable", "no_answer"} {
 		t.Run(word, func(t *testing.T) {
 			rf := signedProcessor(t)
 			second := fakegc.PostStep{}
 			switch word {
+			case "unreachable":
+				rf.gc.Configure(func(s *fakegc.Server) {
+					s.Health = func(w http.ResponseWriter, _ *http.Request) {
+						w.Header().Set("Connection", "close")
+						s.StopAccepting()
+						fmt.Fprint(w, `{"uptime_sec":3600}`)
+					}
+				})
 			case "no_answer":
 				second.Drop = true
 			case "http_500":
@@ -238,8 +316,75 @@ func TestUnansweredPostCurrentReplayMarks(t *testing.T) {
 	checkReplaySnapshot(t, false, false)
 }
 
+func TestUnansweredPostExistingLedger(t *testing.T) {
+	rf := retrySetup(t)
+	at := rf.clock.Now()
+	records := []ledger.ChangeState{
+		{ID: "marked", Status: "unresolved", Cause: "unknown", RaisedEnd: at},
+		{ID: "due", Status: "unresolved", Cause: "unknown"},
+		{ID: "before-causes", Status: "unresolved"},
+		{ID: "interrupted", Status: "intent", Attempts: 1, Posted: at, RaisedEnd: at},
+	}
+	if err := rf.p.update(func(l *ledger.Ledger) {
+		for i := range records {
+			c := &records[i]
+			c.Created, c.Space = at, space
+			l.Changes[c.ID] = c
+			if c.Status == "unresolved" {
+				l.Unresolved[c.ID] = c
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rf.restart(t)
+	rf.poll(t)
+	rf.clock.Add(time.Hour)
+	rf.poll(t)
+	notices := rf.raises.list()
+	if len(rf.gc.Inbound()) != 0 || len(notices) != 1 || notices[0].ID != "due" || !notices[0].Ended {
+		t.Fatalf("posts=%d notices=%v", len(rf.gc.Inbound()), notices)
+	}
+	if c := rf.change(t, "interrupted"); c.Reason != "interrupted POST; delivery unknown" || c.Cause != "unknown" || c.Status != "unresolved" {
+		t.Fatal("lost the interrupted end")
+	}
+}
+
+func TestDeliveryWakeFailureLog(t *testing.T) {
+	for _, cause := range []string{"mail_timeout", "mail_exit", "mail_no_result", "wake_timeout", "wake_exit"} {
+		t.Run(cause, func(t *testing.T) {
+			var logs bytes.Buffer
+			rf := retrySetup(t, func(o *Options) {
+				o.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+			})
+			postSteps(rf, fakegc.PostStep{Drop: true})
+			handle(t, rf.fixture, event("lost", "message.created", message()))
+			rf.raises.setFail(fmt.Errorf("private command output: %w", RaiseFailure(cause)))
+			logs.Reset()
+			rf.p.RaiseDue(t.Context())
+			rf.p.RaiseDue(t.Context())
+			line := logs.String()
+			if strings.Count(line, "\n") != 1 || !strings.Contains(line, "cause="+cause) || strings.Contains(line, "private command output") {
+				t.Fatalf("unexpected failure log %q", line)
+			}
+			notice := rf.raises.list()[0]
+			if strings.Contains(line, notice.Body) || strings.Contains(line, notice.DedupKey()) {
+				t.Fatal("failure log included the mail body or key")
+			}
+		})
+	}
+}
+
 func TestUnansweredPostOrder(t *testing.T) {
+	for _, status := range []string{"delivered", "failed", "pending"} {
+		t.Run(status, func(t *testing.T) { checkPostOrder(t, status) })
+	}
+}
+
+func checkPostOrder(t *testing.T, status string) {
+	t.Helper()
 	rf := signedProcessor(t)
+	rf.script(wire.Delivery{Status: status})
 	open, release := make(chan struct{}), make(chan struct{})
 	defer close(release)
 	postSteps(rf, fakegc.PostStep{HTTPStatus: 500, Drop: true}, fakegc.PostStep{After: func(*httptest.ResponseRecorder) { close(open); <-release }})
@@ -252,8 +397,12 @@ func TestUnansweredPostOrder(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out before re-post")
 	}
+	queued := event("second", "message.created", secondMessage())
+	other := otherEvent("another")
+	other.Changes[0].Message.Name = otherSpace + "/messages/another"
+	queued.Changes = append(queued.Changes, other.Changes...)
 	go func() {
-		_, err := rf.p.Handle(t.Context(), event("second", "message.created", secondMessage()))
+		_, err := rf.p.Handle(t.Context(), queued)
 		done <- err
 	}()
 	// The gate still belongs to the same handler until the re-post returns.
@@ -271,12 +420,23 @@ func TestUnansweredPostOrder(t *testing.T) {
 			t.Fatal("timed out")
 		}
 	}
-	if got := postedIDs(rf.fixture); !slices.Equal(got[1:], []string{messageName, messageName, secondMessage().Name}) {
+	if got := postedIDs(rf.fixture); !slices.Equal(got[1:], []string{messageName, messageName, secondMessage().Name, other.Changes[0].Message.Name}) {
 		t.Fatalf("post order: %v", got)
+	}
+	wantStatus := map[string]string{"delivered": "committed", "failed": "unresolved", "pending": "pending"}
+	if c := rf.change(t, messageName); c.Status != wantStatus[status] {
+		t.Fatalf("first ended %s after %s", c.Status, status)
 	}
 }
 
 func TestUnansweredPostDurableAttempts(t *testing.T) {
+	for _, result := range []string{"delivered", "pending_delivered", "pending_failed", "gc_restarted", "no_answer"} {
+		t.Run(result, func(t *testing.T) { checkDurableAttempts(t, result) })
+	}
+}
+
+func checkDurableAttempts(t *testing.T, result string) {
+	t.Helper()
 	rf := signedProcessor(t)
 	type saved struct {
 		Status, Reason, Cause, Receipt string
@@ -292,10 +452,43 @@ func TestUnansweredPostDurableAttempts(t *testing.T) {
 		}
 		return l.Save(rf.opts.LedgerPath)
 	}
-	postSteps(rf, fakegc.PostStep{HTTPStatus: 500, Drop: true}, fakegc.PostStep{Drop: true})
+	first := fakegc.PostStep{HTTPStatus: 500, Drop: true}
+	second := fakegc.PostStep{}
+	switch result {
+	case "no_answer":
+		second.Drop = true
+	case "gc_restarted":
+		first.HTTPStatus = 0
+		first.After = func(*httptest.ResponseRecorder) { rf.gc.Restart(healthAnswer(`{"uptime_sec":1}`)) }
+	case "pending_delivered", "pending_failed":
+		first.HTTPStatus = 0
+		rf.script(wire.Delivery{Status: "pending"})
+	}
+	postSteps(rf, first, second)
 	handle(t, rf.fixture, event("lost", "message.created", message()))
-	want := []saved{{Status: "intent"}, {Status: "intent", Attempts: 1}, {Status: "intent", Attempts: 2}, {Status: "unresolved", Reason: "re-post not confirmed (no_answer); delivery unknown", Cause: "unknown", Attempts: 2}}
+	want := []saved{{Status: "intent"}, {Status: "intent", Attempts: 1}}
+	if result != "gc_restarted" {
+		want = append(want, saved{Status: "intent", Attempts: 2})
+	}
+	receipt := rf.change(t, messageName).ReceiptID
+	if status, pending := strings.CutPrefix(result, "pending_"); pending {
+		if receipt == "" {
+			t.Fatal("missing pending receipt")
+		}
+		want = append(want, saved{Status: "pending", Receipt: receipt, Attempts: 2})
+		rf.gc.SetReceipt(receipt, wire.ReceiptResponse{State: "concluded", Delivery: wire.Delivery{Status: status}})
+		rf.poll(t)
+	}
+	switch result {
+	case "delivered", "pending_delivered":
+		want = append(want, saved{Status: "committed", Reason: "delivered", Receipt: receipt, Attempts: 2})
+	case "gc_restarted":
+		want = append(want, saved{Status: "unresolved", Reason: lostAnswer, Cause: "unknown", Attempts: 1})
+	case "no_answer", "pending_failed":
+		word := strings.TrimPrefix(result, "pending_")
+		want = append(want, saved{Status: "unresolved", Reason: "re-post not confirmed (" + word + "); delivery unknown", Cause: "unknown", Receipt: receipt, Attempts: 2})
+	}
 	if !slices.Equal(rows, want) {
-		t.Fatalf("saves=%+v", rows)
+		t.Fatalf("saves=%+v want %+v", rows, want)
 	}
 }
