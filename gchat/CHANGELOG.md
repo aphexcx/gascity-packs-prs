@@ -6,6 +6,11 @@
   message needs, as `<users/ID>` with their numeric Chat id, and nobody when
   it asks nothing of anyone. That Chat then notifies them is UNPROVEN (gp-fkb9).
 
+- Every message the adapter sends states Chat markup syntax
+  (`MARKUP_SYNTAX_CHAT`), so its formatting and `<users/ID>` tags read the
+  same in a Google Cloud project created before Google's Markdown default and
+  in one created after. The rest of each request is unchanged (gp-ifrg).
+
 - Remove saved attachments when a message deletion is learned, and files of
   attachments an accepted edit took away. Cleanup retries survive restart;
   past deletions are left alone at an update. Nothing expires by age or is
