@@ -10,12 +10,13 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 
 SCHEMA = "gc.worker-close.v1"
 SOURCE = "gc-worker-close/v1/"
-OUTCOMES = ("shipped", "no-op", "blocked", "abandoned")
+OUTCOMES = ("shipped", "ran", "no-op", "blocked", "abandoned")
 GC_BIN = os.environ.get("GC_BIN") or "gc"
 
 
@@ -74,14 +75,69 @@ def fact(kind: str, ref_kind: str, ref: str, name: str, **fields) -> dict:
                 payload=dict(schema=SCHEMA, fact=name, **fields))
 
 
+def require_ignored_in_worktree(path: Path, submitted_path: str) -> None:
+    # Probe the artifact's directory even when called from a Git hook in another repo.
+    env = {key: value for key, value in os.environ.items() if key not in (
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_CEILING_DIRECTORIES")}
+    env["LC_ALL"] = "C"
+    git = ["git", "-C", str(path.parent)]
+    probe = subprocess.run([*git, "rev-parse", "--show-toplevel"], capture_output=True, env=env)
+    if probe.returncode:
+        if probe.stderr.startswith(b"fatal: not a git repository (or any "):
+            return
+        raise ValueError(f"{submitted_path}: cannot determine Git work tree")
+    ignored = subprocess.run([*git, "check-ignore", "-q", "--", "./" + path.name],
+                             capture_output=True, env=env)
+    if ignored.returncode == 1:
+        raise ValueError(f"{submitted_path}: commit it and use --commit")
+    if ignored.returncode:
+        raise ValueError(f"{submitted_path}: cannot determine Git ignore status")
+
+
+def verified_artifact(value: str, digest: str) -> dict:
+    nonempty(value)
+    path = Path(value)
+    if not path.is_absolute():
+        raise ValueError(f"{value!r}: artifact path is not absolute")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError(f"{value}: expected 64 lowercase hexadecimal characters for --sha256")
+    try:
+        mode = os.stat(value).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        raise ValueError(f"{value}: artifact does not exist") from None
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"{value}: not a regular file")
+    # A link and its target can belong to different work trees.
+    entry = path.parent.resolve() / path.name
+    for candidate in dict.fromkeys((entry, path.resolve())):
+        require_ignored_in_worktree(candidate, value)
+    checksum = hashlib.sha256()
+    with open(value, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            checksum.update(chunk)
+    if checksum.hexdigest() != digest:
+        raise ValueError(f"{value}: checksum mismatch")
+    # Store the full path in the payload. Beads limits the indexed ref to 255 characters.
+    return fact("used", "transcript", digest, "artifact", path=value, sha256=digest)
+
+
 def close_facts(args) -> list[dict]:
     """Validate the entire input before the first append."""
-    if args.outcome == "shipped" and not args.commit:
+    records = []
+    deliverable = dict(sha=args.commit) if args.commit else {}
+    if args.artifact is not None or args.sha256 is not None:
+        if args.artifact is None or args.sha256 is None:
+            raise ValueError("--artifact and --sha256 must be supplied together")
+        if args.outcome != "shipped" or args.commit:
+            raise ValueError("--artifact requires --outcome shipped without --commit")
+        records.append(verified_artifact(args.artifact, args.sha256))
+        deliverable = dict(path=args.artifact, sha256=args.sha256)
+    elif args.outcome == "shipped" and not args.commit:
         raise ValueError("shipped code requires --commit")
     if args.commit:
+        if args.outcome == "ran":
+            raise ValueError("--outcome ran cannot take --commit")
         sha(args.commit)
-    records = []
-    if args.commit:
         records.append(fact("commit", "git-sha", args.commit, "commit", sha=args.commit))
     if args.pr:
         records.append(fact("handoff", "pr", args.pr, "pr", url=args.pr, number=pr_number(args.pr)))
@@ -98,13 +154,13 @@ def close_facts(args) -> list[dict]:
                 raise ValueError("review round must be a positive integer")
             records.append(fact("used", "transcript", review["ref"], "review",
                                 stage=stage, round=round_number,
-                                verdict=nonempty(review["verdict"]), sha=sha(review["sha"])))
+                                verdict=nonempty(review["verdict"]), sha=sha(review["sha"]), pr=args.pr))
     if args.evidence_dir:
         if not Path(args.evidence_dir).is_absolute():
             raise ValueError("evidence directory must be absolute")
         records.append(fact("used", "transcript", args.evidence_dir, "evidence"))
     records.append(fact("handoff", "work-id", "worker-close:" + args.outcome, "outcome",
-                        outcome=args.outcome, sha=args.commit, pr=args.pr))
+                        outcome=args.outcome, pr=args.pr, **deliverable))
     return records
 
 
@@ -168,7 +224,7 @@ def record(args) -> None:
     # the core work-record close gate migrate; do not drop these independently.
     command = [*args.gc_command, "bd", "update", args.bead,
                "--set-metadata", "gc.work_outcome=" + args.outcome]
-    for key, value in (("gc.work_commit", args.commit), ("gc.pr", args.pr)):
+    for key, value in (("gc.work_commit", args.commit or args.artifact), ("gc.pr", args.pr)):
         if value:
             command.extend(["--set-metadata", key + "=" + value])
         else:
@@ -204,7 +260,7 @@ def typed_facts(events: list[dict]) -> list[tuple]:
             continue
         if not isinstance(payload, dict) or payload.get("schema") != SCHEMA:
             continue
-        expected = {"commit": ("commit", "git-sha"), "pr": ("handoff", "pr"),
+        expected = {"commit": ("commit", "git-sha"), "pr": ("handoff", "pr"), "artifact": ("used", "transcript"),
                     "review": ("used", "transcript"), "outcome": ("handoff", "work-id")}
         if expected.get(payload.get("fact")) != (event.get("kind"), event.get("ref_kind")):
             continue
@@ -253,21 +309,46 @@ def summary(events: list[dict]) -> str:
     commit, pr = outcome.get("sha", ""), outcome.get("pr", "")
     commits = [e for _, _, e, p in facts if p["fact"] == "commit" and e["ref"] == p.get("sha") == commit]
     prs = [p for _, _, e, p in facts if p["fact"] == "pr" and e["ref"] == p.get("url") == pr]
+    artifact = next((p for _, _, e, p in facts if p["fact"] == "artifact"
+                     and e["ref"] == p.get("sha256") == outcome.get("sha256")
+                     and p.get("path") == outcome.get("path")), None)
+    reviews = [p for _, _, _, p in facts if p["fact"] == "review"
+               and p.get("stage") in ("codex", "gate", "read")
+               and type(p.get("round")) is int and p["round"] > 0
+               and isinstance(p.get("sha"), str) and re.fullmatch(r"[0-9a-f]{40}", p["sha"])]
+    head = commit if commits else "unknown"
+    subject = f"PR {prs[-1]['number'] if prs else 'unknown'}"
+    review_sha = commit if commits else None
     verdicts = {}
-    if commit and commits:
-        rounds = {}
-        for _, _, _, p in facts:
-            if p["fact"] == "review" and p.get("sha") == commit:
-                stage, round_number = p.get("stage"), p.get("round")
-                if stage not in ("codex", "gate", "read") or type(round_number) is not int:
-                    continue
-                rounds.setdefault(stage, {}).setdefault(round_number, set()).add(p.get("verdict", "unknown"))
-        for stage, values in rounds.items():
-            final = values[max(values)]
-            verdicts[stage] = next(iter(final)) if len(final) == 1 else "conflicting"
-    line = f"PR {prs[-1]['number'] if prs else 'unknown'} at {commit if commits else 'unknown'}"
+    if not commit:
+        scoped = [p for p in reviews if p.get("pr") == pr]
+        # Legacy writers emitted sha="" for a commitless outcome and omitted the PR
+        # from each review. A partial append makes association by proximity unsafe.
+        if outcome.get("sha") == "" and not scoped and reviews:
+            reviews = [p for p in reviews if "pr" not in p]
+            if reviews:
+                subject += "; historical reviews (PR association unknown)"
+        else:
+            reviews = scoped
+        heads = {p["sha"] for p in reviews}
+        if len(heads) == 1:
+            review_sha, = heads
+            head = f"{review_sha} reviewed"
+        elif heads:
+            head = "conflicting"
+            verdicts = {p["stage"]: "conflicting" for p in reviews}
+    rounds = {}
+    for p in reviews:
+        if p["sha"] == review_sha:
+            rounds.setdefault(p["stage"], {}).setdefault(p["round"], set()).add(p.get("verdict", "unknown"))
+    for stage, values in rounds.items():
+        final = values[max(values)]
+        verdicts[stage] = next(iter(final)) if len(final) == 1 else "conflicting"
+    line = f"{subject} at {head}"
     line += f", gate {verdicts.get('gate', 'unknown')}, read {verdicts.get('read', 'unknown')}"
-    if outcome.get("outcome") != "shipped":
+    if artifact:
+        line = f"shipped {artifact['path']} ({artifact['sha256'][:12]}); " + line
+    elif outcome.get("outcome") != "shipped":
         line = str(outcome.get("outcome", "unknown")) + "; " + line
     return line
 
@@ -279,6 +360,8 @@ def main() -> int:
     writer.add_argument("bead")
     writer.add_argument("--outcome", required=True, choices=OUTCOMES)
     writer.add_argument("--commit", default="")
+    writer.add_argument("--artifact", metavar="PATH", help="absolute path to a shipped file, used with --sha256")
+    writer.add_argument("--sha256", metavar="HEX", help="64 lowercase hex digits hashing the shipped file")
     writer.add_argument("--pr", default="")
     writer.add_argument("--reviews", metavar="FILE",
                         help="path to a JSON array file: stage, round, verdict, sha, ref; "
