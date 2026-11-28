@@ -75,7 +75,7 @@ def fact(kind: str, ref_kind: str, ref: str, name: str, **fields) -> dict:
                 payload=dict(schema=SCHEMA, fact=name, **fields))
 
 
-def require_ignored_in_worktree(path: Path) -> None:
+def require_ignored_in_worktree(path: Path, submitted_path: str) -> None:
     # Probe the artifact's directory even when called from a Git hook in another repo.
     env = {key: value for key, value in os.environ.items() if key not in (
         "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_CEILING_DIRECTORIES")}
@@ -85,13 +85,13 @@ def require_ignored_in_worktree(path: Path) -> None:
     if probe.returncode:
         if probe.stderr.startswith(b"fatal: not a git repository (or any "):
             return
-        raise ValueError(f"{path}: cannot determine Git work tree")
+        raise ValueError(f"{submitted_path}: cannot determine Git work tree")
     ignored = subprocess.run([*git, "check-ignore", "-q", "--", "./" + path.name],
                              capture_output=True, env=env)
     if ignored.returncode == 1:
-        raise ValueError(f"{path}: commit it and use --commit")
+        raise ValueError(f"{submitted_path}: commit it and use --commit")
     if ignored.returncode:
-        raise ValueError(f"{path}: cannot determine Git ignore status")
+        raise ValueError(f"{submitted_path}: cannot determine Git ignore status")
 
 
 def verified_artifact(value: str, digest: str) -> dict:
@@ -100,23 +100,23 @@ def verified_artifact(value: str, digest: str) -> dict:
     if not path.is_absolute():
         raise ValueError(f"{value!r}: artifact path is not absolute")
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
-        raise ValueError(f"{path}: expected 64 lowercase hexadecimal characters for --sha256")
+        raise ValueError(f"{value}: expected 64 lowercase hexadecimal characters for --sha256")
     try:
-        mode = path.stat().st_mode
+        mode = os.stat(value).st_mode
     except (FileNotFoundError, NotADirectoryError):
-        raise ValueError(f"{path}: artifact does not exist") from None
+        raise ValueError(f"{value}: artifact does not exist") from None
     if not stat.S_ISREG(mode):
-        raise ValueError(f"{path}: not a regular file")
+        raise ValueError(f"{value}: not a regular file")
     # A link and its target can belong to different work trees.
     entry = path.parent.resolve() / path.name
     for candidate in dict.fromkeys((entry, path.resolve())):
-        require_ignored_in_worktree(candidate)
+        require_ignored_in_worktree(candidate, value)
     checksum = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open(value, "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             checksum.update(chunk)
     if checksum.hexdigest() != digest:
-        raise ValueError(f"{path}: checksum mismatch")
+        raise ValueError(f"{value}: checksum mismatch")
     # Store the full path in the payload. Beads limits the indexed ref to 255 characters.
     return fact("used", "transcript", digest, "artifact", path=value, sha256=digest)
 
@@ -154,7 +154,8 @@ def close_facts(args) -> list[dict]:
                 raise ValueError("review round must be a positive integer")
             records.append(fact("used", "transcript", review["ref"], "review",
                                 stage=stage, round=round_number,
-                                verdict=nonempty(review["verdict"]), sha=sha(review["sha"])))
+                                verdict=nonempty(review["verdict"]), sha=sha(review["sha"]),
+                                **({"pr": args.pr} if not args.commit else {})))
     if args.evidence_dir:
         if not Path(args.evidence_dir).is_absolute():
             raise ValueError("evidence directory must be absolute")
@@ -319,12 +320,15 @@ def summary(events: list[dict]) -> str:
     head = commit if commits else "unknown"
     review_sha = commit if commits else None
     verdicts = {}
-    if not commit and reviews and (artifact or outcome.get("outcome") in ("no-op", "ran")):
+    if not commit and (artifact or outcome.get("outcome") in ("no-op", "ran")):
+        # Older facts have no PR association. Attribute them only on an unambiguous trail.
+        other_pr = any(p.get("url") != pr for _, _, _, p in facts if p["fact"] == "pr")
+        reviews = [p for p in reviews if p.get("pr") == pr or ("pr" not in p and not other_pr)]
         heads = {p["sha"] for p in reviews}
         if len(heads) == 1:
             review_sha, = heads
             head = f"{review_sha} reviewed"
-        else:
+        elif heads:
             head = "conflicting"
             verdicts = {p["stage"]: "conflicting" for p in reviews}
     rounds = {}

@@ -535,6 +535,16 @@ def test_artifact_repository_requires_ignored_file(fixture, artifact, tmp_path):
     assert data(fixture) == before
 
 
+@pytest.mark.parametrize('suffix', ['/', '/.'])
+def test_artifact_stored_path_must_open_as_supplied(fixture, artifact, suffix):
+    path, digest = artifact
+    raw_path = str(path) + suffix
+    result = run(fixture, 'record', 'fixture-1', '--outcome', 'shipped',
+                 '--artifact', raw_path, '--sha256', digest)
+    assert result.returncode and raw_path in result.stderr and 'does not exist' in result.stderr
+    assert data(fixture)['calls'] == []
+
+
 def test_artifact_symlink_to_repository_file_requires_commit(fixture, artifact, tmp_path):
     path, digest = artifact
     repo = tmp_path / 'repo'
@@ -544,6 +554,7 @@ def test_artifact_symlink_to_repository_file_requires_commit(fixture, artifact, 
     result = run(fixture, 'record', 'fixture-1', '--outcome', 'shipped', '--artifact', str(path),
                  '--sha256', digest)
     assert result.returncode and 'commit it and use --commit' in result.stderr
+    assert str(path) in result.stderr
     assert data(fixture)['calls'] == []
 
 
@@ -589,6 +600,29 @@ def test_ran_and_fork_outcome_vocabulary(fixture):
     assert data(fixture)['metadata'] == {'gc.work_outcome': 'ran'}
     result = run(fixture, 'record', 'fixture-1', '--outcome', 'investigated')
     assert result.returncode == 2 and 'invalid choice' in result.stderr
+
+
+def test_noop_reviews_belong_to_the_named_pr(fixture):
+    second_pr = PR.replace('/123', '/234')
+    fixture[1].write_text(json.dumps([dict(stage='read', verdict='PASS', sha=SHA, ref='/evidence/read-1')]))
+    args = ('record', 'fixture-1', '--outcome', 'no-op')
+    assert run(fixture, *args, '--pr', PR, '--reviews', str(fixture[1])).returncode == 0
+    assert run(fixture, *args, '--pr', second_pr).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == (
+        'no-op; PR 234 at unknown, gate unknown, read unknown')
+    assert run(fixture, *args, '--pr', PR).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith(f'{SHA} reviewed, gate unknown, read PASS')
+
+    # Preexisting facts lack the new PR field. Preserve single-PR reads and withhold ambiguous attribution.
+    events = data(fixture)['events']
+    for event in events:
+        payload = json.loads(event['payload'])
+        if payload['fact'] == 'review':
+            del payload['pr']
+            event['payload'] = json.dumps(payload)
+    assert module.summary(events).endswith('at unknown, gate unknown, read unknown')
+    first_record = events[:3]
+    assert module.summary(first_record).endswith(f'{SHA} reviewed, gate unknown, read PASS')
 
 
 def test_reader_ignores_other_producers_and_wrong_types(fixture):
