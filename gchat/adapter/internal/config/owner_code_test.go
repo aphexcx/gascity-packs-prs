@@ -26,7 +26,9 @@ func TestChatOwnerCodesNeverReachTheReactionProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"ABCD-EFGH-JKLM", "abcd efgh jklm", " ABCDEFGHJKLM\n", "ABCDEFGHJK", "abcdefghjk"} {
+	// The join's check makes letters upper case by Unicode, so a letter whose
+	// upper case is one of the alphabet's reads as it does there.
+	for _, text := range []string{"ABCD-EFGH-JKLM", "abcd efgh jklm", " ABCDEFGHJKLM\n", "ABCDEFGHJK", "abcdefghjk", "abcdefghj\u017f"} {
 		before := asked.Load()
 		if row, _ := choice.Choose(context.Background(), text, time.Now()); row != ack.Default || asked.Load() != before {
 			t.Fatalf("%q reached the provider (row %v)", text, row)

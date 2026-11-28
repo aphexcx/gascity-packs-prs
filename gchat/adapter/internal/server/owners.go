@@ -163,7 +163,9 @@ func (s *Server) ownersRemove(ctx context.Context, input ownersInput) ownersResu
 	if !book.Present() {
 		return ownersResult{Result: "settings_owner", Message: "Root's directory is absent: the owners are the settings' (GCHAT_OWNERS), and no command adds or removes one. Nothing changed."}
 	}
-	unlock, err := s.lock(ctx, "owners:"+input.Remove)
+	// One lock for every removal: a yes is asked again after any removal
+	// that came before it, whoever its target was.
+	unlock, err := s.lock(ctx, "owners")
 	if err != nil {
 		return noOwnerYes("The adapter is not ready to check an owner's yes. Nothing changed; run it again.")
 	}

@@ -491,6 +491,45 @@ func TestChatOwnerCatchUpClaimTurnIsItsOwn(t *testing.T) {
 	}
 }
 
+// TestChatOwnerCatchUpClaimKeepsItsPlace: a knocked catch-up message is
+// delivered after the messages before it and before the messages after it.
+func TestChatOwnerCatchUpClaimKeepsItsPlace(t *testing.T) {
+	cf := setupClaim(t, nil, false)
+	if _, err := toml.Decode(`coalesce_window = "8s"`, &cf.opts.Config.Settings); err != nil {
+		t.Fatal(err)
+	}
+	p, err := New(cf.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cf.p = p
+	cf.door.Answer(func(map[string]string) string { return `{"result":"not_live"}` })
+	a, c, b := dmMessage("a1", "first"), dmMessage("c1", claimText), dmMessage("b1", "last")
+	a.CreateTime, c.CreateTime, b.CreateTime = "2026-10-22T10:00:00Z", "2026-10-22T10:00:01Z", "2026-10-22T10:00:02Z"
+	batch := []puller.Change{
+		{Kind: "message.created", Message: a, Space: dmSpace, PublishTime: time.Now()},
+		{Kind: "message.created", Message: c, Space: dmSpace, PublishTime: time.Now()},
+		{Kind: "message.created", Message: b, Space: dmSpace, PublishTime: time.Now()},
+	}
+	if out, err := cf.p.HandleChanges(context.Background(), batch); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up = %v, %v", out, err)
+	}
+	if err := cf.p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	at := map[string]int{}
+	for i, w := range cf.gc.Inbound() {
+		for _, word := range []string{"first", claimLines["not_live"], "last"} {
+			if strings.Contains(w.Text, word) {
+				at[word] = i
+			}
+		}
+	}
+	if len(at) != 3 || !(at["first"] < at[claimLines["not_live"]] && at[claimLines["not_live"]] < at["last"]) {
+		t.Fatalf("delivery order %v: %+v", at, cf.gc.Inbound())
+	}
+}
+
 // TestChatOwnerCatchUpCreationKnocks: a message first seen by catch-up is a
 // new message; the door judges it by root's clock.
 func TestChatOwnerCatchUpCreationKnocks(t *testing.T) {

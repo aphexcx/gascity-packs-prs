@@ -465,6 +465,47 @@ func TestChatOwnerApproverAskedAgainAtTheWrite(t *testing.T) {
 	})
 }
 
+// TestChatOwnerCrossedRemovalsRemoveOne: two owners who each approve the
+// other's removal at once remove one owner, not both: the second yes is asked
+// again after the first removal and its owner is no longer one.
+func TestChatOwnerCrossedRemovalsRemoveOne(t *testing.T) {
+	f := setupOwners(t, "users/222", "users/333")
+	f.g.Configure(func(g *fakegoogle.Server) { g.People["users/333"] = "second@example.com" })
+	inner := f.door
+	inner.Answer(func(r map[string]string) string {
+		if r["request"] != "remove" {
+			return `{"result":"unavailable"}`
+		}
+		time.Sleep(80 * time.Millisecond) // both yeses have passed their checks by now (inside the test book's 200 ms bound)
+		var left []string
+		for _, e := range f.s.opts.Owners.List().Owners {
+			if e.ID != r["owner"] {
+				left = append(left, e.ID)
+			}
+		}
+		f.publish(t, left...)
+		return `{"result":"removed"}`
+	})
+	codeA := f.requestRemoval(t, "users/333")
+	codeB := f.requestRemoval(t, "users/222")
+	yesA := f.yesFrom("users/222", "spaces/dm", codeA, time.Now())
+	yesB := f.yesFrom("users/333", "spaces/dm", codeB, time.Now())
+	results := make(chan any, 2)
+	for _, call := range []map[string]any{{"remove": "users/333", "yes": yesA}, {"remove": "users/222", "yes": yesB}} {
+		go func() { _, v := f.owners(t, call); results <- v["result"] }()
+	}
+	got := []any{<-results, <-results}
+	removed := 0
+	for _, r := range got {
+		if r == "removed" {
+			removed++
+		}
+	}
+	if removed != 1 || len(f.s.opts.Owners.List().Owners) != 1 {
+		t.Fatalf("results %v, owners left %v", got, f.s.opts.Owners.List().Owners)
+	}
+}
+
 // TestChatOwnerRootApprovalAsksNoDirectory: where root's copy decides, the
 // owner of a yes is a Chat id in it; no address is looked up for that.
 func TestChatOwnerRootApprovalAsksNoDirectory(t *testing.T) {

@@ -132,13 +132,11 @@ func isCodeChar(c byte) bool {
 func OneTimeCode(text string) bool {
 	n := 0
 	for _, r := range text {
-		switch {
-		case r == '-' || unicode.IsSpace(r):
+		if r == '-' || unicode.IsSpace(r) {
 			continue
-		case 'a' <= r && r <= 'z':
-			r -= 'a' - 'A'
 		}
-		if r > unicode.MaxASCII || !isCodeChar(byte(r)) {
+		// By Unicode, as the join's check makes letters upper case.
+		if r = unicode.ToUpper(r); r > unicode.MaxASCII || !isCodeChar(byte(r)) {
 			return false
 		}
 		n++
