@@ -186,7 +186,8 @@ func redactedHistoryEvent(l *ledger.Ledger, cfg *config.Config, old *ledger.Chan
 // Existing cursors never call this migration, and committed deliveries survive.
 // A merged turn is judged by its Created, its first act's time. A turn with an
 // act on the other side of the bound is first split back into its acts, so
-// each act is judged by its own time.
+// each act is judged by its own time. So is an edit folded into its message's
+// creation.
 func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) []string {
 	bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
 	if bound.IsZero() {
@@ -197,6 +198,7 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 			unmerge(l, owner)
 		}
 	}
+	unfoldLaterEdits(l, space, bound)
 	var retired []string
 	// Select before mutating owners: committed members of an undelivered
 	// coalesced turn are still undelivered acts, independent of map order.
@@ -289,6 +291,29 @@ func unmerge(l *ledger.Ledger, owner *ledger.ChangeState) {
 	}
 	owner.Event, owner.Kind, owner.Created = owner.OriginalEvent(), owner.OriginalKind(), owner.OriginalCreated()
 	owner.MemberEvent, owner.MemberKind, owner.MemberCreated, owner.Members = "", "", time.Time{}, nil
+}
+
+// unfoldLaterEdits gives an edit back its own record when the window folded it
+// into its message's held creation (hold), the creation was recorded before
+// the bound and the edit at or after it. The creation's record carries the
+// latest edit's text, so only the latest such edit leaves it; the earlier ones
+// were superseded by it. A creation whose delivery may have landed keeps them.
+func unfoldLaterEdits(l *ledger.Ledger, space string, bound time.Time) {
+	latest := map[string]*ledger.ChangeState{}
+	for _, edit := range l.Changes {
+		c := l.Changes[edit.MemberOf]
+		if edit.Space != space || edit.Status != "committed" || edit.Reason != "coalesced" || edit.OriginalKind() != "message.updated" ||
+			c == nil || c.Message != edit.Message || c.OriginalKind() != "message.created" ||
+			!beforeBound(c.OriginalCreated(), bound) || beforeBound(edit.Created, bound) || !rewritable(l.Delivery(c)) {
+			continue
+		}
+		if last := latest[c.ID]; last == nil || earlier(last, edit) {
+			latest[c.ID] = edit
+		}
+	}
+	for _, edit := range latest {
+		edit.Status, edit.Reason, edit.MemberOf = "intent", "", ""
+	}
 }
 
 // RetainHistorySkip is also used while migrating a saved queue, before network
