@@ -124,7 +124,7 @@ def verified_artifact(value: str, digest: str) -> dict:
 def close_facts(args) -> list[dict]:
     """Validate the entire input before the first append."""
     records = []
-    deliverable = dict(sha=args.commit)
+    deliverable = dict(sha=args.commit) if args.commit else {}
     if args.artifact is not None or args.sha256 is not None:
         if args.artifact is None or args.sha256 is None:
             raise ValueError("--artifact and --sha256 must be supplied together")
@@ -317,13 +317,19 @@ def summary(events: list[dict]) -> str:
                and type(p.get("round")) is int and p["round"] > 0
                and isinstance(p.get("sha"), str) and re.fullmatch(r"[0-9a-f]{40}", p["sha"])]
     head = commit if commits else "unknown"
+    subject = f"PR {prs[-1]['number'] if prs else 'unknown'}"
     review_sha = commit if commits else None
     verdicts = {}
     if not commit:
-        # Older facts have no PR association. Attribute them only on an unambiguous trail.
-        scopes = {p.get("pr", "") for _, _, _, p in facts if p["fact"] == "outcome"}
-        scopes.update(p.get("url") for _, _, _, p in facts if p["fact"] == "pr")
-        reviews = [p for p in reviews if p.get("pr") == pr or ("pr" not in p and scopes == {pr})]
+        scoped = [p for p in reviews if p.get("pr") == pr]
+        # Legacy writers emitted sha="" for a commitless outcome and omitted the PR
+        # from each review. A partial append makes association by proximity unsafe.
+        if outcome.get("sha") == "" and not scoped and reviews:
+            reviews = [p for p in reviews if "pr" not in p]
+            if reviews:
+                subject += "; historical reviews (PR association unknown)"
+        else:
+            reviews = scoped
         heads = {p["sha"] for p in reviews}
         if len(heads) == 1:
             review_sha, = heads
@@ -338,7 +344,7 @@ def summary(events: list[dict]) -> str:
     for stage, values in rounds.items():
         final = values[max(values)]
         verdicts[stage] = next(iter(final)) if len(final) == 1 else "conflicting"
-    line = f"PR {prs[-1]['number'] if prs else 'unknown'} at {head}"
+    line = f"{subject} at {head}"
     line += f", gate {verdicts.get('gate', 'unknown')}, read {verdicts.get('read', 'unknown')}"
     if artifact:
         line = f"shipped {artifact['path']} ({artifact['sha256'][:12]}); " + line

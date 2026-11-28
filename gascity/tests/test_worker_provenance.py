@@ -613,7 +613,8 @@ def test_noop_reviews_belong_to_the_named_pr(fixture):
     assert run(fixture, *args, '--pr', PR).returncode == 0
     assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith(f'{SHA} reviewed, gate unknown, read PASS')
 
-    # Preexisting facts lack the new PR field. Preserve single-PR reads and withhold ambiguous attribution.
+    # New outcomes never borrow legacy reviews. Old outcomes still show historical
+    # verdicts, with their unknown PR association made explicit.
     events = data(fixture)['events']
     for event in events:
         payload = json.loads(event['payload'])
@@ -622,7 +623,10 @@ def test_noop_reviews_belong_to_the_named_pr(fixture):
             event['payload'] = json.dumps(payload)
     assert module.summary(events).endswith('at unknown, gate unknown, read unknown')
     first_record = events[:3]
-    assert module.summary(first_record).endswith(f'{SHA} reviewed, gate unknown, read PASS')
+    legacy_outcome = json.loads(first_record[-1]['payload'])
+    first_record[-1]['payload'] = json.dumps(dict(legacy_outcome, sha=''))
+    assert module.summary(first_record) == (
+        f'no-op; PR 123; historical reviews (PR association unknown) at {SHA} reviewed, gate unknown, read PASS')
 
 
 @pytest.mark.parametrize('first_pr', ['', PR])
@@ -644,6 +648,23 @@ def test_committed_review_pr_scope_survives_noop_transitions(fixture, first_pr):
     assert module.summary(legacy) == unknown
     assert run(fixture, *args, '--outcome', 'no-op', '--pr', first_pr).returncode == 0
     assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith(f'{SHA} reviewed, gate PASS, read unknown')
+
+
+def test_partial_legacy_append_cannot_supply_a_new_pr_verdict(fixture):
+    fixture[2]['FAIL_FACT'] = 'outcome'
+    fixture[1].write_text(json.dumps([dict(stage='gate', verdict='PASS', sha=SHA, ref='/evidence/gate')]))
+    result = run(fixture, 'record', 'fixture-1', '--outcome', 'shipped', '--commit', SHA,
+                 '--reviews', str(fixture[1]))
+    assert result.returncode != 0
+    state = data(fixture)
+    review = json.loads(state['events'][-1]['payload'])
+    assert review.pop('pr') == ''
+    state['events'][-1]['payload'] = json.dumps(review)
+    fixture[0].write_text(json.dumps(state))
+    del fixture[2]['FAIL_FACT']
+    assert run(fixture, 'record', 'fixture-1', '--outcome', 'no-op', '--pr', PR).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == (
+        'no-op; PR 123 at unknown, gate unknown, read unknown')
 
 
 def test_reader_ignores_other_producers_and_wrong_types(fixture):

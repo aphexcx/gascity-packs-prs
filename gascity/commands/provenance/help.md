@@ -34,4 +34,6 @@ metadata updates, branch release, and close.
 Summary reads typed records only; missing facts and stale reviews are unknown.
 For a read ticket with no commit, the summary names the reviewed SHA and the
 latest gate and read verdicts. Multiple reviewed SHAs are reported as conflicting.
+Older commitless records show their historical verdicts with the PR association
+marked unknown. A new record uses reviews explicitly scoped to its PR.
 See the pack README, Worker close provenance, for the schema and close recipe.
