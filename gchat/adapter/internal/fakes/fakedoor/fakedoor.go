@@ -1,6 +1,7 @@
 // Package fakedoor is a stand-in for the box's root-side door, on a socket
 // in a test's own temporary directory. It decides nothing by itself: each
-// test says what it answers. Files it writes are the test user's, and a
+// test says what it answers. UNPROVEN: that the real door, built in the box
+// image, answers in the contract's line form; this stand-in encodes it. Files it writes are the test user's, and a
 // test's Book trusts them only through the owners package's test stand-in.
 package fakedoor
 

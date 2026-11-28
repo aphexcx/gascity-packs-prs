@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The adapter keeps no owner. On a box, where root's directory
+  `/run/gchat-owner-claim` exists, owners come from root's owners file alone,
+  trusted only because root owns it, and any owner the settings name is
+  ignored with one log line. A code-shaped message sent alone in a direct
+  chat is handed to the box's root-side door before the mayor sees it, and
+  its turn ends with one fixed line saying what the door answered. New:
+  `gc gchat owners` lists the owners and removes one after an owner's yes;
+  a new owner comes by a code from the owner page alone. New:
+  `gc-gchat-adapter owner-claim-check`, which the box's helper asks before it
+  mints a code. A city that is not a box keeps the owners its settings name,
+  and no owner code is taken there. Tested against a stand-in door only.
+
 - Never-silent observations and operator resolution follow every enrolled member of merged turns; body headers are quoted across the full Unicode invisible and blank class without changing their bytes.
 
 - Owner changes preserve delivery uncertainty, fragment limits and retry state; withdrawals clear every pending or unresolved merged/folded payload, and merged body headers are quoted as they display through Unicode format characters and spaces.

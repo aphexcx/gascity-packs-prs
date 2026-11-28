@@ -27,6 +27,7 @@ import (
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/neversilent"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/server"
 	"gchat-adapter/internal/stopwatch"
@@ -52,7 +53,10 @@ type Options struct {
 var errIdentityChanged = errors.New("app: observed identity changed; rebuilding client")
 
 type application struct {
-	lookupWarnings        *principal.WarningLog
+	lookupWarnings *principal.WarningLog
+	// owners is the one answer to who is an owner, on root's fixed directory;
+	// each use pairs it with the current settings.
+	owners                *owners.Book
 	arrival               *ack.Service
 	watch                 *stopwatch.Writer
 	stateDir              string
@@ -125,9 +129,11 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	}
 	a = &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), spaceJoined: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
 	a.watch, a.arrival, a.stateDir = watch, service, stateDir
+	a.owners = owners.New(nil, a.log)
+	a.owners.With(cfg.Secrets.Owners).NoteSettings()
 	a.stateLock = lock
 	a.l.SetSaveGuard(a.checkStateLock)
-	s, err := server.New(server.Options{Stopwatch: a.watch, Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, LedgerReady: a.loaded.Load, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
+	s, err := server.New(server.Options{Stopwatch: a.watch, Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, LedgerReady: a.loaded.Load, SettingsPath: opts.SettingsPath, Logger: a.log, Owners: a.owners, LastEvent: func() time.Time {
 		if n := a.lastEvent.Load(); n != 0 {
 			return time.Unix(0, n)
 		}

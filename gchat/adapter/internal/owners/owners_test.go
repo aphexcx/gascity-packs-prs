@@ -114,6 +114,10 @@ func TestChatOwnerCopyTrustRule(t *testing.T) {
 			return dir
 		}, "keys"},
 		{"a missing key", fakedoor.Root, func(t *testing.T, dir string) string { fakedoor.WriteRaw(t, dir, []byte(`{"version":1}`)); return dir }, "keys"},
+		{"a missing key in place of another", fakedoor.Root, func(t *testing.T, dir string) string {
+			fakedoor.WriteRaw(t, dir, []byte(`{"version":1,"owner":{}}`))
+			return dir
+		}, "keys"},
 		{"version 2", fakedoor.Root, func(t *testing.T, dir string) string {
 			fakedoor.WriteRaw(t, dir, []byte(`{"version":2,"owners":{"users/1001":{"since":"2026-01-02T03:04:05Z","by":"page-code","claim":"`+claimA+`"}}}`))
 			return dir
@@ -130,6 +134,10 @@ func TestChatOwnerCopyTrustRule(t *testing.T) {
 		}, "owner_id"},
 		{"a record without since", fakedoor.Root, func(t *testing.T, dir string) string {
 			fakedoor.WriteRaw(t, dir, copyJSON(map[string]any{"users/1001": map[string]any{"by": "page-code", "claim": claimA}}))
+			return dir
+		}, "record"},
+		{"a record with another key in place of since", fakedoor.Root, func(t *testing.T, dir string) string {
+			fakedoor.WriteRaw(t, dir, copyJSON(map[string]any{"users/1001": map[string]any{"when": "2026-01-02T03:04:05Z", "by": "page-code", "claim": claimA}}))
 			return dir
 		}, "record"},
 		{"a record with a name", fakedoor.Root, func(t *testing.T, dir string) string {

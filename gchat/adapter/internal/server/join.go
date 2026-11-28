@@ -18,6 +18,7 @@ import (
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/token"
 	"golang.org/x/oauth2"
 )
@@ -207,7 +208,8 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	}
 	// Only an INVITED read reaches here. Already-member never consults an
 	// owner's message or requests a write token.
-	if len(cfg.Secrets.Owners) == 0 {
+	book := s.ownerBook(cfg)
+	if !book.Any() {
 		return noJoinYes("No owner is configured for this box.")
 	}
 	if input.Request {
@@ -236,7 +238,7 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	if !joinMessageName.MatchString(input.Yes) {
 		return noJoinYes("Supply the owner's message name as spaces/ID/messages/ID.")
 	}
-	if reason := checkJoinYes(ctx, c, cfg, input.Yes, identity, pending); reason != "" {
+	if reason := checkOwnerYes(ctx, c, book, input.Yes, identity, pending.CreatedAt, pending.ExpiresAt, pending.CodeHash, "room's"); reason != "" {
 		return noJoinYes(reason)
 	}
 	tok, failure := joinPermission(ctx, cfg)
@@ -288,15 +290,10 @@ func (s *Server) requestJoin(ctx context.Context, cfg config.Config, space, iden
 	if failure.Result != "" {
 		return failure
 	}
-	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	raw := make([]byte, 10)
-	if _, err := rand.Read(raw); err != nil {
+	code, err := approvalCode()
+	if err != nil {
 		return noJoinYes("An approval code could not be made. Nothing changed.")
 	}
-	for i := range raw {
-		raw[i] = alphabet[int(raw[i])%len(alphabet)]
-	}
-	code := string(raw)
 	now := time.Now().UTC()
 	pending := &ledger.JoinRequest{CodeHash: joinCodeHash(code), Identity: identity, CreatedAt: now, ExpiresAt: now.Add(24 * time.Hour)}
 	if err := s.update(ctx, func(l *ledger.Ledger) error {
@@ -320,12 +317,28 @@ func (s *Server) requestJoin(ctx context.Context, cfg config.Config, space, iden
 	return result
 }
 
+// approvalCode is a one-time code of the join's shape: 10 characters.
+func approvalCode() (string, error) {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	raw := make([]byte, 10)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	for i := range raw {
+		raw[i] = alphabet[int(raw[i])%len(alphabet)]
+	}
+	return string(raw), nil
+}
+
 func joinCodeHash(code string) string {
 	sum := sha256.Sum256([]byte(code))
 	return hex.EncodeToString(sum[:])
 }
 
-func checkJoinYes(ctx context.Context, c *chat.Client, cfg config.Config, name, identity string, pending *ledger.JoinRequest) string {
+// checkOwnerYes is the one check of an owner's yes, for a room's join and for
+// an owner's removal: the message, its sender, its space, its time and its
+// code. whose names the request in the last refusal ("room's", "request's").
+func checkOwnerYes(ctx context.Context, c *chat.Client, book *owners.Book, name, identity string, created, expires time.Time, codeHash, whose string) string {
 	m, err := c.GetMessage(ctx, name)
 	if err != nil || m == nil || m.Name != name {
 		return "The owner's message could not be read. Nothing changed."
@@ -333,7 +346,7 @@ func checkJoinYes(ctx context.Context, c *chat.Client, cfg config.Config, name, 
 	if m.Sender != nil && m.Sender.Name == identity {
 		return "The identity cannot approve its own join."
 	}
-	if !c.JoinOwner(ctx, cfg.Secrets.Owners, m.Sender) {
+	if !c.JoinOwner(ctx, book, m.Sender) {
 		return "The message sender is not an owner of this box."
 	}
 	parts := strings.Split(name, "/")
@@ -345,15 +358,15 @@ func checkJoinYes(ctx context.Context, c *chat.Client, cfg config.Config, name, 
 	if err != nil {
 		return "The owner's message has no valid creation time."
 	}
-	if !posted.After(pending.CreatedAt) {
+	if !posted.After(created) {
 		return "The message was written before this request."
 	}
-	if !posted.Before(pending.ExpiresAt) {
+	if !posted.Before(expires) {
 		return "The message was written after this request expired."
 	}
 	code := strings.ToUpper(strings.TrimSpace(m.Text))
-	if subtle.ConstantTimeCompare([]byte(joinCodeHash(code)), []byte(pending.CodeHash)) == 1 {
+	if subtle.ConstantTimeCompare([]byte(joinCodeHash(code)), []byte(codeHash)) == 1 {
 		return ""
 	}
-	return "The owner must reply with this room's code alone, nothing else."
+	return "The owner must reply with this " + whose + " code alone, nothing else."
 }

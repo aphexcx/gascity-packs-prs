@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/provenance"
 	"golang.org/x/oauth2"
@@ -34,8 +35,10 @@ func (c *Client) GetSpace(ctx context.Context, name string) (*api.Space, error) 
 	return c.api.Spaces.Get(name).Context(ctx).Do()
 }
 
-func (c *Client) JoinOwner(ctx context.Context, owners []string, sender *api.User) bool {
-	r := principal.New(principal.Options{Owners: owners, Lookup: principal.DirectoryLookup(c.httpClient, c.ep.PeopleAPIBase)})
+// JoinOwner asks the one owner function, through the frame's class rule, with
+// the directory for the settings' addresses.
+func (c *Client) JoinOwner(ctx context.Context, book *owners.Book, sender *api.User) bool {
+	r := principal.New(principal.Options{Book: book, Lookup: principal.DirectoryLookup(c.httpClient, c.ep.PeopleAPIBase)})
 	return r.Speaker(ctx, sender, "").Class == provenance.Owner
 }
 

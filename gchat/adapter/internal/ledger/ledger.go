@@ -64,8 +64,13 @@ type Ledger struct {
 	Counters       map[string]int64         `json:"counters"`
 	JoinRequests   map[string]*JoinRequest  `json:"join_requests,omitempty"`
 	JoinAttempts   []JoinAttempt            `json:"join_attempts,omitempty"`
-	OwnerRequests  map[string]*OwnerRequest `json:"owner_requests,omitempty"`
-	OwnerEvents    []OwnerEvent             `json:"owner_events,omitempty"`
+	// OwnerRequests are gc gchat owners' removal requests, by the Chat user id
+	// to remove. Like JoinRequests they keep only a code's digest. The state
+	// holds no owner, no claim and no try: root's copy holds the owners.
+	OwnerRequests map[string]*OwnerRequest `json:"owner_requests,omitempty"`
+	// OwnerEvents is a history of what the adapter saw, newest last. It
+	// grants nothing: no part reads it to decide who is an owner.
+	OwnerEvents []OwnerEvent `json:"owner_events,omitempty"`
 	// Media holds attachment links and cleanup obligations introduced after
 	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
 	Media map[string]*MediaState `json:"media,omitempty"`
@@ -648,6 +653,8 @@ func (l *Ledger) Clone() *Ledger {
 	out.Counters = maps.Clone(l.Counters)
 	out.JoinRequests = copyRecords(l.JoinRequests)
 	out.JoinAttempts = slices.Clone(l.JoinAttempts)
+	out.OwnerRequests = copyRecords(l.OwnerRequests)
+	out.OwnerEvents = slices.Clone(l.OwnerEvents)
 	return &out
 }
 

@@ -18,6 +18,7 @@ import (
 	"gchat-adapter/internal/events"
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/inbound"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/token"
@@ -90,7 +91,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	if a.cfg.Secrets.TokenSource == config.TokenSourceKeyholder {
 		lookup = principal.DirectoryLookup(lookupHTTP, a.cfg.Endpoints.PeopleAPIBase)
 	}
-	principals := principal.New(principal.Options{Owners: a.cfg.Secrets.Owners, OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup, Logger: a.lookupWarnings})
+	principals := principal.New(principal.Options{Book: a.ownerBook(), OrganizationDomain: a.cfg.Secrets.OrganizationDomain, Lookup: lookup, Logger: a.lookupWarnings})
 	proc, err := inbound.New(inbound.Options{Ack: a.arrival, NeverSilent: a.neverSilent, Config: a.cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: a.cfg.Endpoints.StateFile, GC: g, Chat: c, Principals: principals, SenderFill: inbound.NewSenderFill(lookupChat, a.lookupWarnings), Logger: a.log, RetryDelay: a.opts.RetryDelay, Now: a.opts.inboundNow, SpaceJoined: func(string) { signal(a.spaceJoined) }, Raise: a.raiseDelivery})
 	if err != nil {
 		return err
@@ -469,4 +470,14 @@ func safeReason(reason string, err error) string {
 		return reason + " (" + code.String() + ")"
 	}
 	return reason
+}
+
+// ownerBook is the app's one answer to who is an owner with the current
+// settings. An application built without RunWithOptions reads the fixed
+// directory with no log.
+func (a *application) ownerBook() *owners.Book {
+	if a.owners == nil {
+		return owners.New(a.cfg.Secrets.Owners, nil)
+	}
+	return a.owners.With(a.cfg.Secrets.Owners)
 }

@@ -82,7 +82,9 @@ func (f *ownersFixture) requestRemoval(t *testing.T, target string) string {
 	return code
 }
 
-// yesFrom writes the owner's reply in a direct chat, now.
+// yesFrom writes the owner's reply in a direct chat. UNPROVEN (U5): that
+// Google gives every delivered message its creation time; the check of a
+// yes, the join's, requires it.
 func (f *ownersFixture) yesFrom(sender, spaceName, text string, at time.Time) string {
 	name := spaceName + "/messages/yes-" + sender[6:] + "-" + strings.ToLower(text)
 	f.g.Configure(func(g *fakegoogle.Server) {
