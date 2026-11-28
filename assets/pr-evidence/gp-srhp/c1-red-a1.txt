@@ -1,0 +1,192 @@
+$ verify -C gchat/adapter go test -count=1 -json -run 'ChatOwner|JoinTeammate' ./...   (at e8270ad3b814cf45ae5239ae6327b7e726ee8181)
+exit 1
+tests: 20 passed, 87 failed, 0 skipped
+failed packages: cmd/gc-gchat-adapter, internal/inbound, internal/ledger, internal/owners, internal/server
+
+FAIL cmd/gc-gchat-adapter TestChatOwnerClaimCheck/here
+       owner_claim_check_test.go:60: code=2 stdout="" stderr="usage: gc-gchat-adapter [serve|auth|state|version]\n"
+PASS cmd/gc-gchat-adapter TestChatOwnerClaimCheck/no_door
+PASS cmd/gc-gchat-adapter TestChatOwnerClaimCheck/silent
+PASS cmd/gc-gchat-adapter TestChatOwnerClaimCheck/refused
+PASS cmd/gc-gchat-adapter TestChatOwnerClaimCheck/unavailable
+PASS cmd/gc-gchat-adapter TestChatOwnerClaimCheck/outside_the_line_form
+FAIL cmd/gc-gchat-adapter TestChatOwnerClaimCheck
+FAIL cmd/gc-gchat-adapter TestChatOwnerClaimCheckPathIsFixed
+       owner_claim_check_test.go:87: dir="" wait=0s
+FAIL internal/owners TestChatOwnerCopyTrustRule/trusted
+       owners_test.go:165: trusted copy: owner=false any=false list={Root:false Owners:[] Settings:[]} logs=[]
+FAIL internal/owners TestChatOwnerCopyTrustRule/file_is_a_link
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/file_not_owned_by_root
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/group_may_write_the_file
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/others_may_write_the_file
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/file_is_not_regular
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/directory_is_a_link
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/directory_not_owned_by_root
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/group_may_write_the_directory
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/others_may_write_the_directory
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/16385_bytes
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_third_key
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/inbound TestChatOwnerTakeRows/taken
+       owner_claim_test.go:240: door lines = []
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_missing_key
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/version_2
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/not_JSON
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_repeated_key
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/51_owners
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/an_owner_id_of_another_shape
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_record_without_since
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_record_with_a_name
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_record_by_another_way
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_record_with_a_short_claim
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_record_with_a_time_of_another_form
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/a_record_that_is_not_an_object
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule/no_stand-in_at_all
+       owners_test.go:170: untrusted copy made an owner: owner=false any=false list={Root:false Owners:[] Settings:[]}
+FAIL internal/owners TestChatOwnerCopyTrustRule
+FAIL internal/owners TestChatOwnerCopyNotTrustedLogsOncePerMinute
+       owners_test.go:200: lines = []
+FAIL internal/owners TestChatOwnerCopyReadAgainWhenChanged
+       owners_test.go:211: first copy
+FAIL internal/owners TestChatOwnerWhereRootIsPresentOrAbsent/absent
+       owners_test.go:238: settings' owners where root's directory is absent
+FAIL internal/owners TestChatOwnerWhereRootIsPresentOrAbsent/present
+       owners_test.go:252: a settings' owner counted where root's directory is present
+PASS internal/owners TestChatOwnerWhereRootIsPresentOrAbsent/present_without_a_copy
+FAIL internal/owners TestChatOwnerWhereRootIsPresentOrAbsent/present_as_something_that_is_not_a_directory
+       owners_test.go:273: anything with the name counts as present, with no owner
+FAIL internal/owners TestChatOwnerWhereRootIsPresentOrAbsent
+FAIL internal/owners TestChatOwnerPathIsFixed
+       owners_test.go:289: dir = ""
+FAIL internal/owners TestChatOwnerDoorLines
+       owners_test.go:313: take = {Result: Claim:}
+FAIL internal/owners TestChatOwnerCodeShape
+       owners_test.go:397: CodeShaped("ABCD-EFGH-JKLM") = "", false
+       owners_test.go:397: CodeShaped("abcd efgh jklm") = "", false
+       owners_test.go:397: CodeShaped(" AbCd-EfGh-JkLm ") = "", false
+FAIL internal/inbound TestChatOwnerTakeRows/already_owner
+       owner_claim_test.go:240: door lines = []
+FAIL internal/server TestChatOwnerOwnersList
+       owners_test.go:121: 404 page not found
+FAIL internal/ledger TestChatOwnerStateKeys
+       owners_test.go:50: a snapshot's change showed in the ledger it was copied from
+FAIL internal/ledger TestChatOwnerEventsKeepTheNewest
+       owners_test.go:71: kept 0 events
+FAIL internal/server TestChatOwnerOwnersAdd
+       owners_test.go:153: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/a_good_yes
+       owners_test.go:181: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/an_owner_removes_themself,_the_last_owner
+       owners_test.go:201: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/a_yes_from_a_sender_who_is_not_an_owner
+       owners_test.go:213: 404 page not found
+FAIL internal/inbound TestChatOwnerTakeRows/full
+       owner_claim_test.go:240: door lines = []
+FAIL internal/server TestChatOwnerOwnersRemove/a_yes_written_before_the_request
+       owners_test.go:218: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/a_yes_in_a_room
+       owners_test.go:223: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/a_yes_with_another_code
+       owners_test.go:228: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/a_yes_from_the_identity
+       owners_test.go:233: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/a_request_used_twice
+       owners_test.go:238: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/a_newer_request_replaces_an_older
+       owners_test.go:247: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/a_yes_without_a_request
+       owners_test.go:253: 404 page not found
+FAIL internal/inbound TestChatOwnerTakeRows/wrong
+       owner_claim_test.go:240: door lines = []
+FAIL internal/server TestChatOwnerOwnersRemove/the_identity_as_the_target
+       owners_test.go:257: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/no_owner_yet
+       owners_test.go:261: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/not_an_owner_by_the_door's_word
+       owners_test.go:265: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove/root's_directory_absent
+       owners_test.go:271: 404 page not found
+FAIL internal/server TestChatOwnerOwnersRemove
+FAIL internal/server TestChatOwnerOwnersDoorDoesNotConfirm/silent
+       owners_test.go:307: 404 page not found
+FAIL internal/server TestChatOwnerOwnersDoorDoesNotConfirm/refused
+       owners_test.go:307: 404 page not found
+FAIL internal/server TestChatOwnerOwnersDoorDoesNotConfirm/unavailable
+       owners_test.go:307: 404 page not found
+FAIL internal/inbound TestChatOwnerTakeRows/fifth_wrong
+       owner_claim_test.go:240: door lines = []
+FAIL internal/server TestChatOwnerOwnersDoorDoesNotConfirm/outside_the_line_form
+       owners_test.go:307: 404 page not found
+FAIL internal/server TestChatOwnerOwnersDoorDoesNotConfirm
+FAIL internal/server TestChatOwnerOwnersInvalid
+       owners_test.go:344: {"remove":"users/abc","request":true}: 404 404 page not found
+FAIL internal/server TestChatOwnerJoinAsksTheOneFunction/an_owner_of_the_copy
+       owners_test.go:361: request: map[message:No owner is configured for this box. recorded:true result:no_owner_yes]
+FAIL internal/inbound TestChatOwnerTakeRows/not_live
+       owner_claim_test.go:240: door lines = []
+FAIL internal/server TestChatOwnerJoinAsksTheOneFunction/the_copy_stops_naming_the_owner
+       owners_test.go:371: join: map[message:Joined Example. People in this room can now write to this identity. recorded:true result:joined]
+FAIL internal/server TestChatOwnerJoinAsksTheOneFunction/an_owner_named_only_in_the_settings
+       owners_test.go:381: join: map[code:2LL96QNCZH expires_at:2026-11-29T11:18:59.766121Z message:Ask the owner in a direct message about room "Example" (spaces/room). To say yes, reply with this room's code alone, nothing else, before it expires in 24 hours. recorded:true result:requested]
+FAIL internal/server TestChatOwnerJoinAsksTheOneFunction
+FAIL internal/inbound TestChatOwnerTakeRows/no_answer_in_time
+       owner_claim_test.go:240: door lines = []
+FAIL internal/server TestChatOwnerRestoreResetBackup
+       owners_test.go:415: 404 page not found
+FAIL internal/inbound TestChatOwnerTakeRows/refused
+       owner_claim_test.go:240: door lines = []
+FAIL internal/inbound TestChatOwnerTakeRows/unavailable
+       owner_claim_test.go:240: door lines = []
+FAIL internal/inbound TestChatOwnerTakeRows/outside_the_line_form
+       owner_claim_test.go:240: door lines = []
+FAIL internal/inbound TestChatOwnerTakeRows/no_answer_after_a_copy_naming_the_sender
+       owner_claim_test.go:240: door lines = []
+FAIL internal/inbound TestChatOwnerTakeRows
+PASS internal/inbound TestChatOwnerUntouchedMessages/in_a_room
+PASS internal/inbound TestChatOwnerUntouchedMessages/with_other_words
+PASS internal/inbound TestChatOwnerUntouchedMessages/with_a_newline_after_it
+PASS internal/inbound TestChatOwnerUntouchedMessages/of_the_join's_shape
+PASS internal/inbound TestChatOwnerUntouchedMessages/from_the_identity
+PASS internal/inbound TestChatOwnerUntouchedMessages/from_a_bot
+PASS internal/inbound TestChatOwnerUntouchedMessages/from_a_deleted_user
+PASS internal/inbound TestChatOwnerUntouchedMessages/with_an_attachment
+PASS internal/inbound TestChatOwnerUntouchedMessages/an_edit_into_the_code
+PASS internal/inbound TestChatOwnerUntouchedMessages/a_catch-up_snapshot_edited_into_the_code
+PASS internal/inbound TestChatOwnerUntouchedMessages/where_root's_directory_is_absent
+PASS internal/inbound TestChatOwnerUntouchedMessages/while_the_identity_is_unknown
+PASS internal/inbound TestChatOwnerUntouchedMessages
+FAIL internal/inbound TestChatOwnerCatchUpCreationKnocks
+       owner_claim_test.go:414: door lines = []
+FAIL internal/inbound TestChatOwnerDeliveredTwice/recorded
+       owner_claim_test.go:437: knocks = 0
+FAIL internal/inbound TestChatOwnerDeliveredTwice/not_recorded
+       owner_claim_test.go:467: knocks = 0
+FAIL internal/inbound TestChatOwnerDeliveredTwice
+FAIL internal/inbound TestChatOwnerOneFunctionInbound/present
+       owner_claim_test.go:515: copy owner framed "[from: Example Person <person@example.com> | external | item gchat:spaces/dm/messages/a]"
+PASS internal/inbound TestChatOwnerOneFunctionInbound/present_without_a_trusted_copy
+FAIL internal/inbound TestChatOwnerOneFunctionInbound/absent
+       owner_claim_test.go:541: settings' owner framed "[from: Example Person <person@example.com> | external | item gchat:spaces/dm/messages/a]"
+FAIL internal/inbound TestChatOwnerOneFunctionInbound

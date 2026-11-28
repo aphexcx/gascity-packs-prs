@@ -1,0 +1,15 @@
+$ git rev-parse HEAD origin/main
+926f17912914d9470b4ef477cc65e9fb70792b56
+926f17912914d9470b4ef477cc65e9fb70792b56
+$ git merge-base --is-ancestor aeb63e574e68198a69a2b28d3abfe0a704130819 HEAD; echo $?
+0
+$ git grep -c 'len(cfg.Secrets.Owners) == 0' HEAD -- gchat/adapter/internal/server/join.go
+HEAD:gchat/adapter/internal/server/join.go:1
+$ git grep -c 'c.JoinOwner(' HEAD -- gchat/adapter/internal/server/join.go
+HEAD:gchat/adapter/internal/server/join.go:1
+$ git grep -n 'owner-claim' HEAD -- gchat
+exit 1
+$ git grep -n 'ChatOwner\|JoinTeammate' HEAD -- gchat
+exit 1
+$ git ls-files gchat/commands/owners.sh
+exit 0
