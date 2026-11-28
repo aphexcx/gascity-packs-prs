@@ -1,0 +1,8 @@
+=== RUN   TestMergedCheckpointWithoutRecordedEditRaisesEndNotice
+--- PASS: TestMergedCheckpointWithoutRecordedEditRaisesEndNotice (0.01s)
+=== RUN   TestMergedCheckpointHoldLetsAnotherRoomPost
+--- PASS: TestMergedCheckpointHoldLetsAnotherRoomPost (0.01s)
+=== RUN   TestMergedCheckpointReleasesCurrentTurnOnce
+--- PASS: TestMergedCheckpointReleasesCurrentTurnOnce (0.01s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.224s
