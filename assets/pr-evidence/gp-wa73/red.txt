@@ -1,0 +1,45 @@
+# head: bc0019e83625f4a5a9978a76127fdeb302f6c949; red tree: the head with gchat/adapter/internal/inbound/coalesce.go and inbound.go as at db4be95184fb4dfc4ad8dbe6e7dcac1563f8f111 (overlay), so the new test file is the only difference from PR 107's round 5 head
+# overlay: coalesce.go <- git show db4be951:gchat/adapter/internal/inbound/coalesce.go; inbound.go <- git show db4be951:gchat/adapter/internal/inbound/inbound.go
+# start: 2026-11-28T03:14:11Z  uptime: 61.63 53.38 36.73
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/red.json -v -run '^(TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave|TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave)$' ./internal/inbound
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone
+    coalesce_retirement_race_test.go:195: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at ledger.(*ChangeState).OriginalKind ledger.go:224, called from inbound.(*Processor).flushSpace.func1 coalesce.go:225)
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: not the retirement's record: status="committed" reason="local" cause="before_history_floor" kind="coalesced" member_of="" members=[spaces/room/messages/m002 spaces/room/messages/m003]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-003"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: not the retirement's record: status="committed" reason="local" cause="before_history_floor" kind="coalesced" member_of="" members=[spaces/room/messages/m002 spaces/room/messages/m003]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-003"
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone
+    coalesce_retirement_race_test.go:195: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at inbound.(*Processor).flushSpace.func1 coalesce.go:231, called from inbound.(*Processor).update inbound.go:693)
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held
+    coalesce_retirement_race_test.go:195: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at inbound.(*Processor).flushSpace.func1 coalesce.go:231, called from inbound.(*Processor).update inbound.go:693)
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:208: want one single turn for [spaces/room/messages/m003], got [{ProviderMessageID:spaces/room/messages/m003 Conversation:{ScopeID:examplecity Provider:gchat AccountID:example ConversationID:spaces/room ParentConversationID: Kind:room} Actor:{ID:users/456 DisplayName:Reader IsBot:false} Text:[2 messages in this room, oldest first. Each has its own from line.]
+        [from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]
+        body-002
+        [from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m003]
+        body-003 ExplicitTarget: ReplyToMessageID:spaces/room/threads/t003 Attachments:[] DedupKey: ReceivedAt:2026-11-01 10:00:11 +0000 UTC}]
+    coalesce_retirement_race_test.go:213: turn spaces/room/messages/m003 posted retired text "body-002"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-002"
+--- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave (0.07s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone (0.01s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed (0.03s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone (0.01s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held (0.02s)
+=== RUN   TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave
+    coalesce_retirement_race_test.go:276: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at inbound.(*Processor).refreshMerged coalesce_retry.go:18, called from inbound.(*Processor).resume.func1.1 inbound.go:1310)
+--- FAIL: TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave (0.08s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.432s
+FAIL
+exit=1
+# end: 2026-11-28T03:14:26Z  uptime: 56.63 52.65 36.75
