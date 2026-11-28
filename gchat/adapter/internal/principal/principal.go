@@ -1,5 +1,6 @@
-// Package principal decides which class a Chat sender belongs to. Owners are
-// configured by address (GCHAT_OWNERS); the organization is a mail domain
+// Package principal decides which class a Chat sender belongs to. Who is an
+// owner is the owners package's one answer: root's copy on a box, otherwise
+// the settings' addresses and Chat ids (GCHAT_OWNERS). The organization is a mail domain
 // (GCHAT_ORGANIZATION_DOMAIN) or, failing that, the Workspace domain id the
 // identity itself belongs to, learned from its own messages. Addresses come
 // from the Workspace directory (People API, directory.readonly); without
@@ -21,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/token"
 	"golang.org/x/oauth2"
@@ -35,8 +37,12 @@ type Lookup func(ctx context.Context, userID string) (string, error)
 type Options struct {
 	// Logger receives one warning per directory failure cause, when supplied.
 	Logger *WarningLog
-	// Owners are addresses (user@example.com) or Chat ids (users/123).
+	// Owners are addresses (user@example.com) or Chat ids (users/123), the
+	// settings' owners. They count only where root's directory is absent.
 	Owners []string
+	// Book answers who is an owner. Nil means owners.New(Owners) on the
+	// fixed directory; a Book given here carries its own settings.
+	Book *owners.Book
 	// OrganizationDomain is the organization's mail domain; empty means unknown.
 	OrganizationDomain string
 	// Lookup resolves users/<id> to an address; nil means no directory.
@@ -48,7 +54,7 @@ type Options struct {
 
 // Resolver classifies senders, caching directory answers for the process.
 type Resolver struct {
-	owners  map[string]bool
+	book    *owners.Book
 	domain  string
 	lookup  Lookup
 	logger  *WarningLog
@@ -61,13 +67,11 @@ type Resolver struct {
 }
 
 func New(o Options) *Resolver {
-	r := &Resolver{owners: map[string]bool{}, domain: strings.ToLower(strings.TrimSpace(o.OrganizationDomain)), lookup: o.Lookup,
+	r := &Resolver{book: o.Book, domain: strings.ToLower(strings.TrimSpace(o.OrganizationDomain)), lookup: o.Lookup,
 		now: o.Now, ttl: o.FailureTTL, address: map[string]string{}, failed: map[string]time.Time{},
 		logger: o.Logger, warned: map[string]bool{}}
-	for _, owner := range o.Owners {
-		if owner = strings.ToLower(strings.TrimSpace(owner)); owner != "" {
-			r.owners[owner] = true
-		}
+	if r.book == nil {
+		r.book = owners.New(o.Owners, nil)
 	}
 	if r.now == nil {
 		r.now = time.Now
@@ -77,6 +81,9 @@ func New(o Options) *Resolver {
 	}
 	return r
 }
+
+// Book is the one answer to who is an owner that this resolver frames with.
+func (r *Resolver) Book() *owners.Book { return r.book }
 
 // Speaker is the frame's view of a sender. identityDomain is the Workspace
 // domain id of the identity itself ("" when not yet known).
@@ -98,9 +105,8 @@ func (r *Resolver) Speaker(ctx context.Context, u *api.User, identityDomain stri
 	if address != "" {
 		s.Address = address
 	}
-	id := strings.ToLower(u.Name)
 	switch {
-	case address != "" && r.owners[strings.ToLower(address)], id != "" && r.owners[id]:
+	case r.book.Owner(u.Name, address):
 		s.Class = provenance.Owner
 	case address != "" && r.domain != "" && strings.HasSuffix(strings.ToLower(address), "@"+r.domain):
 		s.Class = provenance.Organization

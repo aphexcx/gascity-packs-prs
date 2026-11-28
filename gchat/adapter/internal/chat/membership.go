@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/provenance"
 	"golang.org/x/oauth2"
@@ -34,9 +35,17 @@ func (c *Client) GetSpace(ctx context.Context, name string) (*api.Space, error) 
 	return c.api.Spaces.Get(name).Context(ctx).Do()
 }
 
-func (c *Client) JoinOwner(ctx context.Context, owners []string, sender *api.User) bool {
-	r := principal.New(principal.Options{Owners: owners, Lookup: principal.DirectoryLookup(c.httpClient, c.ep.PeopleAPIBase)})
-	return r.Speaker(ctx, sender, "").Class == provenance.Owner
+// JoinOwner asks the one owner function, through the frame's class rule. The
+// directory is asked for an address only where the settings decide; where
+// root's copy decides, the Chat id alone does. It also answers the address
+// the rule was asked with, so a caller can ask the same question again.
+func (c *Client) JoinOwner(ctx context.Context, book *owners.Book, sender *api.User) (bool, string) {
+	o := principal.Options{Book: book}
+	if !book.Present() {
+		o.Lookup = principal.DirectoryLookup(c.httpClient, c.ep.PeopleAPIBase)
+	}
+	s := principal.New(o).Speaker(ctx, sender, "")
+	return s.Class == provenance.Owner, s.Address
 }
 
 func (c *Client) ReadOwnMembership(ctx context.Context, space, identity string) (*api.Membership, error) {

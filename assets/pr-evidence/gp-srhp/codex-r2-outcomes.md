@@ -1,0 +1,21 @@
+# Codex round 2 (class DEEP): outcomes
+
+The same form as round 1, at head `e27b2d0390d9a743865e7f80e11829d3d4b7aa3d`. Verdict **BLOCK**: CRITICAL 3, MAJOR 10, MINOR 2. The answer as given is in [codex-r2.txt](codex-r2.txt). The fixes are in `0a6fe7d46e3ecc947277e24c10780afac1d57b53`. The lane stops its own rounds here: by the review rules a third round stops on any blocking finding of a family already met, and most of this round's blocking findings repeat round 1's families or ask the contract to say otherwise. The mayor's gate reads the head.
+
+| # | Grade | Class | Outcome |
+|---|---|---|---|
+| 1 | CRITICAL | Who is an owner is asked at one moment of a message's life and used at another (saved frames; a grant not bound to its time) | **INTENDED**, round 1's finding 3 again for the saved frames (base behavior; no message received after a removal is framed owner). Binding a yes or a message to the time of a grant is not the contract's rule: C5, "a sender whose Chat user id is in the trusted copy, and nobody else". For the mayor. |
+| 2 | CRITICAL | A live code outside the claim path (a failed knock's turn; a code inside a sentence sent to the reaction provider; Unicode case forms) | The turn and its record keep the text: **INTENDED** (C2, ruling 8). A code inside a sentence is not a code-shaped message and is never knocked: **INTENDED** (C4); its text reaches the provider as any message's does, **PRECONDITION** (`ACK_REACTION=jev` with a key). Unicode case forms: **FIXED** in `0a6fe7d4`, the guard makes letters upper case by Unicode as the join's check does (`TestChatOwnerCodesNeverReachTheReactionProvider`, row `abcdefghjſ`, red first). |
+| 3 | CRITICAL | Root's directory gone, the settings' owners count again | **INTENDED**: the contract's P13 ("when anything has that name, owners come from root's file alone"; root makes the name at every start) and C11 (an image without the door: "owners are the settings', as today"). The name is root's under root's /run; the mayor's user cannot take it away. For the mayor. |
+| 4 | MAJOR | A restored backup revives a removal's request | **INTENDED**, round 1's finding 4 (C5, ruling 10). |
+| 5 | MAJOR | A sender's line that reads like the door's result | **INTENDED**, round 1's finding 7 (C4: "Every other message is untouched by this section"). For the mayor. |
+| 6 | MAJOR | Removals of different targets checked and made under different locks | **FIXED** in `0a6fe7d4`: one lock for every removal, so a yes is asked again after any removal before it. `TestChatOwnerCrossedRemovalsRemoveOne`, red first three times out of three: both removed, no owner left. |
+| 7 | MAJOR | A claim skipped while the identity is in doubt, or when the event omits the sender's type | **DOES NOT MATTER** for who becomes an owner: it is the safe side; the code stays live for the sender's next message. That a delivered message carries its sender's type is named UNPROVEN in the pull request. |
+| 8 | MAJOR | Ordinary prose of the code's shape is knocked ("thanks a bunch" is 12 letters of the alphabet) | **INTENDED**: the shape is the contract's (C4, P2); C13 SMALLER already names "the mayor's user can end a live code by five wrong knocks". The cost (a sentence of that shape in a direct chat costs a live claim one try) is named for the mayor. |
+| 9 | MAJOR | A standalone catch-up turn does not keep its place between held turns | **FIXED** in `0a6fe7d4`: the held turns before it are flushed first. `TestChatOwnerCatchUpClaimKeepsItsPlace`, red first: the later message reached gc with the earlier one, before the claim. |
+| 10 | MAJOR | Redelivery knocks again | **INTENDED**, round 1's finding 8 (ruling 17). |
+| 11 | MAJOR | A yes with an attachment | **INTENDED**, round 1's finding 9 (C6, ruling 1). |
+| 12 | MAJOR | The mayor's own account as a removal's target | **INTENDED**: C6, "THE TARGET ... is never the mayor's own account." |
+| 13 | MAJOR (PRECONDITION) | A search-only root directory | **PRECONDITION**: the directory is root's, mode 0755 (the contract's C3 and C13). |
+| 14 | MINOR | Removal requests are never pruned | **INTENDED**, round 1's finding 12. |
+| 15 | MINOR | Older tests read the host's fixed directory | **PRECONDITION**, round 1's finding 13. |

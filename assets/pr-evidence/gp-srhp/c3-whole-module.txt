@@ -1,0 +1,13 @@
+$ verify -C gchat/adapter go test -count=1 -json -timeout=30m ./...
+
+At 951afdf341989622aa03a4549c27a7a16b050a2c: exit 0; 50610 passed, 0 failed, 2 skipped.
+At f4e0368f6c198f38830040bd9fcc17ba4413d749: exit 0.
+At e27b2d0390d9a743865e7f80e11829d3d4b7aa3d: exit 0; 50626 passed, 0 failed, 2 skipped.
+At 0a6fe7d46e3ecc947277e24c10780afac1d57b53: exit 1; 50624 passed, 4 failed, 2 skipped (load average about 10):
+  internal/inbound TestChatOwnerTakeRows/taken (and its parent): the stand-in door answered after the test book's 200 ms bound; fixed in 2563f6dc (fakedoor.Wait, one second).
+  internal/puller TestRunRotationsCloseAndReuseQuarantineHandles: rotation_unix_test.go:154: context deadline exceeded; passes alone.
+  internal/app TestFreshTokenIdentityDeliversFirstDM: app_test.go:519: condition did not become true; passes alone (-count=3).
+At 2563f6dc0a350d5a8a766de413f3f7139a10cf49: exit 1; 50627 passed, 1 failed, 2 skipped:
+  internal/app TestMissingTokenReplacementResumes: app_test.go:237: health did not become ready in 5s.
+  The same test fails at START too: a copy of gchat/adapter at 926f17912914d9470b4ef477cc65e9fb70792b56, -count=3 -run 'TestMissingTokenReplacementResumes$': FAIL, app_test.go:225: health did not become needs-sign-in in 1s.
+  At 2563f6dc it passes alone with -count=3, and the whole internal/app package passes alone.

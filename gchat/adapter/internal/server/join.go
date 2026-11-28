@@ -18,6 +18,7 @@ import (
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/token"
 	"golang.org/x/oauth2"
 )
@@ -207,7 +208,8 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	}
 	// Only an INVITED read reaches here. Already-member never consults an
 	// owner's message or requests a write token.
-	if len(cfg.Secrets.Owners) == 0 {
+	book := s.ownerBook(cfg)
+	if !book.Any() {
 		return noJoinYes("No owner is configured for this box.")
 	}
 	if input.Request {
@@ -236,7 +238,8 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	if !joinMessageName.MatchString(input.Yes) {
 		return noJoinYes("Supply the owner's message name as spaces/ID/messages/ID.")
 	}
-	if reason := checkJoinYes(ctx, c, cfg, input.Yes, identity, pending); reason != "" {
+	reason, approverStill := checkOwnerYes(ctx, c, book, input.Yes, identity, pending.CreatedAt, pending.ExpiresAt, pending.CodeHash, "join", "room's")
+	if reason != "" {
 		return noJoinYes(reason)
 	}
 	tok, failure := joinPermission(ctx, cfg)
@@ -267,6 +270,9 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	if !stillMine() {
 		return noJoinYes("The identity is not known safely yet. Nothing was sent to Google, but this owner's yes is now used; request approval again after the adapter learns its identity.")
 	}
+	if !approverStill() {
+		return noJoinYes("The owner who said yes is no longer an owner of this box. Nothing was sent to Google, but this yes is now used.")
+	}
 	membership, err = create()
 	state = ""
 	if membership != nil {
@@ -288,15 +294,10 @@ func (s *Server) requestJoin(ctx context.Context, cfg config.Config, space, iden
 	if failure.Result != "" {
 		return failure
 	}
-	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	raw := make([]byte, 10)
-	if _, err := rand.Read(raw); err != nil {
+	code, err := approvalCode()
+	if err != nil {
 		return noJoinYes("An approval code could not be made. Nothing changed.")
 	}
-	for i := range raw {
-		raw[i] = alphabet[int(raw[i])%len(alphabet)]
-	}
-	code := string(raw)
 	now := time.Now().UTC()
 	pending := &ledger.JoinRequest{CodeHash: joinCodeHash(code), Identity: identity, CreatedAt: now, ExpiresAt: now.Add(24 * time.Hour)}
 	if err := s.update(ctx, func(l *ledger.Ledger) error {
@@ -320,40 +321,60 @@ func (s *Server) requestJoin(ctx context.Context, cfg config.Config, space, iden
 	return result
 }
 
+// approvalCode is a one-time code of the join's shape: 10 characters.
+func approvalCode() (string, error) {
+	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	raw := make([]byte, 10)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	for i := range raw {
+		raw[i] = alphabet[int(raw[i])%len(alphabet)]
+	}
+	return string(raw), nil
+}
+
 func joinCodeHash(code string) string {
 	sum := sha256.Sum256([]byte(code))
 	return hex.EncodeToString(sum[:])
 }
 
-func checkJoinYes(ctx context.Context, c *chat.Client, cfg config.Config, name, identity string, pending *ledger.JoinRequest) string {
+// checkOwnerYes is the one check of an owner's yes, for a room's join and for
+// an owner's removal: the message, its sender, its space, its time and its
+// code. act and whose name the change and its request in the refusals
+// ("join" and "room's"; "removal" and "request's"). A good yes also answers
+// a check of the same owner rule to ask again right before the one write.
+func checkOwnerYes(ctx context.Context, c *chat.Client, book *owners.Book, name, identity string, created, expires time.Time, codeHash, act, whose string) (string, func() bool) {
 	m, err := c.GetMessage(ctx, name)
 	if err != nil || m == nil || m.Name != name {
-		return "The owner's message could not be read. Nothing changed."
+		return "The owner's message could not be read. Nothing changed.", nil
 	}
 	if m.Sender != nil && m.Sender.Name == identity {
-		return "The identity cannot approve its own join."
+		return "The identity cannot approve its own " + act + ".", nil
 	}
-	if !c.JoinOwner(ctx, cfg.Secrets.Owners, m.Sender) {
-		return "The message sender is not an owner of this box."
+	owner, address := c.JoinOwner(ctx, book, m.Sender)
+	if !owner {
+		return "The message sender is not an owner of this box.", nil
 	}
 	parts := strings.Split(name, "/")
 	space, err := c.GetSpace(ctx, strings.Join(parts[:2], "/"))
 	if err != nil || space == nil || space.SpaceType != "DIRECT_MESSAGE" {
-		return "The owner's yes must be in a direct message."
+		return "The owner's yes must be in a direct message.", nil
 	}
 	posted, err := time.Parse(time.RFC3339Nano, m.CreateTime)
 	if err != nil {
-		return "The owner's message has no valid creation time."
+		return "The owner's message has no valid creation time.", nil
 	}
-	if !posted.After(pending.CreatedAt) {
-		return "The message was written before this request."
+	if !posted.After(created) {
+		return "The message was written before this request.", nil
 	}
-	if !posted.Before(pending.ExpiresAt) {
-		return "The message was written after this request expired."
+	if !posted.Before(expires) {
+		return "The message was written after this request expired.", nil
 	}
 	code := strings.ToUpper(strings.TrimSpace(m.Text))
-	if subtle.ConstantTimeCompare([]byte(joinCodeHash(code)), []byte(pending.CodeHash)) == 1 {
-		return ""
+	if subtle.ConstantTimeCompare([]byte(joinCodeHash(code)), []byte(codeHash)) == 1 {
+		sender := m.Sender.Name
+		return "", func() bool { return book.Owner(sender, address) }
 	}
-	return "The owner must reply with this room's code alone, nothing else."
+	return "The owner must reply with this " + whose + " code alone, nothing else.", nil
 }

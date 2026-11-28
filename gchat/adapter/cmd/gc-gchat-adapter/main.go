@@ -15,11 +15,16 @@ import (
 
 	"gchat-adapter/internal/app"
 	"gchat-adapter/internal/config"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/token"
 )
 
 // Version is set by the build's -ldflags.
 var Version = "dev"
+
+// claimBook is the book owner-claim-check asks: root's fixed directory. Only
+// this package's tests replace it.
+var claimBook = func() *owners.Book { return owners.New(nil, nil) }
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -115,6 +120,19 @@ func runWithServe(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return 0
 	case "state":
 		return runState(ctx, args[1:], stdout, stderr, getenv)
+	case "owner-claim-check":
+		// The box's helper asks this before it mints an owner code. Yes only
+		// when root's door answers here within its bound; it reads no
+		// setting for its path and writes nothing, on stdout or elsewhere.
+		if len(args) > 1 {
+			fmt.Fprintln(stderr, "usage: gc-gchat-adapter owner-claim-check")
+			return 2
+		}
+		if !claimBook().Here(ctx) {
+			return 1
+		}
+		fmt.Fprint(stdout, "owner-claim 1\n")
+		return 0
 	case "serve":
 		if len(args) > 1 {
 			fmt.Fprintln(stderr, "usage: gc-gchat-adapter serve")
@@ -136,7 +154,7 @@ func runWithServe(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}
 		return 0
 	default:
-		fmt.Fprintln(stderr, "usage: gc-gchat-adapter [serve|auth|state|version]")
+		fmt.Fprintln(stderr, "usage: gc-gchat-adapter [serve|auth|state|version|owner-claim-check]")
 		return 2
 	}
 }

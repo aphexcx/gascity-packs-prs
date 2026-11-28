@@ -1050,6 +1050,27 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 		}
 		return lookupError("space", err)
 	}
+	// A code-shaped message is handed to root's door before it is framed and
+	// handed to the mayor. A message already recorded never comes here again
+	// (the resume and recorded-revision returns above), so it knocks once.
+	claimLine, claimEvent := "", func(*ledger.Ledger) {}
+	if code, ok := p.ownerCode(c, m, s.Kind, local, editedSnapshot); ok {
+		var event func(*ledger.Ledger)
+		claimLine, event = p.knock(ctx, code, m)
+		claimEvent = func(l *ledger.Ledger) {
+			if event != nil {
+				event(l)
+			}
+			// Never merged with its neighbours: the fixed line stays the last
+			// line of this message's own turn, which history leaves out.
+			if c := l.Changes[id]; c != nil {
+				c.HeldUntil, c.FixedLine = time.Time{}, true
+			}
+		}
+		// The frame asks the one owner function again, after the door's answer.
+		speaker = p.opts.Principals.Speaker(speakerCtx, m.Sender, l.IdentityDomainID)
+		speaker.Item = provenance.ChatItem(m.Name)
+	}
 	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
 	w.Text = renderMentions(m)
 	framed := false
@@ -1080,6 +1101,9 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 	if !framed {
 		w.Text = provenance.Render(speaker, w.Text)
 	}
+	if claimLine != "" {
+		w.Text += "\n" + claimLine
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1089,7 +1113,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 				return err
 			}
 		}
-		return p.record(c, id, w, &state, s, local, catchUp, learnedDomain)
+		return p.recordWith(c, id, w, &state, s, local, catchUp, learnedDomain, claimEvent)
 	}); err != nil {
 		return err
 	}
@@ -1204,6 +1228,11 @@ func (p *Processor) envelope(id, space, kind string, user *api.User, thread stri
 // persisted, later config default changes no longer reach that space; a spaces
 // reset must clear or replace its stored Wake to inherit a new default.
 func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string, catchUp bool, learnedDomain string) error {
+	return p.recordWith(c, id, w, state, space, local, catchUp, learnedDomain, func(*ledger.Ledger) {})
+}
+
+// recordWith also applies extra in the same save as the change.
+func (p *Processor) recordWith(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string, catchUp bool, learnedDomain string, extra func(*ledger.Ledger)) error {
 	if catchUp {
 		w.Text = "[catch-up]\n" + w.Text
 	}
@@ -1228,6 +1257,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local, CatchUp: catchUp}
 		l.Changes[id].ProvenanceFramed = w.ProviderMessageID != ""
 		p.hold(l, c, id, w)
+		extra(l)
 		if learnedDomain != "" {
 			l.IdentityDomainID = learnedDomain
 		}

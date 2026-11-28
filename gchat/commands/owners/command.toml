@@ -1,0 +1,2 @@
+description = "List this box's Chat owners, or remove one after an owner's yes"
+run = "../owners.sh"

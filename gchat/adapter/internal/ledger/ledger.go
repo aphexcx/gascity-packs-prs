@@ -64,6 +64,13 @@ type Ledger struct {
 	Counters       map[string]int64         `json:"counters"`
 	JoinRequests   map[string]*JoinRequest  `json:"join_requests,omitempty"`
 	JoinAttempts   []JoinAttempt            `json:"join_attempts,omitempty"`
+	// OwnerRequests are gc gchat owners' removal requests, by the Chat user id
+	// to remove. Like JoinRequests they keep only a code's digest. The state
+	// holds no owner, no claim and no try: root's copy holds the owners.
+	OwnerRequests map[string]*OwnerRequest `json:"owner_requests,omitempty"`
+	// OwnerEvents is a history of what the adapter saw, newest last. It
+	// grants nothing: no part reads it to decide who is an owner.
+	OwnerEvents []OwnerEvent `json:"owner_events,omitempty"`
 	// Media holds attachment links and cleanup obligations introduced after
 	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
 	Media map[string]*MediaState `json:"media,omitempty"`
@@ -170,6 +177,10 @@ type ChangeState struct {
 	// ProvenanceFramed marks adapter-authored frames; legacy records default
 	// to false so user text resembling a frame is never trusted or stripped.
 	ProvenanceFramed bool `json:"provenance_framed,omitempty"`
+	// FixedLine marks a turn whose last line the adapter added from root's
+	// door's answer to an owner code. History leaves that line out; older
+	// readers ignore the field.
+	FixedLine bool `json:"fixed_line,omitempty"`
 	// HeldUntil marks an unsent act in a durable coalescing window. Older
 	// readers ignore it and deliver the retained single turn through intent.
 	HeldUntil time.Time `json:"held_until,omitzero"`
@@ -646,6 +657,8 @@ func (l *Ledger) Clone() *Ledger {
 	out.Counters = maps.Clone(l.Counters)
 	out.JoinRequests = copyRecords(l.JoinRequests)
 	out.JoinAttempts = slices.Clone(l.JoinAttempts)
+	out.OwnerRequests = copyRecords(l.OwnerRequests)
+	out.OwnerEvents = slices.Clone(l.OwnerEvents)
 	return &out
 }
 

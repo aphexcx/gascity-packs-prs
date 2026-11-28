@@ -1,0 +1,100 @@
+A2: one scratch change at a time on the fixed code, never committed, in a copy of gchat/adapter;
+each run: verify -C gchat/adapter go test -count=1 -json -run '^<Test>$/^<row>$' <package>, then the file written back.
+A row 'pass' under its change was caught by a second rule; the next run takes both out (see the README).
+
+[run 1] trust: file is a link
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/file_is_a_link -> fail (exit 1)
+[run 1] trust: file not owned by root
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/file_not_owned_by_root -> fail (exit 1)
+[run 1] trust: group may write the file
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/group_may_write_the_file -> fail (exit 1)
+[run 1] trust: others may write the file
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/others_may_write_the_file -> fail (exit 1)
+[run 1] trust: file is not regular
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/file_is_not_regular -> fail (exit 1)
+[run 1] trust: directory is a link
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/directory_is_a_link -> fail (exit 1)
+[run 1] trust: directory not owned by root
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/directory_not_owned_by_root -> fail (exit 1)
+[run 1] trust: group may write the directory
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/group_may_write_the_directory -> fail (exit 1)
+[run 1] trust: others may write the directory
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/others_may_write_the_directory -> fail (exit 1)
+[run 1] trust: 16385 bytes
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/16385_bytes -> pass (exit 0)
+[run 1] trust: a third key
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_third_key -> fail (exit 1)
+[run 1] trust: a missing key
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_missing_key -> pass (exit 0)
+[run 1] trust: version 2
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/version_2 -> fail (exit 1)
+[run 1] trust: not JSON
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/not_JSON -> fail (exit 1)
+[run 1] trust: a repeated key
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_repeated_key -> fail (exit 1)
+[run 1] trust: 51 owners
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/51_owners -> fail (exit 1)
+[run 1] trust: an owner id of another shape
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/an_owner_id_of_another_shape -> fail (exit 1)
+[run 1] trust: a record without since
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_without_since -> pass (exit 0)
+[run 1] trust: a record with a name
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_with_a_name -> fail (exit 1)
+[run 1] trust: a record by another way
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_by_another_way -> fail (exit 1)
+[run 1] trust: a record with a short claim
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_with_a_short_claim -> fail (exit 1)
+[run 1] trust: a record with a time of another form
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_with_a_time_of_another_form -> absent (exit 1)
+[run 1] trust: a record that is not an object
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_that_is_not_an_object -> fail (exit 1)
+[run 1] trust: no stand-in at all
+    gchat/adapter/internal/owners/trust_unix.go  row TestChatOwnerCopyTrustRule/no_stand-in_at_all -> fail (exit 1)
+[run 1] shape: in a room
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/in_a_room -> fail (exit 1)
+[run 1] shape: with other words
+    gchat/adapter/internal/owners/door.go  row TestChatOwnerUntouchedMessages/with_other_words -> fail (exit 1)
+[run 1] shape: with a newline after it
+    gchat/adapter/internal/owners/door.go  row TestChatOwnerUntouchedMessages/with_a_newline_after_it -> fail (exit 1)
+[run 1] shape: of the join's shape
+    gchat/adapter/internal/owners/door.go  row TestChatOwnerUntouchedMessages/of_the_join's_shape -> fail (exit 1)
+[run 1] shape: from the identity
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/from_the_identity -> pass (exit 0)
+[run 1] shape: from a bot
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/from_a_bot -> fail (exit 1)
+[run 1] shape: from a deleted user
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/from_a_deleted_user -> fail (exit 1)
+[run 1] shape: with an attachment
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/with_an_attachment -> fail (exit 1)
+[run 1] shape: an edit into the code
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/an_edit_into_the_code -> fail (exit 1)
+[run 1] shape: a catch-up snapshot edited into the code
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/a_catch-up_snapshot_edited_into_the_code -> fail (exit 1)
+[run 1] shape: where root's directory is absent
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/where_root's_directory_is_absent -> fail (exit 1)
+[run 1] never: a log line with the text
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerTakeRows/wrong -> fail (exit 1)
+[run 1] never: a log line with the address
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerTakeRows/wrong -> fail (exit 1)
+[run 1] check word: yes whatever the door says
+    gchat/adapter/cmd/gc-gchat-adapter/main.go  row TestChatOwnerClaimCheck/refused -> fail (exit 1)
+[run 1] one function: settings where root's directory is present without a copy
+    gchat/adapter/internal/owners/owners.go  row TestChatOwnerWhereRootIsPresentOrAbsent/present_without_a_copy -> fail (exit 1)
+[run 1] one function: settings where the copy is not trusted (inbound)
+    gchat/adapter/internal/owners/owners.go  row TestChatOwnerOneFunctionInbound/present_without_a_trusted_copy -> fail (exit 1)
+[run 2] trust: 16385 bytes (the limit itself)
+    gchat/adapter/internal/owners/owners.go  row TestChatOwnerCopyTrustRule/16385_bytes -> fail (exit 1)
+[run 2] trust: a missing key in place of another
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_missing_key_in_place_of_another -> fail (exit 1)
+[run 2] trust: a record with another key in place of since
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_with_another_key_in_place_of_since -> pass (exit 0)
+[run 2] trust: a record with a time of another form
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_with_a_time_of_another_form -> fail (exit 1)
+[run 2] shape: from the identity (both of its guards)
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerUntouchedMessages/from_the_identity -> fail (exit 1)
+[run 3] trust: a record with another key in place of since (both of its rules)
+    gchat/adapter/internal/owners/copy.go  row TestChatOwnerCopyTrustRule/a_record_with_another_key_in_place_of_since -> fail (exit 1)
+[run 4 (after the self-review)] refresh: no read again after taken
+    gchat/adapter/internal/inbound/owner_claim.go  row TestChatOwnerTakenReadsTheCopyAgain -> fail (exit 1)
+[run 4 (after the self-review)] log: no owners line
+    gchat/adapter/internal/server/owners.go  row TestChatOwnerOwnersLogLines -> fail (exit 1)

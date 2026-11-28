@@ -7,7 +7,9 @@ message's text to TypeSafe, cut to 1,000 Unicode characters after the same
 secret redaction as Slack's,
 using `JEV_API_KEY`; no sender, room, IDs or attachment bytes are sent. Jev
 chooses from the arrival rows of `reactions.json`; absent credentials, unusable
-catalogs, timeouts and unusable answers use the fixed eyes reaction.
+catalogs, timeouts and unusable answers use the fixed eyes reaction. A message
+whose whole text reads as a one-time code (an owner code or a join or removal
+approval code) is never sent: it gets the eyes reaction.
 
 A fixed arrival row's `slack_name` also works in every adapter. Claim rows,
 `auto`, `model`, and unknown names are rejected at startup. With an unusable
@@ -245,7 +247,8 @@ every turn: `[from: Alice Example <alice@example.com> | organization | item
 gchat:spaces/AAA/messages/BBB]`. The item is the message's own resource
 name: what the agent passes to `boxboxbox-google mail --for` so the key
 holder can verify who asked at the source.
-`GCHAT_OWNERS` lists owners by address or Chat id (`users/123`);
+`GCHAT_OWNERS` lists owners by address or Chat id (`users/123`) in a city
+that is not a box (see Owners on a box, below);
 `GCHAT_ORGANIZATION_DOMAIN` makes senders with that mail domain the
 organization. Addresses come from the Workspace directory (People API,
 `directory.readonly`, which the key holder source requests); a desktop
@@ -255,6 +258,36 @@ learned from the first one it sends. Bots and deleted users are always
 external. Invisible characters are removed from the text and counted in a
 trailing `[N hidden characters removed]` line; `gc gchat read` history
 returns the text without the frame.
+
+**Owners on a box.** Where root's directory `/run/gchat-owner-claim`
+exists, owners come from root's file alone: the copy `owners.json` there,
+which the box's root-side door writes. The adapter trusts it only because
+root owns it: a regular file, not a link, owned by root, that neither its
+group nor others may write, at most 16384 bytes, in a directory that passes
+the same test, holding exactly a version and at most 50 owners by Chat id.
+A copy that fails is no copy, and the box then has no owner. The adapter
+ignores any owner `GCHAT_OWNERS` names there and says so in one log line,
+`gchat owners settings ignored`. The path is fixed in the adapter: no
+setting, environment variable or flag moves it or relaxes the rule. The
+adapter's state holds no owner, no claim and no try, so a restore, a reset
+or a backup made by hand changes no owner.
+
+A new owner comes by a one-time code from the owner page, and by nothing
+else. The person sends it alone to the mayor in a direct chat. Before the
+mayor sees that message, the adapter hands the code, the sender's Chat id and
+the message's name to the door on `/run/gchat-owner-claim/door.sock`; the
+door decides, and the turn ends with one fixed line saying what it answered.
+`gc gchat owners` lists the owners and removes one after an owner's yes. The
+last owner may be removed; the box then has no owner until a code from the
+page, or until a restart or an image update, after which root trusts the
+folder it finds. `gc-gchat-adapter owner-claim-check` prints `owner-claim 1`
+only while the door answers, and the box's helper gives no code without it.
+
+A city that is not a box has no root directory: its owners are the ones its
+settings name (`GCHAT_OWNERS`), as before, and no owner code is ever taken
+there. The door is the box image's part, not this pack's; this adapter was
+tested against a stand-in door only.
+
 Filling an incomplete sender costs one GET for each new sender, bounded at 3 seconds, inside the gate (no call for a message or a reaction of a sender the cache holds), and a sender is asked again after 1 hour, a failed one after 10 minutes.
 Whether the message and membership GETs return both fields is UNPROVEN, and the rule can classify a sender whose name is still missing.
 
@@ -424,6 +457,7 @@ Operator mail contains only city, adapter, cause, times, aggregate counts and ag
 | `gc gchat spaces [--space spaces/AAAA --wake all\|mentions\|default]` | List spaces, or persist a wake override; `default` clears it. |
 | `gc gchat status [--json]` | Show health, subscription, last event, backlog, counters, and deliveries with their age and cause. |
 | `gc gchat resolve ID --accept\|--replay` | Settle an unresolved delivery. |
+| `gc gchat owners [--remove users/ID --request\|--yes MESSAGE]` | List who is an owner, or remove one after an owner's yes. On a box the owners are root's file; `--add` only answers that a new owner comes by a code from the owner page. |
 | `gc gchat state restore FILE\|reset` | Send the contents of a local backup or request a reset through the running service's `/state` endpoint. |
 
 Text commands accept `--body TEXT` or `--body-file PATH`. File contents retain

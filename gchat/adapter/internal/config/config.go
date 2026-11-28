@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"gchat-adapter/internal/ack"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/redact"
 	"github.com/BurntSushi/toml"
 )
@@ -164,7 +165,7 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	}
 	c.Acknowledgement = ack.Options{Mode: arrivalValue("ACK_REACTION"), Scope: arrivalValue("ACK_SCOPE"), Base: arrivalValue("JEV_API_BASE_URL"), Model: arrivalValue("JEV_MODEL"), Key: arrivalValue("JEV_API_KEY"), Catalog: ack.Catalog,
 		// The Jev state passes Slack's secret redaction first, as on Slack.
-		Redact: redact.Text}
+		Redact: AckRedact}
 	c.Secrets = Secrets{
 		ProjectID: values["GCHAT_PROJECT_ID"], Topic: values["GCHAT_PUBSUB_TOPIC"],
 		Subscription: values["GCHAT_PUBSUB_SUBSCRIPTION"], TokenSource: source,
@@ -539,4 +540,14 @@ func splitList(value string) []string {
 		}
 	}
 	return out
+}
+
+// AckRedact is what the arrival reaction's provider may read of a message:
+// nothing of a text that reads as a one-time code (an owner code or an
+// approval code), and the rest after the secret redaction.
+func AckRedact(text string) string {
+	if owners.OneTimeCode(text) {
+		return ""
+	}
+	return redact.Text(text)
 }

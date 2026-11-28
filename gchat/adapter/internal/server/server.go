@@ -31,6 +31,7 @@ import (
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/markdown"
 	"gchat-adapter/internal/neversilent"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/wire"
@@ -86,6 +87,9 @@ type Options struct {
 	// It runs under the state gate and must tolerate retries: after an error,
 	// the same /state request retries reconciliation without replacing the ledger.
 	StateChanged func(context.Context) error
+	// Owners is the app's one answer to who is an owner; each request pairs it
+	// with the current settings. Nil means owners.New on the fixed directory.
+	Owners *owners.Book
 }
 
 type Server struct {
@@ -139,6 +143,7 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("GET /spaces", s.spaces)
 	s.mux.HandleFunc("POST /spaces", s.spaces)
 	s.mux.HandleFunc("POST /join", s.joinHTTP)
+	s.mux.HandleFunc("POST /owners", s.ownersHTTP)
 	s.mux.HandleFunc("GET /status", s.status)
 	s.mux.HandleFunc("POST /resolve", s.resolve)
 	s.mux.HandleFunc("POST /state", s.state)
@@ -206,6 +211,14 @@ func (s *Server) clients() (*chat.Client, *gcclient.Client) {
 	return s.chat, s.gc
 }
 func (s *Server) configuration() config.Config { s.mu.RLock(); defer s.mu.RUnlock(); return s.cfg }
+
+// ownerBook is the one answer to who is an owner, with cfg's settings.
+func (s *Server) ownerBook(cfg config.Config) *owners.Book {
+	if s.opts.Owners != nil {
+		return s.opts.Owners.With(cfg.Secrets.Owners)
+	}
+	return owners.New(cfg.Secrets.Owners, s.opts.Logger)
+}
 
 func (s *Server) Listen() (net.Listener, error) {
 	ln, err := net.Listen("unix", s.configuration().Secrets.ServiceSocket)
@@ -1559,6 +1572,11 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			// the turn's, not the text's. Invisible characters stay removed.
 			if line, ok := provenance.FrameOf(saved.Text); change.ProvenanceFramed && ok {
 				saved.Text = strings.TrimPrefix(saved.Text, line+"\n")
+			}
+			// The line the adapter added from root's door's answer is the
+			// turn's, not the text's.
+			if i := strings.LastIndex(saved.Text, "\n"); change.ProvenanceFramed && change.FixedLine && i >= 0 {
+				saved.Text = saved.Text[:i]
 			}
 			if change.OriginalKind() == "message.updated" && id != m.Name {
 				// An edit folded into its held create was rendered without the
