@@ -182,8 +182,8 @@ type ChangeState struct {
 	MemberEvent string `json:"member_event,omitempty"`
 	MemberKind  string `json:"member_kind,omitempty"`
 	// MemberCreated is when the owner's own act was recorded. The turn's
-	// Created is then its first act's. Older records lack it: their owner's
-	// own time reads as the turn's.
+	// Created is then its first act's. Older records lack it (see
+	// OriginalCreated).
 	MemberCreated time.Time `json:"member_created,omitzero"`
 	// MemberRevision identifies the effective text saved when a failed merged
 	// delivery is refreshed after an edit. Older readers ignore this field and
@@ -231,10 +231,16 @@ func (c *ChangeState) OriginalKind() string {
 	return c.Kind
 }
 
-// OriginalCreated is when this act itself was recorded, not its turn.
+// OriginalCreated is when this act itself was recorded, not its turn. The
+// owner of a turn written before MemberCreated existed reads as recorded at
+// the later of the turn's Created and its own act's time (ActAt). Both are at
+// or before its recording.
 func (c *ChangeState) OriginalCreated() time.Time {
 	if !c.MemberCreated.IsZero() {
 		return c.MemberCreated
+	}
+	if len(c.Members) > 0 && c.ActAt.After(c.Created) {
+		return c.ActAt
 	}
 	return c.Created
 }

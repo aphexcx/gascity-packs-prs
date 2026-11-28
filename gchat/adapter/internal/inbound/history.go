@@ -184,8 +184,9 @@ func redactedHistoryEvent(l *ledger.Ledger, cfg *config.Config, old *ledger.Chan
 // An attempt recorded before a newly installed bound necessarily predates it;
 // its Created time is an upper bound on the act, not a replacement event time.
 // Existing cursors never call this migration, and committed deliveries survive.
-// A merged turn's Created is its first act's. A turn that the bound divides is
-// first split back into its acts, so each act is judged by its own time.
+// A merged turn is judged by its Created, its first act's time. A turn with an
+// act on the other side of the bound is first split back into its acts, so
+// each act is judged by its own time.
 func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) []string {
 	bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
 	if bound.IsZero() {
@@ -201,7 +202,7 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 	// coalesced turn are still undelivered acts, independent of map order.
 	var retiring []*ledger.ChangeState
 	for _, old := range l.Changes {
-		if old.Space != space || l.Delivery(old).Status == "committed" || (!old.Created.IsZero() && !old.Created.Before(bound)) ||
+		if old.Space != space || l.Delivery(old).Status == "committed" || !beforeBound(old.Created, bound) ||
 			(!strings.HasPrefix(old.OriginalKind(), "message.") && !strings.HasPrefix(old.OriginalKind(), "reaction.")) {
 			continue
 		}
@@ -244,27 +245,37 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 	return retired
 }
 
-// dividedAt reports a frozen turn with acts recorded both before the bound and
-// at or after it, that refreshMerged could still rewrite: never POSTed, or
-// answered "not delivered". A turn whose POST may have landed is not split:
-// posting its later acts again could post them twice.
+// beforeBound is the one comparison of a recorded time with a history bound.
+// A record with no recorded time counts as before it.
+func beforeBound(at, bound time.Time) bool {
+	return at.IsZero() || at.Before(bound)
+}
+
+// rewritable is the delivery state in which refreshMerged may rewrite a turn:
+// never POSTed, or every POST answered "not delivered". The POST of any other
+// state may have landed, so posting its acts again could post them twice.
+func rewritable(c *ledger.ChangeState) bool {
+	return c.Status == "intent" && (c.Attempts == 0 || c.Reason == reasonRetry)
+}
+
+// dividedAt reports a frozen, rewritable turn whose Created is before the
+// bound and one of whose acts was recorded at or after it. The Created is its
+// first act's, or after a refresh the time of an act that has left it. A turn
+// whose Created is at or after the bound stays whole, as a single act does: an
+// operator's replay records it anew.
 func dividedAt(l *ledger.Ledger, owner *ledger.ChangeState, bound time.Time) bool {
-	if len(owner.Members) == 0 || owner.Status != "intent" || (owner.Attempts > 0 && owner.Reason != reasonRetry) {
+	if len(owner.Members) == 0 || !rewritable(owner) || !beforeBound(owner.Created, bound) {
 		return false
 	}
-	before, after := false, false
+	later := false
 	for _, id := range owner.Members {
 		m := l.Changes[id]
 		if m == nil || (m != owner && m.MemberOf != owner.ID) {
 			return false
 		}
-		if at := m.OriginalCreated(); at.IsZero() || at.Before(bound) {
-			before = true
-		} else {
-			after = true
-		}
+		later = later || !beforeBound(m.OriginalCreated(), bound)
 	}
-	return before && after
+	return later
 }
 
 // unmerge undoes the window flush's merge: each act is again a single intent
