@@ -1250,7 +1250,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			invalidateWithdrawnCopies(l, c.Space)
 			for _, owner := range l.Changes {
 				if owner.Space == c.Space {
-					refreshed = p.refreshMerged(l, owner) || refreshed
+					refreshed = p.refreshMerged(l, owner) == mergedChanged || refreshed
 				}
 			}
 		}
@@ -1305,7 +1305,10 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		if isHeld(c) {
 			return nil
 		}
-		if p.refreshMerged(l, c) {
+		switch p.refreshMerged(l, c) {
+		case mergedHeld:
+			return nil
+		case mergedChanged:
 			if err := p.opts.NeverSilent.WithHistory(func() error {
 				if err := p.update(func(current *ledger.Ledger) { p.refreshMerged(current, current.Changes[id]) }); err != nil {
 					return err

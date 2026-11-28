@@ -11,17 +11,25 @@ import (
 	"gchat-adapter/internal/wire"
 )
 
+type mergedRefresh uint8
+
+const (
+	mergedUnchanged mergedRefresh = iota
+	mergedChanged
+	mergedHeld
+)
+
 // refreshMerged runs inside the withdrawing act's save, and again before a
 // retry for ledgers written by an older adapter. Pending receipts describe an
 // already-started POST and are left for the normal receipt path.
-func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) bool {
+func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) mergedRefresh {
 	if owner.Status != "intent" || len(owner.Members) == 0 {
-		return false
+		return mergedUnchanged
 	}
 	// A later revision cannot tell us whether an unanswered POST landed: resume
 	// classifies that attempt before any refresh may rewrite or withdraw it.
 	if owner.Attempts > 0 && owner.Reason != reasonRetry {
-		return false
+		return mergedUnchanged
 	}
 	changed := false
 	var survivors, removed []*ledger.ChangeState
@@ -29,7 +37,7 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 		member := l.Changes[id]
 		if member == nil {
 			markUnresolved(l, owner.ID, owner, "stored turn is malformed", p.opts.Now())
-			return true
+			return mergedChanged
 		}
 		copy := *member
 		copy.Event, copy.Kind = member.OriginalEvent(), member.OriginalKind()
@@ -42,10 +50,15 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 				continue
 			}
 			latest := currentEdit(l, member.Message, state.Revision)
+			if checkpoint := l.Media[member.Message]; latest != nil && checkpoint != nil && checkpoint.Revision.After(state.Revision) {
+				// The recorded edit is already stale. Keep the frozen turn
+				// intact until a later pass can rebuild it from current state.
+				return mergedHeld
+			}
 			var w wire.InboundMessage
 			if latest == nil || json.Unmarshal([]byte(latest.OriginalEvent()), &w) != nil {
 				markUnresolved(l, owner.ID, owner, "stored turn is malformed", p.opts.Now())
-				return true
+				return mergedChanged
 			}
 			w.ProviderMessageID = member.ID
 			w.Text = strings.TrimPrefix(w.Text, "[catch-up]\n")
@@ -72,13 +85,13 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 		survivors = append(survivors, &copy)
 	}
 	if !changed {
-		return false
+		return mergedUnchanged
 	}
 	if len(survivors) == 0 {
 		// One frozen delivery becomes one unresolved obligation. Its members
 		// stay attached; even a released reader cannot replay its old payload.
 		retireWithdrawn(l, owner, p.opts.Now())
-		return true
+		return mergedChanged
 	}
 	sort.Slice(survivors, func(i, j int) bool {
 		if survivors[i].ActAt.Equal(survivors[j].ActAt) {
@@ -95,7 +108,7 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 	w, _, err := p.merged(survivors, anchor)
 	if err != nil {
 		markUnresolved(l, owner.ID, owner, "stored turn is malformed", p.opts.Now())
-		return true
+		return mergedChanged
 	}
 	raw, _ := json.Marshal(w)
 	// Retirement mutates the old owner. Capture the turn's delivery state
@@ -127,7 +140,7 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 		}
 	}
 	l.Changes[anchor].Members = ids
-	return true
+	return mergedChanged
 }
 
 // Keep per-message history, but no replayable delivery bytes. Both current and
