@@ -52,6 +52,9 @@ type boundAct struct {
 //	  no refusal.
 //	held_two_folds: body-002 and two folded edits, rev-a then rev-b, still
 //	  held.
+//	message_then_folded_message: body-002, then body-003 and its edit
+//	  rev-003 (folded into it). The owner is the second act; its text is
+//	  rev-003. The edit is not an act of the list.
 func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []boundAct) {
 	t.Helper()
 	f := windowSetup(t, "8s")
@@ -79,10 +82,10 @@ func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []b
 		members++
 		return m
 	}
-	fold := func(first *api.Message, text string) {
+	fold := func(first *api.Message, n int, text string) *ledger.ChangeState {
 		t.Helper()
 		f.now = f.now.Add(time.Second)
-		edit := f.send(t, 2, "message.updated", func(m *api.Message) {
+		edit := f.send(t, n, "message.updated", func(m *api.Message) {
 			m.Text, m.LastUpdateTime = text, f.now.Format(time.RFC3339Nano)
 		})
 		c := f.l.Changes[edit.Name+"#updated#"+edit.LastUpdateTime]
@@ -90,6 +93,7 @@ func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []b
 			t.Fatalf("the edit was not folded into its creation: %+v", c)
 		}
 		acts = append(acts, boundAct{c.ID, text, c.Created, edit})
+		return c
 	}
 	const created, updated = "message.created", "message.updated"
 	switch layout {
@@ -114,15 +118,20 @@ func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []b
 	case "fold_then_message", "held_fold", "held_two_folds":
 		first := held(2, created, "body-002", false)
 		if layout == "held_two_folds" {
-			fold(first, "rev-a")
-			fold(first, "rev-b")
+			fold(first, 2, "rev-a")
+			fold(first, 2, "rev-b")
 			return f, acts
 		}
-		fold(first, "rev-002")
+		fold(first, 2, "rev-002")
 		if layout == "held_fold" {
 			return f, acts
 		}
 		held(3, created, "body-003", false)
+	case "message_then_folded_message":
+		held(2, created, "body-002", false)
+		second := held(3, created, "rev-003", false)
+		fold(second, 3, "rev-003")
+		acts = acts[:len(acts)-1]
 	default:
 		t.Fatalf("unknown layout %q", layout)
 	}
@@ -311,6 +320,33 @@ func TestHistoryBoundAcrossARefusedMergedTurn(t *testing.T) {
 			after: func(t *testing.T, f *windowFixture, acts []boundAct) {
 				if c := f.l.Changes[acts[1].id]; c == nil || c.Status != "committed" || c.Reason != "coalesced" || f.l.Unresolved[acts[1].id] != nil {
 					t.Errorf("the superseded edit did not stay folded: %+v", c)
+				}
+			}},
+		// A later edit, after the refusal, superseded the folded edit: it has
+		// its own record and the refresh put its text in the turn. The folded
+		// edit stays folded; the later edit is posted once.
+		{name: "folded_edit_superseded_by_a_later_edit", layout: "fold_then_message", bound: at(1, 0), retired: []int{0}, posted: []int{2}, texts: map[string]int{"rev-late": 1}, turns: 2,
+			before: func(t *testing.T, f *windowFixture, acts []boundAct) {
+				f.now = f.now.Add(time.Second)
+				m := *acts[0].m
+				m.Text, m.LastUpdateTime = "rev-late", f.now.Format(time.RFC3339Nano)
+				f.handle(t, event("edited-late", "message.updated", &m))
+				if owner := boundOwner(f.l); owner == nil || !strings.Contains(owner.Event, "rev-late") {
+					t.Fatalf("the refresh did not put the later edit in the turn: %+v", owner)
+				}
+			},
+			after: func(t *testing.T, f *windowFixture, acts []boundAct) {
+				if c := f.l.Changes[acts[1].id]; c == nil || c.Status != "committed" || f.l.Unresolved[acts[1].id] != nil {
+					t.Errorf("the superseded folded edit did not stay folded: %+v", c)
+				}
+			}},
+		// The owner kept by the split carries an edit folded into it. It keeps
+		// hold's kind for such a creation, which a released adapter's
+		// superseded check reads as not withdrawn.
+		{name: "kept_owner_keeps_its_fold", layout: "message_then_folded_message", bound: at(1, 0), retired: []int{0}, posted: []int{1}, turns: 1,
+			after: func(t *testing.T, f *windowFixture, acts []boundAct) {
+				if c := f.l.Changes[acts[1].id]; c == nil || c.Kind != "coalesced" || c.OriginalKind() != "message.created" || len(c.Members) != 0 {
+					t.Errorf("the kept owner lost its fold's kind: %+v", c)
 				}
 			}},
 		// The same fold inside a refused turn.
