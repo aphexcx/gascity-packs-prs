@@ -5,6 +5,11 @@ Usage:
   gc <binding> provenance record BEAD --outcome no-op|blocked|abandoned
   gc <binding> provenance summary BEAD
 
+Record takes four outcomes: shipped (with a commit), no-op, blocked and abandoned.
+The close gate (gc bd close) also accepts ran, and shipped with an absolute
+artifact path in gc.work_commit; record has no form for either, so such a
+close sets those keys with gc bd update and says so in its close reason.
+
 Use the binding the worker close discovery selects (README, Worker close provenance).
 Optional --city PATH / --city=PATH and --rig NAME / --rig=NAME go before
 record or summary and are preserved for every nested gc bd call.
@@ -26,4 +31,8 @@ retain provenance for BEAD" and explain the constraint: close such work by its
 workflow-control contract or promote it first. The close recipe stops before
 metadata updates, branch release, and close.
 Summary reads typed records only; missing facts and stale reviews are unknown.
+Summary prints one plain-text line, not JSON:
+  [OUTCOME; ]PR N at SHA, gate VERDICT, read VERDICT.
+OUTCOME appears only for a typed outcome other than shipped; a bead with no typed
+outcome (a ran or artifact close) prints PR unknown at unknown, gate unknown, read unknown.
 See the pack README, Worker close provenance, for the schema and close recipe.

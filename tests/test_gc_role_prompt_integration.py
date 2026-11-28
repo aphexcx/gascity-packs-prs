@@ -247,6 +247,19 @@ def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
     assert "perform the remaining acts of the bead's escalation contract after the bounded wait of the BLOCKED paragraph" in close
     assert "The recipient notification happens at the start of that wait; do not repeat it at close" in close
     assert "include any failed notification recorded by that paragraph in the close reason" in close
+    # The five gc.work_outcome words the close gate accepts, one bullet each
+    # (blocked and abandoned share one), and what the recorder takes today.
+    for bullet in ("- `shipped`:", "- `ran`:", "- `no-op`:", "- `blocked` or `abandoned`:"):
+        assert prompt.count(bullet) == 1, bullet
+    assert "shipped|no-op|blocked|abandoned" not in prompt
+    assert "to the artifact's absolute path instead (no `gc.work_branch` is needed)" in close
+    assert "It has no `ran` and no form for a shipped artifact path" in close
+    assert "(for example `investigated`)" in close
+    held = " ".join(prompt.split("## Claim", 1)[1].split("BOUNDED WAIT", 1)[0].split())
+    assert 'keep its 5-minute claim lease alive with `gc bd heartbeat "$CLAIMED_BEAD_ID"` every few minutes' in held
+    assert 'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments' in held
+    assert 'add your own with `gc bd comment "$CLAIMED_BEAD_ID" --file /abs/path`' in held
+    assert "if it does not exist there, name it in your READY or close reason and never guess another" in held
     assert prompt.count("## Workspace") == 1
     assert "--set-metadata 'gc.outcome=pass'" in prompt
     assert "--set-metadata 'gc.work_outcome=shipped'" in prompt
