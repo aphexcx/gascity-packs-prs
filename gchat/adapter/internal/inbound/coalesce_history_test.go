@@ -63,7 +63,7 @@ func TestCoalescedKindReadersRetireOldHistory(t *testing.T) {
 				c := f.l.Changes[m.Name]
 				c.Kind, c.MemberKind, c.Status = "coalesced", "message.updated", "intent"
 				delete(f.l.Changes, m.Name+"#updated#"+m.LastUpdateTime)
-				RetireQueuedHistory(f.l, puller.Change{Kind: "message.updated", Space: space, Message: m})
+				RetireQueuedHistory(f.l, f.opts.Config, puller.Change{Kind: "message.updated", Space: space, Message: m})
 				if f.l.Changes[m.Name] != nil {
 					t.Fatal("queued coalesced update was not retired")
 				}

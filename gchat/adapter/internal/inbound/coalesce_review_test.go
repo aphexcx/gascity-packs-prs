@@ -23,7 +23,7 @@ func TestRetriedSingletonKeepsProvenance(t *testing.T) {
 						a.Name, a.Text, a.CreateTime = space+"/messages/a", "old-a", f.now.Format(time.RFC3339Nano)
 						b.Name, b.Text, b.CreateTime = space+"/messages/b", "old-b", f.now.Add(time.Second).Format(time.RFC3339Nano)
 						f.gc.CityNotRunning = true
-						_, _ = f.p.handle(context.Background(), &puller.Event{Changes: []puller.Change{{Kind: "message.created", Space: space, Message: a}, {Kind: "message.created", Space: space, Message: b}}}, catchUp)
+						_, _ = f.p.handle(context.Background(), &puller.Event{Changes: []puller.Change{{Kind: "message.created", Space: space, Message: a}, {Kind: "message.created", Space: space, Message: b}}}, catchUp, nil)
 						f.now = f.now.Add(8 * time.Second)
 						_ = f.p.Poll(context.Background())
 						if retained {

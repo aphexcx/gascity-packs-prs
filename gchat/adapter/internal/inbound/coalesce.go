@@ -21,7 +21,7 @@ const windowByteLimit = 32000
 // HandleChanges records a catch-up pass under the same gate, then freezes and
 // delivers its turns without a live window. Validation remains all-or-nothing.
 func (p *Processor) HandleChanges(ctx context.Context, changes []puller.Change) (puller.Outcome, error) {
-	return p.handle(ctx, &puller.Event{Changes: changes}, true)
+	return p.handle(ctx, &puller.Event{Changes: changes}, true, nil)
 }
 
 func actTime(c puller.Change, now time.Time) time.Time {

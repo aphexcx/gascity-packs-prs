@@ -219,6 +219,8 @@ func offParityScript(t *testing.T, neverSilent bool) {
 	}}
 	cfg.Settings.Identities = []config.Identity{{Name: "example", Agent: "mayor"}}
 	cfg.Settings.Defaults.Wake = config.WakeMentions
+	off := "0s"
+	cfg.Settings.CoalesceWindow = &off
 	calls := &offParityCalls{calls: map[string]int{}, next: http.DefaultTransport}
 	c, err := chat.New(context.Background(), &http.Client{Transport: calls}, cfg.Endpoints)
 	if err != nil {
