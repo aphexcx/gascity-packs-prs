@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -460,6 +461,134 @@ def test_legacy_and_noop_do_not_invent_facts(fixture):
     assert data(fixture)['metadata'] == {'gc.work_outcome': 'no-op'}
     assert len(data(fixture)['events']) == 1
     assert run(fixture, 'summary', 'fixture-1').stdout.startswith('no-op; PR unknown')
+
+
+@pytest.fixture
+def artifact(fixture, tmp_path):
+    # Use real Git discovery for the artifact and the existing fake bd for the bead.
+    fixture[2]['PATH'] = os.environ['PATH']
+    path = tmp_path / 'out.txt'
+    content = b'report\x00\xff\n'
+    path.write_bytes(content)
+    return path, hashlib.sha256(content).hexdigest()
+
+
+def test_artifact_records_verified_bytes_and_reviewed_sha(fixture, artifact):
+    path, digest = artifact
+    fixture[1].write_text(json.dumps([
+        dict(stage='read', verdict='PASS', sha=SHA, ref='/evidence/read-1')
+    ]))
+    args = ('record', 'fixture-1', '--outcome', 'shipped', '--artifact', str(path),
+            '--sha256', digest, '--pr', PR, '--reviews', str(fixture[1]))
+    for _ in range(2):
+        result = run(fixture, *args)
+        assert result.returncode == 0, result.stderr
+    state = data(fixture)
+    assert state['metadata'] == {'gc.work_outcome': 'shipped', 'gc.work_commit': str(path), 'gc.pr': PR}
+    facts = [json.loads(e['payload']) for e in state['events']]
+    assert [p['fact'] for p in facts] == ['artifact', 'pr', 'review', 'outcome']
+    assert facts[0]['path'] == facts[-1]['path'] == str(path)
+    assert facts[0]['sha256'] == facts[-1]['sha256'] == digest
+    line = run(fixture, 'summary', 'fixture-1').stdout.strip()
+    assert str(path) in line and digest[:12] in line
+    assert f'PR 123 at {SHA} reviewed, gate unknown, read PASS' in line
+
+
+@pytest.mark.parametrize('case, diagnostic', [
+    ('wrong-hash', 'checksum mismatch'), ('upper-hash', '64 lowercase'),
+    ('missing', 'does not exist'), ('relative', 'not absolute'), ('directory', 'not a regular file'),
+])
+def test_artifact_refusals_write_nothing(fixture, artifact, case, diagnostic):
+    path, digest = artifact
+    if case == 'missing':
+        path = path.with_suffix('.missing')
+    elif case == 'directory':
+        path = path.parent
+    elif case == 'relative':
+        path = Path('relative.txt')
+    elif case == 'wrong-hash':
+        digest = '0' * 64
+    else:
+        digest = digest.upper()
+    result = run(fixture, 'record', 'fixture-1', '--outcome', 'shipped',
+                 '--artifact', str(path), '--sha256', digest)
+    assert result.returncode != 0
+    assert len(result.stderr.splitlines()) == 1
+    assert str(path) in result.stderr and diagnostic in result.stderr
+    assert data(fixture)['calls'] == []
+
+
+def test_artifact_repository_requires_ignored_file(fixture, artifact, tmp_path):
+    path, digest = artifact
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    args = ('record', 'fixture-1', '--outcome', 'shipped', '--artifact', str(path), '--sha256', digest)
+    result = run(fixture, *args)
+    assert result.returncode and 'commit it and use --commit' in result.stderr
+    assert data(fixture)['calls'] == []
+    (tmp_path / '.gitignore').write_text('/out.txt\n')
+    result = run(fixture, *args)
+    assert result.returncode == 0, result.stderr
+    before = data(fixture)
+    subprocess.run(['git', '-C', str(tmp_path), 'add', '-f', '--', path.name], check=True)
+    result = run(fixture, *args)
+    assert result.returncode and 'commit it and use --commit' in result.stderr
+    assert data(fixture) == before
+
+
+def test_artifact_symlink_to_repository_file_requires_commit(fixture, artifact, tmp_path):
+    path, digest = artifact
+    repo = tmp_path / 'repo'
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    target = path.rename(repo / 'out.txt')
+    path.symlink_to(target)
+    result = run(fixture, 'record', 'fixture-1', '--outcome', 'shipped', '--artifact', str(path),
+                 '--sha256', digest)
+    assert result.returncode and 'commit it and use --commit' in result.stderr
+    assert data(fixture)['calls'] == []
+
+
+@pytest.mark.parametrize('outcome, extra', [
+    ('shipped', ['--artifact', '/out']), ('shipped', ['--sha256', '0' * 64]),
+    ('shipped', ['--artifact', '/out', '--sha256', '0' * 64, '--commit', SHA]),
+    ('ran', ['--commit', SHA]), ('ran', ['--artifact', '/out', '--sha256', '0' * 64]),
+    ('no-op', ['--artifact', '/out', '--sha256', '0' * 64]),
+])
+def test_invalid_deliverable_combinations(fixture, outcome, extra):
+    assert run(fixture, 'record', 'fixture-1', '--outcome', outcome, *extra).returncode != 0
+    assert data(fixture)['calls'] == []
+
+
+def test_shipped_code_still_requires_commit(fixture):
+    result = run(fixture, 'record', 'fixture-1', '--outcome', 'shipped')
+    assert result.returncode and 'shipped code requires --commit' in result.stderr
+    assert data(fixture)['calls'] == []
+
+
+def test_noop_reviews_report_latest_round_at_reviewed_sha(fixture):
+    reviews = [
+        dict(stage='gate', round=2, verdict='PASS', sha=SHA, ref='/evidence/gate-2'),
+        dict(stage='gate', round=1, verdict='BLOCK', sha=SHA, ref='/evidence/gate-1'),
+        dict(stage='read', verdict='PASS', sha=SHA, ref='/evidence/read-1'),
+    ]
+    fixture[1].write_text(json.dumps(reviews))
+    args = ('record', 'fixture-1', '--outcome', 'no-op', '--pr', PR, '--reviews', str(fixture[1]))
+    assert run(fixture, *args).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == (
+        f'no-op; PR 123 at {SHA} reviewed, gate PASS, read PASS')
+    reviews[-1].update(sha=OLD_SHA, ref='/evidence/read-other')
+    fixture[1].write_text(json.dumps(reviews))
+    assert run(fixture, *args).returncode == 0
+    assert 'at conflicting' in run(fixture, 'summary', 'fixture-1').stdout
+
+
+def test_ran_and_fork_outcome_vocabulary(fixture):
+    # Pinned vocabulary from the fork's internal/workrecord.ValidOutcome.
+    assert set(module.OUTCOMES) == {'shipped', 'ran', 'no-op', 'blocked', 'abandoned'}
+    result = run(fixture, 'record', 'fixture-1', '--outcome', 'ran', '--evidence-dir', '/evidence')
+    assert result.returncode == 0, result.stderr
+    assert data(fixture)['metadata'] == {'gc.work_outcome': 'ran'}
+    result = run(fixture, 'record', 'fixture-1', '--outcome', 'investigated')
+    assert result.returncode == 2 and 'invalid choice' in result.stderr
 
 
 def test_reader_ignores_other_producers_and_wrong_types(fixture):
