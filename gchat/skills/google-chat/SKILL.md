@@ -212,7 +212,9 @@ Short results go in the message. A file they should keep goes out with
 `gc gchat upload`. A document to collaborate on goes to Google Drive as a
 Google Doc, shared with the sender, and your reply carries its link: the
 `workspace-files` skill has the commands. The reminder names the sender
-without an address; find it in the Workspace directory
+without an address. In a merged turn the person who asked is the one named
+in that message's own from line, never the sender in gc's line in front.
+Find that person in the Workspace directory
 (`gws people searchDirectoryPeople`, the `gws-people` skill) before sharing.
 
 ## A "gchat: delivery" mail
