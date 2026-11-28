@@ -101,9 +101,10 @@ def test_close_shipped_names_the_commit_keys_and_the_artifact_path() -> None:
     # A lane is reset at its next start, so a path inside it does not identify
     # what was delivered; a durable uncommitted file elsewhere (a report under
     # the rig root) does.
-    assert ("An artifact, a file the bead asked for that is not committed, at an absolute "
-            "path outside your lane worktree, sets `gc.work_commit` to that path instead (no "
-            "`gc.work_branch` is needed); say so in the close reason.") in close
+    assert ("An artifact, a file the bead asked for that is not committed, at a durable "
+            "absolute path outside your lane worktree (never a temporary directory), sets "
+            "`gc.work_commit` to that path instead (no `gc.work_branch` is needed); say so in "
+            "the close reason.") in close
 
 
 def test_close_ran_no_op_blocked_and_abandoned_carry_their_result_in_the_close_reason() -> None:
@@ -228,9 +229,13 @@ def test_bead_comments_are_part_of_its_spec_and_the_comment_verb_is_named() -> N
             "(or the text as one quoted argument)") in held
     # A city can serve workflow beads from a store that refuses the comment verbs;
     # a refused heartbeat is never a reason to go on (the claim may have moved).
-    assert ("When the bead's store refuses the comment read or `gc bd comment` (a city may serve "
-            "workflow beads from a store that does), go on without it and say so in your close "
-            "reason. A refused heartbeat is not that case: re-read the bead's status and assignee, "
+    # Only a verb the store does not serve is skipped; a failed read or write
+    # the bead requires follows the bead's failure contract (codex QUICK r4).
+    assert ("When gc refuses the comment read or `gc bd comment` because the bead's store does "
+            "not serve it (a city may serve workflow beads from such a store), go on without it, "
+            "say so in your close reason, and put a comment the bead requires there instead; any "
+            "other failure of a read or write the bead requires follows its failure contract. "
+            "A refused heartbeat is not that case: re-read the bead's status and assignee, "
             "and stop by the reassignment rule of the bounded wait below when it is no longer yours.") in held
     assert "refuses one of these verbs" not in held
 

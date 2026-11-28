@@ -49,9 +49,11 @@ alone omits them: read them with
 change into every review brief you write (state the requirement; never copy a
 comment's text into a file a pull request carries), and add your own with
 `gc bd comment "$CLAIMED_BEAD_ID" --file /abs/path` (or the text as one quoted
-argument). When the bead's store refuses the comment read or `gc bd comment`
-(a city may serve workflow beads from a store that does), go on without it
-and say so in your close reason. A refused heartbeat is not that case:
+argument). When gc refuses the comment read or `gc bd comment` because the
+bead's store does not serve it (a city may serve workflow beads from such a
+store), go on without it, say so in your close reason, and put a comment the
+bead requires there instead; any other failure of a read or write the bead
+requires follows its failure contract. A refused heartbeat is not that case:
 re-read the bead's status and assignee, and stop by the reassignment rule of
 the bounded wait below when it is no longer yours. Unless the bead or its
 formula says where a path is rooted, resolve a path in a bead as written when
@@ -236,9 +238,10 @@ work beads, one of the five words `gc bd close` accepts:
 - `shipped`: a change that satisfies the bead. For a commit, set
   `gc.work_commit` to its full 40-character SHA and `gc.work_branch` to a
   branch containing it; create a named work branch first if HEAD is detached.
-  An artifact, a file the bead asked for that is not committed, at an absolute
-  path outside your lane worktree, sets `gc.work_commit` to that path instead
-  (no `gc.work_branch` is needed); say so in the close reason.
+  An artifact, a file the bead asked for that is not committed, at a durable
+  absolute path outside your lane worktree (never a temporary directory), sets
+  `gc.work_commit` to that path instead (no `gc.work_branch` is needed); say so
+  in the close reason.
 - `ran`: a completed run with no deliverable; its result goes in the close
   reason. Omit commit and branch metadata.
 - `no-op`: no change was needed (already satisfied or duplicate); say why in
