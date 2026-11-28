@@ -260,4 +260,5 @@ On a box, this feature begins only after a pack update and adapter restart.
 Subsequent validated settings changes use the existing reload mechanism.
 
 All people, addresses and provider IDs in the captures are invented.
+The message bodies in the fixtures and captures are also invented.
 Public-repo check: done, 0 things changed; no fixture redactions were needed.
