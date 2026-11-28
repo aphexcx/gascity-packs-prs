@@ -26,12 +26,13 @@ import (
 // retireHistoryInside runs the retirement once, under the ledger lock as the
 // first read runs it, at the first clock read made inside frame and outside
 // any save. Both gaps read the clock between their snapshot and their save.
-func retireHistoryInside(f *windowFixture, frame string) *bool {
+// The retirement takes every undelivered act of the room created before floor.
+func retireHistoryInside(f *windowFixture, frame string, floor time.Time) *bool {
 	fired := false
 	f.p.opts.Now = func() time.Time {
 		if !fired && onStack(frame) && !onStack(".(*Processor).update") && f.opts.LedgerMu.TryLock() {
 			fired = true
-			f.l.HistoryFloor = f.now.Add(time.Hour)
+			f.l.HistoryFloor = floor
 			RetireSpaceHistory(f.l, f.opts.Config, space, nil)
 			f.opts.LedgerMu.Unlock()
 		}
@@ -127,17 +128,23 @@ func checkRetiredUntouched(t *testing.T, f *windowFixture, acts map[string]strin
 }
 
 // The window flush's save: the owner it picked, or a member, is gone or is no
-// longer held when the save runs. Without the guard the first and third rows
-// panic (nil owner, nil member) and the second writes the merged pre-bound
-// text back over the redacted history records.
+// longer held when the save runs. Without the guard the first, third and
+// fourth rows panic (nil owner, nil member, nil member beside a held owner),
+// the second writes the merged pre-bound text back over the redacted history
+// records, and the fifth posts it: the member keeps its key, redacted, and
+// the owner is still held. In the last two rows the bound falls between the
+// two acts: the later one stays held and is delivered alone.
 func TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave(t *testing.T) {
 	for _, row := range []struct {
-		name                string
-		messages, reactions int
+		name string
+		acts []string // in arrival order, one second apart
+		kept int      // the first act the bound keeps; len(acts) when it keeps none
 	}{
-		{"reactions_owner_gone", 0, 2},
-		{"messages_owner_committed", 2, 0},
-		{"message_and_reaction_member_gone", 1, 1},
+		{"reactions_owner_gone", []string{"reaction", "reaction"}, 2},
+		{"messages_owner_committed", []string{"message", "message"}, 2},
+		{"message_and_reaction_member_gone", []string{"message", "reaction"}, 2},
+		{"member_gone_owner_still_held", []string{"reaction", "message"}, 1},
+		{"member_redacted_under_its_key_owner_still_held", []string{"message", "message"}, 1},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			f := windowSetup(t, "8s")
@@ -148,27 +155,38 @@ func TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave(t *testing.T) {
 			}
 			// Reactions wake only on the identity's own messages.
 			f.l.Messages[parent.Name].Mine = true
-			acts := map[string]string{}
+			var ids []string
+			retired := map[string]string{}
 			var texts []string
-			for i := range row.messages {
+			for i, kind := range row.acts {
 				f.now = f.now.Add(time.Second)
-				m := f.send(t, 2+i, "message.created", nil)
-				acts[m.Name], texts = "message.created", append(texts, m.Text)
-			}
-			for i := range row.reactions {
-				f.now = f.now.Add(time.Second)
-				name := fmt.Sprintf("%s/reactions/r%d", parent.Name, i+1)
-				f.handle(t, &puller.Event{Changes: []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: name, User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}}}})
-				acts[name+"#created"] = "reaction.created"
-			}
-			for id := range acts {
+				id := ""
+				if kind == "message" {
+					m := f.send(t, 2+i, "message.created", nil)
+					id, kind = m.Name, "message.created"
+					if i < row.kept {
+						texts = append(texts, m.Text)
+					}
+				} else {
+					name := fmt.Sprintf("%s/reactions/r%d", parent.Name, i+1)
+					f.handle(t, &puller.Event{Changes: []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: name, User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}}}})
+					id, kind = name+"#created", "reaction.created"
+				}
 				if !isHeld(f.l.Changes[id]) {
 					t.Fatalf("%s is not held: %+v", id, f.l.Changes[id])
 				}
+				ids = append(ids, id)
+				if i < row.kept {
+					retired[id] = kind
+				}
+			}
+			floor := f.now.Add(time.Hour)
+			if row.kept < len(ids) {
+				floor = f.l.Changes[ids[row.kept]].Created
 			}
 			posted := len(f.gc.Inbound())
 			f.now = f.now.Add(9 * time.Second)
-			fired := retireHistoryInside(f, ".(*Processor).flushSpace")
+			fired := retireHistoryInside(f, ".(*Processor).flushSpace", floor)
 			err, panicked := guardedPoll(f)
 			if !*fired {
 				t.Fatal("the retirement never ran between the flush's snapshot and its save")
@@ -179,15 +197,31 @@ func TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave(t *testing.T) {
 			if err != nil {
 				t.Errorf("the pass failed: %v", err)
 			}
-			checkRetiredUntouched(t, f, acts, texts)
-			// The next pass finds nothing to deliver either.
+			checkRetiredUntouched(t, f, retired, texts)
+			// The acts the bound kept are delivered as one turn of their own.
+			turns := f.gc.Inbound()[posted:]
+			if kept := ids[row.kept:]; len(kept) == 0 {
+				if len(turns) != 0 {
+					t.Errorf("turns posted after the retirement = %d, want 0", len(turns))
+				}
+			} else if len(turns) != 1 || turns[0].ProviderMessageID != kept[len(kept)-1] || strings.Contains(turns[0].Text, "oldest first") {
+				t.Errorf("want one single turn for %v, got %+v", kept, turns)
+			}
+			for _, w := range turns {
+				for _, text := range texts {
+					if strings.Contains(w.Text, text) {
+						t.Errorf("turn %s posted retired text %q", w.ProviderMessageID, text)
+					}
+				}
+			}
+			// The next pass finds nothing more to deliver.
 			if err, panicked = guardedPoll(f); err != nil || panicked != nil {
 				t.Errorf("next pass: err=%v panic=%v", err, panicked)
 			}
-			if got := len(f.gc.Inbound()); got != posted {
-				t.Errorf("turns posted after the retirement = %d, want 0", got-posted)
+			if got := len(f.gc.Inbound()) - posted; got != len(turns) {
+				t.Errorf("the next pass posted %d more turns", got-len(turns))
 			}
-			checkRetiredUntouched(t, f, acts, texts)
+			checkRetiredUntouched(t, f, retired, texts)
 		})
 	}
 }
@@ -233,7 +267,7 @@ func TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave(t *testing.T) {
 	f.l.Messages[a.Name].Deleted = true
 	posted := len(f.gc.Inbound())
 	f.now = f.now.Add(time.Minute)
-	fired := retireHistoryInside(f, ".(*Processor).refreshMerged")
+	fired := retireHistoryInside(f, ".(*Processor).refreshMerged", f.now.Add(time.Hour))
 	err, panicked := guardedPoll(f)
 	if !*fired {
 		t.Fatal("the retirement never ran between the refresh's snapshot and its save")
