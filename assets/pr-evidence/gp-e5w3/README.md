@@ -41,6 +41,7 @@ It has no `member_created`. A merged owner in it reads as recorded at the later 
 | head-failure-alone.txt | The head run's two load failures pass alone, three times each at the head and three at the base: one in internal/inbound (coalescing off, outside the retirement) and one in internal/app. |
 | review-r1.md, review-r2.md | The lane's two review rounds: fresh reviewers on the builder's model, and each finding's outcome. |
 | codex-r1.txt, codex-r1.md | The lane's Codex round 1 at 6640237a (the city gate script on the hub, its header without local paths), and each finding's outcome. |
+| codex-r2.txt, codex-r2.md | The lane's Codex round 2 at a5258518, BLOCK 3/3, with each finding's status. No code changed after it: the lane asked the mayor (BLOCKED gp-e5w3). |
 
 The records ran at `01cc478c282b9e89b9ef724186ddd1acb48d4ded`. `<scratch>` stands for the lane's scratch folder outside the repository.
 
@@ -57,6 +58,9 @@ The rows are in `gchat/adapter/internal/inbound/coalesce_refused_bound_test.go`.
 - A turn with a fragment in a terminal, and a turn whose POST may have landed.
 
 ## Left for the mayor
+
+The lane stopped after the Codex round 2 (codex-r2.md) and asked the mayor which time decides that an act came after the bound, and whether a split turn should stay one delivery. Besides those questions:
+
 
 These are the same at main unless the list says otherwise.
 - **An edit folded into a creation before the bound.** The creation is retired, and the edit with it. The first two rounds released such an edit; codex-r1.md says why that came out again.
