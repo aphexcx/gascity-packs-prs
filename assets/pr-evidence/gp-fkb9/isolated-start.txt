@@ -1,0 +1,11 @@
+WT HEAD 96dfa21b6f988c934fe434260f031e2e3277ce10
+inbound run 1 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/inbound	0.452s
+inbound run 2 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/inbound	0.443s
+inbound run 3 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/inbound	0.436s
+inbound run 4 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/inbound	0.456s
+inbound run 5 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/inbound	0.435s
+app run 1 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/app	4.760s
+app run 2 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/app	4.764s
+app run 3 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/app	7.705s
+app run 4 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/app	4.752s
+app run 5 exit=0 0 FAIL lines: ok  	gchat-adapter/internal/app	4.783s

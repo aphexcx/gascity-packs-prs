@@ -181,6 +181,19 @@ Keep replies short and plain; Chat is conversation, not a report. Markdown
 `[links](https://...)`) is converted to Chat's formatting; messages longer
 than Chat allows are split at paragraph boundaries.
 
+**Whom to tag.** Tag the one person whose answer or action your message
+needs. Tag nobody when your message asks nothing of anyone.
+
+Write a tag as `<users/ID>`, where ID is the person's numeric Chat id, not
+as a typed `@Name` or an email address. Their turn's `[from: ...]` line may
+show `<users/ID>`; when it shows an email, `gc gchat read` on the same space
+gives the `users/ID` of each person who wrote there as `actor.id`. For
+example, to ask Alex Example (`users/1234567890`) to approve a date:
+
+```bash
+gc gchat reply-current --to spaces/<id>/messages/<id> --body '<users/1234567890> can you approve Friday?'
+```
+
 ## Files and history
 
 When a message is deleted, the adapter removes the files it saved for it, and a local path from that message stops working.

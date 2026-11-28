@@ -26,6 +26,13 @@ import (
 
 type Space = googlechat.Space
 
+// chatMarkup is the markup syntax every message the client creates states.
+// The markdown package writes Chat markup (*bold*, <url|label>), and a tag
+// <users/ID> is a mention only in that syntax. A message that states none
+// takes the syntax its project's Chat app saved, or Markdown if none is saved,
+// and a newly created Chat app defaults to Markdown ("Format messages").
+const chatMarkup = "MARKUP_SYNTAX_CHAT"
+
 // Client belongs to one authenticated identity. Do not reuse it after switching
 // credentials: its reaction ownership and rate limits belong to that identity.
 type Client struct {
@@ -187,7 +194,7 @@ func (c *Client) CreateMessage(ctx context.Context, space, text, thread, request
 func (c *Client) CreateNotice(ctx context.Context, space, text, thread string, named bool, allowed ...func() bool) (string, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	m := &googlechat.Message{Text: text}
+	m := &googlechat.Message{Text: text, MarkupSyntax: chatMarkup}
 	if thread != "" {
 		m.Thread = &googlechat.Thread{Name: thread}
 	}
@@ -222,7 +229,7 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 // time, including a replay after Google accepted a request but local state was
 // not saved. An absent timestamp is unknown; the retry time is not evidence.
 func (c *Client) CreateMessageWithAttachmentsAndTime(ctx context.Context, space, text, thread, requestID string, named bool, attachments []*googlechat.Attachment) (name, threadName string, createdAt time.Time, err error) {
-	message := &googlechat.Message{Text: text, Attachment: attachments}
+	message := &googlechat.Message{Text: text, Attachment: attachments, MarkupSyntax: chatMarkup}
 	if thread != "" {
 		message.Thread = &googlechat.Thread{Name: thread}
 	}
