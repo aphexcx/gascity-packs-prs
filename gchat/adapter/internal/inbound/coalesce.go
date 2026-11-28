@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -37,6 +38,16 @@ func isHeld(c *ledger.ChangeState) bool {
 
 func cancelHeld(c *ledger.ChangeState) {
 	c.Status, c.Reason, c.HeldUntil = "committed", "coalesced_cancelled", time.Time{}
+}
+
+// unchanged lets a save apply what a pass decided from a snapshot's copy of a
+// record only while the ledger still holds that record, every field as the
+// snapshot saw it. A first read retires history under the ledger lock while
+// the processor works (catchup: StartFirstRead, then RetireSpaceHistory): it
+// moves a reaction's or an edit's record to a history key and commits a
+// message's under its own key, with its text redacted.
+func unchanged(current, seen *ledger.ChangeState) bool {
+	return current != nil && reflect.DeepEqual(*current, *seen)
 }
 
 // hold is part of record's atomic save, before the transport may acknowledge.
@@ -219,7 +230,14 @@ func (p *Processor) flushSpace(ctx context.Context, space string, catchUp, force
 		if err != nil {
 			return err
 		}
+		stale := false
 		if err = p.update(func(l *ledger.Ledger) {
+			for _, a := range acts[:n] {
+				if !unchanged(l.Changes[a.ID], a) {
+					stale = true
+					return
+				}
+			}
 			c := l.Changes[owner]
 			if n > 1 {
 				c.MemberEvent, c.MemberKind = c.Event, c.OriginalKind()
@@ -239,6 +257,10 @@ func (p *Processor) flushSpace(ctx context.Context, space string, catchUp, force
 			c.HeldUntil = time.Time{}
 		}); err != nil {
 			return err
+		}
+		if stale {
+			// Nothing was merged. Pick again from what the ledger holds now.
+			continue
 		}
 		for _, c := range acts[:n] {
 			delete(p.recoverHeld, c.ID)

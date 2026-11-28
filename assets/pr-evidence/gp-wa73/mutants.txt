@@ -1,0 +1,121 @@
+# head: bc0019e83625f4a5a9978a76127fdeb302f6c949; test file: as committed
+
+## m1: no flush guard (the base's flush, with the shared helper kept so inbound.go builds).
+# start: 2026-11-28T03:15:04Z  uptime: 71.34 56.54 38.80
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/mutants/m1.json -v -run '^(TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave|TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave)$' ./internal/inbound
+    coalesce_retirement_race_test.go:195: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at ledger.(*ChangeState).OriginalKind ledger.go:224, called from inbound.(*Processor).flushSpace.func1 coalesce.go:236)
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: not the retirement's record: status="committed" reason="local" cause="before_history_floor" kind="coalesced" member_of="" members=[spaces/room/messages/m002 spaces/room/messages/m003]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-003"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: not the retirement's record: status="committed" reason="local" cause="before_history_floor" kind="coalesced" member_of="" members=[spaces/room/messages/m002 spaces/room/messages/m003]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-003"
+    coalesce_retirement_race_test.go:195: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at inbound.(*Processor).flushSpace.func1 coalesce.go:242, called from inbound.(*Processor).update inbound.go:694)
+    coalesce_retirement_race_test.go:195: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at inbound.(*Processor).flushSpace.func1 coalesce.go:242, called from inbound.(*Processor).update inbound.go:694)
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:208: want one single turn for [spaces/room/messages/m003], got [{ProviderMessageID:spaces/room/messages/m003 Conversation:{ScopeID:examplecity Provider:gchat AccountID:example ConversationID:spaces/room ParentConversationID: Kind:room} Actor:{ID:users/456 DisplayName:Reader IsBot:false} Text:[2 messages in this room, oldest first. Each has its own from line.]
+    coalesce_retirement_race_test.go:213: turn spaces/room/messages/m003 posted retired text "body-002"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-002"
+--- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held (0.00s)
+--- PASS: TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.227s
+FAIL
+exit=1
+
+## m2: no refresh guard (the base's inbound.go).
+# start: 2026-11-28T03:15:15Z  uptime: 61.87 55.17 38.62
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/mutants/m2.json -v -run '^(TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave|TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave)$' ./internal/inbound
+--- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held (0.00s)
+    coalesce_retirement_race_test.go:276: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at inbound.(*Processor).refreshMerged coalesce_retry.go:18, called from inbound.(*Processor).resume.func1.1 inbound.go:1310)
+--- FAIL: TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.221s
+FAIL
+exit=1
+
+## m3: both guards check existence only.
+# start: 2026-11-28T03:15:24Z  uptime: 58.99 54.68 38.54
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/mutants/m3.json -v -run '^(TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave|TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave)$' ./internal/inbound
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: not the retirement's record: status="committed" reason="local" cause="before_history_floor" kind="coalesced" member_of="" members=[spaces/room/messages/m002 spaces/room/messages/m003]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-003"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: not the retirement's record: status="committed" reason="local" cause="before_history_floor" kind="coalesced" member_of="" members=[spaces/room/messages/m002 spaces/room/messages/m003]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-003"
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:208: want one single turn for [spaces/room/messages/m003], got [{ProviderMessageID:spaces/room/messages/m003 Conversation:{ScopeID:examplecity Provider:gchat AccountID:example ConversationID:spaces/room ParentConversationID: Kind:room} Actor:{ID:users/456 DisplayName:Reader IsBot:false} Text:[2 messages in this room, oldest first. Each has its own from line.]
+    coalesce_retirement_race_test.go:213: turn spaces/room/messages/m003 posted retired text "body-002"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-002"
+--- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave (0.03s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone (0.01s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held (0.01s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held (0.01s)
+--- PASS: TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.239s
+FAIL
+exit=1
+
+## m4: the flush compares only the owner's record.
+# start: 2026-11-28T03:15:32Z  uptime: 55.46 54.06 38.51
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/mutants/m4.json -v -run '^(TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave|TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave)$' ./internal/inbound
+    coalesce_retirement_race_test.go:195: the pass panicked: runtime error: invalid memory address or nil pointer dereference (at inbound.(*Processor).flushSpace.func1 coalesce.go:249, called from inbound.(*Processor).update inbound.go:694)
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:200: spaces/room/messages/m003: holds retired text "body-002"
+    coalesce_retirement_race_test.go:208: want one single turn for [spaces/room/messages/m003], got [{ProviderMessageID:spaces/room/messages/m003 Conversation:{ScopeID:examplecity Provider:gchat AccountID:example ConversationID:spaces/room ParentConversationID: Kind:room} Actor:{ID:users/456 DisplayName:Reader IsBot:false} Text:[2 messages in this room, oldest first. Each has its own from line.]
+    coalesce_retirement_race_test.go:213: turn spaces/room/messages/m003 posted retired text "body-002"
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m002: not the retirement's record: status="committed" reason="coalesced" cause="before_history_floor" kind="message.created" member_of="spaces/room/messages/m003" members=[]
+    coalesce_retirement_race_test.go:224: spaces/room/messages/m003: holds retired text "body-002"
+--- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held (0.00s)
+--- PASS: TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.228s
+FAIL
+exit=1
+
+## m5: a stale flush returns instead of picking again.
+# start: 2026-11-28T03:15:42Z  uptime: 50.34 53.00 38.32
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/mutants/m5.json -v -run '^(TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave|TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave)$' ./internal/inbound
+    coalesce_retirement_race_test.go:208: want one single turn for [spaces/room/messages/m003], got []
+    coalesce_retirement_race_test.go:222: the next pass posted 1 more turns
+    coalesce_retirement_race_test.go:208: want one single turn for [spaces/room/messages/m003], got []
+    coalesce_retirement_race_test.go:222: the next pass posted 1 more turns
+--- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held (0.00s)
+    --- FAIL: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held (0.00s)
+--- PASS: TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.213s
+FAIL
+exit=1
+
+# end: 2026-11-28T03:15:51Z  uptime: 50.42 52.89 38.45

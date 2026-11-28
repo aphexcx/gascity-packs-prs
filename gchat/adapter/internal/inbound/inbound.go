@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1305,12 +1306,20 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		if isHeld(c) {
 			return nil
 		}
+		// The refresh below rewrites the snapshot's record; the save compares
+		// the ledger's record with this copy of what the snapshot saw.
+		seen := *c
+		seen.Members = slices.Clone(c.Members)
 		switch p.refreshMerged(l, c) {
 		case mergedHeld:
 			return nil
 		case mergedChanged:
 			if err := p.opts.NeverSilent.WithHistory(func() error {
-				if err := p.update(func(current *ledger.Ledger) { p.refreshMerged(current, current.Changes[id]) }); err != nil {
+				if err := p.update(func(current *ledger.Ledger) {
+					if owner := current.Changes[id]; unchanged(owner, &seen) {
+						p.refreshMerged(current, owner)
+					}
+				}); err != nil {
 					return err
 				}
 				current, err := p.snapshot()

@@ -1,0 +1,21 @@
+# head: bc0019e83625f4a5a9978a76127fdeb302f6c949 (clean: 0 changed files)
+# start: 2026-11-28T03:14:27Z  uptime: 56.63 52.65 36.75
+$ verify -C gchat/adapter go test -count=1 -v -run '^(TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave|TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave)$' ./internal/inbound
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held
+=== RUN   TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held
+--- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/reactions_owner_gone (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/messages_owner_committed (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/message_and_reaction_member_gone (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_gone_owner_still_held (0.00s)
+    --- PASS: TestWindowFlushYieldsToAHistoryRetirementBeforeItsSave/member_redacted_under_its_key_owner_still_held (0.00s)
+=== RUN   TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave
+--- PASS: TestRetryRefreshYieldsToAHistoryRetirementBeforeItsSave (0.01s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.245s
+exit=0
+# end: 2026-11-28T03:15:04Z  uptime: 71.34 56.54 38.80

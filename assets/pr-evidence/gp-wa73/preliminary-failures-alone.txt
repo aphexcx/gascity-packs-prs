@@ -1,0 +1,29 @@
+## head (143fbb7c0951c56a336a6bc95a6cfc9e00ebe113): ./internal/inbound
+# start: 2026-11-28T03:07:12Z  uptime: 35.96 30.48 22.91
+$ verify -C gchat/adapter go test -count=1  -run '^(TestLookupHoldCarriesCredentialKind|TestLookupHoldPreservesTokenError)$' ./internal/inbound
+ok  	gchat-adapter/internal/inbound	0.595s
+exit=0
+
+## head (143fbb7c0951c56a336a6bc95a6cfc9e00ebe113): ./internal/app
+# start: 2026-11-28T03:07:27Z  uptime: 31.02 29.65 22.74
+$ verify -C gchat/adapter go test -count=1  -run '^(TestMissingTokenReplacementResumes|TestSenderFillCredentialRefusal|TestSubscriptionRefusalRetriesWithoutSignIn)$' ./internal/app
+ok  	gchat-adapter/internal/app	26.656s
+exit=0
+
+## base (db4be951 by overlay): ./internal/inbound
+# start: 2026-11-28T03:08:02Z  uptime: 25.84 28.63 22.65
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -run '^(TestLookupHoldCarriesCredentialKind|TestLookupHoldPreservesTokenError)$' ./internal/inbound
+ok  	gchat-adapter/internal/inbound	2.058s
+exit=0
+
+## base (db4be951 by overlay): ./internal/app
+# start: 2026-11-28T03:08:19Z  uptime: 28.82 29.23 22.98
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -run '^(TestMissingTokenReplacementResumes|TestSenderFillCredentialRefusal|TestSubscriptionRefusalRetriesWithoutSignIn)$' ./internal/app
+--- FAIL: TestMissingTokenReplacementResumes (5.19s)
+    app_test.go:237: health did not become ready in 5s: {State:catching-up Reason:recovering retained history}
+FAIL
+FAIL	gchat-adapter/internal/app	28.236s
+FAIL
+exit=1
+
+# end: 2026-11-28T03:09:11Z  uptime: 28.10 29.24 23.39

@@ -1,0 +1,11 @@
+# tree: bc0019e83625f4a5a9978a76127fdeb302f6c949 with the base overlay (PR 107's round 5 head)
+# start: 2026-11-28T03:47:49Z  uptime: 27.64 27.34 29.75
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base.json -v -run '^(TestRestartWithALedgerStillDeliversTheOutage|TestSubscriptionRefusalRetriesWithoutSignIn)$' ./internal/app
+--- PASS: TestRestartWithALedgerStillDeliversTheOutage (2.77s)
+--- PASS: TestSubscriptionRefusalRetriesWithoutSignIn (6.68s)
+    --- PASS: TestSubscriptionRefusalRetriesWithoutSignIn/403 (2.39s)
+    --- PASS: TestSubscriptionRefusalRetriesWithoutSignIn/404 (4.29s)
+PASS
+ok  	gchat-adapter/internal/app	9.651s
+exit=0
+# end: 2026-11-28T03:48:12Z  uptime: 28.78 27.65 29.79
