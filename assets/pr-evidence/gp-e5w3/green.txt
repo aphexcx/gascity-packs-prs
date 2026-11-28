@@ -1,0 +1,49 @@
+# head: 366655eda3a2409fd863acd51b930af3c1227415 (changed files: 0)
+# start: 2026-11-28T13:47:30Z  load: 11.36 13.43 11.56
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestHistoryBoundAcrossARefusedMergedTurn$' ./internal/inbound
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/before_the_first_act
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/at_the_first_act
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/between_the_acts
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/at_the_second_act
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/after_the_last_act
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/owner_before_the_bound
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/restart_between_the_refusal_and_the_bound
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/state_file_without_the_owners_time
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_a_later_owner
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/owner_dated_before_the_bound_by_chat
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_an_owner_dated_before_the_bound
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/first_act_deleted_after_the_refusal
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/edit_of_the_first_act_after_the_refusal
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/edit_folded_into_a_held_creation
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/two_edits_folded_into_a_held_creation
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/folded_edit_superseded_by_a_later_edit
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/kept_owner_keeps_its_fold
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/edit_folded_into_a_refused_turn
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/edit_folded_into_a_turn_whose_post_may_have_landed
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/post_may_have_landed
+--- PASS: TestHistoryBoundAcrossARefusedMergedTurn (0.40s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/before_the_first_act (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/at_the_first_act (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/between_the_acts (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/at_the_second_act (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/after_the_last_act (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/owner_before_the_bound (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/restart_between_the_refusal_and_the_bound (0.22s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/state_file_without_the_owners_time (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_a_later_owner (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/owner_dated_before_the_bound_by_chat (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_an_owner_dated_before_the_bound (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/first_act_deleted_after_the_refusal (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/edit_of_the_first_act_after_the_refusal (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/edit_folded_into_a_held_creation (0.00s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/two_edits_folded_into_a_held_creation (0.00s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/folded_edit_superseded_by_a_later_edit (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/kept_owner_keeps_its_fold (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/edit_folded_into_a_refused_turn (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/edit_folded_into_a_turn_whose_post_may_have_landed (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/post_may_have_landed (0.01s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.602s
+exit=0
+# end: 2026-11-28T13:47:36Z  load: 11.01 13.32 11.53

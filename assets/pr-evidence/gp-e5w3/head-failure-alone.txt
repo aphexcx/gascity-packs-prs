@@ -1,0 +1,37 @@
+# head run 1, tree 366655eda3a2409fd863acd51b930af3c1227415; start: 2026-11-28T14:01:47Z  load: 11.88 10.03 10.21
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestSettingsReloadUpdatesWakePolicy$' ./internal/app
+--- PASS: TestSettingsReloadUpdatesWakePolicy (1.29s)
+PASS
+ok  	gchat-adapter/internal/app	1.529s
+exit=0
+# head run 2, tree 366655eda3a2409fd863acd51b930af3c1227415; start: 2026-11-28T14:01:54Z  load: 12.21 10.13 10.25
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestSettingsReloadUpdatesWakePolicy$' ./internal/app
+--- PASS: TestSettingsReloadUpdatesWakePolicy (1.26s)
+PASS
+ok  	gchat-adapter/internal/app	1.467s
+exit=0
+# head run 3, tree 366655eda3a2409fd863acd51b930af3c1227415; start: 2026-11-28T14:02:01Z  load: 13.57 10.50 10.38
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestSettingsReloadUpdatesWakePolicy$' ./internal/app
+--- PASS: TestSettingsReloadUpdatesWakePolicy (1.25s)
+PASS
+ok  	gchat-adapter/internal/app	1.463s
+exit=0
+# base run 1, tree 366655eda3a2409fd863acd51b930af3c1227415 with the base overlay; start: 2026-11-28T14:02:08Z  load: 13.61 10.56 10.40
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestSettingsReloadUpdatesWakePolicy$' ./internal/app
+--- PASS: TestSettingsReloadUpdatesWakePolicy (1.26s)
+PASS
+ok  	gchat-adapter/internal/app	1.472s
+exit=0
+# base run 2, tree 366655eda3a2409fd863acd51b930af3c1227415 with the base overlay; start: 2026-11-28T14:02:16Z  load: 12.81 10.49 10.37
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestSettingsReloadUpdatesWakePolicy$' ./internal/app
+--- PASS: TestSettingsReloadUpdatesWakePolicy (1.25s)
+PASS
+ok  	gchat-adapter/internal/app	1.457s
+exit=0
+# base run 3, tree 366655eda3a2409fd863acd51b930af3c1227415 with the base overlay; start: 2026-11-28T14:02:23Z  load: 12.83 10.53 10.39
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestSettingsReloadUpdatesWakePolicy$' ./internal/app
+--- PASS: TestSettingsReloadUpdatesWakePolicy (1.26s)
+PASS
+ok  	gchat-adapter/internal/app	1.454s
+exit=0
+# end: 2026-11-28T14:02:31Z  load: 12.17 10.46 10.37

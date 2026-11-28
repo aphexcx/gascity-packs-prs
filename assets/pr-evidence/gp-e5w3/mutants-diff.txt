@@ -1,0 +1,97 @@
+== m1: the split judges each act by the turn's time, not its own (inbound/history.go)
+--- head/inbound/history.go
++++ m1/inbound/history.go
+@@ -278 +278 @@
+-		later = later || !beforeBound(m.OriginalCreated(), bound)
++		later = later || !beforeBound(m.Created, bound)
+
+== m2: a time at the bound counts as before it (inbound/history.go)
+--- head/inbound/history.go
++++ m2/inbound/history.go
+@@ -253 +253 @@
+-	return at.IsZero() || at.Before(bound)
++	return at.IsZero() || !at.After(bound)
+
+== m3: the flush does not keep the owner's own time (inbound/coalesce.go)
+--- head/inbound/coalesce.go
++++ m3/inbound/coalesce.go
+@@ -228 +228 @@
+-				c.MemberCreated, c.Created = c.OriginalCreated(), acts[0].Created
++				c.Created = acts[0].Created
+
+== m4: a delivery that may have landed counts as rewritable (inbound/history.go)
+--- head/inbound/history.go
++++ m4/inbound/history.go
+@@ -260 +260 @@
+-	return c.Status == "intent" && (c.Attempts == 0 || c.Reason == reasonRetry)
++	return c.Status == "intent"
+
+== m5: the split does not release the members (inbound/history.go)
+--- head/inbound/history.go
++++ m5/inbound/history.go
+@@ -290 +290 @@
+-			m.Status, m.Reason, m.MemberOf = "intent", "", ""
++			_ = m
+
+== m6: the split leaves the owner at the turn's time (inbound/history.go)
+--- head/inbound/history.go
++++ m6/inbound/history.go
+@@ -294 +294 @@
+-	owner.Event, owner.Kind, owner.Created = owner.OriginalEvent(), kind, owner.OriginalCreated()
++	owner.Event, owner.Kind = owner.OriginalEvent(), kind
+
+== m7: the refresh's new owner does not keep its own time (inbound/coalesce_retry.go)
+--- head/inbound/coalesce_retry.go
++++ m7/inbound/coalesce_retry.go
+@@ -130 +130 @@
+-			c.MemberEvent, c.MemberKind, c.MemberCreated = copy.Event, copy.Kind, copy.Created
++			c.MemberEvent, c.MemberKind = copy.Event, copy.Kind
+
+== m8: the refresh copies the turn's time, not the act's (inbound/coalesce_retry.go)
+--- head/inbound/coalesce_retry.go
++++ m8/inbound/coalesce_retry.go
+@@ -43 +43 @@
+-		copy.Event, copy.Kind, copy.Created = member.OriginalEvent(), member.OriginalKind(), member.OriginalCreated()
++		copy.Event, copy.Kind, copy.Created = member.OriginalEvent(), member.OriginalKind(), member.Created
+
+== m9: the split takes the owner's own time for the turn's (the first round's rule) (inbound/history.go)
+--- head/inbound/history.go
++++ m9/inbound/history.go
+@@ -269 +269 @@
+-	if len(owner.Members) == 0 || !rewritable(owner) || !beforeBound(owner.Created, bound) {
++	if len(owner.Members) == 0 || !rewritable(owner) || !beforeBound(owner.OriginalCreated(), bound) {
+
+== m10: an older state file's owner reads as the turn's time alone (ledger/ledger.go)
+--- head/ledger/ledger.go
++++ m10/ledger/ledger.go
+@@ -242,3 +241,0 @@
+-	if len(c.Members) > 0 && c.ActAt.After(c.Created) {
+-		return c.ActAt
+-	}
+
+== m11: no edit leaves its creation (inbound/history.go)
+--- head/inbound/history.go
++++ m11/inbound/history.go
+@@ -201 +200,0 @@
+-	unfoldLaterEdits(l, space, bound)
+
+== m12: an edit a later revision superseded leaves its creation too (inbound/history.go)
+--- head/inbound/history.go
++++ m12/inbound/history.go
+@@ -322 +322 @@
+-			beforeBound(edit.Created, bound) || superseded(l, edit) || !rewritable(l.Delivery(c)) {
++			beforeBound(edit.Created, bound) || !rewritable(l.Delivery(c)) {
+
+== m13: an edit leaves a creation whose delivery may have landed (inbound/history.go)
+--- head/inbound/history.go
++++ m13/inbound/history.go
+@@ -322 +322 @@
+-			beforeBound(edit.Created, bound) || superseded(l, edit) || !rewritable(l.Delivery(c)) {
++			beforeBound(edit.Created, bound) || superseded(l, edit) {
+
+== m14: the kept owner loses its fold's kind (inbound/history.go)
+--- head/inbound/history.go
++++ m14/inbound/history.go
+@@ -298 +298 @@
+-			owner.Kind, owner.MemberKind = "coalesced", kind
++			_ = kind
