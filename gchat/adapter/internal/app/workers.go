@@ -155,6 +155,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 			}
 		}
 	})
+	workers.Go(func() { _ = proc.RunWindows(ctx) })
 	workers.Go(func() { fatal <- a.catchup(ctx, r, m, &caught) })
 	monitor := time.NewTicker(time.Second)
 	defer monitor.Stop()

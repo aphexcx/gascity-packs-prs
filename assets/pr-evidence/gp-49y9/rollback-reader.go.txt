@@ -1,0 +1,90 @@
+package inbound
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/wire"
+)
+
+// This test is compiled only with the pinned released Go source by the
+// accompanying overlay runner, including its real ledger.Load and Poll.
+func TestCoalescedLedgerCompatibility(t *testing.T) {
+	for _, state := range []string{"held", "delivered", "pending", "frozen", "posted"} {
+		t.Run(state, func(t *testing.T) {
+			f := setup(t)
+			l, err := ledger.Load(filepath.Join(os.Getenv("GCHAT_ROLLBACK_FIXTURES"), state+".json"), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.l, f.opts.Ledger = l, l
+			f.opts.Now = func() time.Time { return time.Date(2026, 11, 1, 10, 0, 9, 0, time.UTC) }
+			var frozen string
+			for _, c := range l.Changes {
+				var event wire.InboundMessage
+				if err := json.Unmarshal([]byte(c.Event), &event); err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasPrefix(event.Text, "[3 messages") {
+					frozen = c.Event
+				}
+				if c.Status == "pending" {
+					// The gc side survives adapter rollback. Recreate the POST
+					// that issued this receipt before starting the old reader.
+					f.gc.NextDelivery = "pending"
+					issued, err := f.opts.GC.Inbound(context.Background(), event)
+					if err != nil || issued.Delivery.ReceiptID != c.ReceiptID {
+						t.Fatal("could not restore issued receipt", err)
+					}
+					receipt := wire.ReceiptResponse{State: "concluded"}
+					receipt.Delivery.Status = "delivered"
+					f.gc.SetReceipt(c.ReceiptID, receipt)
+				}
+			}
+			alreadyPosted := len(f.gc.Inbound())
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if err := f.p.Poll(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := 0
+			if state == "held" {
+				want = 3
+			} else if state == "frozen" {
+				want = 1
+			}
+			turns := f.gc.Inbound()[alreadyPosted:]
+			if len(turns) != want {
+				t.Fatalf("POSTs=%d want=%d", len(turns), want)
+			}
+			if state == "frozen" {
+				b, err := json.Marshal(turns[0])
+				if err != nil || string(b) != frozen {
+					t.Fatal("frozen payload or IDs changed")
+				}
+			}
+			unresolved := 0
+			if state == "posted" {
+				unresolved = 1
+			}
+			if len(l.Unresolved) != unresolved {
+				t.Fatalf("unresolved=%d want=%d", len(l.Unresolved), unresolved)
+			}
+			for _, c := range l.Changes {
+				if c.Status != "committed" && !(state == "posted" && c.Status == "unresolved") {
+					t.Fatalf("unsettled member: %s", c.Status)
+				}
+			}
+		})
+	}
+}

@@ -1,0 +1,21 @@
+{
+  "TestCatchUpReportsPartialSuccess": "pass",
+  "TestCatchUpRetryCountsEveryAct": "pass",
+  "TestFromLineIsJudgedAsItDisplays": "pass",
+  "TestRetryNeverSendsWithdrawnText": "pass",
+  "TestRetryTranscriptKeepsFirstText": "pass",
+  "TestMalformedHeldRecordIsOneUnresolved": "pass",
+  "TestDueWindowNeverRefusesAnotherSpace": "pass",
+  "TestWithdrawnRecordKeepsHistorySpeaker": "pass",
+  "TestCoalescedKindReadersRetireOldHistory": "pass",
+  "TestWithdrawalSaveSurvivesRestart": "pass",
+  "TestOwnerChangeKeepsDeliveryState": "pass",
+  "TestOwnerChangeDeliveryClass": "pass",
+  "TestRetriedSingletonKeepsProvenance": "pass",
+  "TestWindowOffIsToday": "pass",
+  "TestMergedTurnCannotBeForged": "pass",
+  "TestCoalescedLedgerCompatibility": "pass",
+  "TestWithdrawalReachesEveryStoredCopy": "pass",
+  "TestSupersededIntentNeverRepostsOldText": "pass",
+  "TestHistoryPreservesFoldedLiteralEditPrefix": "pass"
+}

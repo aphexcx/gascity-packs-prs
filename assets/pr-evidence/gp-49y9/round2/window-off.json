@@ -1,0 +1,16 @@
+[
+  {
+    "stage": "head",
+    "sha": "48b1675eaf7bc773d3316b0d3036abd1dd95de59",
+    "command": "go test -overlay <overlay> ./internal/inbound -run ^TestProbeDiffOffIsParent$ -count=1 -json",
+    "exit": 0,
+    "sha256": "b66f9b224a75fb8ebdaf9e7605c544b4e243e515af0fdbf448710ce7732853af"
+  },
+  {
+    "stage": "parent",
+    "sha": "a553d22f3756240be77e9e0f8bc12025265c2ae2",
+    "command": "go test -overlay <overlay> ./internal/inbound -run ^TestProbeDiffOffIsParent$ -count=1 -json",
+    "exit": 0,
+    "sha256": "b66f9b224a75fb8ebdaf9e7605c544b4e243e515af0fdbf448710ce7732853af"
+  }
+]

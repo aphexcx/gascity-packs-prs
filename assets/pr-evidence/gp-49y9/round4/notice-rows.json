@@ -1,0 +1,6304 @@
+[
+  {
+    "phase": "red",
+    "row": "refused",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "refused",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "refused",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "refused",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "refused",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "refused",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "gate_and_read_422",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "gate_and_read_422",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "gate_and_read_422",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "gate_and_read_422",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "gate_and_read_422",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "gate_and_read_422",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "answer_lost",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "answer_lost",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "answer_lost",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "answer_lost",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "answer_lost",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "answer_lost",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "failed",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "failed",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "failed",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "failed",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "failed",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "failed",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "held",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "held",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "held",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "held",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "held",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "held",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "fourth_partial",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "partial",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "fourth_partial",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "partial",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "fourth_partial",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "fourth_partial",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "fourth_partial",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "fourth_partial",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "no_route",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "no_route",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "no_route",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "no_route",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "no_route",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "no_route",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "delivered_ok",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "delivered_ok",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "delivered_ok",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "delivered_ok",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "delivered_ok",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "delivered_ok",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "delivered_down",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "delivered_down",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "delivered_down",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "delivered_down",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "delivered_down",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "delivered_down",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "pending",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "pending",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "pending",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "pending",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "pending",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "pending",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "whole_paste_terminal",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "whole_paste_terminal",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "whole_paste_terminal",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "whole_paste_terminal",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "whole_paste_terminal",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "whole_paste_terminal",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "whole_paste_terminal",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "whole_paste_terminal",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "landed_whole",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "landed_whole",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "landed_whole",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "landed_whole",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "landed_whole",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "landed_whole",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "landed_whole",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "landed_whole",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "terminal_not_whole",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "terminal_not_whole",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:20Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "terminal_not_whole",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:20Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "terminal_not_whole",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "terminal_not_whole",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "terminal_not_whole",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "terminal_not_whole",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "terminal_not_whole",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "receipt_failed",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "receipt_failed",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:20Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "receipt_failed",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:47Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:20Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "receipt_failed",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "receipt_failed",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "receipt_failed",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "receipt_failed",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "receipt_failed",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_422",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_422",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_422",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_422",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_422",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_422",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_422",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_422",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_no_route",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_no_route",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_no_route",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_no_route",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_no_route",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_no_route",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_no_route",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_no_route",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_ok",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_ok",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_ok",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_ok",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_ok",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_ok",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_ok",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_ok",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_down",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_down",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_down",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_down",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_down",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_down",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_down",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_delivered_down",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_whole_paste",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "Stage": "resolved",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "Stage": "resolved",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "accept",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "Stage": "resolved",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "Stage": "resolved",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "two_mentions",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "two_mentions",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "two_mentions",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "two_mentions",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "two_mentions",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "two_mentions",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_before_urgent_freeze",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_before_urgent_freeze",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_before_urgent_freeze",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "restart_before_urgent_freeze",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_before_urgent_freeze",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "restart_before_urgent_freeze",
+    "end": "member=true posts=[spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "act_cap_owns_mention_pin",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "act_cap_owns_mention_pin",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "act_cap_owns_mention_pin",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "act_cap_owns_mention_pin",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "act_cap_owns_mention_pin",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "act_cap_owns_mention_pin",
+    "end": "member=true posts=[spaces/room/messages/m149 spaces/room/messages/m149 spaces/room/messages/m002 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "owner_change",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "owner_change",
+    "Stage": "withdrawal",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "2026-11-01T10:00:21Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "owner_change",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "2026-11-01T10:00:21Z",
+      "notified": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "owner_change",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m001#deleted] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "owner_change",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "owner_change",
+    "Stage": "withdrawal",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:21Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "owner_change",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:21Z",
+      "notified": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "owner_change",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m002 spaces/room/messages/m003#deleted] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "member_deleted",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "member_deleted",
+    "Stage": "withdrawal",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "member_deleted",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "member_deleted",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m001 spaces/room/messages/m002#deleted] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "member_deleted",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "member_deleted",
+    "Stage": "withdrawal",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "member_deleted",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "member_deleted",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m002#deleted] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "resolved",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "withdrawal",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m001#deleted spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "resolved",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "withdrawal",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:21Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:21Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:21Z",
+      "notified": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "red",
+    "row": "replay_then_owner_change",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003#deleted spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "window_off_pin",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "window_off_pin",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "window_off_pin",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "red",
+    "row": "window_off_pin",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "window_off_pin",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "red",
+    "row": "window_off_pin",
+    "end": "member=true posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "refused",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "refused",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "refused",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "refused",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "refused",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "refused",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "gate_and_read_422",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "gate_and_read_422",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "gate_and_read_422",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "gate_and_read_422",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "gate_and_read_422",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "gate_and_read_422",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "answer_lost",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "answer_lost",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "answer_lost",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "answer_lost",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "answer_lost",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "answer_lost",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "failed",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "failed",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "failed",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "failed",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "failed",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "failed",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "held",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "held",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "held",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "held",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "held",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:38Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "held",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "fourth_partial",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "partial",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "fourth_partial",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "partial",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "fourth_partial",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "fourth_partial",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "partial",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "fourth_partial",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "partial",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "fourth_partial",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "no_route",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "no_route",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "no_route",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "no_route",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "no_route",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "no_route",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "delivered_ok",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "delivered_ok",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "delivered_ok",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "delivered_ok",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "delivered_ok",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "delivered_ok",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "delivered_down",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "delivered_down",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "delivered_down",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "delivered_down",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "delivered_down",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "delivered_down",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "pending",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "pending",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "pending",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "pending",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "pending",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "pending",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "whole_paste_terminal",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "whole_paste_terminal",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "whole_paste_terminal",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "whole_paste_terminal",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "whole_paste_terminal",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "whole_paste_terminal",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "whole_paste_terminal",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "whole_paste_terminal",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "landed_whole",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "landed_whole",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "landed_whole",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "landed_whole",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "landed_whole",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "landed_whole",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "landed_whole",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "landed_whole",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "terminal_not_whole",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "terminal_not_whole",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:20Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "terminal_not_whole",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:20Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "terminal_not_whole",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "terminal_not_whole",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "terminal_not_whole",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:20Z",
+      "uncertain": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "terminal_not_whole",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:20Z",
+      "uncertain": true,
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "terminal_not_whole",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "receipt_failed",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "receipt_failed",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:20Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "receipt_failed",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:47Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:20Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "receipt_failed",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "receipt_failed",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "receipt_failed",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:20Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "receipt_failed",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:47Z",
+      "observed_kind": "failed",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:20Z",
+      "failure_kind": "failed",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "receipt_failed",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_422",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_422",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_422",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_422",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_422",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_422",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_422",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_422",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_no_route",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_no_route",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_no_route",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_no_route",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_no_route",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_no_route",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_no_route",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "no_route",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_no_route",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_ok",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_ok",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_ok",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_ok",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_ok",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_ok",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_ok",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_ok",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_down",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_down",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_down",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_down",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_down",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_down",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_down",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:11Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_delivered_down",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "Stage": "receipt",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "pending",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "Stage": "receipt",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "targets": [
+        "example-session"
+      ],
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:20Z",
+      "observed_kind": "delivered",
+      "delivered": "2026-11-01T10:00:20Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_whole_paste",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "Stage": "resolved",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "Stage": "resolved",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "accept",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "Stage": "resolved",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "Stage": "resolved",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "two_mentions",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "two_mentions",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "two_mentions",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "two_mentions",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "two_mentions",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "two_mentions",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_before_urgent_freeze",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_before_urgent_freeze",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_before_urgent_freeze",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "restart_before_urgent_freeze",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_before_urgent_freeze",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "restart_before_urgent_freeze",
+    "end": "member=true posts=[spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "act_cap_owns_mention_pin",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "act_cap_owns_mention_pin",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "act_cap_owns_mention_pin",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "act_cap_owns_mention_pin",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "act_cap_owns_mention_pin",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "act_cap_owns_mention_pin",
+    "end": "member=true posts=[spaces/room/messages/m149 spaces/room/messages/m149 spaces/room/messages/m002 spaces/room/messages/m003] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "owner_change",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "owner_change",
+    "Stage": "withdrawal",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "2026-11-01T10:00:21Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "owner_change",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "2026-11-01T10:00:21Z",
+      "notified": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "owner_change",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m001#deleted] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "owner_change",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "owner_change",
+    "Stage": "withdrawal",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "2026-11-01T10:00:21Z"
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "owner_change",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:21Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "2026-11-01T10:00:21Z",
+      "notified": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "owner_change",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m002 spaces/room/messages/m003#deleted] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "member_deleted",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "member_deleted",
+    "Stage": "withdrawal",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "member_deleted",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "member_deleted",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m001 spaces/room/messages/m002#deleted] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "member_deleted",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "member_deleted",
+    "Stage": "withdrawal",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "member_deleted",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "observed_kind": "unreachable",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "2026-11-01T10:00:11Z",
+      "failure_kind": "unreachable",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "member_deleted",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m002#deleted] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "resolved",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "withdrawal",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "restart",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m001": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "end": "member=false posts=[spaces/room/messages/m002 spaces/room/messages/m002 spaces/room/messages/m001#deleted spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "resolved",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "withdrawal",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "restart",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:01Z",
+      "observed": "0001-01-01T00:00:00Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "0001-01-01T00:00:00Z",
+      "removed": true
+    },
+    "Ambient": {
+      "spaces/room/messages/m003": true
+    }
+  },
+  {
+    "phase": "green",
+    "row": "replay_then_owner_change",
+    "end": "member=true posts=[spaces/room/messages/m001 spaces/room/messages/m001 spaces/room/messages/m003 spaces/room/messages/m003 spaces/room/messages/m003#deleted spaces/room/messages/m002] lines=[]"
+  },
+  {
+    "phase": "green",
+    "row": "window_off_pin",
+    "Stage": "initial",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "window_off_pin",
+    "Stage": "polled",
+    "Member": false,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "window_off_pin",
+    "end": "member=false posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  },
+  {
+    "phase": "green",
+    "row": "window_off_pin",
+    "Stage": "initial",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z"
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "window_off_pin",
+    "Stage": "polled",
+    "Member": true,
+    "Record": {
+      "id": "spaces/room/messages/m002",
+      "conversation": "spaces/room",
+      "thread": "spaces/room/threads/m002",
+      "created": "2026-11-01T10:00:11Z",
+      "observed": "2026-11-01T10:00:11Z",
+      "delivered": "0001-01-01T00:00:00Z",
+      "failure_since": "0001-01-01T00:00:00Z",
+      "stopped": "2026-11-01T10:00:11Z",
+      "notified": true
+    },
+    "Ambient": {}
+  },
+  {
+    "phase": "green",
+    "row": "window_off_pin",
+    "end": "member=true posts=[spaces/room/messages/m002] lines=[I can't read your message right now. The team that runs me has been told, and I'll answer as soon as I'm back.]"
+  }
+]

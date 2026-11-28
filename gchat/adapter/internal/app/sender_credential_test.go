@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -216,7 +217,7 @@ func (f *credentialFixture) change(t *testing.T, source, label, user string) {
 		t.Fatal("change timestamps out of order")
 	}
 	want.Created, want.Posted, want.NoticeAt = got.Created, got.Posted, got.NoticeAt
-	if *got != *want {
+	if !reflect.DeepEqual(*got, *want) {
 		t.Fatalf("fallback differs from the no-fill control: got %+v want %+v", got, want)
 	}
 	expected, err := json.Marshal(f.reference.Inbound()[controls])

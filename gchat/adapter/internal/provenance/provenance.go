@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Class is the principal class the constitution names.
@@ -33,11 +34,18 @@ type Speaker struct {
 }
 
 var (
-	nameUnsafe    = regexp.MustCompile(`[\r\n\[\]<>|]`)
-	spaces        = regexp.MustCompile(`\s+`)
-	addressUnsafe = regexp.MustCompile(`[\r\n\[\]<>|\s]`)
-	itemOK        = regexp.MustCompile(`^[a-z]+:[A-Za-z0-9_./-]+$`)
+	nameUnsafe          = regexp.MustCompile(`[\r\n\[\]<>|]`)
+	spaces              = regexp.MustCompile(`\s+`)
+	addressUnsafe       = regexp.MustCompile(`[\r\n\[\]<>|\s]`)
+	itemOK              = regexp.MustCompile(`^[a-z]+:[A-Za-z0-9_./-]+$`)
+	mergedHeader        = regexp.MustCompile(`^\[(catch-up: )?[0-9]+ messages( in this room)?, oldest first[.;]`)
+	mergedDisplayHeader = regexp.MustCompile(strings.ReplaceAll(mergedHeader.String(), " ", ""))
 )
+
+// These have no blank/ignorable Unicode property: a Braille blank cell, a
+// musical null notehead, and an object placeholder whose object may be absent.
+// Treat the last two conservatively; an unnecessary quote costs two bytes.
+const mergedBlankSymbols = "\u2800\U0001d159\ufffc"
 
 // ChatItem is the item id of a Chat message by its resource name.
 func ChatItem(messageName string) string {
@@ -145,4 +153,28 @@ func Render(s Speaker, body string) string {
 		out += fmt.Sprintf("\n[%d hidden characters removed]", removed)
 	}
 	return out
+}
+
+// QuoteMergedHeaders is used only while assembling a merged turn. The first
+// line is the adapter's frame; every subsequent from-line prefix is body,
+// even when words or punctuation follow its bracket. Single deliveries keep
+// their original bytes, including with coalescing disabled.
+func QuoteMergedHeaders(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		// Fold only the comparison. Removing both blank and invisible code
+		// points (including plain spaces) accepts either interpretation of
+		// ambiguous controls/fillers, without enumerating their combinations.
+		visible := strings.Map(func(r rune) rune {
+			if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Mn, unicode.Me, unicode.Z,
+				unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector) || strings.ContainsRune(mergedBlankSymbols, r) {
+				return -1
+			}
+			return r
+		}, line)
+		if mergedDisplayHeader.MatchString(visible) || (i > 0 && strings.HasPrefix(visible, "[from:")) {
+			lines[i] = "> " + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }

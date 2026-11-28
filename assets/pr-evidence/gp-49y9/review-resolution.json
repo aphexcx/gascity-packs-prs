@@ -1,0 +1,60 @@
+{
+  "reviewed_sha": "0a7e30f6d62141d90082ceeb14b8c44205b2afe4",
+  "verdict": "BLOCK",
+  "severity": "MAJOR",
+  "class": "Body mutation after provenance sanitization",
+  "outcome": "FIXED",
+  "fixed_sha": "30ef56d2c558f1a284d31019c79805f43cdc568b",
+  "reproduction": [
+    {
+      "Test": "TestFoldedEditsKeepProvenance/live_single",
+      "Action": "fail"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance/live_merged",
+      "Action": "fail"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance/catchup_single",
+      "Action": "fail"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance/catchup_merged",
+      "Action": "fail"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance/literal_edited_prefix",
+      "Action": "pass"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance",
+      "Action": "fail"
+    }
+  ],
+  "fixed": [
+    {
+      "Test": "TestFoldedEditsKeepProvenance/live_single",
+      "Action": "pass"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance/live_merged",
+      "Action": "pass"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance/catchup_single",
+      "Action": "pass"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance/catchup_merged",
+      "Action": "pass"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance/literal_edited_prefix",
+      "Action": "pass"
+    },
+    {
+      "Test": "TestFoldedEditsKeepProvenance",
+      "Action": "pass"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "model": "gpt-6-astra",
+  "class": "DEEP",
+  "reviewed_sha": "fa7dce6449fef75823d12e1cbaaaa8b998cd0d07",
+  "verdict": "CLEAN",
+  "helper_exit": 0,
+  "record": "self-review.md",
+  "findings": [
+    {
+      "severity": "MINOR",
+      "class": "Recovery instructions conflate interrupted intent with already unresolved delivery",
+      "outcome": "FIXED",
+      "commit": "32228ffd052970c40472cfb080a64399b7dc63d7",
+      "change": "Distinguish replayable sanitized survivors from accept-only cleared payloads."
+    }
+  ],
+  "post_review_delta": "gchat/README.md only; runtime code unchanged",
+  "mayor_gate": "pending",
+  "cross_model_read": "pending"
+}

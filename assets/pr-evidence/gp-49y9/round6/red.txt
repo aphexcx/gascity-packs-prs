@@ -1,0 +1,11 @@
+=== RUN   TestMergedCheckpointWithoutRecordedEditRaisesEndNotice
+--- PASS: TestMergedCheckpointWithoutRecordedEditRaisesEndNotice (0.01s)
+=== RUN   TestMergedCheckpointHoldLetsAnotherRoomPost
+    coalesce_checkpoint_test.go:87: attempted to rewrite a held turn
+--- FAIL: TestMergedCheckpointHoldLetsAnotherRoomPost (0.02s)
+=== RUN   TestMergedCheckpointReleasesCurrentTurnOnce
+    coalesce_checkpoint_test.go:87: attempted to rewrite a held turn
+--- FAIL: TestMergedCheckpointReleasesCurrentTurnOnce (0.02s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.247s
+FAIL

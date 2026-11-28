@@ -143,8 +143,11 @@ type Processor struct {
 	wait func(context.Context, time.Duration) error
 	// raiseMu serializes the raise phase of concurrent polls. raiseTried
 	// throttles a change whose report failed; it is process memory only.
-	raiseMu    sync.Mutex
-	raiseTried map[string]time.Time
+	raiseMu       sync.Mutex
+	raiseTried    map[string]time.Time
+	windowChanged chan struct{}
+	windowWait    func(context.Context, time.Duration, <-chan struct{}) error
+	recoverHeld   map[string]bool
 }
 
 // ErrCredentials identifies a lookup held until Chat credentials or scopes are repaired.
@@ -190,7 +193,16 @@ func New(opts Options) (*Processor, error) {
 	if opts.Save == nil {
 		opts.Save = func(l *ledger.Ledger) error { return l.Save(opts.LedgerPath) }
 	}
-	return &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{}, unanswered: make(map[string]time.Time)}, nil
+	p := &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{}, unanswered: make(map[string]time.Time),
+		windowChanged: make(chan struct{}, 1), windowWait: windowWait, recoverHeld: map[string]bool{}}
+	opts.LedgerMu.Lock()
+	for id, c := range opts.Ledger.Changes {
+		if isHeld(c) {
+			p.recoverHeld[id] = true
+		}
+	}
+	opts.LedgerMu.Unlock()
+	return p, nil
 }
 
 // Handle is a puller.Handler. Pending receipts are durable recovery obligations,
@@ -287,6 +299,11 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool, 
 	if ev == nil {
 		return puller.Quarantine, errors.New("inbound: missing event")
 	}
+	if err := p.flushWindows(ctx); err != nil {
+		// Existing obligations retain their own failure. Record this event
+		// before deciding its outcome, even when another space is unavailable.
+		p.opts.Logger.Warn("inbound window deferred; retained for retry")
+	}
 	l, err := p.snapshot()
 	if err != nil {
 		return puller.Nack, err
@@ -317,6 +334,13 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool, 
 		}
 		if err := p.change(ctx, c, catchUp, arrivals[i]); err != nil {
 			return puller.Nack, err
+		}
+	}
+	if catchUp {
+		for _, c := range ev.Changes {
+			if err := p.flushSpace(ctx, c.Space, true, true, ""); err != nil {
+				return puller.Nack, err
+			}
 		}
 	}
 	if ev.PubSubID == "" && ev.CloudEventID == "" {
@@ -356,7 +380,21 @@ func (p *Processor) Pass(ctx context.Context) error {
 		return err
 	}
 	defer p.leave()
-	var l *ledger.Ledger
+	l, err := p.snapshot()
+	if err != nil {
+		return err
+	}
+	// Older writers may have recorded a withdrawal without refreshing an
+	// already-stopped copy. Clean it before any member can change on resume.
+	if invalidateWithdrawnCopies(l, "") {
+		if err := p.update(func(current *ledger.Ledger) { invalidateWithdrawnCopies(current, "") }); err != nil {
+			return err
+		}
+	}
+	var failures []error
+	if err := p.flushWindows(ctx); err != nil {
+		failures = append(failures, err)
+	}
 	if err := p.opts.NeverSilent.WithHistory(func() error {
 		var err error
 		l, err = p.snapshot()
@@ -375,7 +413,6 @@ func (p *Processor) Pass(ctx context.Context) error {
 		}
 	}
 	sort.Slice(ids, func(i, j int) bool { return earlier(l.Changes[ids[i]], l.Changes[ids[j]]) })
-	var failures []error
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -555,7 +592,7 @@ func unresolvedCause(reason, waiting string) string {
 // no terminal hold, landed: gc vouches the whole message is in the terminal,
 // not that the agent read it. Anything else stays unresolved.
 func (p *Processor) concludedPending(id string, d wire.Delivery) error {
-	if err := p.opts.NeverSilent.Result(id, "pending", deliverySessions(d)); err != nil {
+	if err := p.noticeResult(id, "pending", deliverySessions(d), time.Time{}); err != nil {
 		return err
 	}
 	terminal := d.Terminal
@@ -573,14 +610,14 @@ func (p *Processor) concludedPending(id string, d wire.Delivery) error {
 			}); err != nil {
 				return err
 			}
-			return p.opts.NeverSilent.ResultAt(id, "delivered", deliverySessions(d), at)
+			return p.noticeResult(id, "delivered", deliverySessions(d), at)
 		}
 		return p.unresolved(id, reasonHeld)
 	}
 	if !landedWhole(d) {
 		return p.unresolved(id, reasonUnconcluded)
 	}
-	if err := p.opts.NeverSilent.Result(id, "delivered", deliverySessions(d)); err != nil {
+	if err := p.noticeResult(id, "delivered", deliverySessions(d), time.Time{}); err != nil {
 		return err
 	}
 	committed := false
@@ -667,6 +704,17 @@ func (p *Processor) snapshot() (*ledger.Ledger, error) {
 }
 func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
 	return l.Clone(), nil
+}
+
+// ValidateChange lets catch-up quarantine malformed individual acts before
+// submitting the valid part of its pass as one batch.
+func ValidateChange(l *ledger.Ledger, c puller.Change) error {
+	s := l.Spaces[c.Space]
+	bounded := !ledger.HistoryBound(s, l.HistoryFloor).IsZero() || s == nil || (s.MessageCursor.IsZero() && s.JoinedAt.IsZero())
+	if bounded {
+		c = historyTime(c)
+	}
+	return validate(c)
 }
 
 func validate(c puller.Change) error {
@@ -901,7 +949,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 		id += "#updated#" + m.LastUpdateTime
 		// An update received before creation owns the base ID, including when
 		// a redelivery resumes its interrupted or transiently failed POST.
-		if base.Kind == "message.updated" && previous != nil && previous.Revision.Equal(updated) {
+		if base.OriginalKind() == "message.updated" && previous != nil && previous.Revision.Equal(updated) {
 			id = m.Name
 		}
 	}
@@ -978,7 +1026,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 	}
 	forwarded := false
 	for _, change := range l.Changes {
-		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "before_history_floor" && !strings.HasPrefix(change.Reason, "space unavailable") {
+		if change.Message == m.Name && strings.HasPrefix(change.OriginalKind(), "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "before_history_floor" && !strings.HasPrefix(change.Reason, "space unavailable") {
 			forwarded = true
 			break
 		}
@@ -1010,7 +1058,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 		// Without a cached sender for this deletion, preserve the original actor and frame.
 		if base != nil && m == c.Message {
 			var original wire.InboundMessage
-			if json.Unmarshal([]byte(base.Event), &original) == nil {
+			if json.Unmarshal([]byte(base.OriginalEvent()), &original) == nil {
 				w.Actor = original.Actor
 				if line, ok := provenance.FrameOf(original.Text); base.ProvenanceFramed && ok {
 					w.Text, framed = line+"\ndeleted", true
@@ -1023,7 +1071,10 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 	if local == "" && c.Kind != "message.deleted" {
 		w.Text, w.Attachments = NormalizeContent(ctx, p.opts.Chat, p.opts.Config.Endpoints, m, p.mediaStore())
 	}
-	if c.Kind == "message.updated" && id != m.Name {
+	// Decide the body before Render. Removing an "edited: " prefix after
+	// rendering could expose a first body line that forges a provenance frame.
+	foldsCreate := p.opts.Config.CoalesceWindow() > 0 && isHeld(base) && base.OriginalKind() == "message.created" && base.CatchUp == catchUp
+	if c.Kind == "message.updated" && id != m.Name && !foldsCreate {
 		w.Text = "edited: " + w.Text
 	}
 	if !framed {
@@ -1042,7 +1093,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 	}); err != nil {
 		return err
 	}
-	return p.resume(ctx, id)
+	return p.admit(ctx, c, id, catchUp)
 }
 
 func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool) error {
@@ -1102,7 +1153,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		}
 		if created != nil {
 			var original wire.InboundMessage
-			if json.Unmarshal([]byte(created.Event), &original) == nil {
+			if json.Unmarshal([]byte(created.OriginalEvent()), &original) == nil {
 				w.Actor = original.Actor
 				if created.ProvenanceFramed {
 					w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
@@ -1122,7 +1173,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	if err := p.record(c, id, w, state, s, local, catchUp, ""); err != nil {
 		return err
 	}
-	return p.resume(ctx, id)
+	return p.admit(ctx, c, id, catchUp)
 }
 
 func reactionText(r *api.Reaction, action, parent string) string {
@@ -1168,6 +1219,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 		name = strings.Split(c.Reaction.Name, "/reactions/")[0]
 	}
 	unavailable := strings.HasPrefix(local, "space unavailable") || strings.HasPrefix(local, "parent unavailable")
+	refreshed := false
 	err = p.update(func(l *ledger.Ledger) {
 		status := "intent"
 		if local != "" {
@@ -1175,6 +1227,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 		}
 		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local, CatchUp: catchUp}
 		l.Changes[id].ProvenanceFramed = w.ProviderMessageID != ""
+		p.hold(l, c, id, w)
 		if learnedDomain != "" {
 			l.IdentityDomainID = learnedDomain
 		}
@@ -1193,6 +1246,14 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 				mediaState(l, name).DeletePending = true
 			}
 		}
+		if c.Kind == "message.updated" || c.Kind == "message.deleted" {
+			invalidateWithdrawnCopies(l, c.Space)
+			for _, owner := range l.Changes {
+				if owner.Space == c.Space {
+					refreshed = p.refreshMerged(l, owner) == mergedChanged || refreshed
+				}
+			}
+		}
 		if space != nil {
 			// Preserve cursors/backlog and any concurrent wake-policy update.
 			if current := l.Spaces[c.Space]; current != nil {
@@ -1205,8 +1266,18 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			}
 		}
 	})
+	if err == nil && refreshed {
+		var l *ledger.Ledger
+		l, err = p.snapshot()
+		if err == nil {
+			err = ReconcileNeverSilent(l, p.opts.NeverSilent)
+		}
+	}
 	if err == nil && unavailable {
 		p.opts.Logger.Warn("inbound change retained", "space", c.Space, "change", id, "message", name, "cause", local)
+	}
+	if err == nil {
+		p.signalWindow()
 	}
 	return err
 }
@@ -1230,6 +1301,27 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		c := l.Changes[id]
 		if c == nil || c.Status != "intent" {
 			return nil
+		}
+		if isHeld(c) {
+			return nil
+		}
+		switch p.refreshMerged(l, c) {
+		case mergedHeld:
+			return nil
+		case mergedChanged:
+			if err := p.opts.NeverSilent.WithHistory(func() error {
+				if err := p.update(func(current *ledger.Ledger) { p.refreshMerged(current, current.Changes[id]) }); err != nil {
+					return err
+				}
+				current, err := p.snapshot()
+				if err != nil {
+					return err
+				}
+				return ReconcileNeverSilent(current, p.opts.NeverSilent)
+			}); err != nil {
+				return err
+			}
+			continue
 		}
 		// A later revision cannot tell us whether an unanswered POST landed.
 		if c.Attempts > 0 && c.Reason != reasonRetry {
@@ -1328,7 +1420,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 				if (answered && (responseErr.StatusCode >= 500 || stoppedCity(responseErr))) || (op != nil && op.Op == "dial") {
 					kind = "unreachable"
 				}
-				if noticeErr := p.opts.NeverSilent.Result(id, kind, nil); noticeErr != nil {
+				if noticeErr := p.noticeResult(id, kind, nil, time.Time{}); noticeErr != nil {
 					return noticeErr
 				}
 				if err := p.update(func(l *ledger.Ledger) {
@@ -1458,7 +1550,7 @@ func reasonCode(code string) string {
 // a newer edit or tombstone. Keep it for an operator instead of replaying it.
 // Pending receipts still get polled: they describe a POST already in flight.
 func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
-	if c.Kind != "message.created" && c.Kind != "message.updated" {
+	if c.OriginalKind() != "message.created" && c.OriginalKind() != "message.updated" {
 		return false
 	}
 	state := l.Messages[c.Message]
@@ -1471,12 +1563,15 @@ func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
 	if checkpoint := l.Media[c.Message]; checkpoint != nil && checkpoint.Revision.After(state.Revision) {
 		return true
 	}
+	if !c.MemberRevision.IsZero() && !state.Revision.After(c.MemberRevision) {
+		return false
+	}
 	if stamp, ok := strings.CutPrefix(c.ID, c.Message+"#updated#"); ok {
 		revision, err := time.Parse(time.RFC3339Nano, stamp)
 		return err == nil && state.Revision.After(revision)
 	}
 	for _, other := range l.Changes {
-		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID && other.Cause != "before_history_floor" && other.Cause != "history_time_missing" {
+		if other.Message == c.Message && other.OriginalKind() == "message.updated" && other.ID != c.ID && other.MemberOf != c.ID && other.Cause != "before_history_floor" && other.Cause != "history_time_missing" {
 			return true
 		}
 	}
@@ -1498,7 +1593,7 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 	if status == "held" && !fragment(d) {
 		noticeKind = "failed"
 	}
-	if err := p.opts.NeverSilent.Result(id, noticeKind, deliverySessions(d)); err != nil {
+	if err := p.noticeResult(id, noticeKind, deliverySessions(d), time.Time{}); err != nil {
 		return err
 	}
 	if status == "pending" && d.ReceiptID == "" {
@@ -1549,10 +1644,10 @@ func (p *Processor) outcome(id string, d wire.Delivery) error {
 	})
 	if err == nil && exhausted {
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reasonExhausted)
-		err = p.opts.NeverSilent.Stop(id, false)
+		err = p.noticeStop(id, false)
 	}
 	if err == nil && status == "no_route" {
-		err = p.opts.NeverSilent.Stop(id, true)
+		err = p.noticeStop(id, true)
 	}
 	if err == nil && (status == "delivered" || status == "no_route") {
 		delete(p.unanswered, id)
@@ -1580,7 +1675,7 @@ func fragment(d wire.Delivery) bool {
 // unresolved ends a change for an operator and records its cause.
 func (p *Processor) unresolved(id, reason string) error {
 	if reason == reasonWithdrawn {
-		if err := p.opts.NeverSilent.Forget(id); err != nil {
+		if err := p.noticeForget(id); err != nil {
 			return err
 		}
 	} else {
@@ -1593,7 +1688,7 @@ func (p *Processor) unresolved(id, reason string) error {
 		if c != nil && c.Reason == "retry" && !c.Fragment && (c.Cause == causeNotDelivered || c.Cause == causeDraftDeferred || c.Cause == causePendingInteraction || c.Cause == causeBehindEarlier) {
 			definite = true
 		}
-		if err := p.opts.NeverSilent.Stop(id, definite); err != nil {
+		if err := p.noticeStop(id, definite); err != nil {
 			return err
 		}
 	}
@@ -1603,7 +1698,11 @@ func (p *Processor) unresolved(id, reason string) error {
 		if !acceptingResult(c) {
 			return
 		}
-		markUnresolved(l, id, c, reason, p.opts.Now())
+		if reason == reasonWithdrawn && (p.opts.Config.CoalesceWindow() > 0 || c.MemberEvent != "" || c.MemberOf != "" || len(c.Members) > 0) {
+			retireWithdrawn(l, c, p.opts.Now())
+		} else {
+			markUnresolved(l, id, c, reason, p.opts.Now())
+		}
 		recorded = true
 	})
 	if err == nil && recorded {

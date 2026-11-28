@@ -1,0 +1,179 @@
+{
+  "red_worktree_delta": "The red writer/current-reader used source 6a92b24d plus an uncommitted prototype restoring OriginalKind in markUnresolved. That prototype did not clear Event; all six withdrawal states still failed the endpoint contract. It was replaced by 2e267bc1.",
+  "red": [
+    {
+      "stage": "writer",
+      "source": "6a92b24d25bf3449fbbeb73024ac727afd228c0d",
+      "command": "go test -overlay <evidence>/writer-overlay.json ./internal/inbound -run ^TestExportRollbackLedgers$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "current-reader",
+      "source": "6a92b24d25bf3449fbbeb73024ac727afd228c0d",
+      "command": "go test -overlay <evidence>/current-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 1,
+      "counts": {
+        "subtest_fail": 6,
+        "subtest_pass": 1,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestCoalescedLedgerCompatibility/owner_deleted",
+        "TestCoalescedLedgerCompatibility/member_deleted",
+        "TestCoalescedLedgerCompatibility/empty_replayed",
+        "TestCoalescedLedgerCompatibility/folded_deleted_replayed",
+        "TestCoalescedLedgerCompatibility/folded_edited_replayed",
+        "TestCoalescedLedgerCompatibility/edit_owner_replayed",
+        "TestCoalescedLedgerCompatibility",
+        "gchat-adapter/internal/server"
+      ]
+    },
+    {
+      "stage": "released-reader",
+      "source": "d2f453b83a428546dfe7fa01dc2bd831c0b47ae0",
+      "command": "go test -overlay <evidence>/released-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 1,
+      "counts": {
+        "subtest_fail": 6,
+        "subtest_pass": 1,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestCoalescedLedgerCompatibility/owner_deleted",
+        "TestCoalescedLedgerCompatibility/member_deleted",
+        "TestCoalescedLedgerCompatibility/empty_replayed",
+        "TestCoalescedLedgerCompatibility/folded_deleted_replayed",
+        "TestCoalescedLedgerCompatibility/folded_edited_replayed",
+        "TestCoalescedLedgerCompatibility/edit_owner_replayed",
+        "TestCoalescedLedgerCompatibility",
+        "gchat-adapter/internal/server"
+      ]
+    },
+    {
+      "stage": "main-reader",
+      "source": "205d0aecedf944792f1e3b3fbc420b9e5ad910d8",
+      "command": "go test -overlay <evidence>/main-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 1,
+      "counts": {
+        "subtest_fail": 6,
+        "subtest_pass": 1,
+        "test_fail": 1,
+        "package_fail": 1
+      },
+      "failures": [
+        "TestCoalescedLedgerCompatibility/owner_deleted",
+        "TestCoalescedLedgerCompatibility/member_deleted",
+        "TestCoalescedLedgerCompatibility/empty_replayed",
+        "TestCoalescedLedgerCompatibility/folded_deleted_replayed",
+        "TestCoalescedLedgerCompatibility/folded_edited_replayed",
+        "TestCoalescedLedgerCompatibility/edit_owner_replayed",
+        "TestCoalescedLedgerCompatibility",
+        "gchat-adapter/internal/server"
+      ]
+    }
+  ],
+  "final": [
+    {
+      "stage": "writer",
+      "source": "48b1675eaf7bc773d3316b0d3036abd1dd95de59",
+      "command": "go test -overlay <evidence>/writer-overlay.json ./internal/inbound -run ^TestExportRollbackLedgers$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "current-reader",
+      "source": "48b1675eaf7bc773d3316b0d3036abd1dd95de59",
+      "command": "go test -overlay <evidence>/current-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "released-reader",
+      "source": "d2f453b83a428546dfe7fa01dc2bd831c0b47ae0",
+      "command": "go test -overlay <evidence>/released-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    },
+    {
+      "stage": "main-reader",
+      "source": "205d0aecedf944792f1e3b3fbc420b9e5ad910d8",
+      "command": "go test -overlay <evidence>/main-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=1 -timeout=3m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 7,
+        "test_pass": 1,
+        "package_pass": 1
+      },
+      "failures": []
+    }
+  ],
+  "repeated": [
+    {
+      "stage": "writer",
+      "command": "go test -overlay <evidence>/writer-overlay.json ./internal/inbound -run ^TestExportRollbackLedgers$ -count=20 -timeout=5m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 140,
+        "test_pass": 20,
+        "package_pass": 1
+      }
+    },
+    {
+      "stage": "current-reader",
+      "command": "go test -overlay <evidence>/current-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=20 -timeout=5m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 140,
+        "test_pass": 20,
+        "package_pass": 1
+      }
+    },
+    {
+      "stage": "released-reader",
+      "command": "go test -overlay <evidence>/released-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=20 -timeout=5m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 140,
+        "test_pass": 20,
+        "package_pass": 1
+      }
+    },
+    {
+      "stage": "main-reader",
+      "command": "go test -overlay <evidence>/main-reader-overlay.json ./internal/server -run ^TestCoalescedLedgerCompatibility$ -count=20 -timeout=5m -json",
+      "exit": 0,
+      "counts": {
+        "subtest_pass": 140,
+        "test_pass": 20,
+        "package_pass": 1
+      }
+    }
+  ],
+  "intermediate_current_reader_expectation": {
+    "test": "TestCoalescedLedgerCompatibility/empty_replayed",
+    "result": "one POST carried both healthy deletion acts; changed assertion to count acts; no product fix"
+  }
+}

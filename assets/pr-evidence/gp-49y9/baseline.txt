@@ -1,0 +1,90 @@
+=== RUN   TestBaselineTurnBytes
+=== RUN   TestBaselineTurnBytes/room
+    coalesce_budget_test.go:73: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345]
+        Can you send me the rent roll for March?
+
+        Message id: spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345 (in thread spaces/AAAA_XXXXXX/threads/abcDEF12345)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345 --body-file <path>
+        </system-reminder>
+    coalesce_budget_test.go:75: BYTES turns=1 words=40 adapter_fixed=113 whole_fixed=452 total=492
+=== RUN   TestBaselineTurnBytes/dm
+    coalesce_budget_test.go:73: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345]
+        Can you send me the rent roll for March?
+
+        Message id: spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345 (in thread spaces/AAAA_XXXXXX/threads/abcDEF12345)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/abcDEF12345.abcDEF12345 --body-file <path>
+        </system-reminder>
+    coalesce_budget_test.go:75: BYTES turns=1 words=40 adapter_fixed=113 whole_fixed=452 total=492
+=== RUN   TestBaselineTurnBytes/five
+    coalesce_budget_test.go:73: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m1aaaaaaaaa.m1aaaaaaaaa]
+        Morning all.
+
+        Message id: spaces/AAAA_XXXXXX/messages/m1aaaaaaaaa.m1aaaaaaaaa (in thread spaces/AAAA_XXXXXX/threads/m1aaaaaaaaa)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/m1aaaaaaaaa.m1aaaaaaaaa --body-file <path>
+        </system-reminder>
+    coalesce_budget_test.go:73: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m2aaaaaaaaa.m2aaaaaaaaa]
+        The plumber is confirmed for unit 4.
+
+        Message id: spaces/AAAA_XXXXXX/messages/m2aaaaaaaaa.m2aaaaaaaaa (in thread spaces/AAAA_XXXXXX/threads/m2aaaaaaaaa)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/m2aaaaaaaaa.m2aaaaaaaaa --body-file <path>
+        </system-reminder>
+    coalesce_budget_test.go:73: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Lee Sample (human): [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/m3aaaaaaaaa.m3aaaaaaaaa]
+        Great, thanks.
+
+        Message id: spaces/AAAA_XXXXXX/messages/m3aaaaaaaaa.m3aaaaaaaaa (in thread spaces/AAAA_XXXXXX/threads/m3aaaaaaaaa)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/m3aaaaaaaaa.m3aaaaaaaaa --body-file <path>
+        </system-reminder>
+    coalesce_budget_test.go:73: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Lee Sample (human): [from: Lee Sample <lee@example.com> | organization | item gchat:spaces/AAAA_XXXXXX/messages/m4aaaaaaaaa.m4aaaaaaaaa]
+        I will let the tenant know.
+
+        Message id: spaces/AAAA_XXXXXX/messages/m4aaaaaaaaa.m4aaaaaaaaa (in thread spaces/AAAA_XXXXXX/threads/m4aaaaaaaaa)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/m4aaaaaaaaa.m4aaaaaaaaa --body-file <path>
+        </system-reminder>
+    coalesce_budget_test.go:73: CAPTURE
+        <system-reminder>
+        New message in shared conversation gchat/spaces/AAAA_XXXXXX:
+
+        - Dana Example (human): [from: Dana Example <dana@example.com> | owner | item gchat:spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa]
+        Perfect.
+
+        Message id: spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa (in thread spaces/AAAA_XXXXXX/threads/m5aaaaaaaaa)
+
+        gc gchat reply-current --to spaces/AAAA_XXXXXX/messages/m5aaaaaaaaa.m5aaaaaaaaa --body-file <path>
+        </system-reminder>
+    coalesce_budget_test.go:75: BYTES turns=5 words=97 adapter_fixed=573 whole_fixed=2264 total=2361
+--- PASS: TestBaselineTurnBytes (0.58s)
+    --- PASS: TestBaselineTurnBytes/room (0.08s)
+    --- PASS: TestBaselineTurnBytes/dm (0.09s)
+    --- PASS: TestBaselineTurnBytes/five (0.41s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.811s

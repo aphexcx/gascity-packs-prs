@@ -1,0 +1,204 @@
+[
+  {
+    "label": "format",
+    "command": "gofmt -l .",
+    "exit": 0,
+    "counts": {},
+    "failures": [],
+    "empty_output": true
+  },
+  {
+    "label": "vet",
+    "command": "go vet ./...",
+    "exit": 0,
+    "counts": {},
+    "failures": [],
+    "empty_output": true
+  },
+  {
+    "label": "TestRetryNeverSendsWithdrawnText",
+    "command": "go test ./internal/inbound -run ^TestRetryNeverSendsWithdrawnText$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 200,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestRetryTranscriptKeepsFirstText",
+    "command": "go test ./internal/inbound -run ^TestRetryTranscriptKeepsFirstText$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestMergedTurnCannotBeForged",
+    "command": "go test ./internal/inbound -run ^TestMergedTurnCannotBeForged$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 40,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestMalformedHeldRecordIsOneUnresolved",
+    "command": "go test ./internal/inbound -run ^TestMalformedHeldRecordIsOneUnresolved$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 40,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestDueWindowNeverRefusesAnotherSpace",
+    "command": "go test ./internal/inbound -run ^TestDueWindowNeverRefusesAnotherSpace$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestCoalescedKindReadersRetireOldHistory",
+    "command": "go test ./internal/inbound -run ^TestCoalescedKindReadersRetireOldHistory$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 60,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestWithdrawalSaveSurvivesRestart",
+    "command": "go test ./internal/inbound -run ^TestWithdrawalSaveSurvivesRestart$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 40,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestCoalescedLedgerCompatibility",
+    "command": "go test ./internal/inbound -run ^TestCoalescedLedgerCompatibility$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 80,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestWindowOffIsToday",
+    "command": "go test ./internal/inbound -run ^TestWindowOffIsToday$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestSupersededIntentNeverRepostsOldText",
+    "command": "go test ./internal/inbound -run ^TestSupersededIntentNeverRepostsOldText$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 40,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestRetriedSingletonKeepsProvenance",
+    "command": "go test ./internal/inbound -run ^TestRetriedSingletonKeepsProvenance$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 320,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestWithdrawnRecordKeepsHistorySpeaker",
+    "command": "go test ./internal/inbound -run ^TestWithdrawnRecordKeepsHistorySpeaker$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestHistoryPreservesFoldedLiteralEditPrefix",
+    "command": "go test ./internal/server -run ^TestHistoryPreservesFoldedLiteralEditPrefix$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 40,
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestCatchUpRetryCountsEveryAct",
+    "command": "go test ./internal/catchup -run ^TestCatchUpRetryCountsEveryAct$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "TestCatchUpReportsPartialSuccess",
+    "command": "go test ./internal/catchup -run ^TestCatchUpReportsPartialSuccess$ -count=20 -json",
+    "exit": 0,
+    "counts": {
+      "test_pass": 20,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  },
+  {
+    "label": "race",
+    "command": "go test -race ./internal/inbound -run ^(TestRetryNeverSendsWithdrawnText|TestRetryTranscriptKeepsFirstText|TestWithdrawalSaveSurvivesRestart|TestCoalescedKindReadersRetireOldHistory|TestMalformedHeldRecordIsOneUnresolved|TestDueWindowNeverRefusesAnotherSpace|TestRetriedSingletonKeepsProvenance|TestWithdrawnRecordKeepsHistorySpeaker)$ -count=1 -json",
+    "exit": 0,
+    "counts": {
+      "subtest_pass": 33,
+      "test_pass": 8,
+      "package_pass": 1
+    },
+    "failures": [],
+    "empty_output": false
+  }
+]

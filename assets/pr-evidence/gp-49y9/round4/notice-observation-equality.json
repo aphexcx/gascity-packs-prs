@@ -1,0 +1,377 @@
+[
+  {
+    "row": "refused",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "refused",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "gate_and_read_422",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "gate_and_read_422",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "answer_lost",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "answer_lost",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "failed",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "failed",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "held",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "held",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "fourth_partial",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "fourth_partial",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "no_route",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "no_route",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "delivered_ok",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "delivered_ok",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "delivered_down",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "delivered_down",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "pending",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "pending",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "whole_paste_terminal",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "whole_paste_terminal",
+    "stage": "receipt",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "whole_paste_terminal",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "landed_whole",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "landed_whole",
+    "stage": "receipt",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "landed_whole",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "terminal_not_whole",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "terminal_not_whole",
+    "stage": "receipt",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "terminal_not_whole",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "receipt_failed",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "receipt_failed",
+    "stage": "receipt",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "receipt_failed",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_422",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_422",
+    "stage": "restart",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_422",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_no_route",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_no_route",
+    "stage": "restart",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_no_route",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_delivered_ok",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_delivered_ok",
+    "stage": "restart",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_delivered_ok",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_delivered_down",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_delivered_down",
+    "stage": "restart",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_delivered_down",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_whole_paste",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_whole_paste",
+    "stage": "receipt",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_whole_paste",
+    "stage": "restart",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_whole_paste",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "accept",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "accept",
+    "stage": "resolved",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "accept",
+    "stage": "restart",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "accept",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay",
+    "stage": "resolved",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay",
+    "stage": "restart",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "two_mentions",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "two_mentions",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_before_urgent_freeze",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "restart_before_urgent_freeze",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "act_cap_owns_mention_pin",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "act_cap_owns_mention_pin",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "owner_change",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "owner_change",
+    "stage": "withdrawal",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "owner_change",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "member_deleted",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "member_deleted",
+    "stage": "withdrawal",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "member_deleted",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay_then_owner_change",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay_then_owner_change",
+    "stage": "resolved",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay_then_owner_change",
+    "stage": "withdrawal",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay_then_owner_change",
+    "stage": "restart",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "replay_then_owner_change",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "window_off_pin",
+    "stage": "initial",
+    "observed_and_targets_equal": true
+  },
+  {
+    "row": "window_off_pin",
+    "stage": "polled",
+    "observed_and_targets_equal": true
+  }
+]
