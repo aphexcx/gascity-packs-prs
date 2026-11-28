@@ -11,6 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRAGMENT = REPO_ROOT / "gascity" / "template-fragments" / "gc-role-worker.template.md"
+RECORDER = REPO_ROOT / "gascity" / "assets" / "scripts" / "worker_provenance.py"
 README = REPO_ROOT / "gascity" / "README.md"
 
 
@@ -69,6 +70,182 @@ def test_blocked_wait_close_performs_remaining_escalation_without_notifying_twic
     assert "perform the remaining acts of the bead's escalation contract after the bounded wait of the BLOCKED paragraph" in close
     assert "The recipient notification happens at the start of that wait; do not repeat it at close" in close
     assert "include any failed notification recorded by that paragraph in the close reason" in close
+
+
+# The words `gc bd close` accepts for gc.work_outcome (gascity
+# internal/workrecord ValidOutcome, in this order in its warning text). The
+# pack's recorder (gascity/assets/scripts/worker_provenance.py OUTCOMES) takes
+# four of them and has no artifact form; the Close section must say both.
+GATE_OUTCOMES = ("shipped", "ran", "no-op", "blocked", "abandoned")
+
+
+def close_section() -> str:
+    return fragment().split("## Close", 1)[1].split("## Continue", 1)[0]
+
+
+def flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_close_lists_the_five_work_outcome_words_the_close_gate_accepts() -> None:
+    bullets = re.findall(r"^- `([a-z-]+)`(?: or `([a-z-]+)`)?:", close_section(), re.M)
+    assert [word for pair in bullets for word in pair if word] == list(GATE_OUTCOMES)
+    assert "one of the five words `gc bd close` accepts" in flat(close_section())
+    assert "shipped|no-op|blocked|abandoned" not in fragment()
+
+
+def test_close_shipped_names_the_commit_keys_and_the_artifact_path() -> None:
+    close = flat(close_section())
+    assert ("For a commit, set `gc.work_commit` to its full 40-character SHA and "
+            "`gc.work_branch` to a branch containing it") in close
+    # A lane is reset at its next start, so a path inside it does not identify
+    # what was delivered; a durable uncommitted file elsewhere (a report under
+    # the rig root) does.
+    assert ("An artifact, a file the bead asked for that is not committed, at a durable "
+            "absolute path outside your lane worktree (never a temporary directory), sets "
+            "`gc.work_commit` to that path instead (no `gc.work_branch` is needed); say so in "
+            "the close reason.") in close
+
+
+def test_close_ran_no_op_blocked_and_abandoned_carry_their_result_in_the_close_reason() -> None:
+    close = flat(close_section())
+    assert "`ran`: a completed run with no deliverable; its result goes in the close reason." in close
+    assert "`no-op`: no change was needed (already satisfied or duplicate); say why in the close reason." in close
+    assert "name the blocker (`blocked`) or the reason (`abandoned`) in the close reason" in close
+
+
+def test_close_maps_a_bead_word_outside_the_five_to_one_of_them() -> None:
+    close = flat(close_section())
+    assert ("A bead that names any other `gc.work_outcome` word (for example `investigated`) "
+            "sets `gc.work_outcome` to the one of these five that fits and follows that word's "
+            "close below; say so in the close reason. A file the bead asked for that is not "
+            "committed is a shipped artifact; a result that lives only in the close reason is `ran`.") in close
+
+
+def test_close_says_the_recorder_takes_four_words_and_no_artifact_form_today() -> None:
+    close = flat(close_section())
+    assert ("It records four of the five words today: `shipped` with a commit, `no-op`, "
+            "`blocked`, and `abandoned`. It has no `ran` and no form for a shipped artifact path") in close
+    assert "Before any close write for one of the four it records, discover its binding once." in close
+    assert "all four outcomes" not in close
+    # Words only: nothing promises recorder flags the code does not take yet.
+    assert not re.search(r"--artifact\b(?!-)|--sha256\b", fragment())
+
+
+def test_every_flag_on_a_provenance_record_line_is_one_the_recorder_takes() -> None:
+    takes = set(re.findall(r'add_argument\("(--[a-z][a-z-]*)"', RECORDER.read_text(encoding="utf-8")))
+    assert {"--outcome", "--commit", "--pr", "--reviews", "--evidence-dir"} <= takes
+    joined = fragment().replace("\\\n", " ")
+    lines = re.findall(r"provenance record [^`\n]*", joined)
+    assert len(lines) >= 2
+    used = {flag for line in lines for flag in re.findall(r"(?<![\w-])--[a-z][a-z-]*", line)}
+    assert "--outcome" in used
+    assert used <= takes, used - takes
+
+
+def metadata_only_close() -> str:
+    close = flat(close_section())
+    start = close.index("If `gc help bd` does not list `ran`")
+    return close[start:close.index("For blocked or abandoned work", start)]
+
+
+# One path for every close the recorder cannot write (codex QUICK r1 and r2):
+# each row is a requirement of that path, in the order a worker meets it.
+METADATA_ONLY_CLOSE = (
+    # The effective word is chosen first. Upstream gc (v1.5.1 and main) takes
+    # four words; there a run or an artifact is a recorded no-op, so its typed
+    # record and compatibility keys are the recorder's.
+    "If `gc help bd` does not list `ran`, your gc build's gate takes the other four words and "
+    "needs a commit and a branch for `shipped`: close a run or an artifact by the `no-op` "
+    "close above instead, with `gc.outcome` as the bead's result contract asks, and name the "
+    "result or the file in the close reason.",
+    # The recorder refuses both, and the shipped recipe is not reused.
+    "Otherwise, for a `ran` close, or a shipped artifact, the recorder refuses both: skip its "
+    "discovery and record, and do not run the shipped recipe. Instead:",
+    # The step result follows the bead's result contract, never a fixed pass.
+    '1. Run one `gc bd update "$CLAIMED_BEAD_ID"` that sets `gc.outcome` as the bead\'s '
+    "result contract asks (`pass` when the run met it) and "
+    "`--set-metadata 'gc.work_outcome=ran'`, or `--set-metadata 'gc.work_outcome=shipped'` with "
+    '`--set-metadata "gc.work_commit=$ARTIFACT_PATH"` (`ARTIFACT_PATH` holds the file\'s '
+    "absolute path, starting with `/`).",
+    # Stale keys from an earlier close are set or cleared on every such close.
+    "The same update sets `gc.pr` to the PR this close names, or unsets it "
+    "(`--unset-metadata gc.pr`) when it names none, and for `ran` unsets `gc.work_commit`.",
+    # No detach in a directory that holds no branch (or is not a git checkout).
+    '2. Release a branch only when you hold one in your lane (`git -C "$GC_DIR" branch '
+    "--show-current` prints a name): detach and verify the release as the shipped recipe does.",
+    # The typed summary cannot be corrected without the recorder: say so.
+    "3. Close with a reason that gives the run's result or names the file, says the recorder "
+    "has no form for it, and, when `provenance summary` still shows an earlier close, says "
+    "that close is superseded.",
+)
+
+
+def test_close_one_metadata_only_path_for_ran_and_artifact_closes() -> None:
+    path = metadata_only_close()
+    at = 0
+    for row in METADATA_ONLY_CLOSE:
+        assert row in path, row
+        assert path.index(row) >= at, row
+        at = path.index(row)
+    assert "In the shipped recipe, skip" not in path
+    assert "--set-metadata 'gc.outcome=pass'" not in path
+    assert "<absolute artifact path>" not in path
+
+
+def test_close_metadata_alone_is_named_only_for_the_metadata_only_path() -> None:
+    close = flat(close_section())
+    assert "Do not silently close with metadata alone." in close
+    assert "Only the `ran` and artifact closes below close on metadata alone" in close
+    assert close.index("Only the `ran` and artifact closes below") < close.index("for a `ran` close, or a shipped artifact")
+    assert "If an earlier close of this bead wrote a typed record" not in close
+    assert close.count("If `gc help bd` does not list `ran`") == 1
+
+
+def holding_paragraph() -> str:
+    claim = flat(fragment().split("## Claim", 1)[1].split("## Codex gates", 1)[0])
+    start = claim.index("While you hold the bead")
+    return claim[start:claim.index("A successful claim is authorization", start)]
+
+
+def test_lease_verb_is_named_where_the_lease_is_first_mentioned() -> None:
+    text = flat(fragment())
+    first = re.search(r"\blease\b", text).start()
+    sentence = text[text.rindex(". ", 0, first) + 2:text.index(". ", first) + 1]
+    assert sentence == ("While you hold the bead, keep its 5-minute claim lease alive with "
+                        '`gc bd heartbeat "$CLAIMED_BEAD_ID"` every few minutes.')
+    assert first < text.index("BOUNDED WAIT")
+
+
+def test_bead_comments_are_part_of_its_spec_and_the_comment_verb_is_named() -> None:
+    held = holding_paragraph()
+    assert "The bead's comments are part of its spec (amendments and rulings arrive as comments)" in held
+    assert '`--json` alone omits them: read them with `gc bd show "$CLAIMED_BEAD_ID" --json --include-comments`' in held
+    assert ("carry what they change into every review brief you write (state the requirement; never "
+            "copy a comment's text into a file a pull request carries)") in held
+    # A classed review is never swapped for an unclassed prompt-file run.
+    assert "prompt-file form" not in held
+    assert ('add your own with `gc bd comment "$CLAIMED_BEAD_ID" --file /abs/path` '
+            "(or the text as one quoted argument)") in held
+    # A city can serve workflow beads from a store that refuses the comment verbs;
+    # a refused heartbeat is never a reason to go on (the claim may have moved).
+    # Only a verb the store does not serve is skipped; a failed read or write
+    # the bead requires follows the bead's failure contract (codex QUICK r4).
+    assert ("When gc refuses the comment read or `gc bd comment` because the bead's store does "
+            "not serve it (a city may serve workflow beads from such a store), go on without it, "
+            "say so in your close reason, and put a comment the bead requires there instead; any "
+            "other failure of a read or write the bead requires follows its failure contract. "
+            "A refused heartbeat is not that case: re-read the bead's status and assignee, "
+            "and stop by the reassignment rule of the bounded wait below when it is no longer yours.") in held
+    assert "refuses one of these verbs" not in held
+
+
+def test_bead_paths_are_absolute_or_rig_relative_and_a_missing_one_is_reported() -> None:
+    held = holding_paragraph()
+    assert ("Unless the bead or its formula says where a path is rooted, resolve a path in a bead "
+            "as written when it is absolute, and against the rig the bead "
+            "names when it is relative (for your own rig, your lane worktree); if it does not exist "
+            "there, name it in your READY or close reason and never guess another.") in held
 
 
 def test_blocked_wait_ruling_resumes_work_before_expiry() -> None:

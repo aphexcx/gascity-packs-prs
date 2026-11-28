@@ -525,3 +525,43 @@ def test_reader_rejects_forked_outcomes_and_conflicting_same_round_reviews(fixtu
     outcome = next(e for e in events if json.loads(e['payload'])['fact'] == 'outcome')
     with pytest.raises(ValueError, match='ambiguous'):
         module.summary(events + [{**outcome, 'id': 'a-different-root'}])
+
+
+HELP = PACK / "commands/provenance/help.md"
+
+
+def test_help_usage_lists_exactly_the_outcomes_the_recorder_accepts():
+    usage = [line for line in HELP.read_text(encoding="utf-8").splitlines()
+             if " provenance record " in line and "--outcome " in line]
+    words = [word for line in usage for word in line.split("--outcome ", 1)[1].split()[0].split("|")]
+    assert sorted(words) == sorted(module.OUTCOMES)
+
+
+def test_help_names_the_close_gate_words_the_recorder_has_no_form_for():
+    text = " ".join(HELP.read_text(encoding="utf-8").split())
+    assert "Record takes four outcomes: shipped (with a commit), no-op, blocked and abandoned." in text
+    assert ("The close gate (gc bd close) of a gc build whose gc help bd lists ran also accepts ran, "
+            "and shipped with an absolute artifact path in gc.work_commit; record has no form for either, "
+            "so such a close sets those keys with gc bd update and says so in its close reason.") in text
+    assert "ran" not in module.OUTCOMES
+
+
+@pytest.mark.parametrize('args, error', [
+    (['--outcome', 'ran'], "invalid choice: 'ran'"),
+    (['--outcome', 'shipped'], 'shipped code requires --commit'),
+    (['--outcome', 'shipped', '--commit', '/city/out/report.md'], 'full 40-character'),
+])
+def test_record_refuses_a_ran_close_and_a_shipped_artifact_path_today(fixture, args, error):
+    # The worker role's ran and artifact closes skip the recorder because of these refusals.
+    result = run(fixture, 'record', 'fixture-1', *args)
+    assert result.returncode != 0
+    assert error in result.stderr
+    assert data(fixture) == dict(events=[], metadata={}, calls=[], closed=False)
+
+
+def test_help_names_the_summary_output_as_one_plain_text_line():
+    text = " ".join(HELP.read_text(encoding="utf-8").split())
+    assert ("Summary prints one plain-text line, not JSON: [OUTCOME; ]PR N at SHA, gate VERDICT, read VERDICT. "
+            "OUTCOME appears only for a typed outcome other than shipped; a bead with no typed outcome "
+            "(a ran or artifact close) prints PR unknown at unknown, gate unknown, read unknown.") in text
+    assert module.summary([]) == "PR unknown at unknown, gate unknown, read unknown"

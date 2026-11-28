@@ -41,6 +41,26 @@ Use no bead id except one from immediately preceding claim. If terminal calls
 do not retain shell variables, substitute the exact saved values; never update
 or close with an empty id. Never choose or assign continuation work.
 
+While you hold the bead, keep its 5-minute claim lease alive with
+`gc bd heartbeat "$CLAIMED_BEAD_ID"` every few minutes. The bead's comments are
+part of its spec (amendments and rulings arrive as comments), and `--json`
+alone omits them: read them with
+`gc bd show "$CLAIMED_BEAD_ID" --json --include-comments`, carry what they
+change into every review brief you write (state the requirement; never copy a
+comment's text into a file a pull request carries), and add your own with
+`gc bd comment "$CLAIMED_BEAD_ID" --file /abs/path` (or the text as one quoted
+argument). When gc refuses the comment read or `gc bd comment` because the
+bead's store does not serve it (a city may serve workflow beads from such a
+store), go on without it, say so in your close reason, and put a comment the
+bead requires there instead; any other failure of a read or write the bead
+requires follows its failure contract. A refused heartbeat is not that case:
+re-read the bead's status and assignee, and stop by the reassignment rule of
+the bounded wait below when it is no longer yours. Unless the bead or its
+formula says where a path is rooted, resolve a path in a bead as written when
+it is absolute, and against the rig the bead names when it is relative (for
+your own rig, your lane worktree); if it does not exist there, name it in your
+READY or close reason and never guess another.
+
 A successful claim is authorization to execute immediately. You are operating
 autonomously: no human is watching in real time, so asking whether to proceed
 blocks the work. Do not stop for confirmation in a headless workflow. If
@@ -212,30 +232,46 @@ gc bd update "$CLAIMED_BEAD_ID" \
 ## Close
 
 `gc.outcome=pass|fail` is the run/step result; honor the bead's requested
-contract. `gc.work_outcome=shipped|no-op|blocked|abandoned` is the separate
-work record required for normal work beads:
+contract. `gc.work_outcome` is the separate work record required for normal
+work beads, one of the five words `gc bd close` accepts:
 
-- `shipped`: committed a change that satisfies the bead. Also set
-  `gc.work_commit` to that commit's SHA and `gc.work_branch` to a branch
-  containing it. Create a named work branch first if HEAD is detached.
-- `no-op`: no change was needed (already satisfied or duplicate); omit commit
-  and branch metadata.
-- `blocked` or `abandoned`: work could not be completed; record the reason
-  and perform the remaining acts of the bead's escalation contract after the
-  bounded wait of the BLOCKED paragraph when an infrastructure wall caused the
-  stop. The recipient notification happens at the start of that wait; do not
-  repeat it at close, and include any failed notification recorded by that
-  paragraph in the close reason.
+- `shipped`: a change that satisfies the bead. For a commit, set
+  `gc.work_commit` to its full 40-character SHA and `gc.work_branch` to a
+  branch containing it; create a named work branch first if HEAD is detached.
+  An artifact, a file the bead asked for that is not committed, at a durable
+  absolute path outside your lane worktree (never a temporary directory), sets
+  `gc.work_commit` to that path instead (no `gc.work_branch` is needed); say so
+  in the close reason.
+- `ran`: a completed run with no deliverable; its result goes in the close
+  reason. Omit commit and branch metadata.
+- `no-op`: no change was needed (already satisfied or duplicate); say why in
+  the close reason. Omit commit and branch metadata.
+- `blocked` or `abandoned`: work could not be completed; name the blocker
+  (`blocked`) or the reason (`abandoned`) in the close reason, and perform the
+  remaining acts of the bead's escalation contract after the bounded wait of
+  the BLOCKED paragraph when an infrastructure wall caused the stop. The
+  recipient notification happens at the start of that wait; do not repeat it
+  at close, and include any failed notification recorded by that paragraph in
+  the close reason.
+
+A bead that names any other `gc.work_outcome` word (for example
+`investigated`) sets `gc.work_outcome` to the one of these five that fits and
+follows that word's close below; say so in the close reason. A file the bead
+asked for that is not committed is a shipped artifact; a result that lives
+only in the close reason is `ran`.
 
 Do not substitute `gc.outcome` for `gc.work_outcome`. If no failure contract exists,
 record unrecoverable failure as `gc.outcome=fail` plus concise
 `gc.failure_class` and reason.
 
 Before closing a normal work bead, record every known fact using the pack's
-`provenance record` command (Beads 1.3.1 or later). Discover its binding once
-before any close write for **all four outcomes**: shipped, no-op, blocked,
-and abandoned. Try direct `/gascity` imports first, then `gc`, the nested
-binding used by derived packs. Transitive rows have no usable alias, and
+`provenance record` command (Beads 1.3.1 or later). It records four of the
+five words today: `shipped` with a commit, `no-op`, `blocked`, and
+`abandoned`. It has no `ran` and no form for a shipped artifact path; those
+two closes skip it, as below. Before any close write for one of the four it
+records, discover its binding once. Try direct `/gascity` imports first, then
+`gc`, the nested binding used by derived packs. Transitive rows have no usable
+alias, and
 `/gascity/roles` imports supply roles, not commands. Select by help content:
 generic help can exit successfully even when the command is unavailable.
 Run discovery in the same shell call as the record, or save the printed binding
@@ -265,7 +301,9 @@ The command writes one typed record per commit, PR, review, evidence directory,
 and work outcome.
 It also writes compatibility metadata and never closes the bead. A recording
 failure stops the close; retry safely after resolving it, or record the
-bead's failure contract. Do not silently close with metadata alone.
+bead's failure contract. Do not silently close with metadata alone. Only the
+`ran` and artifact closes below close on metadata alone, and their close
+reason says so.
 
 For code delivery, set `PR_URL` to the canonical PR URL when one exists (empty
 otherwise), `EVIDENCE_DIR` to the absolute evidence directory when available,
@@ -327,6 +365,29 @@ that opens the shipped recipe, then run
 (add known PR/review/evidence flags), then use
 `--set-metadata 'gc.outcome=pass'` and `--set-metadata 'gc.work_outcome=no-op'`
 on the update instead.
+
+If `gc help bd` does not list `ran`, your gc build's gate takes the other four
+words and needs a commit and a branch for `shipped`: close a run or an
+artifact by the `no-op` close above instead, with `gc.outcome` as the bead's
+result contract asks, and name the result or the file in the close reason.
+Otherwise, for a `ran` close, or a shipped artifact, the recorder refuses
+both: skip its discovery and record, and do not run the shipped recipe.
+Instead:
+
+1. Run one `gc bd update "$CLAIMED_BEAD_ID"` that sets `gc.outcome` as the
+   bead's result contract asks (`pass` when the run met it) and
+   `--set-metadata 'gc.work_outcome=ran'`, or
+   `--set-metadata 'gc.work_outcome=shipped'` with
+   `--set-metadata "gc.work_commit=$ARTIFACT_PATH"` (`ARTIFACT_PATH` holds the
+   file's absolute path, starting with `/`). The same update sets `gc.pr` to
+   the PR this close names, or unsets it (`--unset-metadata gc.pr`) when it
+   names none, and for `ran` unsets `gc.work_commit`.
+2. Release a branch only when you hold one in your lane
+   (`git -C "$GC_DIR" branch --show-current` prints a name): detach and verify
+   the release as the shipped recipe does.
+3. Close with a reason that gives the run's result or names the file, says
+   the recorder has no form for it, and, when `provenance summary` still
+   shows an earlier close, says that close is superseded.
 
 For blocked or abandoned work, first run that same non-empty binding guard,
 then record the outcome with the same command and known facts before its
