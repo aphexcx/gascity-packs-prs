@@ -45,6 +45,8 @@ type boundAct struct {
 //	  body-003. The owner is the last act.
 //	held_fold: body-002 and its folded edit rev-002, still held: no turn and
 //	  no refusal.
+//	held_two_folds: body-002 and two folded edits, rev-a then rev-b, still
+//	  held.
 func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []boundAct) {
 	t.Helper()
 	f := windowSetup(t, "8s")
@@ -65,19 +67,28 @@ func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []b
 	f.now = f.now.Add(time.Second)
 	first := f.send(t, 2, "message.created", nil)
 	held(first, "body-002")
-	if layout == "fold_then_message" || layout == "held_fold" {
+	fold := func(text string) {
+		t.Helper()
 		f.now = f.now.Add(time.Second)
 		edit := f.send(t, 2, "message.updated", func(m *api.Message) {
-			m.Text, m.LastUpdateTime = "rev-002", f.now.Format(time.RFC3339Nano)
+			m.Text, m.LastUpdateTime = text, f.now.Format(time.RFC3339Nano)
 		})
 		c := f.l.Changes[edit.Name+"#updated#"+edit.LastUpdateTime]
 		if c == nil || c.Status != "committed" || c.Reason != "coalesced" || c.MemberOf != first.Name {
 			t.Fatalf("the edit was not folded into its creation: %+v", c)
 		}
-		acts = append(acts, boundAct{c.ID, "rev-002", c.Created, edit})
-		if layout == "held_fold" {
-			return f, acts
-		}
+		acts = append(acts, boundAct{c.ID, text, c.Created, edit})
+	}
+	switch layout {
+	case "held_fold":
+		fold("rev-002")
+		return f, acts
+	case "held_two_folds":
+		fold("rev-a")
+		fold("rev-b")
+		return f, acts
+	case "fold_then_message":
+		fold("rev-002")
 	}
 	if layout != "message_then_edit" {
 		f.now = f.now.Add(time.Second)
@@ -256,8 +267,17 @@ func TestHistoryBoundAcrossARefusedMergedTurn(t *testing.T) {
 		// An edit folded into its message's held creation, the bound between
 		// them. The creation is retired; the edit is posted on its own.
 		{name: "edit_folded_into_a_held_creation", layout: "held_fold", bound: at(1, 0), retired: []int{0}, posted: []int{1}, turns: 1},
+		// Two edits folded into the creation, both after the bound. The later
+		// one carries the message's text; the earlier was superseded by it.
+		{name: "two_edits_folded_into_a_held_creation", layout: "held_two_folds", bound: at(1, 0), retired: []int{0}, posted: []int{2}, turns: 1},
 		// The same fold inside a refused turn.
 		{name: "edit_folded_into_a_refused_turn", layout: "fold_then_message", bound: at(1, 0), retired: []int{0}, posted: []int{1, 2}, turns: 2},
+		// The fold inside a turn whose POST may have landed: the edit's text
+		// may be in front of the agent already, so it stays folded.
+		{name: "edit_folded_into_a_turn_whose_post_may_have_landed", layout: "fold_then_message", bound: at(1, 0), retired: []int{0},
+			before: func(t *testing.T, f *windowFixture, _ []boundAct) {
+				boundOwner(f.l).Reason = ""
+			}},
 		// A POST of the turn may have landed: its answer never came. The
 		// turn is not split. It is retired as before, into an operator's
 		// notice, and none of its text is posted or kept for a replay.
