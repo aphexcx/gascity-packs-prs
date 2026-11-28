@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/token"
 	"golang.org/x/oauth2"
@@ -37,6 +38,7 @@ type Options struct {
 	Logger *WarningLog
 	// Owners are addresses (user@example.com) or Chat ids (users/123).
 	Owners []string
+	Book   *owners.Book
 	// OrganizationDomain is the organization's mail domain; empty means unknown.
 	OrganizationDomain string
 	// Lookup resolves users/<id> to an address; nil means no directory.
@@ -77,6 +79,8 @@ func New(o Options) *Resolver {
 	}
 	return r
 }
+
+func (r *Resolver) Book() *owners.Book { return owners.New(nil, nil) }
 
 // Speaker is the frame's view of a sender. identityDomain is the Workspace
 // domain id of the identity itself ("" when not yet known).

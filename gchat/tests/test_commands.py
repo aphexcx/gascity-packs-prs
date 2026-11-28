@@ -228,6 +228,44 @@ class ProxyCommandsTest(ProxyFixture):
         self.assertIn("not an owner", result.stdout)
         self.assertEqual(self.requests[-1][3], {"space": "spaces/room", "yes": "spaces/dm/messages/a"})
 
+    def test_owners_takes_one_removal_and_checks_its_shape(self):
+        for args, reason in [
+            (("--remove", "users/1001"), "--remove takes --request or --yes"),
+            (("--remove", "users/1001", "--remove", "users/1002", "--request"), "--remove must be supplied once"),
+            (("--remove", "person@example.com", "--request"), "users/ID"),
+            (("--remove", "users/10a1", "--request"), "users/ID"),
+            (("--request",), "add --remove"),
+            (("--remove", "users/1001", "--request", "--yes", "spaces/dm/messages/a"), "choose one"),
+            (("--all",), "unknown argument"),
+        ]:
+            with self.subTest(args=args):
+                result = self.run_command("owners", *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(reason, result.stderr)
+                self.assertEqual(self.requests, [])
+
+    def test_owners_lists_removes_and_never_adds(self):
+        self.respond("/owners", {"result": "owners", "owners": [{"id": "users/1001", "since": "2026-01-02T03:04:05Z", "by": "page-code", "claim": "c" * 32}]})
+        result = self.run_command("owners")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][3], {})
+        self.respond("/owners", {"result": "requested", "code": "EXAMPLE", "expires_at": "2026-01-02T00:00:00Z"})
+        result = self.run_command("owners", "--remove", "users/1001", "--request")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][3], {"remove": "users/1001", "request": True})
+        self.respond("/owners", {"result": "door_unavailable", "message": "[gchat owners: the box did NOT confirm this removal.]"})
+        result = self.run_command("owners", "--remove", "users/1001", "--yes", "spaces/dm/messages/a")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("did NOT confirm", result.stdout)
+        self.assertEqual(self.requests[-1][3], {"remove": "users/1001", "yes": "spaces/dm/messages/a"})
+        self.respond("/owners", {"result": "add_by_page", "message": "A new owner comes by a one-time code from the owner page."})
+        for args in (("--add",), ("--add", "users/1002"), ("--remove", "users/1001", "--add", "--request")):
+            with self.subTest(args=args):
+                result = self.run_command("owners", *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("owner page", result.stdout)
+                self.assertEqual(self.requests[-1][3], {"add": True})
+
     def test_reaction_preserves_session_attribution(self):
         self.env["GC_SESSION_ID"] = "example-session"
         self.respond("/react", {"ok": True})

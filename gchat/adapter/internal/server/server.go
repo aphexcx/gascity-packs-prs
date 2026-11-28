@@ -31,6 +31,7 @@ import (
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/markdown"
 	"gchat-adapter/internal/neversilent"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/provenance"
 	"gchat-adapter/internal/stopwatch"
 	"gchat-adapter/internal/wire"
@@ -86,6 +87,7 @@ type Options struct {
 	// It runs under the state gate and must tolerate retries: after an error,
 	// the same /state request retries reconciliation without replacing the ledger.
 	StateChanged func(context.Context) error
+	Owners       *owners.Book
 }
 
 type Server struct {
@@ -206,6 +208,10 @@ func (s *Server) clients() (*chat.Client, *gcclient.Client) {
 	return s.chat, s.gc
 }
 func (s *Server) configuration() config.Config { s.mu.RLock(); defer s.mu.RUnlock(); return s.cfg }
+
+func (s *Server) ownerBook(cfg config.Config) *owners.Book {
+	return owners.New(cfg.Secrets.Owners, nil)
+}
 
 func (s *Server) Listen() (net.Listener, error) {
 	ln, err := net.Listen("unix", s.configuration().Secrets.ServiceSocket)

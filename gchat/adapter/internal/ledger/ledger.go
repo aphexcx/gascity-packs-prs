@@ -64,6 +64,8 @@ type Ledger struct {
 	Counters       map[string]int64         `json:"counters"`
 	JoinRequests   map[string]*JoinRequest  `json:"join_requests,omitempty"`
 	JoinAttempts   []JoinAttempt            `json:"join_attempts,omitempty"`
+	OwnerRequests  map[string]*OwnerRequest `json:"owner_requests,omitempty"`
+	OwnerEvents    []OwnerEvent             `json:"owner_events,omitempty"`
 	// Media holds attachment links and cleanup obligations introduced after
 	// 0.5.0. Old tombstones alone never enroll files for cleanup at an update.
 	Media map[string]*MediaState `json:"media,omitempty"`

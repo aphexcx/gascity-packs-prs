@@ -15,11 +15,14 @@ import (
 
 	"gchat-adapter/internal/app"
 	"gchat-adapter/internal/config"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/token"
 )
 
 // Version is set by the build's -ldflags.
 var Version = "dev"
+
+var claimBook = func() *owners.Book { return owners.New(nil, nil) }
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
