@@ -1,0 +1,98 @@
+== m1: the proof judges an act by the turn's time, not its own (inbound/history.go)
+--- head/inbound/history.go
++++ m1/inbound/history.go
+@@ -267 +267 @@
+-	return !beforeBound(c.OriginalCreated(), bound) && (c.ActAt.IsZero() || !c.ActAt.Before(bound))
++	return !beforeBound(c.Created, bound) && (c.ActAt.IsZero() || !c.ActAt.Before(bound))
+
+== m2: a time at the bound counts as before it (inbound/history.go)
+--- head/inbound/history.go
++++ m2/inbound/history.go
+@@ -251 +251 @@
+-	return at.IsZero() || at.Before(bound)
++	return at.IsZero() || !at.After(bound)
+
+== m3: the flush does not keep the owner's own time (inbound/coalesce.go)
+--- head/inbound/coalesce.go
++++ m3/inbound/coalesce.go
+@@ -228 +228 @@
+-				c.MemberCreated, c.Created = c.OriginalCreated(), acts[0].Created
++				c.Created = acts[0].Created
+
+== m4: a delivery that may have landed counts as rewritable (inbound/history.go)
+--- head/inbound/history.go
++++ m4/inbound/history.go
+@@ -258 +258 @@
+-	return c.Status == "intent" && (c.Attempts == 0 || c.Reason == reasonRetry)
++	return c.Status == "intent"
+
+== m5: the split does not release the members (inbound/history.go)
+--- head/inbound/history.go
++++ m5/inbound/history.go
+@@ -313 +313 @@
+-			m.Status, m.Reason, m.MemberOf = "intent", "", ""
++			_ = m
+
+== m6: the split leaves every act at the turn's time (inbound/history.go)
+--- head/inbound/history.go
++++ m6/inbound/history.go
+@@ -307 +307 @@
+-			created = m.OriginalCreated()
++			created = turn
+
+== m7: the refresh's new owner does not keep its own time (inbound/coalesce_retry.go)
+--- head/inbound/coalesce_retry.go
++++ m7/inbound/coalesce_retry.go
+@@ -130 +130 @@
+-			c.MemberEvent, c.MemberKind, c.MemberCreated = copy.Event, copy.Kind, copy.Created
++			c.MemberEvent, c.MemberKind = copy.Event, copy.Kind
+
+== m8: the refresh copies the turn's time, not the act's (inbound/coalesce_retry.go)
+--- head/inbound/coalesce_retry.go
++++ m8/inbound/coalesce_retry.go
+@@ -43 +43 @@
+-		copy.Event, copy.Kind, copy.Created = member.OriginalEvent(), member.OriginalKind(), member.OriginalCreated()
++		copy.Event, copy.Kind, copy.Created = member.OriginalEvent(), member.OriginalKind(), member.Created
+
+== m9: the split takes the owner's own time for the turn's (the first round's rule) (inbound/history.go)
+--- head/inbound/history.go
++++ m9/inbound/history.go
+@@ -278 +278 @@
+-	if len(owner.Members) == 0 || !rewritable(owner) || owner.Fragment || !beforeBound(owner.Created, bound) {
++	if len(owner.Members) == 0 || !rewritable(owner) || owner.Fragment || !beforeBound(owner.OriginalCreated(), bound) {
+
+== m10: an older state file's owner reads as the turn's time alone (ledger/ledger.go)
+--- head/ledger/ledger.go
++++ m10/ledger/ledger.go
+@@ -242,3 +241,0 @@
+-	if len(c.Members) > 0 && c.ActAt.After(c.Created) {
+-		return c.ActAt
+-	}
+
+== m11: the proof ignores Chat's time for the act (inbound/history.go)
+--- head/inbound/history.go
++++ m11/inbound/history.go
+@@ -267 +267 @@
+-	return !beforeBound(c.OriginalCreated(), bound) && (c.ActAt.IsZero() || !c.ActAt.Before(bound))
++	return !beforeBound(c.OriginalCreated(), bound)
+
+== m12: a turn with a fragment in a terminal is split too (inbound/history.go)
+--- head/inbound/history.go
++++ m12/inbound/history.go
+@@ -278 +278 @@
+-	if len(owner.Members) == 0 || !rewritable(owner) || owner.Fragment || !beforeBound(owner.Created, bound) {
++	if len(owner.Members) == 0 || !rewritable(owner) || !beforeBound(owner.Created, bound) {
+
+== m13: a kept creation loses its fold's kind (inbound/history.go)
+--- head/inbound/history.go
++++ m13/inbound/history.go
+@@ -318 +318 @@
+-				m.Kind, m.MemberKind = "coalesced", kind
++				_ = kind
+
+== m14: only the owner gets its fold's kind back (inbound/history.go)
+--- head/inbound/history.go
++++ m14/inbound/history.go
+@@ -317 +317 @@
+-			if foldedInto(edit, m) {
++			if m == owner && foldedInto(edit, m) {

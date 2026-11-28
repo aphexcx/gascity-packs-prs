@@ -1,0 +1,11 @@
+# tree: 366655eda3a2409fd863acd51b930af3c1227415 with the base overlay (main 926f17912914d9470b4ef477cc65e9fb70792b56)
+# start: 2026-11-28T14:01:17Z  load: 11.08 9.69 10.10
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^(TestObservedIdentityReplacesContradictedLedgerIdentity|TestShutdownCheckpointsBeforeDrainingStalledRequestBody)$' ./internal/app
+--- PASS: TestObservedIdentityReplacesContradictedLedgerIdentity (2.17s)
+--- PASS: TestShutdownCheckpointsBeforeDrainingStalledRequestBody (3.27s)
+    --- PASS: TestShutdownCheckpointsBeforeDrainingStalledRequestBody/bounded (2.13s)
+    --- PASS: TestShutdownCheckpointsBeforeDrainingStalledRequestBody/post-drain-save (1.14s)
+PASS
+ok  	gchat-adapter/internal/app	5.679s
+exit=0
+# end: 2026-11-28T14:01:35Z  load: 11.85 9.96 10.19

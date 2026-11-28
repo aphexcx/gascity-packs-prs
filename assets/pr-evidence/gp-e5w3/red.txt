@@ -1,0 +1,84 @@
+# head: 01cc478c282b9e89b9ef724186ddd1acb48d4ded; red tree: the head with gchat/adapter/internal/inbound/coalesce.go, coalesce_retry.go, history.go and gchat/adapter/internal/ledger/ledger.go as at main 926f17912914d9470b4ef477cc65e9fb70792b56 (overlay), so the new test file is the only difference from main
+# overlay: each file <- git show origin/main:<path>
+# start: 2026-11-28T14:23:01Z  load: 6.95 7.12 8.04
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/red.json -v -run '^TestHistoryBoundAcrossARefusedMergedTurn$' ./internal/inbound
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/before_the_first_act
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/at_the_first_act
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/between_the_acts
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m003, recorded 10:00:02.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=0, want 1: []
+    coalesce_refused_bound_test.go:433: "body-003" was posted 0 times, want once: []
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/at_the_second_act
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m003, recorded 10:00:02.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=0, want 1: []
+    coalesce_refused_bound_test.go:433: "body-003" was posted 0 times, want once: []
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/after_the_last_act
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/owner_before_the_bound
+    coalesce_refused_bound_test.go:424: turns after the bound=0, want 1: []
+    coalesce_refused_bound_test.go:433: "edit-007" was posted 0 times, want once: []
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/restart_between_the_refusal_and_the_bound
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m003, recorded 10:00:02.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=0, want 1: []
+    coalesce_refused_bound_test.go:433: "body-003" was posted 0 times, want once: []
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/state_file_without_the_owners_time
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m003, recorded 10:00:02.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=0, want 2: []
+    coalesce_refused_bound_test.go:433: "body-003" was posted 0 times, want once: []
+    coalesce_refused_bound_test.go:433: "edit-007" was posted 0 times, want once: []
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_a_later_owner
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m003, recorded 10:00:02.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=1, want 2: [spaces/room/messages/m004#deleted: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m004]\ndeleted"]
+    coalesce_refused_bound_test.go:433: "body-003" was posted 0 times, want once: [spaces/room/messages/m004#deleted: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m004]\ndeleted"]
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/owner_chat_dates_before_the_bound
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_an_owner_chat_dates_before_the_bound
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/owner_recorded_before_the_bound_chat_dates_after
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_an_owner_recorded_before_the_bound
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/first_act_deleted_after_the_refusal
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m004, recorded 10:00:03.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=1, want 3: [spaces/room/messages/m002#deleted: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\ndeleted"]
+    coalesce_refused_bound_test.go:433: "body-003" was posted 0 times, want once: [spaces/room/messages/m002#deleted: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\ndeleted"]
+    coalesce_refused_bound_test.go:433: "body-004" was posted 0 times, want once: [spaces/room/messages/m002#deleted: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\ndeleted"]
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/edit_of_the_first_act_after_the_refusal
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m004, recorded 10:00:03.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=1, want 3: [spaces/room/messages/m002#updated#2026-11-01T10:00:13Z: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\nedited: rev-002"]
+    coalesce_refused_bound_test.go:433: "body-003" was posted 0 times, want once: [spaces/room/messages/m002#updated#2026-11-01T10:00:13Z: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\nedited: rev-002"]
+    coalesce_refused_bound_test.go:433: "body-004" was posted 0 times, want once: [spaces/room/messages/m002#updated#2026-11-01T10:00:13Z: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\nedited: rev-002"]
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/kept_owner_keeps_its_fold
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m003, recorded 10:00:02.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=0, want 1: []
+    coalesce_refused_bound_test.go:433: "rev-003" was posted 0 times, want once: []
+    coalesce_refused_bound_test.go:331: the kept owner lost its fold's kind: &{ID:spaces/room/messages/m003 Space:spaces/room Message:spaces/room/messages/m003 Kind:message.created Status:committed ReceiptID: Attempts:4 Created:2026-11-01 10:00:01 +0000 UTC Event:{"provider_message_id":"spaces/room/messages/m003","conversation":{"scope_id":"examplecity","provider":"gchat","account_id":"example","conversation_id":"spaces/room","kind":"room"},"actor":{"id":"users/456","display_name":"Reader","is_bot":false},"text":"[from: Reader \u003c456@example.com\u003e | organization | item gchat:spaces/room/messages/m003]","reply_to_message_id":"spaces/room/threads/t003","received_at":"2026-11-01T10:00:03Z"} Reason:local CatchUp:false NoticeResolved:false NoticeAt:2026-11-01 10:00:12 +0000 UTC NoticeDelivered:false ProvenanceFramed:true HeldUntil:0001-01-01 00:00:00 +0000 UTC ActAt:2026-11-01 10:00:02 +0000 UTC Members:[] MemberOf: MemberEvent: MemberKind: MemberRevision:0001-01-01 00:00:00 +0000 UTC NextAttempt:0001-01-01 00:00:00 +0000 UTC Posted:2026-11-01 10:00:12 +0000 UTC Cause:before_history_floor Fragment:false Raised:0001-01-01 00:00:00 +0000 UTC RaisedEnd:0001-01-01 00:00:00 +0000 UTC}
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/kept_member_keeps_its_fold
+    coalesce_refused_bound_test.go:406: spaces/room/messages/m004, recorded 10:00:04.000, at or after the bound: retired
+    coalesce_refused_bound_test.go:424: turns after the bound=1, want 3: [spaces/room/messages/m002#deleted: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\ndeleted"]
+    coalesce_refused_bound_test.go:433: "rev-003" was posted 0 times, want once: [spaces/room/messages/m002#deleted: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\ndeleted"]
+    coalesce_refused_bound_test.go:433: "body-004" was posted 0 times, want once: [spaces/room/messages/m002#deleted: "[from: Reader <456@example.com> | organization | item gchat:spaces/room/messages/m002]\ndeleted"]
+    coalesce_refused_bound_test.go:348: the kept member lost its fold's kind: &{ID:spaces/room/messages/m003 Space:spaces/room Message:spaces/room/messages/m003 Kind:message.created Status:committed ReceiptID: Attempts:0 Created:2026-11-01 10:00:02 +0000 UTC Event:{"provider_message_id":"spaces/room/messages/m003","conversation":{"scope_id":"examplecity","provider":"gchat","account_id":"example","conversation_id":"spaces/room","kind":"room"},"actor":{"id":"users/456","display_name":"Reader","is_bot":false},"text":"[from: Reader \u003c456@example.com\u003e | organization | item gchat:spaces/room/messages/m003]\nrev-003","reply_to_message_id":"spaces/room/threads/t003","received_at":"2026-11-01T10:00:03Z"} Reason:coalesced CatchUp:false NoticeResolved:false NoticeAt:0001-01-01 00:00:00 +0000 UTC NoticeDelivered:false ProvenanceFramed:true HeldUntil:0001-01-01 00:00:00 +0000 UTC ActAt:2026-11-01 10:00:02 +0000 UTC Members:[] MemberOf:spaces/room/messages/m004 MemberEvent: MemberKind: MemberRevision:0001-01-01 00:00:00 +0000 UTC NextAttempt:0001-01-01 00:00:00 +0000 UTC Posted:0001-01-01 00:00:00 +0000 UTC Cause: Fragment:false Raised:0001-01-01 00:00:00 +0000 UTC RaisedEnd:0001-01-01 00:00:00 +0000 UTC}
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/fragment_in_a_terminal
+=== RUN   TestHistoryBoundAcrossARefusedMergedTurn/post_may_have_landed
+--- FAIL: TestHistoryBoundAcrossARefusedMergedTurn (0.40s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/before_the_first_act (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/at_the_first_act (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/between_the_acts (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/at_the_second_act (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/after_the_last_act (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/owner_before_the_bound (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/restart_between_the_refusal_and_the_bound (0.21s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/state_file_without_the_owners_time (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_a_later_owner (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/owner_chat_dates_before_the_bound (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_an_owner_chat_dates_before_the_bound (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/owner_recorded_before_the_bound_chat_dates_after (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/refreshed_to_an_owner_recorded_before_the_bound (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/first_act_deleted_after_the_refusal (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/edit_of_the_first_act_after_the_refusal (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/kept_owner_keeps_its_fold (0.01s)
+    --- FAIL: TestHistoryBoundAcrossARefusedMergedTurn/kept_member_keeps_its_fold (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/fragment_in_a_terminal (0.01s)
+    --- PASS: TestHistoryBoundAcrossARefusedMergedTurn/post_may_have_landed (0.01s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.681s
+FAIL
+exit=1
+# end: 2026-11-28T14:23:08Z  load: 7.32 7.20 8.05

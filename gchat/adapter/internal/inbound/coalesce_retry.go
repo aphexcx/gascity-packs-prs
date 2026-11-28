@@ -40,8 +40,8 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) m
 			return mergedChanged
 		}
 		copy := *member
-		copy.Event, copy.Kind = member.OriginalEvent(), member.OriginalKind()
-		copy.MemberEvent, copy.MemberKind, copy.MemberOf, copy.Members = "", "", "", nil
+		copy.Event, copy.Kind, copy.Created = member.OriginalEvent(), member.OriginalKind(), member.OriginalCreated()
+		copy.MemberEvent, copy.MemberKind, copy.MemberOf, copy.Members, copy.MemberCreated = "", "", "", nil, time.Time{}
 		if superseded(l, member) {
 			changed = true
 			state := l.Messages[member.Message]
@@ -124,10 +124,10 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) m
 		ids = append(ids, copy.ID)
 		c := l.Changes[copy.ID]
 		c.Event, c.Kind, c.MemberRevision = copy.Event, copy.Kind, copy.MemberRevision
-		c.MemberEvent, c.MemberKind, c.MemberOf, c.Members = "", "", anchor, nil
+		c.MemberEvent, c.MemberKind, c.MemberOf, c.Members, c.MemberCreated = "", "", anchor, nil, time.Time{}
 		c.HeldUntil = time.Time{}
 		if c.ID == anchor {
-			c.MemberEvent, c.MemberKind = copy.Event, copy.Kind
+			c.MemberEvent, c.MemberKind, c.MemberCreated = copy.Event, copy.Kind, copy.Created
 			c.Event, c.Kind, c.MemberOf = string(raw), "coalesced", ""
 			c.Status, c.Created = "intent", delivery.Created
 			if anchor != owner.ID {

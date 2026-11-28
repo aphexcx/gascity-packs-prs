@@ -1,0 +1,91 @@
+# head run 1, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded; start: 2026-11-28T14:38:27Z  load: 6.68 6.02 6.76
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestUnansweredPostOrder$' ./internal/inbound
+--- PASS: TestUnansweredPostOrder (0.72s)
+    --- PASS: TestUnansweredPostOrder/delivered (0.26s)
+    --- PASS: TestUnansweredPostOrder/failed (0.24s)
+    --- PASS: TestUnansweredPostOrder/pending (0.23s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.949s
+exit=0
+# head run 2, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded; start: 2026-11-28T14:38:33Z  load: 6.71 6.04 6.76
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestUnansweredPostOrder$' ./internal/inbound
+--- PASS: TestUnansweredPostOrder (0.71s)
+    --- PASS: TestUnansweredPostOrder/delivered (0.24s)
+    --- PASS: TestUnansweredPostOrder/failed (0.24s)
+    --- PASS: TestUnansweredPostOrder/pending (0.23s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.904s
+exit=0
+# head run 3, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded; start: 2026-11-28T14:38:39Z  load: 6.49 6.00 6.74
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestUnansweredPostOrder$' ./internal/inbound
+--- PASS: TestUnansweredPostOrder (0.71s)
+    --- PASS: TestUnansweredPostOrder/delivered (0.25s)
+    --- PASS: TestUnansweredPostOrder/failed (0.23s)
+    --- PASS: TestUnansweredPostOrder/pending (0.22s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.901s
+exit=0
+# base run 1, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded with the base overlay; start: 2026-11-28T14:38:45Z  load: 6.29 5.97 6.73
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestUnansweredPostOrder$' ./internal/inbound
+--- PASS: TestUnansweredPostOrder (3.78s)
+    --- PASS: TestUnansweredPostOrder/delivered (3.29s)
+    --- PASS: TestUnansweredPostOrder/failed (0.25s)
+    --- PASS: TestUnansweredPostOrder/pending (0.23s)
+PASS
+ok  	gchat-adapter/internal/inbound	4.020s
+exit=0
+# base run 2, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded with the base overlay; start: 2026-11-28T14:38:55Z  load: 6.45 6.02 6.74
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestUnansweredPostOrder$' ./internal/inbound
+--- PASS: TestUnansweredPostOrder (0.83s)
+    --- PASS: TestUnansweredPostOrder/delivered (0.30s)
+    --- PASS: TestUnansweredPostOrder/failed (0.27s)
+    --- PASS: TestUnansweredPostOrder/pending (0.26s)
+PASS
+ok  	gchat-adapter/internal/inbound	1.034s
+exit=0
+# base run 3, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded with the base overlay; start: 2026-11-28T14:39:01Z  load: 6.41 6.02 6.73
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestUnansweredPostOrder$' ./internal/inbound
+--- PASS: TestUnansweredPostOrder (0.74s)
+    --- PASS: TestUnansweredPostOrder/delivered (0.24s)
+    --- PASS: TestUnansweredPostOrder/failed (0.26s)
+    --- PASS: TestUnansweredPostOrder/pending (0.23s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.948s
+exit=0
+# head run 1, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded; start: 2026-11-28T14:39:08Z  load: 6.78 6.11 6.76
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestTokenReloadDrainsPublishBeforeRebuilding$' ./internal/app
+--- PASS: TestTokenReloadDrainsPublishBeforeRebuilding (3.25s)
+PASS
+ok  	gchat-adapter/internal/app	3.478s
+exit=0
+# head run 2, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded; start: 2026-11-28T14:39:16Z  load: 8.16 6.41 6.86
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestTokenReloadDrainsPublishBeforeRebuilding$' ./internal/app
+--- PASS: TestTokenReloadDrainsPublishBeforeRebuilding (3.24s)
+PASS
+ok  	gchat-adapter/internal/app	3.456s
+exit=0
+# head run 3, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded; start: 2026-11-28T14:39:25Z  load: 7.92 6.41 6.85
+$ verify -C gchat/adapter go test -count=1 -v -run '^TestTokenReloadDrainsPublishBeforeRebuilding$' ./internal/app
+--- PASS: TestTokenReloadDrainsPublishBeforeRebuilding (3.26s)
+PASS
+ok  	gchat-adapter/internal/app	3.465s
+exit=0
+# base run 1, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded with the base overlay; start: 2026-11-28T14:39:34Z  load: 8.32 6.55 6.90
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestTokenReloadDrainsPublishBeforeRebuilding$' ./internal/app
+--- PASS: TestTokenReloadDrainsPublishBeforeRebuilding (3.24s)
+PASS
+ok  	gchat-adapter/internal/app	3.477s
+exit=0
+# base run 2, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded with the base overlay; start: 2026-11-28T14:39:43Z  load: 8.27 6.59 6.91
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestTokenReloadDrainsPublishBeforeRebuilding$' ./internal/app
+--- PASS: TestTokenReloadDrainsPublishBeforeRebuilding (3.26s)
+PASS
+ok  	gchat-adapter/internal/app	3.471s
+exit=0
+# base run 3, tree 01cc478c282b9e89b9ef724186ddd1acb48d4ded with the base overlay; start: 2026-11-28T14:39:52Z  load: 8.20 6.64 6.92
+$ verify -C gchat/adapter go test -count=1 -overlay <scratch>/base/base.json -v -run '^TestTokenReloadDrainsPublishBeforeRebuilding$' ./internal/app
+--- PASS: TestTokenReloadDrainsPublishBeforeRebuilding (3.25s)
+PASS
+ok  	gchat-adapter/internal/app	3.457s
+exit=0
+# end: 2026-11-28T14:40:01Z  load: 7.94 6.61 6.91

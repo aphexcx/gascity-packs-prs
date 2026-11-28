@@ -1,0 +1,18 @@
+# gp-e5w3 Codex round 1, at 6640237a
+
+The lane's own Codex round ran through the city's gate script on the hub: class STANDARD, the whole change against main 926f1791, and REVIEW.md from main. Its answer is codex-r1.txt (model gpt-6.2-astra, a pristine worktree at the head, no tests run in its sandbox).
+
+Verdict: BLOCK, CRITICAL 1 / MAJOR 6 / MINOR 1.
+
+The changes after it are 517ef179 (rows) and 01cc478c (code). The split was rebuilt on positive proof: an act leaves a turn with its own time only when it was recorded at or after the bound and Chat dates it there too. Every other act keeps the turn's time and is retired with it, as at main. The unfold of folded edits was removed.
+
+| # | Codex grade | Finding | Outcome |
+| --- | --- | --- | --- |
+| 1 | CRITICAL, NEW | A released member or unfolded edit is judged by its recorded time. A recorded time after the bound can override a history decision that catch-up made from Chat's time for the act. The late-owner row expected a message Chat dates before the bound to be posted, against the README's act-time rule. | Fixed in 01cc478c. `afterBound` also needs Chat's time (ActAt, the act time saved at recording, which is what the queue judges by) to be at or after the bound. The unfold is gone. Rows `owner_chat_dates_before_the_bound` and `refreshed_to_an_owner_chat_dates_before_the_bound` now expect retirement. Mutant m11 (the proof without Chat's time) fails both. |
+| 2 | MAJOR, NEW | A turn answered "partial" (a fragment in a terminal) was split. Its acts then lost the fragment mark and the four-POST budget. | Fixed in 01cc478c. Such a turn is not split and is retired whole, as at main. Row `fragment_in_a_terminal`, mutant m12. |
+| 3 | MAJOR, NEW | An unfolded edit could be posted twice. A replayed turn that keeps the folded text stays whole, while the edit is released as well. | Gone with the unfold (01cc478c). |
+| 4 | MAJOR, PRESENT AT BASE | An unresolved merged turn, after a definite refusal (HTTP 400), is retired whole. Its later act can no longer be replayed. | Left for the mayor, as in review round 2 finding 1. An operator owns such a turn. Keeping its later act needs a notice of its own, with its own mail. |
+| 5 | MAJOR, NEW | After a rollback, a released creation that is not the owner and carries a folded edit had lost hold's kind for a fold (the refresh had reset it). | Fixed in 01cc478c. Every creation the split keeps that carries a fold, owner or member, gets the kind back. Row `kept_member_keeps_its_fold`, mutants m13 and m14. |
+| 6 | MAJOR, PRESENT AT BASE | In a state file written by main, a late owner that Chat dates before the join is retired, though it came inside the first read's reachback. | Not changed: left for the mayor. Under the README's act-time rule, and `HistorySkipCause`, an act Chat dates before the bound is history. The change keeps main's result for it. Whether the reachback should make it eligible is a question about the bound itself, outside this change. |
+| 7 | MAJOR, NEW | The split changes the kept owner's Created, which is also the raise mail's life. A waiting mail in flight during the split goes unmarked, and a second can follow under a new key. | Kept, as a judgment for the mayor (review round 1 note 7). The change of Created is what stops a pass that read the old turn from POSTing its text: saveAttempt checks it. The second mail needs a waiting mail in flight during a first read. Nothing is lost or posted twice to the agent. |
+| 8 | MINOR, NEW | An unfolded edit kept the folded wire text, without the adapter's "edited:" label. | Gone with the unfold (01cc478c). |
