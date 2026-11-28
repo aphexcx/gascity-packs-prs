@@ -67,7 +67,10 @@ func TestChatOwnerEventsKeepTheNewest(t *testing.T) {
 	for i := range OwnerEventLimit + 7 {
 		l.AddOwnerEvent(OwnerEvent{Event: "removed", Owner: "users/1", Message: "spaces/A/messages/" + string(rune('a'+i%26)), At: time.Unix(int64(i), 0).UTC()})
 	}
-	if len(l.OwnerEvents) != OwnerEventLimit || !l.OwnerEvents[0].At.Equal(time.Unix(7, 0)) || !l.OwnerEvents[OwnerEventLimit-1].At.Equal(time.Unix(OwnerEventLimit+6, 0)) {
-		t.Fatalf("kept %d, first %v", len(l.OwnerEvents), l.OwnerEvents[0].At)
+	if len(l.OwnerEvents) != OwnerEventLimit {
+		t.Fatalf("kept %d events", len(l.OwnerEvents))
+	}
+	if !l.OwnerEvents[0].At.Equal(time.Unix(7, 0)) || !l.OwnerEvents[OwnerEventLimit-1].At.Equal(time.Unix(OwnerEventLimit+6, 0)) {
+		t.Fatalf("first %v, last %v", l.OwnerEvents[0].At, l.OwnerEvents[OwnerEventLimit-1].At)
 	}
 }
