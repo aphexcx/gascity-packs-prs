@@ -59,8 +59,8 @@ func TestChatOwnerClaimCheck(t *testing.T) {
 			if tc.ok && (code != 0 || stdout.String() != "owner-claim 1\n") {
 				t.Fatalf("code=%d stdout=%q stderr=%q", code, &stdout, &stderr)
 			}
-			if !tc.ok && (code == 0 || stdout.Len() != 0) {
-				t.Fatalf("code=%d stdout=%q", code, &stdout)
+			if !tc.ok && (code == 0 || stdout.Len() != 0 || stderr.Len() != 0) {
+				t.Fatalf("code=%d stdout=%q stderr=%q", code, &stdout, &stderr)
 			}
 			if after := listDir(t, dir); !reflect.DeepEqual(before, after) {
 				t.Fatalf("it wrote: %v -> %v", before, after)

@@ -233,6 +233,38 @@ func TestChatOwnerCopyReadAgainWhenChanged(t *testing.T) {
 	}
 }
 
+// TestChatOwnerRefreshReadsAnUnchangedLookingCopy: Refresh reads the copy
+// again even when it was rewritten in place with its size and time kept.
+func TestChatOwnerRefreshReadsAnUnchangedLookingCopy(t *testing.T) {
+	dir := fakedoor.Dir(t)
+	fakedoor.WriteCopy(t, dir, map[string]owners.Record{"users/9999": fakedoor.Record(claimA)})
+	b := book(dir, fakedoor.Root, nil, nil)
+	if !b.Owner("users/9999", "") {
+		t.Fatal("first copy")
+	}
+	rewriteInPlace(t, dir, map[string]owners.Record{"users/1001": fakedoor.Record(claimA)})
+	b.Refresh()
+	if !b.Owner("users/1001", "") || b.Owner("users/9999", "") {
+		t.Fatal("Refresh did not read the copy again")
+	}
+}
+
+// rewriteInPlace writes the copy into the same file, keeping its size and
+// modification time, so it looks unchanged to anything but a read.
+func rewriteInPlace(t *testing.T, dir string, records map[string]owners.Record) {
+	t.Helper()
+	path := filepath.Join(dir, "owners.json")
+	fi, err := os.Stat(path)
+	must(t, err)
+	data, err := json.Marshal(map[string]any{"version": 1, "owners": records})
+	must(t, err)
+	if int64(len(data)) != fi.Size() {
+		t.Fatalf("rewrite changes the size: %d != %d", len(data), fi.Size())
+	}
+	must(t, os.WriteFile(path, data, 0o644))
+	must(t, os.Chtimes(path, fi.ModTime(), fi.ModTime()))
+}
+
 // TestChatOwnerWhereRootIsPresentOrAbsent is C5's two rules: present, the
 // trusted copy alone, the settings ignored with one log line; absent, the
 // settings by address or Chat id, as before.

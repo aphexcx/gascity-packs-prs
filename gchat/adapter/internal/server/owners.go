@@ -36,7 +36,10 @@ type ownersResult struct {
 // removal; it does not say that the removal failed.
 const doorUnavailable = "[gchat owners: the box did NOT confirm this removal. The next answer of gc gchat owners shows who is an owner now. If the person is listed there and is still to be removed, make a new request and give a new yes]"
 
-const addByPage = "A new owner comes by a one-time code from the owner page, sent alone to the mayor in a direct chat, and by nothing else. Nothing changed."
+const (
+	addByPage     = "On a box, a new owner comes by a one-time code from the owner page, sent alone to the mayor in a direct chat, and by nothing else. Nothing changed."
+	addBySettings = "Root's directory is absent, so this is not a box: the owners are the ones the settings name (GCHAT_OWNERS), no command adds one, and no owner code is taken here. Nothing changed."
+)
 
 // decodeOwners refuses unknown and repeated fields, as the join does.
 func decodeOwners(w http.ResponseWriter, r *http.Request) (ownersInput, map[string]bool, error) {
@@ -114,6 +117,9 @@ func (s *Server) ownersHTTP(w http.ResponseWriter, r *http.Request) {
 		action = "invalid"
 	case seen["add"]:
 		action, result = "add", ownersResult{Result: "add_by_page", Message: addByPage}
+		if !s.ownerBook(s.configuration()).Present() {
+			result.Message = addBySettings
+		}
 	case seen["remove"] && input.Request:
 		action, result = "request", s.ownersRemove(r.Context(), input)
 	case seen["remove"]:
@@ -196,7 +202,7 @@ func (s *Server) ownersRemove(ctx context.Context, input ownersInput) ownersResu
 	case pending.Identity != identity:
 		return noOwnerYes("This request belongs to a different identity. Request approval again.")
 	}
-	if reason := checkOwnerYes(ctx, c, book, input.Yes, identity, pending.CreatedAt, pending.ExpiresAt, pending.CodeHash, "request's"); reason != "" {
+	if reason := checkOwnerYes(ctx, c, book, input.Yes, identity, pending.CreatedAt, pending.ExpiresAt, pending.CodeHash, "removal", "request's"); reason != "" {
 		return noOwnerYes(reason)
 	}
 	if err = s.update(ctx, func(l *ledger.Ledger) error {
@@ -213,6 +219,11 @@ func (s *Server) ownersRemove(ctx context.Context, input ownersInput) ownersResu
 		return noOwnerYes(unknownIdentity)
 	} else if err != nil {
 		return noOwnerYes("The approval could not be saved as used, or it expired. Nothing changed; request approval again.")
+	}
+	// As the join does before its one write: the identity again, after the
+	// yes is spent and before the one remove.
+	if !stillMine() {
+		return noOwnerYes("The identity is not known safely yet. Nothing was sent to the box, but this owner's yes is now used; request approval again after the adapter learns its identity.")
 	}
 	answer := book.Remove(ctx, input.Remove, input.Yes)
 	switch answer.Result {

@@ -123,13 +123,12 @@ func runWithServe(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	case "owner-claim-check":
 		// The box's helper asks this before it mints an owner code. Yes only
 		// when root's door answers here within its bound; it reads no
-		// setting for its path and writes nothing.
+		// setting for its path and writes nothing, on stdout or elsewhere.
 		if len(args) > 1 {
 			fmt.Fprintln(stderr, "usage: gc-gchat-adapter owner-claim-check")
 			return 2
 		}
 		if !claimBook().Here(ctx) {
-			fmt.Fprintln(stderr, "owner-claim: root's door did not answer here")
 			return 1
 		}
 		fmt.Fprint(stdout, "owner-claim 1\n")

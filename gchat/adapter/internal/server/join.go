@@ -238,7 +238,7 @@ func (s *Server) runJoin(ctx context.Context, input joinInput) joinResult {
 	if !joinMessageName.MatchString(input.Yes) {
 		return noJoinYes("Supply the owner's message name as spaces/ID/messages/ID.")
 	}
-	if reason := checkOwnerYes(ctx, c, book, input.Yes, identity, pending.CreatedAt, pending.ExpiresAt, pending.CodeHash, "room's"); reason != "" {
+	if reason := checkOwnerYes(ctx, c, book, input.Yes, identity, pending.CreatedAt, pending.ExpiresAt, pending.CodeHash, "join", "room's"); reason != "" {
 		return noJoinYes(reason)
 	}
 	tok, failure := joinPermission(ctx, cfg)
@@ -337,14 +337,15 @@ func joinCodeHash(code string) string {
 
 // checkOwnerYes is the one check of an owner's yes, for a room's join and for
 // an owner's removal: the message, its sender, its space, its time and its
-// code. whose names the request in the last refusal ("room's", "request's").
-func checkOwnerYes(ctx context.Context, c *chat.Client, book *owners.Book, name, identity string, created, expires time.Time, codeHash, whose string) string {
+// code. act and whose name the change and its request in the refusals
+// ("join" and "room's"; "removal" and "request's").
+func checkOwnerYes(ctx context.Context, c *chat.Client, book *owners.Book, name, identity string, created, expires time.Time, codeHash, act, whose string) string {
 	m, err := c.GetMessage(ctx, name)
 	if err != nil || m == nil || m.Name != name {
 		return "The owner's message could not be read. Nothing changed."
 	}
 	if m.Sender != nil && m.Sender.Name == identity {
-		return "The identity cannot approve its own join."
+		return "The identity cannot approve its own " + act + "."
 	}
 	if !c.JoinOwner(ctx, book, m.Sender) {
 		return "The message sender is not an owner of this box."

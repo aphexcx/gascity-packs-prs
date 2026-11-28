@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -297,6 +298,45 @@ func TestChatOwnerOwnersRemove(t *testing.T) {
 	}
 }
 
+// TestChatOwnerOwnersLogLines: one "gchat owners" line for each call, with
+// the action, the target, the owner's message name and the result, and no
+// line carries the request's code or an address.
+func TestChatOwnerOwnersLogLines(t *testing.T) {
+	f := setupOwners(t, "users/222", "users/333")
+	f.owners(t, map[string]any{})
+	f.owners(t, map[string]any{"add": true})
+	code := f.requestRemoval(t, "users/333")
+	yes := f.yesFrom("users/222", "spaces/dm", code, time.Now())
+	f.owners(t, map[string]any{"remove": "users/333", "yes": yes})
+	want := []map[string]any{
+		{"action": "list", "target": "", "owner_message": "", "result": "owners"},
+		{"action": "add", "target": "", "owner_message": "", "result": "add_by_page"},
+		{"action": "request", "target": "users/333", "owner_message": "", "result": "requested"},
+		{"action": "yes", "target": "users/333", "owner_message": yes, "result": "removed"},
+	}
+	var got []map[string]any
+	for _, line := range f.ownersLogs(t) {
+		got = append(got, map[string]any{"action": line["action"], "target": line["target"], "owner_message": line["owner_message"], "result": line["result"]})
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("owners lines = %v", got)
+	}
+	if logs := f.logs.String(); strings.Contains(logs, code) || strings.Contains(logs, "@example.com") {
+		t.Fatalf("a log line carries the code or an address: %s", logs)
+	}
+}
+
+// TestChatOwnerOwnersAddWhereRootIsAbsent: asked to add in a city that is
+// not a box, the answer is still add_by_page, and it says the settings name
+// the owners there.
+func TestChatOwnerOwnersAddWhereRootIsAbsent(t *testing.T) {
+	f := setupOwners(t)
+	f.s.opts.Owners = owners.ForTest(owners.TestOptions{Dir: filepath.Join(f.door.Dir, "absent"), IsRoot: fakedoor.Root})
+	if _, v := f.owners(t, map[string]any{"add": true}); v["result"] != "add_by_page" || v["message"] != addBySettings {
+		t.Fatalf("add: %v", v)
+	}
+}
+
 // TestChatOwnerOwnersDoorDoesNotConfirm: when the door does not answer, or
 // answers refused or unavailable, the adapter removes nothing by itself and
 // sends nothing again; the request stays used and the answer carries the
@@ -416,6 +456,19 @@ func TestChatOwnerRestoreResetBackup(t *testing.T) {
 		}
 		if _, v := f.owners(t, map[string]any{}); v["result"] != "owners" || len(v["owners"].([]any)) != 1 {
 			t.Fatalf("%s: list %v", body["action"], v)
+		}
+		saved, err := os.ReadFile(f.cfg.Endpoints.StateFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var keys map[string]json.RawMessage
+		if err := json.Unmarshal(saved, &keys); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"owners", "owner_claim", "tries"} {
+			if _, ok := keys[key]; ok {
+				t.Fatalf("%s kept the backup's %q in the state", body["action"], key)
+			}
 		}
 	}
 	if len(f.door.Requests()) != 0 {

@@ -13,9 +13,9 @@ directory is absent, as in a city that is not a box, it lists the settings'
 entries (GCHAT_OWNERS) and says that they come from the settings; no command
 adds or removes one of those, and no owner code is ever taken there.
 
-A new owner comes by a one-time code from the owner page, sent alone to the
-mayor in a direct chat, and by nothing else. --add, with any other flag,
-asks nothing, changes nothing and answers add_by_page.
+On a box, a new owner comes by a one-time code from the owner page, sent
+alone to the mayor in a direct chat, and by nothing else. --add, with any
+other flag, asks nothing, changes nothing and answers add_by_page.
 
 To remove an owner, --remove users/ID --request returns a one-time code for
 that one change, valid for 24 hours; a new request replaces the old one. Ask

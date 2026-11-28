@@ -290,6 +290,34 @@ func TestChatOwnerTakeRows(t *testing.T) {
 	}
 }
 
+// TestChatOwnerTakenReadsTheCopyAgain: after taken the copy is read again
+// before the frame, even when the door rewrote it in place so that it looks
+// unchanged.
+func TestChatOwnerTakenReadsTheCopyAgain(t *testing.T) {
+	cf := setupClaim(t, nil, false)
+	fakedoor.WriteCopy(t, cf.door.Dir, map[string]owners.Record{"users/9999": fakedoor.Record(claimID)})
+	if cf.book.Owner(claimSender, "") {
+		t.Fatal("not yet an owner")
+	}
+	cf.door.Answer(func(map[string]string) string {
+		path := filepath.Join(cf.door.Dir, "owners.json")
+		fi, err := os.Stat(path)
+		if err != nil {
+			return `{"result":"unavailable"}`
+		}
+		data, _ := json.Marshal(map[string]any{"version": 1, "owners": map[string]owners.Record{claimSender: fakedoor.Record(claimID)}})
+		if int64(len(data)) != fi.Size() || os.WriteFile(path, data, 0o644) != nil || os.Chtimes(path, fi.ModTime(), fi.ModTime()) != nil {
+			return `{"result":"unavailable"}`
+		}
+		return `{"result":"taken","claim":"` + claimID + `"}`
+	})
+	cf.deliver(t, "m1", "message.created", dmMessage("m1", claimText))
+	lines := cf.turn(t, "m1")
+	if !strings.Contains(lines[0], "| owner") || lines[len(lines)-1] != claimLines["taken"] {
+		t.Fatalf("turn = %q", lines)
+	}
+}
+
 // TestChatOwnerUntouchedMessages: every message that is not code-shaped, or
 // not alone in a direct chat from a person who is not the identity, makes
 // no knock and gets no line.
