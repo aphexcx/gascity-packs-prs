@@ -156,6 +156,7 @@ func preserveHistoryNotice(l *ledger.Ledger, cfg *config.Config, c *ledger.Chang
 		return false
 	}
 	c.Event = redactedHistoryEvent(l, cfg, c, "")
+	c.MemberEvent = ""
 	c.ProvenanceFramed = true
 	c.Status, c.Cause = "unresolved", causeUnknown
 	c.NextAttempt = time.Time{}
@@ -165,7 +166,7 @@ func preserveHistoryNotice(l *ledger.Ledger, cfg *config.Config, c *ledger.Chang
 
 func redactedHistoryEvent(l *ledger.Ledger, cfg *config.Config, old *ledger.ChangeState, wireID string) string {
 	var w wire.InboundMessage
-	_ = json.Unmarshal([]byte(old.Event), &w)
+	_ = json.Unmarshal([]byte(old.OriginalEvent()), &w)
 	frame, framed := provenance.FrameOf(w.Text)
 	if !old.ProvenanceFramed || !framed {
 		user := &api.User{Name: w.Actor.ID, DisplayName: w.Actor.DisplayName}

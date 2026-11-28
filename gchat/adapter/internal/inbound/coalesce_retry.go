@@ -18,6 +18,11 @@ func (p *Processor) refreshMerged(l *ledger.Ledger, owner *ledger.ChangeState) b
 	if owner.Status != "intent" || len(owner.Members) == 0 {
 		return false
 	}
+	// A later revision cannot tell us whether an unanswered POST landed: resume
+	// classifies that attempt before any refresh may rewrite or withdraw it.
+	if owner.Attempts > 0 && owner.Reason != reasonRetry {
+		return false
+	}
 	changed := false
 	var survivors, removed []*ledger.ChangeState
 	for _, id := range owner.Members {

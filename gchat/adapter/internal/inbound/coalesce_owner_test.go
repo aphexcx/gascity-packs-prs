@@ -251,6 +251,17 @@ func TestOwnerChangeKeepsDeliveryState(t *testing.T) {
 					t.Errorf("survivor POSTs=%d accepted=%d want accepted=%d, at most %d POSTs", count, accepted, want, firstPOSTs)
 				}
 				a, b := f.l.Changes[space+"/messages/m001"], f.l.Changes[space+"/messages/m002"]
+				if outcome == "unsaved" {
+					// An attempt with no answer keeps its own id and ends unknown; the
+					// withdrawal only clears what could be replayed.
+					if a.Status != "committed" || a.Reason != "coalesced" || a.MemberOf != b.ID {
+						t.Errorf("member state: %+v", a)
+					}
+					if b.Status != "unresolved" || b.Reason != reason || b.Attempts != attempts || b.Fragment || b.Event != "" {
+						t.Errorf("unanswered owner state: %+v", b)
+					}
+					return
+				}
 				if a.Status != "unresolved" || a.Reason != reason || a.Attempts != attempts || a.Fragment != (outcome == "partial") || a.Event == "" {
 					t.Errorf("survivor state: %+v", a)
 				}
