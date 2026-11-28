@@ -252,7 +252,7 @@ def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
     for bullet in ("- `shipped`:", "- `ran`:", "- `no-op`:", "- `blocked` or `abandoned`:"):
         assert prompt.count(bullet) == 1, bullet
     assert "shipped|no-op|blocked|abandoned" not in prompt
-    assert "sets `gc.work_commit` to its absolute path instead (no `gc.work_branch` is needed)" in close
+    assert "sets `gc.work_commit` to that path instead (no `gc.work_branch` is needed)" in close
     assert "do not run the shipped recipe" in close
     assert "It has no `ran` and no form for a shipped artifact path" in close
     assert "(for example `investigated`)" in close

@@ -49,13 +49,15 @@ alone omits them: read them with
 change into every review brief you write (state the requirement; never copy a
 comment's text into a file a pull request carries), and add your own with
 `gc bd comment "$CLAIMED_BEAD_ID" --file /abs/path` (or the text as one quoted
-argument). When the bead's store refuses one of these verbs (a city may serve
-workflow beads from a store that does), go on without it and say so in your
-close reason. Unless the bead or its formula says where a path is rooted,
-resolve a path in a bead as written when it is absolute, and against the rig
-the bead names when it is relative (for your own rig, your lane worktree); if
-it does not exist there, name it in your READY or close reason and never
-guess another.
+argument). When the bead's store refuses the comment read or `gc bd comment`
+(a city may serve workflow beads from a store that does), go on without it
+and say so in your close reason. A refused heartbeat is not that case:
+re-read the bead's status and assignee, and stop by the reassignment rule of
+the bounded wait below when it is no longer yours. Unless the bead or its
+formula says where a path is rooted, resolve a path in a bead as written when
+it is absolute, and against the rig the bead names when it is relative (for
+your own rig, your lane worktree); if it does not exist there, name it in your
+READY or close reason and never guess another.
 
 A successful claim is authorization to execute immediately. You are operating
 autonomously: no human is watching in real time, so asking whether to proceed
@@ -234,9 +236,9 @@ work beads, one of the five words `gc bd close` accepts:
 - `shipped`: a change that satisfies the bead. For a commit, set
   `gc.work_commit` to its full 40-character SHA and `gc.work_branch` to a
   branch containing it; create a named work branch first if HEAD is detached.
-  An artifact, a file outside any git work tree, sets `gc.work_commit` to its
-  absolute path instead (no `gc.work_branch` is needed); say so in the close
-  reason.
+  An artifact, a file the bead asked for that is not committed, at an absolute
+  path outside your lane worktree, sets `gc.work_commit` to that path instead
+  (no `gc.work_branch` is needed); say so in the close reason.
 - `ran`: a completed run with no deliverable; its result goes in the close
   reason. Omit commit and branch metadata.
 - `no-op`: no change was needed (already satisfied or duplicate); say why in
@@ -251,9 +253,9 @@ work beads, one of the five words `gc bd close` accepts:
 
 A bead that names any other `gc.work_outcome` word (for example
 `investigated`) sets `gc.work_outcome` to the one of these five that fits and
-follows that word's close below; say so in the close reason. A file outside
-git that the bead asked for is a shipped artifact; a result that lives only in
-the close reason is `ran`.
+follows that word's close below; say so in the close reason. A file the bead
+asked for that is not committed is a shipped artifact; a result that lives
+only in the close reason is `ran`.
 
 Do not substitute `gc.outcome` for `gc.work_outcome`. If no failure contract exists,
 record unrecoverable failure as `gc.outcome=fail` plus concise
@@ -361,20 +363,22 @@ that opens the shipped recipe, then run
 `--set-metadata 'gc.outcome=pass'` and `--set-metadata 'gc.work_outcome=no-op'`
 on the update instead.
 
-For a `ran` close, or a shipped artifact, the recorder refuses both: skip its
-discovery and record, and do not run the shipped recipe. Instead:
+If `gc help bd` does not list `ran`, your gc build's gate takes the other four
+words and needs a commit and a branch for `shipped`: close a run or an
+artifact by the `no-op` close above instead, with `gc.outcome` as the bead's
+result contract asks, and name the result or the file in the close reason.
+Otherwise, for a `ran` close, or a shipped artifact, the recorder refuses
+both: skip its discovery and record, and do not run the shipped recipe.
+Instead:
 
 1. Run one `gc bd update "$CLAIMED_BEAD_ID"` that sets `gc.outcome` as the
    bead's result contract asks (`pass` when the run met it) and
    `--set-metadata 'gc.work_outcome=ran'`, or
    `--set-metadata 'gc.work_outcome=shipped'` with
    `--set-metadata "gc.work_commit=$ARTIFACT_PATH"` (`ARTIFACT_PATH` holds the
-   file's absolute path, starting with `/`). The same update unsets what it
-   does not set: `--unset-metadata gc.pr` when this close names no PR, and
-   `--unset-metadata gc.work_commit` for `ran`. If `gc help bd` does not list
-   `ran`, your gc build's gate takes the other four words and needs a commit
-   and a branch for `shipped`: write `gc.work_outcome=no-op` in this update
-   instead, with the same `gc.outcome`.
+   file's absolute path, starting with `/`). The same update sets `gc.pr` to
+   the PR this close names, or unsets it (`--unset-metadata gc.pr`) when it
+   names none, and for `ran` unsets `gc.work_commit`.
 2. Release a branch only when you hold one in your lane
    (`git -C "$GC_DIR" branch --show-current` prints a name): detach and verify
    the release as the shipped recipe does.

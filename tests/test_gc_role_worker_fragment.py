@@ -98,10 +98,12 @@ def test_close_shipped_names_the_commit_keys_and_the_artifact_path() -> None:
     close = flat(close_section())
     assert ("For a commit, set `gc.work_commit` to its full 40-character SHA and "
             "`gc.work_branch` to a branch containing it") in close
-    # A file in a git work tree is a commit; a lane is reset at its next start,
-    # so a path inside it does not identify what was delivered.
-    assert ("An artifact, a file outside any git work tree, sets `gc.work_commit` to its "
-            "absolute path instead (no `gc.work_branch` is needed); say so in the close reason.") in close
+    # A lane is reset at its next start, so a path inside it does not identify
+    # what was delivered; a durable uncommitted file elsewhere (a report under
+    # the rig root) does.
+    assert ("An artifact, a file the bead asked for that is not committed, at an absolute "
+            "path outside your lane worktree, sets `gc.work_commit` to that path instead (no "
+            "`gc.work_branch` is needed); say so in the close reason.") in close
 
 
 def test_close_ran_no_op_blocked_and_abandoned_carry_their_result_in_the_close_reason() -> None:
@@ -115,8 +117,8 @@ def test_close_maps_a_bead_word_outside_the_five_to_one_of_them() -> None:
     close = flat(close_section())
     assert ("A bead that names any other `gc.work_outcome` word (for example `investigated`) "
             "sets `gc.work_outcome` to the one of these five that fits and follows that word's "
-            "close below; say so in the close reason. A file outside git that the bead asked for "
-            "is a shipped artifact; a result that lives only in the close reason is `ran`.") in close
+            "close below; say so in the close reason. A file the bead asked for that is not "
+            "committed is a shipped artifact; a result that lives only in the close reason is `ran`.") in close
 
 
 def test_close_says_the_recorder_takes_four_words_and_no_artifact_form_today() -> None:
@@ -142,15 +144,22 @@ def test_every_flag_on_a_provenance_record_line_is_one_the_recorder_takes() -> N
 
 def metadata_only_close() -> str:
     close = flat(close_section())
-    start = close.index("For a `ran` close, or a shipped artifact,")
+    start = close.index("If `gc help bd` does not list `ran`")
     return close[start:close.index("For blocked or abandoned work", start)]
 
 
 # One path for every close the recorder cannot write (codex QUICK r1 and r2):
 # each row is a requirement of that path, in the order a worker meets it.
 METADATA_ONLY_CLOSE = (
+    # The effective word is chosen first. Upstream gc (v1.5.1 and main) takes
+    # four words; there a run or an artifact is a recorded no-op, so its typed
+    # record and compatibility keys are the recorder's.
+    "If `gc help bd` does not list `ran`, your gc build's gate takes the other four words and "
+    "needs a commit and a branch for `shipped`: close a run or an artifact by the `no-op` "
+    "close above instead, with `gc.outcome` as the bead's result contract asks, and name the "
+    "result or the file in the close reason.",
     # The recorder refuses both, and the shipped recipe is not reused.
-    "For a `ran` close, or a shipped artifact, the recorder refuses both: skip its "
+    "Otherwise, for a `ran` close, or a shipped artifact, the recorder refuses both: skip its "
     "discovery and record, and do not run the shipped recipe. Instead:",
     # The step result follows the bead's result contract, never a fixed pass.
     '1. Run one `gc bd update "$CLAIMED_BEAD_ID"` that sets `gc.outcome` as the bead\'s '
@@ -158,14 +167,9 @@ METADATA_ONLY_CLOSE = (
     "`--set-metadata 'gc.work_outcome=ran'`, or `--set-metadata 'gc.work_outcome=shipped'` with "
     '`--set-metadata "gc.work_commit=$ARTIFACT_PATH"` (`ARTIFACT_PATH` holds the file\'s '
     "absolute path, starting with `/`).",
-    # Stale keys from an earlier close are cleared on every such close.
-    "The same update unsets what it does not set: `--unset-metadata gc.pr` when this close "
-    "names no PR, and `--unset-metadata gc.work_commit` for `ran`.",
-    # Upstream gc (v1.5.1 and main) takes four words; only a build whose
-    # `gc help bd` lists ran takes the five and the artifact path.
-    "If `gc help bd` does not list `ran`, your gc build's gate takes the other four words and "
-    "needs a commit and a branch for `shipped`: write `gc.work_outcome=no-op` in this update "
-    "instead, with the same `gc.outcome`.",
+    # Stale keys from an earlier close are set or cleared on every such close.
+    "The same update sets `gc.pr` to the PR this close names, or unsets it "
+    "(`--unset-metadata gc.pr`) when it names none, and for `ran` unsets `gc.work_commit`.",
     # No detach in a directory that holds no branch (or is not a git checkout).
     '2. Release a branch only when you hold one in your lane (`git -C "$GC_DIR" branch '
     "--show-current` prints a name): detach and verify the release as the shipped recipe does.",
@@ -192,7 +196,7 @@ def test_close_metadata_alone_is_named_only_for_the_metadata_only_path() -> None
     close = flat(close_section())
     assert "Do not silently close with metadata alone." in close
     assert "Only the `ran` and artifact closes below close on metadata alone" in close
-    assert close.index("Only the `ran` and artifact closes below") < close.index("For a `ran` close")
+    assert close.index("Only the `ran` and artifact closes below") < close.index("for a `ran` close, or a shipped artifact")
     assert "If an earlier close of this bead wrote a typed record" not in close
     assert close.count("If `gc help bd` does not list `ran`") == 1
 
@@ -222,9 +226,13 @@ def test_bead_comments_are_part_of_its_spec_and_the_comment_verb_is_named() -> N
     assert "prompt-file form" not in held
     assert ('add your own with `gc bd comment "$CLAIMED_BEAD_ID" --file /abs/path` '
             "(or the text as one quoted argument)") in held
-    # A city can serve workflow beads from a store that refuses some of these verbs.
-    assert ("When the bead's store refuses one of these verbs (a city may serve workflow beads "
-            "from a store that does), go on without it and say so in your close reason.") in held
+    # A city can serve workflow beads from a store that refuses the comment verbs;
+    # a refused heartbeat is never a reason to go on (the claim may have moved).
+    assert ("When the bead's store refuses the comment read or `gc bd comment` (a city may serve "
+            "workflow beads from a store that does), go on without it and say so in your close "
+            "reason. A refused heartbeat is not that case: re-read the bead's status and assignee, "
+            "and stop by the reassignment rule of the bounded wait below when it is no longer yours.") in held
+    assert "refuses one of these verbs" not in held
 
 
 def test_bead_paths_are_absolute_or_rig_relative_and_a_missing_one_is_reported() -> None:
