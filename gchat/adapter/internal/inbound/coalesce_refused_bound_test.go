@@ -1,13 +1,13 @@
 package inbound
 
 // A history bound that falls between the acts of a merged turn that gc
-// refused (gp-e5w3). The bound retires only the acts recorded before it. An
-// act recorded at or after it is kept and posted once, and it is posted
-// without the text of the retired acts. The arrangement of the between rows
-// is the Fable read's probe P9 on packs pull request 135. Two rows put the
-// bound between a message's creation and an edit the window folded into it,
-// one held alone and one inside a refused turn: the fold keeps the edit's
-// text in the creation's record.
+// refused (gp-e5w3). The bound retires only the acts before it. An act that
+// came at or after it is kept and posted once, and it is posted without the
+// text of the retired acts. "Came at or after it" needs proof: the act was
+// recorded then, and Chat dates it then too. An act that Chat dates before
+// the bound is history even when it was recorded after it (gchat/README.md,
+// "Catch-up and restart recovery"). The arrangement of the between rows is
+// the Fable read's probe P9 on packs pull request 135.
 
 import (
 	"context"
@@ -42,19 +42,19 @@ type boundAct struct {
 //	  The owner is the first act.
 //	three_acts: body-002, body-003, edit-007. The owner is the second.
 //	three_messages: body-002, body-003, body-004. The owner is the third.
-//	late_message: body-002, then body-003, which Chat dates before body-002
-//	  (an event that came late). The owner is the first act.
-//	edit_then_late_message: edit-007, then body-002, which Chat dates before
-//	  edit-007. The owner is the second act.
-//	fold_then_message: body-002, its edit rev-002 (folded into it), body-003.
-//	  The owner is the last act.
-//	held_fold: body-002 and its folded edit rev-002, still held: no turn and
-//	  no refusal.
-//	held_two_folds: body-002 and two folded edits, rev-a then rev-b, still
-//	  held.
+//	late_message: body-002, then body-003, which Chat dates 3 s before it
+//	  was recorded (an event that came late). The owner is the first act.
+//	edit_then_late_message: edit-007, then body-002, which Chat dates 3 s
+//	  before it was recorded. The owner is the second act.
+//	ahead_message: body-002, then body-003, which Chat dates 5 s after it was
+//	  recorded (Chat's clock ahead). The owner is the second act.
+//	ahead_middle_message: body-002, body-003 (Chat dates it 500 ms after it
+//	  was recorded), body-004. The owner is the third act.
 //	message_then_folded_message: body-002, then body-003 and its edit
 //	  rev-003 (folded into it). The owner is the second act; its text is
 //	  rev-003. The edit is not an act of the list.
+//	folded_message_between: body-002, body-003 with its folded edit rev-003,
+//	  body-004. The owner is the third act.
 func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []boundAct) {
 	t.Helper()
 	f := windowSetup(t, "8s")
@@ -63,15 +63,16 @@ func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []b
 	}
 	var acts []boundAct
 	members := 0
-	held := func(n int, kind, text string, late bool) *api.Message {
+	// held records one act; skew is Chat's time for it minus its recorded time.
+	held := func(n int, kind, text string, skew time.Duration) *api.Message {
 		t.Helper()
 		f.now = f.now.Add(time.Second)
 		m := f.send(t, n, kind, func(m *api.Message) {
 			if kind == "message.updated" {
 				m.Text, m.LastUpdateTime = text, f.now.Format(time.RFC3339Nano)
 			}
-			if late {
-				m.CreateTime = f.now.Add(-3 * time.Second).Format(time.RFC3339Nano)
+			if skew != 0 {
+				m.CreateTime = f.now.Add(skew).Format(time.RFC3339Nano)
 			}
 		})
 		c := f.l.Changes[m.Name]
@@ -82,7 +83,7 @@ func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []b
 		members++
 		return m
 	}
-	fold := func(first *api.Message, n int, text string) *ledger.ChangeState {
+	fold := func(first *api.Message, n int, text string) {
 		t.Helper()
 		f.now = f.now.Add(time.Second)
 		edit := f.send(t, n, "message.updated", func(m *api.Message) {
@@ -92,46 +93,41 @@ func refusedTurn(t *testing.T, layout string, restart bool) (*windowFixture, []b
 		if c == nil || c.Status != "committed" || c.Reason != "coalesced" || c.MemberOf != first.Name {
 			t.Fatalf("the edit was not folded into its creation: %+v", c)
 		}
-		acts = append(acts, boundAct{c.ID, text, c.Created, edit})
-		return c
 	}
 	const created, updated = "message.created", "message.updated"
 	switch layout {
 	case "two_messages", "three_acts", "three_messages":
-		held(2, created, "body-002", false)
-		held(3, created, "body-003", false)
+		held(2, created, "body-002", 0)
+		held(3, created, "body-003", 0)
 		if layout == "three_messages" {
-			held(4, created, "body-004", false)
+			held(4, created, "body-004", 0)
 		}
 		if layout == "three_acts" {
-			held(7, updated, "edit-007", false)
+			held(7, updated, "edit-007", 0)
 		}
 	case "message_then_edit":
-		held(2, created, "body-002", false)
-		held(7, updated, "edit-007", false)
+		held(2, created, "body-002", 0)
+		held(7, updated, "edit-007", 0)
 	case "late_message":
-		held(2, created, "body-002", false)
-		held(3, created, "body-003", true)
+		held(2, created, "body-002", 0)
+		held(3, created, "body-003", -3*time.Second)
 	case "edit_then_late_message":
-		held(7, updated, "edit-007", false)
-		held(2, created, "body-002", true)
-	case "fold_then_message", "held_fold", "held_two_folds":
-		first := held(2, created, "body-002", false)
-		if layout == "held_two_folds" {
-			fold(first, 2, "rev-a")
-			fold(first, 2, "rev-b")
-			return f, acts
-		}
-		fold(first, 2, "rev-002")
-		if layout == "held_fold" {
-			return f, acts
-		}
-		held(3, created, "body-003", false)
+		held(7, updated, "edit-007", 0)
+		held(2, created, "body-002", -3*time.Second)
+	case "ahead_message":
+		held(2, created, "body-002", 0)
+		held(3, created, "body-003", 5*time.Second)
+	case "ahead_middle_message":
+		held(2, created, "body-002", 0)
+		held(3, created, "body-003", 500*time.Millisecond)
+		held(4, created, "body-004", 0)
 	case "message_then_folded_message":
-		held(2, created, "body-002", false)
-		second := held(3, created, "rev-003", false)
-		fold(second, 3, "rev-003")
-		acts = acts[:len(acts)-1]
+		held(2, created, "body-002", 0)
+		fold(held(3, created, "rev-003", 0), 3, "rev-003")
+	case "folded_message_between":
+		held(2, created, "body-002", 0)
+		fold(held(3, created, "rev-003", 0), 3, "rev-003")
+		held(4, created, "body-004", 0)
 	default:
 		t.Fatalf("unknown layout %q", layout)
 	}
@@ -269,17 +265,33 @@ func TestHistoryBoundAcrossARefusedMergedTurn(t *testing.T) {
 				}
 			}},
 		// The owner was recorded at the bound, but Chat dates it before the
-		// bound and before the first act. Its recorded time is what counts.
-		{name: "owner_dated_before_the_bound_by_chat", layout: "edit_then_late_message", bound: at(1, 0), retired: []int{0}, posted: []int{1}, turns: 1},
+		// bound: it is history, as the README's act-time rule says. With no
+		// act shown to be after the bound, the turn is retired whole.
+		{name: "owner_chat_dates_before_the_bound", layout: "edit_then_late_message", bound: at(1, 0), retired: []int{0, 1}},
 		// The same late act becomes the turn's owner when the refresh takes
-		// out the owner that was deleted. The new owner keeps its own
-		// recorded time.
-		{name: "refreshed_to_an_owner_dated_before_the_bound", layout: "late_message", bound: at(1, 0), withdrawn: []int{0}, posted: []int{1}, turns: 2,
+		// out the owner that was deleted. It is history too.
+		{name: "refreshed_to_an_owner_chat_dates_before_the_bound", layout: "late_message", bound: at(1, 0), withdrawn: []int{0}, retired: []int{1}, turns: 1,
 			before: func(t *testing.T, f *windowFixture, acts []boundAct) {
 				f.now = f.now.Add(time.Second)
 				f.handle(t, event("deleted", "message.deleted", acts[0].m))
 				owner := boundOwner(f.l)
 				if owner == nil || owner.ID != acts[1].id || len(owner.Members) != 1 || !owner.Created.Equal(acts[0].at) {
+					t.Fatalf("the refresh did not move the turn to %s: %+v", acts[1].id, owner)
+				}
+			}},
+		// The owner was recorded before the bound, though Chat dates it after
+		// it (Chat's clock ahead). An act recorded before the bound predates
+		// it: the turn is retired whole. This row needs the owner's own
+		// recorded time.
+		{name: "owner_recorded_before_the_bound_chat_dates_after", layout: "ahead_message", bound: at(1, time.Second), retired: []int{0, 1}},
+		// The same, when that act becomes the owner after the refresh takes
+		// out the deleted owner. The new owner keeps its own recorded time.
+		{name: "refreshed_to_an_owner_recorded_before_the_bound", layout: "ahead_middle_message", bound: at(1, 250*time.Millisecond), retired: []int{0, 1}, withdrawn: []int{2}, turns: 1,
+			before: func(t *testing.T, f *windowFixture, acts []boundAct) {
+				f.now = f.now.Add(time.Second)
+				f.handle(t, event("deleted", "message.deleted", acts[2].m))
+				owner := boundOwner(f.l)
+				if owner == nil || owner.ID != acts[1].id || len(owner.Members) != 2 || !owner.Created.Equal(acts[0].at) {
 					t.Fatalf("the refresh did not move the turn to %s: %+v", acts[1].id, owner)
 				}
 			}},
@@ -310,36 +322,6 @@ func TestHistoryBoundAcrossARefusedMergedTurn(t *testing.T) {
 					t.Fatalf("the refresh did not rebuild the turn under %s: %+v", acts[2].id, owner)
 				}
 			}},
-		// An edit folded into its message's held creation, the bound between
-		// them. The creation is retired; the edit is posted on its own.
-		{name: "edit_folded_into_a_held_creation", layout: "held_fold", bound: at(1, 0), retired: []int{0}, posted: []int{1}, turns: 1},
-		// Two edits folded into the creation, both after the bound. The later
-		// one carries the message's text. The earlier was superseded by it and
-		// stays folded: it is not posted and is no operator's notice.
-		{name: "two_edits_folded_into_a_held_creation", layout: "held_two_folds", bound: at(1, 0), retired: []int{0}, posted: []int{2}, turns: 1,
-			after: func(t *testing.T, f *windowFixture, acts []boundAct) {
-				if c := f.l.Changes[acts[1].id]; c == nil || c.Status != "committed" || c.Reason != "coalesced" || f.l.Unresolved[acts[1].id] != nil {
-					t.Errorf("the superseded edit did not stay folded: %+v", c)
-				}
-			}},
-		// A later edit, after the refusal, superseded the folded edit: it has
-		// its own record and the refresh put its text in the turn. The folded
-		// edit stays folded; the later edit is posted once.
-		{name: "folded_edit_superseded_by_a_later_edit", layout: "fold_then_message", bound: at(1, 0), retired: []int{0}, posted: []int{2}, texts: map[string]int{"rev-late": 1}, turns: 2,
-			before: func(t *testing.T, f *windowFixture, acts []boundAct) {
-				f.now = f.now.Add(time.Second)
-				m := *acts[0].m
-				m.Text, m.LastUpdateTime = "rev-late", f.now.Format(time.RFC3339Nano)
-				f.handle(t, event("edited-late", "message.updated", &m))
-				if owner := boundOwner(f.l); owner == nil || !strings.Contains(owner.Event, "rev-late") {
-					t.Fatalf("the refresh did not put the later edit in the turn: %+v", owner)
-				}
-			},
-			after: func(t *testing.T, f *windowFixture, acts []boundAct) {
-				if c := f.l.Changes[acts[1].id]; c == nil || c.Status != "committed" || f.l.Unresolved[acts[1].id] != nil {
-					t.Errorf("the superseded folded edit did not stay folded: %+v", c)
-				}
-			}},
 		// The owner kept by the split carries an edit folded into it. It keeps
 		// hold's kind for such a creation, which a released adapter's
 		// superseded check reads as not withdrawn.
@@ -349,13 +331,30 @@ func TestHistoryBoundAcrossARefusedMergedTurn(t *testing.T) {
 					t.Errorf("the kept owner lost its fold's kind: %+v", c)
 				}
 			}},
-		// The same fold inside a refused turn.
-		{name: "edit_folded_into_a_refused_turn", layout: "fold_then_message", bound: at(1, 0), retired: []int{0}, posted: []int{1, 2}, turns: 2},
-		// The fold inside a turn whose POST may have landed: the edit's text
-		// may be in front of the agent already, so it stays folded.
-		{name: "edit_folded_into_a_turn_whose_post_may_have_landed", layout: "fold_then_message", bound: at(1, 0), retired: []int{0},
+		// A member creation that carries a folded edit, after the bound. The
+		// refresh that took out the deleted first act gave it the plain kind.
+		// The split gives it hold's kind for a creation with a fold back.
+		{name: "kept_member_keeps_its_fold", layout: "folded_message_between", bound: at(1, 0), withdrawn: []int{0}, posted: []int{1, 2}, turns: 3,
+			before: func(t *testing.T, f *windowFixture, acts []boundAct) {
+				f.now = f.now.Add(time.Second)
+				f.handle(t, event("deleted", "message.deleted", acts[0].m))
+				owner := boundOwner(f.l)
+				if owner == nil || owner.ID != acts[2].id || len(owner.Members) != 2 || f.l.Changes[acts[1].id].Kind != "message.created" {
+					t.Fatalf("the refresh did not take %s out and keep %s as a plain member: %+v", acts[0].id, acts[1].id, owner)
+				}
+			},
+			after: func(t *testing.T, f *windowFixture, acts []boundAct) {
+				if c := f.l.Changes[acts[1].id]; c == nil || c.Kind != "coalesced" || c.OriginalKind() != "message.created" {
+					t.Errorf("the kept member lost its fold's kind: %+v", c)
+				}
+			}},
+		// A fragment of the turn is in a terminal ("partial"). Posting its
+		// acts again could post that part twice, so the turn is not split and
+		// is retired whole, as at main.
+		{name: "fragment_in_a_terminal", layout: "two_messages", bound: at(1, 0), retired: []int{0, 1},
 			before: func(t *testing.T, f *windowFixture, _ []boundAct) {
-				boundOwner(f.l).Reason = ""
+				owner := boundOwner(f.l)
+				owner.Fragment, owner.Attempts = true, 1
 			}},
 		// A POST of the turn may have landed: its answer never came. The
 		// turn is not split. It is retired as before, into an operator's
