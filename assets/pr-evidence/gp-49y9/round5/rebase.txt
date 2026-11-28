@@ -1,0 +1,348 @@
+Remove the leading diff3> and its following space from marker lines to recover the conflict transcript. Three historical ticket identifiers are redacted.
+
+Rebasing (1/1)
+Auto-merging gchat/CHANGELOG.md
+CONFLICT (content): Merge conflict in gchat/CHANGELOG.md
+Auto-merging gchat/README.md
+CONFLICT (content): Merge conflict in gchat/README.md
+Auto-merging gchat/adapter/internal/app/app_test.go
+Auto-merging gchat/adapter/internal/app/workers.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/app/workers.go
+Auto-merging gchat/adapter/internal/catchup/catchup.go
+Auto-merging gchat/adapter/internal/catchup/catchup_test.go
+Auto-merging gchat/adapter/internal/config/config.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/config/config.go
+Auto-merging gchat/adapter/internal/inbound/history.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/inbound/history.go
+Auto-merging gchat/adapter/internal/inbound/inbound.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/inbound/inbound.go
+Auto-merging gchat/adapter/internal/inbound/inbound_test.go
+Auto-merging gchat/adapter/internal/inbound/raise.go
+Auto-merging gchat/adapter/internal/ledger/ledger.go
+Auto-merging gchat/adapter/internal/server/server.go
+CONFLICT (content): Merge conflict in gchat/adapter/internal/server/server.go
+Auto-merging gchat/adapter/internal/server/server_test.go
+Auto-merging gchat/adapter/test/e2e/e2e_test.go
+Auto-merging gchat/skills/google-chat/SKILL.md
+Auto-merging gchat/tests/test_commands.py
+error: could not apply 1b91ef8f... gchat: coalesce room chatter into durable, smaller turns
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+hint: Disable this message with "git config set advice.mergeConflict false"
+Recorded preimage for 'gchat/CHANGELOG.md'
+Recorded preimage for 'gchat/README.md'
+Recorded preimage for 'gchat/adapter/internal/app/workers.go'
+Recorded preimage for 'gchat/adapter/internal/config/config.go'
+Recorded preimage for 'gchat/adapter/internal/inbound/history.go'
+Recorded preimage for 'gchat/adapter/internal/inbound/inbound.go'
+Recorded preimage for 'gchat/adapter/internal/server/server.go'
+Could not apply 1b91ef8f... # gchat: coalesce room chatter into durable, smaller turns
+
+gchat/CHANGELOG.md:5
+diff3> <<<<<<< HEAD
+- Required Google API reads now keep a message or reaction on hold when a
+  redirect body gives a different error code. The adapter discards that body
+  for required calls, optional lookups and replacement credential checks.
+  Token refresh, sign-in code exchange and managed identity lookups now
+  refuse redirects. P1 and P2 below remain UNPROVEN.
+
+- The authenticated Google API clients for required calls, optional lookups
+  and replacement credential validation now return the first redirect as a
+  failed call. P1 (UNPROVEN) assumes Chat, People and Workspace Events
+  answer ordinary requests directly. P2 (UNPROVEN) assumes media downloads
+  also answer directly. A redirected download produces an unavailable
+  attachment note.
+
+- Remove saved attachments when a message deletion is learned, and files of
+  attachments an accepted edit took away. Cleanup retries survive restart;
+  past deletions are left alone at an update. Nothing expires by age or is
+  removed to make room. Ledger text, delivered turns and other copies stay;
+  commands, settings, subscriptions and deletion turns are unchanged. Deletions
+  outside membership or event retention cannot be learned. A merge changes
+  no box (<ticket>).
+
+- Bound a newly listed room's first read by the installation floor while allowing its adding message within the join margin.
+- Add `gc gchat join` for one invited room, with a one-time code checked in
+  the owner's direct-message reply. The membership write permission is asked
+  for only by join, separately from standing credentials. Until the admin adds
+  it and the box's key holder serves it, the command explains what is missing
+  and joins nothing. Updating alone preserves startup scopes, every existing
+  command, inbound delivery, health, and existing ledger fields; optional join
+  records are discarded on rollback. No version change. Google acceptance is
+  UNPROVEN: fake coverage awaits a real proof call.
+- The join rechecks its identity before it spends the owner's yes and again
+  before it writes. If the identity turned conflicted meanwhile, the yes stays
+  unspent and nothing is written; past the spend, nothing is sent and the
+  answer says to request approval again (<ticket>).
+- Recover the mention that adds the identity to a room with a bounded first-read margin; bound rooms discovered without an event by membership/inventory time and log first discovery and read completion (<ticket>).
+
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+diff3> =======
+- Never-silent observations and operator resolution follow every enrolled member of merged turns; body headers are quoted across the full Unicode invisible and blank class without changing their bytes.
+
+- Owner changes preserve delivery uncertainty, fragment limits and retry state; withdrawals clear every pending or unresolved merged/folded payload, and merged body headers are quoted as they display through Unicode format characters and spaces.
+
+- Coalesced retries refresh withdrawn members before posting, preserve literal edit prefixes in history, quote body from-line prefixes, isolate malformed held records, and count retried catch-up acts against the budget.
+- Withdrawn window-on deliveries retain their message history but cannot be replayed, including by a rolled-back 0.5.0 reader; replay leaves the withdrawal reason intact and operators can accept the record.
+
+- Room chatter now waits a per-space window (default eight seconds) and arrives
+  as one turn, with each message's full from line. DMs, mentions and replies in
+  the mayor's threads arrive immediately; reactions wait for the window.
+  Catch-up merges missed messages, and the ledger keeps held messages across
+  stops and crashes. `coalesce_window = "0s"` restores individual turns.
+  A box that sets nothing changes behavior when its adapter updates and restarts: the default is on.
+  Remove the setting before rolling back to an older adapter.
+
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/README.md:315
+diff3> <<<<<<< HEAD
+When the adapter learns that a message was deleted, it removes the attachment
+files it saved for that message, including copies saved by history reads and
+edits. An accepted edit removes only the saved files of attachments it no
+longer carries. Files saved before this change have no attachment link: an
+edit leaves them, and a message deletion removes them. Attachment resource
+names are assumed to stay the same across edits (UNPROVEN). If Google changes
+a kept attachment's name, its earlier paths stop working and the edit saves
+a fresh copy. Text edits and history reads still save additional copies.
+
+Failed removals remain in the ledger and are retried at startup and every
+five seconds, independently of credentials, registration, subscriptions and
+history recovery, without holding later messages. Configured media roots are
+remembered across settings reloads and restarts, so a deletion also reaches
+copies in earlier stores. Attachment links use a digest scoped to their store;
+while a filename has pending removal debt, new downloads choose another name.
+Each copy's link records the snapshot revision it came from; a delayed edit
+cannot remove a copy from a newer snapshot. Links from an older ledger without
+that source revision are treated as older than any edit. Catch-up snapshots
+reconcile saved copies before delivery deduplication.
+An edit checkpoint keeps its revision across a crash, preventing older edits
+from restoring removed attachments. Directory removals are synchronized before
+their ledger obligation is cleared; synchronization failures remain retryable.
+Cleanup does not hold the health lock while waiting for downloads, so a
+credential or settings reload can cancel a stalled download. The adapter log
+reports the message id, removed count, and, on failure, a remaining count and
+one cause word; `remaining=-1` means the directory could not be inspected.
+Links and nested folders are left in place and reported for operator attention.
+The first start after an update leaves files of past deletions alone: only
+cleanup obligations recorded by the new code are retried. A rollback to the
+released adapter drops these obligations, attachment links and remembered
+media roots. Fields understood by that adapter remain, and it does not remove
+saved attachments.
+
+Only the adapter's saved files are removed. Ledger text, turns already sent
+to the mayor's session, and copies made elsewhere remain. Deletions in rooms
+the mayor has left, or during outages longer than Google's event retention,
+cannot be learned; files of a room the mayor leaves stay. Commands, settings,
+Google subscriptions and deletion turns are unchanged. A merge changes no
+box; adoption needs a separate adapter release and image or pack update.
+
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+diff3> =======
+The root-level `coalesce_window` setting is a Go duration string from `"0s"`
+to `"60s"`, default `"8s"`. Room chatter waits this long from the first act,
+then arrives as one turn. `coalesce_window = "0s"` restores individual turns
+with their original text and ids. A validated settings replacement reloads it
+with the other settings. Remove this key before rolling back to 0.5.0,
+whose settings loader refuses unknown keys, as with `first_start_history` below.
+
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/app/workers.go:144
+diff3> <<<<<<< HEAD
+	workers.Go(func() {
+		t := time.NewTicker(a.deliveryTick())
+		defer t.Stop()
+		// Give the immediate recovery pass its first chance to settle old
+		// intents. A slow or blocked POST cannot delay this first tick.
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				proc.RaiseDue(ctx)
+			}
+		}
+	})
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+diff3> =======
+	workers.Go(func() { _ = proc.RunWindows(ctx) })
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/config/config.go:108
+diff3> <<<<<<< HEAD
+	JoinReachback     string     `toml:"join_reachback,omitempty"`      // duration, default 5m, maximum 60m
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+diff3> =======
+	CoalesceWindow    *string    `toml:"coalesce_window,omitempty"`
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/config/config.go:457
+diff3> <<<<<<< HEAD
+	if c.Settings.JoinReachback != "" {
+		d, err := time.ParseDuration(c.Settings.JoinReachback)
+		if err != nil || d < 0 || d > time.Hour {
+			return fmt.Errorf("join_reachback must be a duration between 0s and 60m")
+		}
+	}
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+diff3> =======
+	if c.Settings.CoalesceWindow != nil {
+		d, err := time.ParseDuration(*c.Settings.CoalesceWindow)
+		if err != nil {
+			return fmt.Errorf("coalesce_window must be a Go duration: %w", err)
+		}
+		if d < 0 || d > time.Minute {
+			return fmt.Errorf("coalesce_window must be between 0s and 60s")
+		}
+	}
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/inbound/history.go:108
+diff3> <<<<<<< HEAD
+	if old := l.Changes[id]; old != nil && old.Kind == c.Kind && old.Status != "committed" {
+		if !preserveHistoryNotice(l, cfg, old) {
+			delete(l.Changes, id)
+			delete(l.Unresolved, id)
+		}
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+	if old := l.Changes[id]; old != nil && old.Kind == c.Kind && old.Status != "committed" {
+		delete(l.Changes, id)
+		delete(l.Unresolved, id)
+diff3> =======
+	if old := l.Changes[id]; old != nil && old.OriginalKind() == c.Kind && old.Status != "committed" {
+		// The queued row retires only this act. Restore unsent members before
+		// removing their owner so the space migration judges each one too.
+		var members []*ledger.ChangeState
+		for _, member := range l.Changes {
+			if member.ID != id && member.MemberOf != "" && l.Delivery(member) == old {
+				members = append(members, member)
+			}
+		}
+		for _, member := range members {
+			member.Event, member.Kind = member.OriginalEvent(), member.OriginalKind()
+			member.MemberEvent, member.MemberKind, member.MemberOf, member.Members = "", "", "", nil
+			member.Status, member.Reason, member.HeldUntil = "intent", "", time.Time{}
+		}
+		delete(l.Changes, id)
+		delete(l.Unresolved, id)
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/inbound/history.go:210
+diff3> <<<<<<< HEAD
+		if old.Kind == "message.deleted" {
+			if state := l.Messages[old.Message]; state != nil {
+				state.Deleted = false
+			}
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+		var w wire.InboundMessage
+		_ = json.Unmarshal([]byte(old.Event), &w)
+		frame, framed := provenance.FrameOf(w.Text)
+		if !old.ProvenanceFramed || !framed {
+			user := &api.User{Name: w.Actor.ID, DisplayName: w.Actor.DisplayName}
+			frame = provenance.Frame(HistorySpeaker(l, cfg, puller.Change{Message: &api.Message{Sender: user}}))
+diff3> =======
+		retiring = append(retiring, old)
+	}
+	for _, old := range retiring {
+		id, kind := old.ID, old.OriginalKind()
+		var w wire.InboundMessage
+		_ = json.Unmarshal([]byte(old.OriginalEvent()), &w)
+		frame, framed := provenance.FrameOf(w.Text)
+		if !old.ProvenanceFramed || !framed {
+			user := &api.User{Name: w.Actor.ID, DisplayName: w.Actor.DisplayName}
+			frame = provenance.Frame(HistorySpeaker(l, cfg, puller.Change{Message: &api.Message{Sender: user}}))
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/inbound/history.go:261
+diff3> <<<<<<< HEAD
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+		if old.Kind == "message.deleted" {
+			if state := l.Messages[old.Message]; state != nil {
+				state.Deleted = false
+			}
+		}
+diff3> =======
+		if kind == "message.deleted" {
+			if state := l.Messages[old.Message]; state != nil {
+				state.Deleted = false
+			}
+		}
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/inbound/inbound.go:196
+diff3> <<<<<<< HEAD
+	return &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{}, unanswered: make(map[string]time.Time)}, nil
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+	return &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{}}, nil
+diff3> =======
+	p := &Processor{opts: opts, gate: make(chan struct{}, 1), wait: wait, raiseTried: map[string]time.Time{},
+		windowChanged: make(chan struct{}, 1), windowWait: windowWait, recoverHeld: map[string]bool{}}
+	opts.LedgerMu.Lock()
+	for id, c := range opts.Ledger.Changes {
+		if isHeld(c) {
+			p.recoverHeld[id] = true
+		}
+	}
+	opts.LedgerMu.Unlock()
+	return p, nil
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/inbound/inbound.go:1311
+diff3> <<<<<<< HEAD
+		// A later revision cannot tell us whether an unanswered POST landed.
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+		if superseded(l, c) {
+			return p.unresolved(id, reasonWithdrawn)
+		}
+diff3> =======
+		if isHeld(c) {
+			return nil
+		}
+		if p.refreshMerged(l, c) {
+			if err := p.opts.NeverSilent.WithHistory(func() error {
+				if err := p.update(func(current *ledger.Ledger) { p.refreshMerged(current, current.Changes[id]) }); err != nil {
+					return err
+				}
+				current, err := p.snapshot()
+				if err != nil {
+					return err
+				}
+				return ReconcileNeverSilent(current, p.opts.NeverSilent)
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+		if superseded(l, c) {
+			return p.unresolved(id, reasonWithdrawn)
+		}
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/inbound/inbound.go:1576
+diff3> <<<<<<< HEAD
+	if checkpoint := l.Media[c.Message]; checkpoint != nil && checkpoint.Revision.After(state.Revision) {
+		return true
+	}
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+diff3> =======
+	if !c.MemberRevision.IsZero() && !state.Revision.After(c.MemberRevision) {
+		return false
+	}
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+
+gchat/adapter/internal/server/server.go:1775
+diff3> <<<<<<< HEAD
+	status["jev_api_key"] = "not set"
+	s.mu.RLock()
+	if s.cfg.Acknowledgement.Key != "" {
+		status["jev_api_key"] = "set"
+	}
+	s.mu.RUnlock()
+diff3> ||||||| parent of 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)
+diff3> =======
+	cfg := s.configuration()
+	status["coalesce_window"], status["held_acts"] = cfg.CoalesceWindow().String(), held
+diff3> >>>>>>> 1b91ef8f (gchat: coalesce room chatter into durable, smaller turns)

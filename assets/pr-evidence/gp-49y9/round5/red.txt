@@ -1,0 +1,36 @@
+At R and after fixing its three call sites, respectively
+env -u GC_BIN -u NEVER_SILENT go vet ./...
+exit 1 on each run
+internal/inbound/coalesce.go:24:56: not enough arguments in call to p.handle
+internal/inbound/coalesce_history_test.go:66:30: not enough arguments in call to RetireQueuedHistory
+internal/inbound/coalesce_review_test.go:26:194: not enough arguments in call to f.p.handle
+vet: internal/app/sender_credential_test.go:219:5: invalid operation: *got != *want (struct containing []string cannot be compared)
+
+Before disabling the coalescing window in the parity fixture
+env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run '^(TestOffParityWithTheBase|TestOffParityWithTheBaseNeverSilentOn)$' -count=1
+exit 1 (assertion excerpts)
+--- FAIL: TestOffParityWithTheBase (3.00s)
+    offparity_test.go:352: OFF-PARITY turns raised differs from the base:
+    offparity_test.go:354: OFF-PARITY counters differs from the base:
+--- FAIL: TestOffParityWithTheBaseNeverSilentOn (1.26s)
+    offparity_test.go:352: OFF-PARITY turns raised differs from the base:
+    offparity_test.go:354: OFF-PARITY counters differs from the base:
+FAIL
+FAIL	gchat-adapter/internal/inbound	4.468s
+FAIL
+
+Reversed guard order, same final test fixture
+env -u GC_BIN -u NEVER_SILENT go test -overlay <tmp>/swapped-overlay.json ./internal/inbound -run '^TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint$' -count=1 -v
+exit 1
+=== RUN   TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint
+=== RUN   TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/refreshed_member_behind_checkpoint
+    superseded_checkpoint_test.go:31: superseded = false, want true
+=== RUN   TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/refreshed_member_at_checkpoint
+=== RUN   TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/ordinary_change_behind_checkpoint
+--- FAIL: TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint (0.00s)
+    --- FAIL: TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/refreshed_member_behind_checkpoint (0.00s)
+    --- PASS: TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/refreshed_member_at_checkpoint (0.00s)
+    --- PASS: TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/ordinary_change_behind_checkpoint (0.00s)
+FAIL
+FAIL	gchat-adapter/internal/inbound	0.231s
+FAIL

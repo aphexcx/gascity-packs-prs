@@ -1,0 +1,22 @@
+At F
+gofmt -l .
+exit 0, empty output
+env -u GC_BIN -u NEVER_SILENT go vet ./...
+exit 0, empty output
+env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run '^(TestOffParityWithTheBase|TestOffParityWithTheBaseNeverSilentOn)$' -count=1
+exit 0
+ok  	gchat-adapter/internal/inbound	2.651s
+
+Checkpoint first, same test fixture
+env -u GC_BIN -u NEVER_SILENT go test ./internal/inbound -run '^TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint$' -count=1 -v
+exit 0
+=== RUN   TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint
+=== RUN   TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/refreshed_member_behind_checkpoint
+=== RUN   TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/refreshed_member_at_checkpoint
+=== RUN   TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/ordinary_change_behind_checkpoint
+--- PASS: TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint (0.00s)
+    --- PASS: TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/refreshed_member_behind_checkpoint (0.00s)
+    --- PASS: TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/refreshed_member_at_checkpoint (0.00s)
+    --- PASS: TestSupersededHoldsARefreshedMemberBehindAnEditCheckpoint/ordinary_change_behind_checkpoint (0.00s)
+PASS
+ok  	gchat-adapter/internal/inbound	0.216s
