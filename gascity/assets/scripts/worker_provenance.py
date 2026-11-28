@@ -154,8 +154,7 @@ def close_facts(args) -> list[dict]:
                 raise ValueError("review round must be a positive integer")
             records.append(fact("used", "transcript", review["ref"], "review",
                                 stage=stage, round=round_number,
-                                verdict=nonempty(review["verdict"]), sha=sha(review["sha"]),
-                                **({"pr": args.pr} if not args.commit else {})))
+                                verdict=nonempty(review["verdict"]), sha=sha(review["sha"]), pr=args.pr))
     if args.evidence_dir:
         if not Path(args.evidence_dir).is_absolute():
             raise ValueError("evidence directory must be absolute")
@@ -320,10 +319,11 @@ def summary(events: list[dict]) -> str:
     head = commit if commits else "unknown"
     review_sha = commit if commits else None
     verdicts = {}
-    if not commit and (artifact or outcome.get("outcome") in ("no-op", "ran")):
+    if not commit:
         # Older facts have no PR association. Attribute them only on an unambiguous trail.
-        other_pr = any(p.get("url") != pr for _, _, _, p in facts if p["fact"] == "pr")
-        reviews = [p for p in reviews if p.get("pr") == pr or ("pr" not in p and not other_pr)]
+        scopes = {p.get("pr", "") for _, _, _, p in facts if p["fact"] == "outcome"}
+        scopes.update(p.get("url") for _, _, _, p in facts if p["fact"] == "pr")
+        reviews = [p for p in reviews if p.get("pr") == pr or ("pr" not in p and scopes == {pr})]
         heads = {p["sha"] for p in reviews}
         if len(heads) == 1:
             review_sha, = heads

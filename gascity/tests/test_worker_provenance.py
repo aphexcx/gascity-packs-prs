@@ -625,6 +625,27 @@ def test_noop_reviews_belong_to_the_named_pr(fixture):
     assert module.summary(first_record).endswith(f'{SHA} reviewed, gate unknown, read PASS')
 
 
+@pytest.mark.parametrize('first_pr', ['', PR])
+def test_committed_review_pr_scope_survives_noop_transitions(fixture, first_pr):
+    second_pr = PR.replace('/123', '/234')
+    fixture[1].write_text(json.dumps([dict(stage='gate', verdict='PASS', sha=SHA, ref='/evidence/gate')]))
+    args = ('record', 'fixture-1')
+    assert run(fixture, *args, '--outcome', 'shipped', '--commit', SHA, '--pr', first_pr,
+               '--reviews', str(fixture[1])).returncode == 0
+    assert run(fixture, *args, '--outcome', 'no-op', '--pr', second_pr).returncode == 0
+    unknown = 'no-op; PR 234 at unknown, gate unknown, read unknown'
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == unknown
+    legacy = data(fixture)['events']
+    for event in legacy:
+        payload = json.loads(event['payload'])
+        if payload['fact'] == 'review':
+            del payload['pr']
+            event['payload'] = json.dumps(payload)
+    assert module.summary(legacy) == unknown
+    assert run(fixture, *args, '--outcome', 'no-op', '--pr', first_pr).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith(f'{SHA} reviewed, gate PASS, read unknown')
+
+
 def test_reader_ignores_other_producers_and_wrong_types(fixture):
     assert record(fixture).returncode == 0
     events = data(fixture)['events']
