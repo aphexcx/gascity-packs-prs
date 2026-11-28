@@ -1958,6 +1958,7 @@ func main() {
 	if err := installInboundRecovery(&cfg); err != nil {
 		log.Fatalf("inbound recovery: %v", err)
 	}
+	cfg.deadLetterAlerts.alarm = newDeadLetterAlarm(cfg)
 	// Shutdown must await in-flight event goroutines before draining the
 	// coalescer (gp-9e7 fix round 1a) — wired before the handlers below
 	// close over the cfg value.
@@ -7113,7 +7114,7 @@ func inboundDeadLetterSink(deliverCfg config) func(string, []pendingChannelInbou
 			return false
 		}
 		if len(batch) > 0 {
-			deliverCfg.deadLetterAlerts.notify(path, batch[0].inbound.ProviderMessageID, deadLetterMailReason(rejectionReasonText(cause)))
+			deliverCfg.deadLetterAlerts.notify(path, batch[0].inbound, deadLetterMailReason(rejectionReasonText(cause)))
 		}
 		deliverCfg.postFailures.clear("dead-letter:" + channel)
 		if err := deliverCfg.inboundRecovery.importDeadLetters(); err != nil {

@@ -1520,7 +1520,7 @@ func (r *inboundRecovery) retire(key string, e inboundRecoveryEntry) {
 	r.put(key, e)
 	if !e.Retiring {
 		path := filepath.Join(r.deadDir, safePathComponent(e.Inbound.Conversation.ConversationID)+".jsonl")
-		r.deadLetterAlerts.notify(path, e.Inbound.ProviderMessageID, deadLetterMailReason(e.Reason))
+		r.deadLetterAlerts.notify(path, e.Inbound, deadLetterMailReason(e.Reason))
 		log.Printf("inbound HOLD: LOSS chan=%s ts=%s receipt=%s dead-lettered after %d attempt(s) over %s file=%s", e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID, receiptLogID(e.OriginalReceiptID), e.Attempts, r.now().Sub(e.HeldAt), path)
 	}
 	if !e.Retiring && r.finished != nil {
@@ -2216,6 +2216,29 @@ func (r *inboundRecovery) updateNotices() {
 
 type inboundRecoveryCounts struct{ Held, Dead, ByHand int }
 
+// A group receipt has no cursor. Room and alias copies of one Slack message
+// share it, but a parent and each lost range of replies are separate losses.
+// Keep settled rows in this check: they may explain a receipt still on disk.
+func (r *inboundRecovery) canAttributeAlarmReceipt(inbound externalInboundMessage, replies unreadReplyRange) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if replies.present && replies.after == "" {
+		return false
+	}
+	matched := !replies.present // Ordinary writes can precede import of their row.
+	for _, e := range r.state.Entries {
+		other := e.Inbound
+		if other.Conversation.ConversationID != inbound.Conversation.ConversationID || other.ProviderMessageID != inbound.ProviderMessageID {
+			continue
+		}
+		if deadLetterReplyRange(other, e.Reason) != replies {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}
+
 // deadLetterAlarmSet copies only the coordinates, times and classifications
 // needed by mail. No mutable entry or payload escapes the recovery lock.
 func (r *inboundRecovery) deadLetterAlarmSet(now time.Time) map[string]alarmMessage {
@@ -2246,6 +2269,7 @@ func (r *inboundRecovery) deadLetterAlarmSet(now time.Time) map[string]alarmMess
 		if class > m.class {
 			m.class = class
 			m.channel, m.ts, m.thread = e.Inbound.Conversation.ConversationID, e.Inbound.ProviderMessageID, e.Inbound.ReplyToMessageID
+			m.replies = deadLetterReplyRange(e.Inbound, e.Reason)
 			if m.thread == "" {
 				m.thread = m.ts
 			}

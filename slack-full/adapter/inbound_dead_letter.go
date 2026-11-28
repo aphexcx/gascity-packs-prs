@@ -19,37 +19,81 @@ import (
 )
 
 // Each distinct loss can request its turn independently. Overlapping writes
-// for the same key share a worker that rechecks gc's mailbox after the send.
+// for the same message share a worker that checks its receipt before retrying.
 type deadLetterAlerts struct {
 	mu       sync.Mutex
 	inFlight map[string]*deadLetterMail
-	send     func(path, key, reason string) error
+	send     func(key, body string) (operatorMailReceipt, error)
+	alarm    *deadLetterAlarm
 }
 
 type deadLetterMail struct {
 	done    chan struct{}
-	pending *deadLetterNotice
+	pending *string
 }
 
-type deadLetterNotice struct {
-	path, reason string
+func localMailBinary() string {
+	if bin := os.Getenv("GC_BIN"); bin != "" {
+		return bin
+	}
+	return "gc"
 }
 
 func newDeadLetterAlerts(city string) *deadLetterAlerts {
-	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(path, key, reason string) error {
-		body := fmt.Sprintf("File: %s\nReason: %s", path, reason)
-		return sendOperatorMail(context.Background(), "gc", city, key, "Slack inbound message could not be delivered", body, true)
+	bin := localMailBinary()
+	return &deadLetterAlerts{inFlight: make(map[string]*deadLetterMail), send: func(key, body string) (operatorMailReceipt, error) {
+		return sendNotifyingOperatorMail(context.Background(), bin, city, key, "Slack inbound message could not be delivered", body)
 	}}
 }
 
-func (a *deadLetterAlerts) notify(path, firstMessageTS, reason string) {
+const listingHoldReasonPrefix = "inbound liveness: a thread's listing hold aged out of the backfill window"
+
+type unreadReplyRange struct {
+	present       bool
+	thread, after string
+}
+
+// The existing liveness rows store a pending thread's cursor in the dedup
+// key. A listing hold shares the latest reply's key and stores its cursor
+// only in the adapter-authored reason.
+func deadLetterReplyRange(inbound externalInboundMessage, reason string) unreadReplyRange {
+	thread := inbound.ReplyToMessageID
+	after, found := strings.CutPrefix(inbound.DedupKey, "slack-thread-"+thread+"-")
+	if thread != inbound.ProviderMessageID || !found {
+		if !strings.HasPrefix(reason, listingHoldReasonPrefix+" (") {
+			return unreadReplyRange{}
+		}
+		_, rest, _ := strings.Cut(reason, " — the replies of thread "+thread+" above ")
+		after, _, _ = strings.Cut(rest, " and up to this ts")
+	}
+	if _, _, ok := splitSlackTS(after); !ok {
+		after = ""
+	}
+	return unreadReplyRange{present: true, thread: thread, after: after}
+}
+
+func (a *deadLetterAlerts) notify(path string, inbound externalInboundMessage, reason string) {
 	if a == nil {
 		return
 	}
-	key := "dead-letter:" + filepath.Base(path) + ":" + firstMessageTS
+	key := recoveryKey(inbound)
+	ts := inbound.ProviderMessageID
+	thread := inbound.ReplyToMessageID
+	if thread == "" {
+		thread = ts
+	}
+	mailKey := "dead-letter:" + filepath.Base(path) + ":" + ts
+	replies := deadLetterReplyRange(inbound, reason)
+	if replies.present {
+		rangeKey := ingestionDigest(replies.thread + "|" + replies.after + "|" + inbound.DedupKey)
+		key += "|range:" + rangeKey
+		mailKey += ":range:" + rangeKey
+	}
+	channel := inbound.Conversation.ConversationID
+	body := fmt.Sprintf("File: %s\nReason: %s\nchannel: %s\nthread_ts: %s\nmessage_ts: %s\n%s", path, reason, channel, thread, ts, deadLetterRecoveryGuidance(channel, ts, replies))
 	a.mu.Lock()
 	if mail := a.inFlight[key]; mail != nil {
-		mail.pending = &deadLetterNotice{path: path, reason: reason}
+		mail.pending = &body
 		a.mu.Unlock()
 		return
 	}
@@ -58,9 +102,11 @@ func (a *deadLetterAlerts) notify(path, firstMessageTS, reason string) {
 	a.mu.Unlock()
 	go func() {
 		for {
-			err := a.send(path, key, reason)
+			err := a.alarm.mailWritten(inbound, replies, func() (operatorMailReceipt, error) {
+				return a.send(mailKey, body)
+			})
 			if err != nil {
-				log.Printf("operator mail failed key=%q: %v", key, err)
+				log.Printf("operator mail failed key=%q: %v", mailKey, err)
 			}
 			a.mu.Lock()
 			if mail.pending == nil {
@@ -69,7 +115,7 @@ func (a *deadLetterAlerts) notify(path, firstMessageTS, reason string) {
 				a.mu.Unlock()
 				return
 			}
-			path, reason = mail.pending.path, mail.pending.reason
+			body = *mail.pending
 			mail.pending = nil
 			a.mu.Unlock()
 		}

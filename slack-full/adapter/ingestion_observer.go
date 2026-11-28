@@ -772,15 +772,28 @@ func (cfg config) operatorMailCity() string {
 // gc can wait up to 30 seconds for an idle session before queuing the turn.
 const operatorMailNotifyTimeout = 60 * time.Second
 
+type operatorMailReceipt struct {
+	ID          string `json:"id"`
+	Notified    bool   `json:"notified"`
+	AlreadyDone bool   `json:"already_done"`
+}
+
+func (r operatorMailReceipt) accepted() bool { return r.ID != "" || r.AlreadyDone }
+
 func sendOperatorMail(ctx context.Context, bin, city, key, subject, body string, notify bool) error {
-	args := []string{"--city", city, "mail", "send", "mayor"}
 	if !notify {
-		_, err := runOperatorMail(ctx, bin, append(args, "--dedup", key, "-s", subject, "-m", body))
+		_, err := runOperatorMail(ctx, bin, []string{"--city", city, "mail", "send", "mayor", "--dedup", key, "-s", subject, "-m", body})
 		return err // HOLD notices retain their original CLI contract.
 	}
+	_, err := sendNotifyingOperatorMail(ctx, bin, city, key, subject, body)
+	return err
+}
+
+func sendNotifyingOperatorMail(ctx context.Context, bin, city, key, subject, body string) (operatorMailReceipt, error) {
+	var result operatorMailReceipt
 	ctx, cancel := context.WithTimeout(ctx, operatorMailNotifyTimeout)
 	defer cancel()
-	args = append(args, "-s", subject, "-m", body)
+	args := []string{"--city", city, "mail", "send", "mayor", "-s", subject, "-m", body}
 	output, err := runOperatorMail(ctx, bin, append(args, "--dedup", key, "--notify", "--json"))
 	if flag := unsupportedMailFlag(err); flag != "" {
 		if flag == "json" {
@@ -790,24 +803,21 @@ func sendOperatorMail(ctx context.Context, bin, city, key, subject, body string,
 		output, err = runOperatorMail(ctx, bin, args)
 		if err == nil {
 			var id string
-			fmt.Sscanf(string(output), "Sent message %s to mayor", &id)
-			log.Printf("operator mail id=%q notified=false key=%q plain=true", id, key)
+			if _, scanErr := fmt.Sscanf(string(output), "Sent message %s to mayor", &id); scanErr == nil {
+				result.ID = id
+			}
+			log.Printf("operator mail id=%q notified=false key=%q plain=true", result.ID, key)
 		}
-		return err
+		return result, err
 	}
 	if err != nil {
-		return err
+		return result, err
 	}
-	var result struct {
-		ID          string `json:"id"`
-		Notified    bool   `json:"notified"`
-		AlreadyDone bool   `json:"already_done"`
-	}
-	if json.Unmarshal(output, &result) != nil || (result.ID == "" && !result.AlreadyDone) {
-		return errors.New("gc mail send returned an invalid receipt")
+	if json.Unmarshal(output, &result) != nil || !result.accepted() {
+		return operatorMailReceipt{}, errors.New("gc mail send returned an invalid receipt")
 	}
 	log.Printf("operator mail id=%q notified=%t key=%q already_done=%t", result.ID, result.Notified, key, result.AlreadyDone)
-	return nil
+	return result, nil
 }
 
 func unsupportedMailFlag(err error) string {

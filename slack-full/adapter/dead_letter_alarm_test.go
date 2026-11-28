@@ -82,6 +82,8 @@ func newAlarmFixture(t *testing.T, operator bool) *alarmFixture {
 	}
 	t.Setenv("NEVER_SILENT_OPERATOR_AGENT", "fixture-agent")
 	f := &alarmFixture{t: t, dir: dir, cfg: config{cityName: "fixture", cityPath: dir, inboundRecovery: r}, now: now}
+	f.cfg.deadLetterAlerts = newDeadLetterAlerts(dir)
+	r.deadLetterAlerts = f.cfg.deadLetterAlerts
 	f.mode("local", "ok")
 	f.mode("operator", "ok")
 	f.restart()
@@ -90,6 +92,7 @@ func newAlarmFixture(t *testing.T, operator bool) *alarmFixture {
 
 func (f *alarmFixture) restart() {
 	f.a = newDeadLetterAlarm(f.cfg)
+	f.cfg.deadLetterAlerts.alarm = f.a
 	f.a.now = func() time.Time { return *f.now }
 	f.t.Setenv("ALARM_RECORDS", f.a.path)
 }
@@ -201,6 +204,310 @@ func TestDeadLetterAlarmOnce(t *testing.T) {
 	f.count("operator", 1)
 	if f.args("local")[0][6] != f.args("local")[1][6] || len(strings.Fields(f.file("local.mails"))) != 1 {
 		t.Fatal("retry changed key or created another mail")
+	}
+}
+
+func TestDeadLetterLocalReceipt(t *testing.T) {
+	for _, first := range []string{"writer", "alarm", "alarm-only"} {
+		for _, restart := range []bool{false, true} {
+			for _, result := range []string{"accepted", "refused", "lost"} {
+				t.Run(fmt.Sprintf("%s/restart=%t/%s", first, restart, result), func(t *testing.T) {
+					testDeadLetterReceipt(t, first, restart, result)
+				})
+			}
+		}
+	}
+}
+
+func testDeadLetterReceipt(t *testing.T, first string, restart bool, result string) {
+	f := newAlarmFixture(t, false)
+	// Each accepted mail is archived immediately, releasing its mailbox key.
+	alarmWrite(t, filepath.Join(f.dir, "gc"), `#!/bin/sh
+set -eu
+cd "$ALARM_FIXTURE"
+[ "$1" = --city ]
+[ "$2" = "$ALARM_FIXTURE" ]
+[ "$3 $4 $5" = "mail send mayor" ]
+mode=$(cat local.mode)
+[ "$mode" != refused ] || exit 1
+echo mail >> events
+for arg do
+  if [ "$arg" = --notify ]; then echo turn >> events; fi
+done
+[ "$mode" != lost ] || exit 0
+echo '{"ok":true,"id":"example-mail","notified":true}'
+`)
+	t.Setenv("PATH", f.dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	count := func(want int) {
+		t.Helper()
+		events := f.file("events")
+		mails, turns := strings.Count(events, "mail\n"), strings.Count(events, "turn\n")
+		t.Logf("mails=%d turn_requests=%d", mails, turns)
+		if mails != want || turns != want {
+			t.Fatalf("want %d of each", want)
+		}
+	}
+	e := f.add("C1", "100.1")
+	key := recoveryKey(e.Inbound)
+	r := f.cfg.inboundRecovery
+	r.put(key, e)
+	write := func() {
+		r.retire(key, e)
+		r.deadLetterAlerts.wait()
+	}
+	f.mode("local", result)
+	if first == "writer" {
+		write()
+	} else {
+		f.pass()
+	}
+	if result == "refused" {
+		count(0)
+	} else {
+		count(1)
+	}
+	if restart {
+		var err error
+		r, err = newInboundRecovery(r.path, r.deadDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.now = func() time.Time { return *f.now }
+		f.cfg.inboundRecovery = r
+		f.cfg.deadLetterAlerts = newDeadLetterAlerts(f.dir)
+		r.deadLetterAlerts = f.cfg.deadLetterAlerts
+		f.restart()
+	}
+	f.mode("local", "accepted")
+	*f.now = f.now.Add(20 * time.Second)
+	if first == "alarm" {
+		write()
+	}
+	f.pass()
+	f.pass() // The message stays outstanding.
+	want := 1
+	if result == "lost" {
+		want = 2 // At-least-once by design when acceptance was never recorded.
+	}
+	count(want)
+}
+
+func TestDeadLetterUnattributedReceiptAfterRestart(t *testing.T) {
+	for _, first := range []string{"parent", "range"} {
+		t.Run(first, func(t *testing.T) {
+			f := newAlarmFixture(t, false)
+			r := f.cfg.inboundRecovery
+			parent := f.add("C1", "100.1")
+			missing := parent
+			missing.ManualRecovery = true
+			missing.Inbound.ReplyToMessageID = parent.Inbound.ProviderMessageID
+			missing.Inbound.DedupKey = "slack-thread-100.1-99.1"
+			parentKey := recoveryKey(parent.Inbound)
+			rangeKey := parentKey + "|manual:" + missing.Inbound.DedupKey
+			if first == "parent" {
+				r.put(parentKey, parent)
+			} else {
+				r.put(rangeKey, missing)
+			}
+			f.pass()
+			args := f.one("local")
+			if err := os.Remove(filepath.Join(f.dir, args[6])); err != nil {
+				t.Fatal(err)
+			}
+			r.put(parentKey, parent)
+			r.put(rangeKey, missing)
+			reopened, err := newInboundRecovery(r.path, r.deadDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.cfg.inboundRecovery = reopened
+			f.restart()
+			f.pass()
+			f.count("local", 1)
+			calls := 0
+			f.cfg.deadLetterAlerts.send = func(string, string) (operatorMailReceipt, error) {
+				calls++
+				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+			}
+			f.cfg.deadLetterAlerts.notify("C1.jsonl", parent.Inbound, "delivery refused")
+			f.cfg.deadLetterAlerts.wait()
+			// At-least-once by design: the parent gets its first mail after a
+			// range receipt, or one duplicate after its own archived receipt.
+			if calls != 1 {
+				t.Fatalf("first receipt for %s: parent writer sent %d mails, want 1", first, calls)
+			}
+			f.pass()
+			f.count("local", 1)
+		})
+	}
+}
+
+func TestDeadLetterRangeCannotBorrowParentOrSiblingReceipt(t *testing.T) {
+	for _, first := range []string{"parent", "sibling"} {
+		t.Run(first, func(t *testing.T) {
+			f := newAlarmFixture(t, false)
+			e := f.add("C1", "100.1")
+			e.Inbound.ReplyToMessageID = "100.1"
+			if first == "sibling" {
+				e.ManualRecovery = true
+				e.Inbound.DedupKey = "slack-thread-100.1-98.1"
+			}
+			f.put("first", e)
+			f.pass()
+			f.one("local")
+			var keys []string
+			f.cfg.deadLetterAlerts.send = func(key, body string) (operatorMailReceipt, error) {
+				keys = append(keys, key)
+				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+			}
+			for _, cursor := range []string{"99.1", "99.2"} {
+				e.ManualRecovery = true
+				e.Inbound.DedupKey = "slack-thread-100.1-" + cursor
+				f.put(cursor, e)
+				f.cfg.deadLetterAlerts.notify("C1.jsonl", e.Inbound, "unread replies after "+cursor)
+				f.cfg.deadLetterAlerts.wait()
+			}
+			if len(keys) != 2 || keys[0] == keys[1] {
+				t.Fatalf("two distinct ranges need two mailbox keys, got %v", keys)
+			}
+			f.pass()
+			f.count("local", 1)
+		})
+	}
+}
+
+func TestDeadLetterListingAndLatestReplyDoNotShareReceipt(t *testing.T) {
+	for _, first := range []string{"listing", "latest"} {
+		t.Run(first, func(t *testing.T) {
+			f := newAlarmFixture(t, false)
+			latest := f.add("C1", "101.1")
+			latest.Inbound.ReplyToMessageID = "100.1"
+			listing := latest
+			listing.ManualRecovery = true
+			listing.Reason = "inbound liveness: a thread's listing hold aged out of the backfill window (1h0m0s) — the replies of thread 100.1 above 99.1 and up to this ts were never read (the pending set was full and the reads failed every probe); read them from Slack"
+			rows := []inboundRecoveryEntry{listing, latest}
+			if first == "latest" {
+				rows[0], rows[1] = rows[1], rows[0]
+			}
+			f.put("first", rows[0])
+			f.pass()
+			f.one("local")
+			f.put("second", rows[1])
+			f.restart()
+			sent := 0
+			f.cfg.deadLetterAlerts.send = func(key, body string) (operatorMailReceipt, error) {
+				sent++
+				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+			}
+			f.cfg.deadLetterAlerts.notify("C1.jsonl", rows[1].Inbound, rows[1].Reason)
+			f.cfg.deadLetterAlerts.wait()
+			if sent != 1 {
+				t.Fatalf("%s mailed first: writer sent %d mails for the other loss, want 1", first, sent)
+			}
+		})
+	}
+}
+
+func TestDeadLetterAlarmMailIdentifiesUnreadReplies(t *testing.T) {
+	f := newAlarmFixture(t, false)
+	e := f.add("C1", "100.1")
+	e.ManualRecovery = true
+	e.Inbound.ReplyToMessageID = "100.1"
+	e.Inbound.DedupKey = "slack-thread-100.1-99.1"
+	f.put("range", e)
+	f.pass()
+	args := f.one("local")
+	body := args[len(args)-1]
+	if !strings.Contains(body, "replies") || !strings.Contains(body, "99.1") {
+		t.Fatalf("alarm mail omitted the unread range: %s", body)
+	}
+	sent := 0
+	f.cfg.deadLetterAlerts.send = func(key, body string) (operatorMailReceipt, error) {
+		sent++
+		return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+	}
+	f.cfg.deadLetterAlerts.notify("C1.jsonl", e.Inbound, "unread replies after 99.1")
+	f.cfg.deadLetterAlerts.wait()
+	if sent != 0 {
+		t.Fatalf("writer repeated the sole range's accepted alarm mail %d times", sent)
+	}
+}
+
+func TestDeadLetterReceiptUsesConfiguredMailbox(t *testing.T) {
+	for _, first := range []string{"alarm", "writer"} {
+		t.Run(first, func(t *testing.T) {
+			f := newAlarmFixture(t, false)
+			f.cfg.cityPath = ""
+			f.cfg.deadLetterAlerts = newDeadLetterAlerts(f.cfg.operatorMailCity())
+			f.restart()
+			alarmWrite(t, filepath.Join(f.dir, "gc"), `#!/bin/sh
+set -eu
+[ "$1" = --city ]
+[ "$2" = fixture ]
+[ "$3 $4 $5" = "mail send mayor" ]
+printf '%s\n' "$@" >> "$ALARM_FIXTURE/received"
+echo '{"ok":true,"id":"example-mail","notified":true}'
+`)
+			other := t.TempDir()
+			alarmWrite(t, filepath.Join(other, "gc"), "#!/bin/sh\nexit 1\n")
+			t.Setenv("PATH", other)
+			e := f.add("C1", "100.1")
+			e.Inbound.ReplyToMessageID = "99.1"
+			f.put(recoveryKey(e.Inbound), e)
+			if first == "alarm" {
+				f.pass()
+			}
+			f.cfg.deadLetterAlerts.notify("C1.jsonl", e.Inbound, "delivery refused")
+			f.cfg.deadLetterAlerts.wait()
+			// Inspect the first send before a later scan could mask its failure.
+			body := f.file("received")
+			for _, want := range []string{"--notify\n", "channel: C1", "thread_ts: 99.1", "message_ts: 100.1", "read this message in Slack", "--acknowledge 100.1"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("mail missing %q", want)
+				}
+			}
+			f.pass()
+			if n := strings.Count(f.file("received"), "--notify\n"); n != 1 {
+				t.Fatalf("turn requests to configured mayor = %d, want 1", n)
+			}
+		})
+	}
+}
+
+func TestDeadLetterWriteBeforeImport(t *testing.T) {
+	for _, order := range []string{"receipt-before-import", "import-during-send"} {
+		t.Run(order, func(t *testing.T) {
+			f := newAlarmFixture(t, true)
+			e := f.add("C1", "100.1")
+			started, finish := make(chan struct{}), make(chan struct{})
+			alerts := f.cfg.deadLetterAlerts
+			alerts.send = func(key, body string) (operatorMailReceipt, error) {
+				close(started)
+				<-finish
+				return operatorMailReceipt{ID: "example-mail", Notified: true}, nil
+			}
+			alerts.notify("C1.jsonl", e.Inbound, "delivery refused")
+			<-started
+			if order == "receipt-before-import" {
+				close(finish)
+				alerts.wait()
+				f.pass()
+				f.count("operator", 0)
+				f.put("room", e)
+			} else {
+				f.put("room", e)
+				f.pass()
+				close(finish)
+				alerts.wait()
+			}
+			f.pass()
+			f.pass()
+			f.count("local", 0)
+			op := f.one("operator")
+			if !strings.Contains(op[len(op)-1], "local_wake: asked\n") {
+				t.Fatal("operator summary did not report the accepted turn request")
+			}
+		})
 	}
 }
 
@@ -316,7 +623,9 @@ func TestDeadLetterAlarmRoads(t *testing.T) {
 			previous := log.Writer()
 			log.SetOutput(&logs)
 			defer log.SetOutput(previous)
-			f.a.limit = 250 * time.Millisecond
+			// A successful fixture CLI also starts a shell and archives a key.
+			// Give it time to finish; the hanging command sleeps for 30s.
+			f.a.limit = 2 * time.Second
 			f.put("room", f.add("C1", "100.1"))
 			f.pass()
 			*f.now = f.now.Add(19 * time.Second)
