@@ -540,9 +540,9 @@ def test_help_usage_lists_exactly_the_outcomes_the_recorder_accepts():
 def test_help_names_the_close_gate_words_the_recorder_has_no_form_for():
     text = " ".join(HELP.read_text(encoding="utf-8").split())
     assert "Record takes four outcomes: shipped (with a commit), no-op, blocked and abandoned." in text
-    assert ("The close gate (gc bd close) also accepts ran, and shipped with an absolute artifact path "
-            "in gc.work_commit; record has no form for either, so such a close sets those keys with "
-            "gc bd update and says so in its close reason.") in text
+    assert ("The close gate (gc bd close) of a gc build whose gc help bd lists ran also accepts ran, "
+            "and shipped with an absolute artifact path in gc.work_commit; record has no form for either, "
+            "so such a close sets those keys with gc bd update and says so in its close reason.") in text
     assert "ran" not in module.OUTCOMES
 
 

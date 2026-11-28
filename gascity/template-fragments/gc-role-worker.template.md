@@ -45,15 +45,15 @@ While you hold the bead, keep its 5-minute claim lease alive with
 `gc bd heartbeat "$CLAIMED_BEAD_ID"` every few minutes. The bead's comments are
 part of its spec (amendments and rulings arrive as comments), and `--json`
 alone omits them: read them with
-`gc bd show "$CLAIMED_BEAD_ID" --json --include-comments`, include them in
-every review prompt or brief you write (a Codex `review --base` gate reads only
-the diff: use its prompt-file form, under Codex gates, when they change the
-spec), and add your own with
+`gc bd show "$CLAIMED_BEAD_ID" --json --include-comments`, carry what they
+change into every review brief you write (state the requirement; never copy a
+comment's text into a file a pull request carries), and add your own with
 `gc bd comment "$CLAIMED_BEAD_ID" --file /abs/path` (or the text as one quoted
-argument). Resolve a path in a bead as written when it is absolute, and
-against the rig the bead names when it is relative (for your own rig, your
-lane worktree); if it does not exist there, name it in your READY or close
-reason and never guess another.
+argument). Unless the bead or its formula says where a path is rooted,
+resolve a path in a bead as written when it is absolute, and against the rig
+the bead names when it is relative (for your own rig, your lane worktree); if
+it does not exist there, name it in your READY or close reason and never
+guess another.
 
 A successful claim is authorization to execute immediately. You are operating
 autonomously: no human is watching in real time, so asking whether to proceed
@@ -251,7 +251,10 @@ A bead that names any other `gc.work_outcome` word (for example
 `investigated`) sets `gc.work_outcome` to the one of these five that fits and
 follows that word's close below; say so in the close reason. A file the bead
 asked for is `shipped` with its path; a result that lives only in the close
-reason is `ran`.
+reason is `ran`. If `gc help bd` does not list `ran`, your gc build's gate
+takes the other four and needs a commit and a branch for `shipped`: close a
+run, or a file outside git, by the `no-op` close below there, and name the
+result or the path in the close reason.
 
 Do not substitute `gc.outcome` for `gc.work_outcome`. If no failure contract exists,
 record unrecoverable failure as `gc.outcome=fail` plus concise
@@ -362,12 +365,17 @@ on the update instead.
 For a `ran` close, or a shipped deliverable that is not a commit, skip the
 discovery and the record: the command refuses both. In the shipped recipe,
 skip the binding guard, the commit and branch capture and the record, and on
-the update use `--set-metadata 'gc.outcome=pass'` with
+the update set `gc.outcome` as the bead's result contract asks
+(`--set-metadata 'gc.outcome=pass'` when the run met it) with
 `--set-metadata 'gc.work_outcome=ran'`, or with
 `--set-metadata 'gc.work_outcome=shipped'` and
 `--set-metadata "gc.work_commit=$ARTIFACT_PATH"` (`ARTIFACT_PATH` holds the
 artifact's absolute path, starting with `/`); the close reason gives the run's
 result or names the artifact path, and says the recorder has no form for it.
+If an earlier close of this bead wrote a typed record (`provenance summary`
+names a PR or a commit), also unset what this close does not set
+(`--unset-metadata gc.pr`, and `--unset-metadata gc.work_commit` for `ran`)
+and say in the close reason that the typed record is the earlier close's.
 
 For blocked or abandoned work, first run that same non-empty binding guard,
 then record the outcome with the same command and known facts before its

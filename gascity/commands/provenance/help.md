@@ -6,9 +6,10 @@ Usage:
   gc <binding> provenance summary BEAD
 
 Record takes four outcomes: shipped (with a commit), no-op, blocked and abandoned.
-The close gate (gc bd close) also accepts ran, and shipped with an absolute
-artifact path in gc.work_commit; record has no form for either, so such a
-close sets those keys with gc bd update and says so in its close reason.
+The close gate (gc bd close) of a gc build whose gc help bd lists ran also
+accepts ran, and shipped with an absolute artifact path in gc.work_commit;
+record has no form for either, so such a close sets those keys with
+gc bd update and says so in its close reason.
 
 Use the binding the worker close discovery selects (README, Worker close provenance).
 Optional --city PATH / --city=PATH and --rig NAME / --rig=NAME go before

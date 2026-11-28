@@ -94,6 +94,15 @@ def test_close_lists_the_five_work_outcome_words_the_close_gate_accepts() -> Non
     assert "shipped|no-op|blocked|abandoned" not in fragment()
 
 
+def test_close_names_the_fallback_for_a_gc_build_whose_gate_takes_four_words() -> None:
+    # Upstream gc (v1.5.1 and main) accepts four words and needs a commit and a
+    # branch for shipped; only a build whose `gc help bd` lists ran takes the five.
+    close = flat(close_section())
+    assert ("If `gc help bd` does not list `ran`, your gc build's gate takes the other four "
+            "and needs a commit and a branch for `shipped`: close a run, or a file outside git, "
+            "by the `no-op` close below there, and name the result or the path in the close reason.") in close
+
+
 def test_close_shipped_names_the_commit_keys_and_the_artifact_path() -> None:
     close = flat(close_section())
     assert ("For a commit, set `gc.work_commit` to its full 40-character SHA and "
@@ -144,12 +153,23 @@ def test_close_ran_and_artifact_closes_skip_the_recorder_and_say_so() -> None:
             "discovery and the record: the command refuses both.") in close
     assert "`--set-metadata 'gc.work_outcome=ran'`" in close
     assert "In the shipped recipe, skip the binding guard, the commit and branch capture and the record" in close
+    assert ("set `gc.outcome` as the bead's result contract asks (`--set-metadata 'gc.outcome=pass'` "
+            "when the run met it)") in close
+    assert "and on the update use `--set-metadata 'gc.outcome=pass'` with" not in close
     assert '`--set-metadata "gc.work_commit=$ARTIFACT_PATH"` (`ARTIFACT_PATH` holds the artifact\'s absolute path, starting with `/`)' in close
     assert "<absolute artifact path>" not in close
     assert "says the recorder has no form for it" in close
     assert "Do not silently close with metadata alone." in close
     assert "Only the `ran` and artifact closes below close on metadata alone" in close
     assert close.index("Only the `ran` and artifact closes below") < close.index("For a `ran` close")
+
+
+def test_close_a_ran_or_artifact_close_of_a_reopened_bead_clears_the_earlier_keys() -> None:
+    close = flat(close_section())
+    assert ("If an earlier close of this bead wrote a typed record (`provenance summary` names a PR "
+            "or a commit), also unset what this close does not set (`--unset-metadata gc.pr`, and "
+            "`--unset-metadata gc.work_commit` for `ran`) and say in the close reason that the typed "
+            "record is the earlier close's.") in close
 
 
 def holding_paragraph() -> str:
@@ -171,15 +191,18 @@ def test_bead_comments_are_part_of_its_spec_and_the_comment_verb_is_named() -> N
     held = holding_paragraph()
     assert "The bead's comments are part of its spec (amendments and rulings arrive as comments)" in held
     assert '`--json` alone omits them: read them with `gc bd show "$CLAIMED_BEAD_ID" --json --include-comments`' in held
-    assert ("include them in every review prompt or brief you write (a Codex `review --base` gate "
-            "reads only the diff: use its prompt-file form, under Codex gates, when they change the spec)") in held
+    assert ("carry what they change into every review brief you write (state the requirement; never "
+            "copy a comment's text into a file a pull request carries)") in held
+    # A classed review is never swapped for an unclassed prompt-file run.
+    assert "prompt-file form" not in held
     assert ('add your own with `gc bd comment "$CLAIMED_BEAD_ID" --file /abs/path` '
             "(or the text as one quoted argument)") in held
 
 
 def test_bead_paths_are_absolute_or_rig_relative_and_a_missing_one_is_reported() -> None:
     held = holding_paragraph()
-    assert ("Resolve a path in a bead as written when it is absolute, and against the rig the bead "
+    assert ("Unless the bead or its formula says where a path is rooted, resolve a path in a bead "
+            "as written when it is absolute, and against the rig the bead "
             "names when it is relative (for your own rig, your lane worktree); if it does not exist "
             "there, name it in your READY or close reason and never guess another.") in held
 
