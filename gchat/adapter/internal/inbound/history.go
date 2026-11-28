@@ -184,10 +184,17 @@ func redactedHistoryEvent(l *ledger.Ledger, cfg *config.Config, old *ledger.Chan
 // An attempt recorded before a newly installed bound necessarily predates it;
 // its Created time is an upper bound on the act, not a replacement event time.
 // Existing cursors never call this migration, and committed deliveries survive.
+// A merged turn's Created is its first act's. A turn that the bound divides is
+// first split back into its acts, so each act is judged by its own time.
 func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) []string {
 	bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
 	if bound.IsZero() {
 		return nil
+	}
+	for _, owner := range l.Changes {
+		if owner.Space == space && dividedAt(l, owner, bound) {
+			unmerge(l, owner)
+		}
 	}
 	var retired []string
 	// Select before mutating owners: committed members of an undelivered
@@ -212,7 +219,7 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 		}
 		retained := *old
 		retained.Kind = kind
-		retained.MemberEvent, retained.MemberKind, retained.MemberOf, retained.Members = "", "", "", nil
+		retained.MemberEvent, retained.MemberKind, retained.MemberOf, retained.Members, retained.MemberCreated = "", "", "", nil, time.Time{}
 		retained.MemberRevision, retained.HeldUntil = time.Time{}, time.Time{}
 		if kind != "message.created" {
 			retained.ID += "#history#" + kind + "#" + old.Created.UTC().Format(time.RFC3339Nano)
@@ -235,6 +242,42 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 		retired = append(retired, old.Message)
 	}
 	return retired
+}
+
+// dividedAt reports a frozen turn with acts recorded both before the bound and
+// at or after it, that refreshMerged could still rewrite: never POSTed, or
+// answered "not delivered". A turn whose POST may have landed is not split:
+// posting its later acts again could post them twice.
+func dividedAt(l *ledger.Ledger, owner *ledger.ChangeState, bound time.Time) bool {
+	if len(owner.Members) == 0 || owner.Status != "intent" || (owner.Attempts > 0 && owner.Reason != reasonRetry) {
+		return false
+	}
+	before, after := false, false
+	for _, id := range owner.Members {
+		m := l.Changes[id]
+		if m == nil || (m != owner && m.MemberOf != owner.ID) {
+			return false
+		}
+		if at := m.OriginalCreated(); at.IsZero() || at.Before(bound) {
+			before = true
+		} else {
+			after = true
+		}
+	}
+	return before && after
+}
+
+// unmerge undoes the window flush's merge: each act is again a single intent
+// with its own text, kind and recorded time. The owner keeps the attempts gc
+// refused, and the old turn's text is gone in the same save.
+func unmerge(l *ledger.Ledger, owner *ledger.ChangeState) {
+	for _, id := range owner.Members {
+		if m := l.Changes[id]; m != owner {
+			m.Status, m.Reason, m.MemberOf = "intent", "", ""
+		}
+	}
+	owner.Event, owner.Kind, owner.Created = owner.OriginalEvent(), owner.OriginalKind(), owner.OriginalCreated()
+	owner.MemberEvent, owner.MemberKind, owner.MemberCreated, owner.Members = "", "", time.Time{}, nil
 }
 
 // RetainHistorySkip is also used while migrating a saved queue, before network

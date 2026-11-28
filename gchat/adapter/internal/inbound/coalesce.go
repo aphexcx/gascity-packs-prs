@@ -225,7 +225,7 @@ func (p *Processor) flushSpace(ctx context.Context, space string, catchUp, force
 				c.MemberEvent, c.MemberKind = c.Event, c.OriginalKind()
 				c.Kind = "coalesced"
 				c.Members = make([]string, 0, n)
-				c.Created = acts[0].Created
+				c.MemberCreated, c.Created = c.OriginalCreated(), acts[0].Created
 				for _, a := range acts[:n] {
 					m := l.Changes[a.ID]
 					c.Members = append(c.Members, m.ID)

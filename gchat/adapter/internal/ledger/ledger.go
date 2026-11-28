@@ -181,6 +181,10 @@ type ChangeState struct {
 	// The owner retains its own original message for history and attribution.
 	MemberEvent string `json:"member_event,omitempty"`
 	MemberKind  string `json:"member_kind,omitempty"`
+	// MemberCreated is when the owner's own act was recorded. The turn's
+	// Created is then its first act's. Older records lack it: their owner's
+	// own time reads as the turn's.
+	MemberCreated time.Time `json:"member_created,omitzero"`
 	// MemberRevision identifies the effective text saved when a failed merged
 	// delivery is refreshed after an edit. Older readers ignore this field and
 	// send the already-refreshed Event under the existing delivery key.
@@ -225,6 +229,14 @@ func (c *ChangeState) OriginalKind() string {
 		return c.MemberKind
 	}
 	return c.Kind
+}
+
+// OriginalCreated is when this act itself was recorded, not its turn.
+func (c *ChangeState) OriginalCreated() time.Time {
+	if !c.MemberCreated.IsZero() {
+		return c.MemberCreated
+	}
+	return c.Created
 }
 
 // Delivery follows folded revisions and merged members to their one obligation.
