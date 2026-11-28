@@ -210,7 +210,7 @@ func TestChatOwnerCopyNotTrustedLogsOncePerMinute(t *testing.T) {
 }
 
 // TestChatOwnerCopyReadAgainWhenChanged: the adapter reads the copy again
-// whenever the file has changed, and after Refresh.
+// whenever the file has changed.
 func TestChatOwnerCopyReadAgainWhenChanged(t *testing.T) {
 	dir := fakedoor.Dir(t)
 	fakedoor.WriteCopy(t, dir, map[string]owners.Record{"users/1001": fakedoor.Record(claimA)})
@@ -223,7 +223,6 @@ func TestChatOwnerCopyReadAgainWhenChanged(t *testing.T) {
 		t.Fatal("changed copy was not read again")
 	}
 	fakedoor.WriteCopy(t, dir, nil)
-	b.Refresh()
 	if b.Any() || b.Owner("users/1002", "") {
 		t.Fatal("emptied copy still names an owner")
 	}
@@ -233,9 +232,10 @@ func TestChatOwnerCopyReadAgainWhenChanged(t *testing.T) {
 	}
 }
 
-// TestChatOwnerRefreshReadsAnUnchangedLookingCopy: Refresh reads the copy
-// again even when it was rewritten in place with its size and time kept.
-func TestChatOwnerRefreshReadsAnUnchangedLookingCopy(t *testing.T) {
+// TestChatOwnerReadsAnUnchangedLookingCopy: every answer reads the copy,
+// even one rewritten in place with its size and time kept: nothing about
+// the file is taken as proof that the owners did not change.
+func TestChatOwnerReadsAnUnchangedLookingCopy(t *testing.T) {
 	dir := fakedoor.Dir(t)
 	fakedoor.WriteCopy(t, dir, map[string]owners.Record{"users/9999": fakedoor.Record(claimA)})
 	b := book(dir, fakedoor.Root, nil, nil)
@@ -243,9 +243,8 @@ func TestChatOwnerRefreshReadsAnUnchangedLookingCopy(t *testing.T) {
 		t.Fatal("first copy")
 	}
 	rewriteInPlace(t, dir, map[string]owners.Record{"users/1001": fakedoor.Record(claimA)})
-	b.Refresh()
-	if !b.Owner("users/1001", "") || b.Owner("users/9999", "") {
-		t.Fatal("Refresh did not read the copy again")
+	if !b.Owner("users/1001", "") || b.Owner("users/9999", "") || len(b.List().Owners) != 1 || b.List().Owners[0].ID != "users/1001" {
+		t.Fatal("a copy rewritten in place was not read again")
 	}
 }
 

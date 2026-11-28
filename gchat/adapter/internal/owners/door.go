@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"time"
+	"unicode"
 )
 
 // Answer is the door's word. Result is "" when the door did not answer in
@@ -121,6 +122,28 @@ func isCodeChar(c byte) bool {
 		}
 	}
 	return false
+}
+
+// OneTimeCode reports whether a text reads as any one-time code the adapter
+// knows: the owner page's 12 characters or the 10 of a join's or a removal's
+// approval, once white space and hyphens are taken out and letters made upper
+// case. It is wider than CodeShaped on purpose: it keeps such a text from
+// anything that need not read it.
+func OneTimeCode(text string) bool {
+	n := 0
+	for _, r := range text {
+		switch {
+		case r == '-' || unicode.IsSpace(r):
+			continue
+		case 'a' <= r && r <= 'z':
+			r -= 'a' - 'A'
+		}
+		if r > unicode.MaxASCII || !isCodeChar(byte(r)) {
+			return false
+		}
+		n++
+	}
+	return n == 10 || n == 12
 }
 
 // CodeShaped reads a message's whole text as an owner code: spaces and

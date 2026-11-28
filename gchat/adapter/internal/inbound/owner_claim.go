@@ -26,12 +26,16 @@ var claimLines = map[string]string{
 // created, never an edit (a catch-up snapshot edited after its creation is
 // an edit), alone (no attachment), in a direct chat, from a human who is not
 // the identity, not a bot and not a deleted user, and only where root's
-// directory is present. Every other message is untouched.
+// directory is present. Every other message is untouched. While Chat has shown
+// an account other than the identity (a conflict the app rebuilds after), the
+// adapter cannot vouch that a sender is not its own account: no knock.
 func (p *Processor) ownerCode(c puller.Change, m *api.Message, kind, local string, edited bool) (string, bool) {
 	identity := p.identity()
+	observed, conflicted := p.opts.Chat.ObservedIdentityUserID()
 	u := m.Sender
 	if c.Kind != "message.created" || edited || local != "" || kind != "dm" || len(m.Attachment) != 0 ||
 		u == nil || u.Type != "HUMAN" || u.IsAnonymous || identity == "" || u.Name == identity ||
+		conflicted || u.Name == observed ||
 		!owners.ChatUserID.MatchString(u.Name) || !owners.ValidMessage(m.Name) {
 		return "", false
 	}
@@ -53,10 +57,8 @@ func (p *Processor) knock(ctx context.Context, code string, m *api.Message) (str
 	if claimLines[result] == "" {
 		result = "no_answer"
 	}
-	if result == "taken" {
-		// The door writes its copy before it answers: read it again now.
-		book.Refresh()
-	}
+	// The door writes its copy before it answers taken; the frame reads the
+	// copy again, as every owner answer does.
 	at := p.opts.Now().UTC()
 	fields := []any{"at", at, "result", result, "sender", m.Sender.Name, "message", m.Name}
 	if answer.Claim != "" {

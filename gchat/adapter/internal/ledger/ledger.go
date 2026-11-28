@@ -177,6 +177,10 @@ type ChangeState struct {
 	// ProvenanceFramed marks adapter-authored frames; legacy records default
 	// to false so user text resembling a frame is never trusted or stripped.
 	ProvenanceFramed bool `json:"provenance_framed,omitempty"`
+	// FixedLine marks a turn whose last line the adapter added from root's
+	// door's answer to an owner code. History leaves that line out; older
+	// readers ignore the field.
+	FixedLine bool `json:"fixed_line,omitempty"`
 	// HeldUntil marks an unsent act in a durable coalescing window. Older
 	// readers ignore it and deliver the retained single turn through intent.
 	HeldUntil time.Time `json:"held_until,omitzero"`

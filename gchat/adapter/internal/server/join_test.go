@@ -19,8 +19,10 @@ import (
 
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
+	"gchat-adapter/internal/fakes/fakedoor"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/token"
 	api "google.golang.org/api/chat/v1"
 )
@@ -77,6 +79,9 @@ func setupJoin(t *testing.T) *joinFixture {
 	f.cfg.Secrets.TokenSource = config.TokenSourceKeyholder
 	f.cfg.Secrets.KeyholderSocket = socket
 	f.cfg.Secrets.Owners = []string{"owner@example.com"}
+	// Root's directory is a path of this test's own that does not exist, so
+	// the settings name the owners whatever the host has at the fixed path.
+	f.s.opts.Owners = owners.ForTest(owners.TestOptions{Dir: filepath.Join(dir, "absent"), IsRoot: fakedoor.Root})
 	f.cfg.Endpoints.PeopleAPIBase = f.g.URL()
 	f.s.SetConfig(*f.cfg)
 	c, err := chat.New(context.Background(), http.DefaultClient, f.cfg.Endpoints)

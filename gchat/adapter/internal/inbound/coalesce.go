@@ -132,8 +132,13 @@ func (p *Processor) admit(ctx context.Context, input puller.Change, id string, c
 		}
 	}
 	// Catch-up is collected under handle's gate and flushed at the pass end.
+	// A catch-up turn that is not held (a knocked owner code's) is its own
+	// delivery, after the held ones before it.
 	if catchUp {
-		return p.flushSpace(ctx, c.Space, true, false, "")
+		if err := p.flushSpace(ctx, c.Space, true, false, ""); err != nil || isHeld(c) {
+			return err
+		}
+		return p.resume(ctx, c.ID)
 	}
 	anchor := ""
 	if urgent {

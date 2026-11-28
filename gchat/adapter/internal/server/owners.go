@@ -202,7 +202,8 @@ func (s *Server) ownersRemove(ctx context.Context, input ownersInput) ownersResu
 	case pending.Identity != identity:
 		return noOwnerYes("This request belongs to a different identity. Request approval again.")
 	}
-	if reason := checkOwnerYes(ctx, c, book, input.Yes, identity, pending.CreatedAt, pending.ExpiresAt, pending.CodeHash, "removal", "request's"); reason != "" {
+	reason, approverStill := checkOwnerYes(ctx, c, book, input.Yes, identity, pending.CreatedAt, pending.ExpiresAt, pending.CodeHash, "removal", "request's")
+	if reason != "" {
 		return noOwnerYes(reason)
 	}
 	if err = s.update(ctx, func(l *ledger.Ledger) error {
@@ -224,6 +225,9 @@ func (s *Server) ownersRemove(ctx context.Context, input ownersInput) ownersResu
 	// yes is spent and before the one remove.
 	if !stillMine() {
 		return noOwnerYes("The identity is not known safely yet. Nothing was sent to the box, but this owner's yes is now used; request approval again after the adapter learns its identity.")
+	}
+	if !approverStill() {
+		return noOwnerYes("The owner who said yes is no longer an owner of this box. Nothing was sent to the box, but this yes is now used.")
 	}
 	answer := book.Remove(ctx, input.Remove, input.Yes)
 	switch answer.Result {

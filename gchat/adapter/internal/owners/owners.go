@@ -71,7 +71,8 @@ type Entry struct {
 }
 
 // Book answers "is this sender an owner". Books made by With share the root
-// side (the copy's cache and the log limits) and differ only in the settings.
+// side (the directory, the stand-ins and the log limits) and differ only in
+// the settings.
 type Book struct {
 	settings []string
 	set      map[string]bool
@@ -86,9 +87,6 @@ type rootSide struct {
 	wait   time.Duration
 
 	mu      sync.Mutex
-	have    bool
-	key     statKey
-	owners  map[string]Record
 	warned  time.Time
 	ignored bool
 }
@@ -165,7 +163,7 @@ func (b *Book) view() (root bool, owners map[string]Record) {
 	if len(b.settings) != 0 {
 		b.r.noteIgnored()
 	}
-	return true, b.r.current(false)
+	return true, b.r.current()
 }
 
 // Owner is the one answer to "is this sender an owner": where root's
@@ -213,14 +211,6 @@ func (b *Book) List() Listing {
 	return out
 }
 
-// Refresh reads root's copy again whether or not its file looks changed. The
-// adapter calls it after the door answers taken.
-func (b *Book) Refresh() {
-	if b.Present() {
-		b.r.current(true)
-	}
-}
-
 // NoteSettings writes the one "gchat owners settings ignored" line when root's
 // directory is present and the settings name an owner. The app calls it at
 // start; the answers above call it too, so a directory that appears later is
@@ -241,20 +231,16 @@ func (r *rootSide) noteIgnored() {
 	}
 }
 
-// current returns the owners of the trusted copy, reading it again when its
-// file or directory looks changed, or when forced. Not trusted is no owner.
-func (r *rootSide) current(force bool) map[string]Record {
+// current reads the copy and returns its owners when it is trusted. It
+// reads at every answer: nothing about the file stands in for its content.
+// Not trusted is no owner.
+func (r *rootSide) current() map[string]Record {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key, data, why := readTrusted(r.dir, copyName, copyLimit, r.isRoot, func(k statKey) bool { return !force && r.have && k == r.key })
-	if why == reasonUnchanged {
-		return r.owners
-	}
-	r.have, r.owners = false, nil
+	data, why := readTrusted(r.dir, copyName, copyLimit, r.isRoot)
 	if why == "" {
 		var owners map[string]Record
 		if owners, why = parseCopy(data); why == "" {
-			r.have, r.key, r.owners = true, key, owners
 			return owners
 		}
 	}

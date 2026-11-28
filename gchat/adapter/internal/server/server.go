@@ -1573,6 +1573,11 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			if line, ok := provenance.FrameOf(saved.Text); change.ProvenanceFramed && ok {
 				saved.Text = strings.TrimPrefix(saved.Text, line+"\n")
 			}
+			// The line the adapter added from root's door's answer is the
+			// turn's, not the text's.
+			if i := strings.LastIndex(saved.Text, "\n"); change.ProvenanceFramed && change.FixedLine && i >= 0 {
+				saved.Text = saved.Text[:i]
+			}
 			if change.OriginalKind() == "message.updated" && id != m.Name {
 				// An edit folded into its held create was rendered without the
 				// adapter's prefix. Its own member link survives a later merge.

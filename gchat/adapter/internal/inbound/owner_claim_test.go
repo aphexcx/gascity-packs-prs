@@ -23,6 +23,7 @@ import (
 	"gchat-adapter/internal/owners"
 	"gchat-adapter/internal/principal"
 	"gchat-adapter/internal/puller"
+	"github.com/BurntSushi/toml"
 	api "google.golang.org/api/chat/v1"
 )
 
@@ -429,6 +430,67 @@ func TestChatOwnerUntouchedMessages(t *testing.T) {
 	}
 }
 
+// TestChatOwnerConflictedIdentityMakesNoKnock: while Chat has shown another
+// account than the identity the adapter holds, the adapter cannot vouch
+// that a sender is not the mayor's own account, and it does not knock.
+func TestChatOwnerConflictedIdentityMakesNoKnock(t *testing.T) {
+	cf := setupClaim(t, nil, false)
+	cf.door.Answer(func(map[string]string) string { return `{"result":"taken","claim":"` + claimID + `"}` })
+	if err := cf.opts.Chat.SetIdentityUserID(identity); err != nil {
+		t.Fatal(err)
+	}
+	_ = cf.opts.Chat.SetIdentityUserID(claimSender) // Chat now says the account is another
+	if _, conflicted := cf.opts.Chat.ObservedIdentityUserID(); !conflicted {
+		t.Fatal("the fixture did not make a conflict")
+	}
+	ev := &puller.Event{PubSubID: "m1", Changes: []puller.Change{{Kind: "message.created", Message: dmMessage("m1", claimText), Space: dmSpace, PublishTime: time.Now()}}}
+	_, _ = cf.p.Handle(context.Background(), ev)
+	if got := cf.door.Requests(); len(got) != 0 {
+		t.Fatalf("knocked with a conflicted identity: %v", got)
+	}
+}
+
+// TestChatOwnerCatchUpClaimTurnIsItsOwn: a knocked message is not merged
+// with its neighbours, so its fixed line stays the last line of its own turn.
+func TestChatOwnerCatchUpClaimTurnIsItsOwn(t *testing.T) {
+	cf := setupClaim(t, nil, false)
+	if _, err := toml.Decode(`coalesce_window = "8s"`, &cf.opts.Config.Settings); err != nil {
+		t.Fatal(err)
+	}
+	p, err := New(cf.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cf.p = p
+	cf.door.Answer(func(map[string]string) string { return `{"result":"not_live"}` })
+	// Catch-up hands its pass over as one batch, the way it merges.
+	batch := []puller.Change{
+		{Kind: "message.created", Message: dmMessage("c1", claimText), Space: dmSpace, PublishTime: time.Now()},
+		{Kind: "message.created", Message: dmMessage("c2", "and one more thing"), Space: dmSpace, PublishTime: time.Now()},
+	}
+	if out, err := cf.p.HandleChanges(context.Background(), batch); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up = %v, %v", out, err)
+	}
+	if err := cf.p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range cf.gc.Inbound() {
+		lines := strings.Split(w.Text, "\n")
+		for i, line := range lines {
+			if line == claimLines["not_live"] {
+				found = true
+				if i != len(lines)-1 {
+					t.Fatalf("the fixed line is not the last line of its turn: %q", lines)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no turn carries the fixed line: %+v", cf.gc.Inbound())
+	}
+}
+
 // TestChatOwnerCatchUpCreationKnocks: a message first seen by catch-up is a
 // new message; the door judges it by root's clock.
 func TestChatOwnerCatchUpCreationKnocks(t *testing.T) {
@@ -444,6 +506,9 @@ func TestChatOwnerCatchUpCreationKnocks(t *testing.T) {
 	lines := cf.turn(t, "c2")
 	if lines[0] != "[catch-up]" || lines[len(lines)-1] != claimLines["not_live"] {
 		t.Fatalf("turn = %q", lines)
+	}
+	if c := cf.l.Changes[dmSpace+"/messages/c2"]; c == nil || !c.FixedLine {
+		t.Fatalf("the turn is not marked as carrying the fixed line: %+v", c)
 	}
 }
 

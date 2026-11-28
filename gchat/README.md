@@ -7,7 +7,9 @@ message's text to TypeSafe, cut to 1,000 Unicode characters after the same
 secret redaction as Slack's,
 using `JEV_API_KEY`; no sender, room, IDs or attachment bytes are sent. Jev
 chooses from the arrival rows of `reactions.json`; absent credentials, unusable
-catalogs, timeouts and unusable answers use the fixed eyes reaction.
+catalogs, timeouts and unusable answers use the fixed eyes reaction. A message
+whose whole text reads as a one-time code (an owner code or a join or removal
+approval code) is never sent: it gets the eyes reaction.
 
 A fixed arrival row's `slack_name` also works in every adapter. Claim rows,
 `auto`, `model`, and unknown names are rejected at startup. With an unusable

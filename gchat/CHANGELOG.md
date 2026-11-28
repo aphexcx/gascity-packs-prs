@@ -12,7 +12,9 @@
   a new owner comes by a code from the owner page alone. New:
   `gc-gchat-adapter owner-claim-check`, which the box's helper asks before it
   mints a code. A city that is not a box keeps the owners its settings name,
-  and no owner code is taken there. Tested against a stand-in door only.
+  and no owner code is taken there. With `ACK_REACTION=jev`, a text that
+  reads as a one-time code is no longer sent to the reaction provider.
+  Tested against a stand-in door only.
 
 - Never-silent observations and operator resolution follow every enrolled member of merged turns; body headers are quoted across the full Unicode invisible and blank class without changing their bytes.
 

@@ -1,17 +1,23 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/fakes/fakedoor"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"gchat-adapter/internal/ledger"
@@ -25,7 +31,8 @@ const ownersClaim = "dddddddddddddddddddddddddddddddd"
 
 type ownersFixture struct {
 	*joinFixture
-	door *fakedoor.Door
+	door    *fakedoor.Door
+	replies int
 }
 
 // setupOwners is the join fixture with a stand-in door. The settings still
@@ -85,9 +92,10 @@ func (f *ownersFixture) requestRemoval(t *testing.T, target string) string {
 
 // yesFrom writes the owner's reply in a direct chat. UNPROVEN (U5): that
 // Google gives every delivered message its creation time; the check of a
-// yes, the join's, requires it.
+// yes, the join's, requires it. Its name says nothing of its text.
 func (f *ownersFixture) yesFrom(sender, spaceName, text string, at time.Time) string {
-	name := spaceName + "/messages/yes-" + sender[6:] + "-" + strings.ToLower(text)
+	f.replies++
+	name := fmt.Sprintf("%s/messages/yes-%d", spaceName, f.replies)
 	f.g.Configure(func(g *fakegoogle.Server) {
 		g.Messages[name] = &api.Message{Name: name, Text: text, Sender: &api.User{Name: sender, Type: "HUMAN"}, CreateTime: at.UTC().Format(time.RFC3339Nano), Space: g.Spaces[spaceName]}
 	})
@@ -321,7 +329,7 @@ func TestChatOwnerOwnersLogLines(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("owners lines = %v", got)
 	}
-	if logs := f.logs.String(); strings.Contains(logs, code) || strings.Contains(logs, "@example.com") {
+	if logs := strings.ToLower(f.logs.String()); strings.Contains(logs, strings.ToLower(code)) || strings.Contains(logs, "@example.com") {
 		t.Fatalf("a log line carries the code or an address: %s", logs)
 	}
 }
@@ -389,6 +397,86 @@ func TestChatOwnerOwnersInvalid(t *testing.T) {
 	snapshot, _ := f.s.snapshot(t.Context())
 	if len(snapshot.OwnerRequests) != 0 || len(f.door.Requests()) != 0 {
 		t.Fatal("an invalid request changed something")
+	}
+}
+
+// proxyGoogle puts a proxy in front of the fake Google for the server's Chat
+// client. hook runs before a request is passed on; people counts the
+// directory's requests.
+func (f *ownersFixture) proxyGoogle(t *testing.T, hook func(*http.Request)) *atomic.Int64 {
+	t.Helper()
+	target, err := url.Parse(f.g.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var people atomic.Int64
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v1/people/") {
+			people.Add(1)
+		}
+		hook(r)
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	f.cfg.Endpoints.ChatAPIBase, f.cfg.Endpoints.PeopleAPIBase = srv.URL, srv.URL
+	f.s.SetConfig(*f.cfg)
+	c, err := chat.New(context.Background(), http.DefaultClient, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.SetIdentityUserID(fakegoogle.UserID); err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetClients(c, f.options.GC)
+	return &people
+}
+
+// TestChatOwnerApproverAskedAgainAtTheWrite: an owner whose yes passed the
+// check and who stops being an owner before the one write (the join's) or
+// the one remove (the removal's) does not get that write or that remove.
+func TestChatOwnerApproverAskedAgainAtTheWrite(t *testing.T) {
+	dropApprover := func(f *ownersFixture, keep ...string) func(*http.Request) {
+		return func(r *http.Request) {
+			// The direct chat's space is read after the sender's check.
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/spaces/dm" {
+				f.publish(t, keep...)
+			}
+		}
+	}
+	t.Run("removal", func(t *testing.T) {
+		f := setupOwners(t, "users/222", "users/333")
+		f.proxyGoogle(t, dropApprover(f, "users/333"))
+		code := f.requestRemoval(t, "users/333")
+		_, v := f.owners(t, map[string]any{"remove": "users/333", "yes": f.yesFrom("users/222", "spaces/dm", code, time.Now())})
+		if v["result"] != "no_owner_yes" || len(f.removes()) != 0 {
+			t.Fatalf("answer %v, remove lines %v", v, f.removes())
+		}
+	})
+	t.Run("join", func(t *testing.T) {
+		f := setupOwners(t, "users/222")
+		f.cfg.Secrets.Owners = nil
+		f.s.SetConfig(*f.cfg)
+		f.proxyGoogle(t, dropApprover(f))
+		code := f.request(t, "spaces/room")
+		if v := f.join(t, map[string]any{"space": "spaces/room", "yes": f.yes(code)}); v["result"] != "no_owner_yes" || len(f.writes()) != 0 {
+			t.Fatalf("join %v, writes %v", v, f.writes())
+		}
+	})
+}
+
+// TestChatOwnerRootApprovalAsksNoDirectory: where root's copy decides, the
+// owner of a yes is a Chat id in it; no address is looked up for that.
+func TestChatOwnerRootApprovalAsksNoDirectory(t *testing.T) {
+	f := setupOwners(t, "users/222", "users/333")
+	people := f.proxyGoogle(t, func(*http.Request) {})
+	code := f.requestRemoval(t, "users/333")
+	before := people.Load()
+	if _, v := f.owners(t, map[string]any{"remove": "users/333", "yes": f.yesFrom("users/222", "spaces/dm", code, time.Now())}); v["result"] != "removed" {
+		t.Fatalf("removal: %v", v)
+	}
+	if n := people.Load() - before; n != 0 {
+		t.Fatalf("the directory was asked %d times for a root-decided yes", n)
 	}
 }
 
@@ -473,5 +561,33 @@ func TestChatOwnerRestoreResetBackup(t *testing.T) {
 	}
 	if len(f.door.Requests()) != 0 {
 		t.Fatal("a restore or reset called the door")
+	}
+}
+
+// TestChatOwnerHistoryLeavesOutTheFixedLine: gc gchat read gives a message
+// as Chat has it: without the frame and without the line the adapter added
+// from the door's answer. A line the sender wrote stays.
+func TestChatOwnerHistoryLeavesOutTheFixedLine(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		fixed bool
+		want  string
+	}{
+		{"the adapter's line", true, "abcd-EFGH jklm"},
+		{"a line the sender wrote", false, "abcd-EFGH jklm\n[gchat: this message has the shape of an owner code and is not the live one]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := ledger.New()
+			m := &api.Message{Name: "spaces/dm/messages/m1", CreateTime: "2026-10-22T10:00:00Z", Text: "abcd-EFGH jklm"}
+			at, _ := time.Parse(time.RFC3339, m.CreateTime)
+			l.Messages[m.Name] = &ledger.MessageState{Revision: at}
+			text := "[from: Example <users/1001> | external | item gchat:" + m.Name + "]\nabcd-EFGH jklm\n[gchat: this message has the shape of an owner code and is not the live one]"
+			data, _ := json.Marshal(map[string]any{"provider_message_id": m.Name, "text": text})
+			l.Changes[m.Name] = &ledger.ChangeState{ID: m.Name, Message: m.Name, Kind: "message.created", Status: "committed", Event: string(data), ProvenanceFramed: true, FixedLine: tc.fixed}
+			got, ok := historyContent(l, m)
+			if !ok || got.Text != tc.want {
+				t.Fatalf("history = %v %q", ok, got.Text)
+			}
+		})
 	}
 }

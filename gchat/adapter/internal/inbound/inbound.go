@@ -1056,8 +1056,16 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool, 
 	claimLine, claimEvent := "", func(*ledger.Ledger) {}
 	if code, ok := p.ownerCode(c, m, s.Kind, local, editedSnapshot); ok {
 		var event func(*ledger.Ledger)
-		if claimLine, event = p.knock(ctx, code, m); event != nil {
-			claimEvent = event
+		claimLine, event = p.knock(ctx, code, m)
+		claimEvent = func(l *ledger.Ledger) {
+			if event != nil {
+				event(l)
+			}
+			// Never merged with its neighbours: the fixed line stays the last
+			// line of this message's own turn, which history leaves out.
+			if c := l.Changes[id]; c != nil {
+				c.HeldUntil, c.FixedLine = time.Time{}, true
+			}
 		}
 		// The frame asks the one owner function again, after the door's answer.
 		speaker = p.opts.Principals.Speaker(speakerCtx, m.Sender, l.IdentityDomainID)

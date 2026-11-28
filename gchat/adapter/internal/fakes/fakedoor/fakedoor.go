@@ -8,13 +8,11 @@ package fakedoor
 import (
 	"bufio"
 	"encoding/json"
-	"io/fs"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -33,12 +31,6 @@ type Door struct {
 	requests []map[string]string
 	answer   func(map[string]string) string
 	ln       net.Listener
-}
-
-// Root stands in for "owned by user id 0": the test's own user.
-func Root(fi fs.FileInfo) bool {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	return ok && st.Uid == uint32(os.Getuid())
 }
 
 // Dir makes an empty directory of the copy's shape, mode 0755, short enough
