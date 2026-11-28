@@ -282,36 +282,49 @@ func dividedAt(l *ledger.Ledger, owner *ledger.ChangeState, bound time.Time) boo
 
 // unmerge undoes the window flush's merge: each act is again a single intent
 // with its own text, kind and recorded time. The owner keeps the attempts gc
-// refused, and the old turn's text is gone in the same save.
+// refused, and the old turn's text is gone in the same save. A creation that
+// carries its folded edits' text keeps hold's kind for it.
 func unmerge(l *ledger.Ledger, owner *ledger.ChangeState) {
 	for _, id := range owner.Members {
 		if m := l.Changes[id]; m != owner {
 			m.Status, m.Reason, m.MemberOf = "intent", "", ""
 		}
 	}
-	owner.Event, owner.Kind, owner.Created = owner.OriginalEvent(), owner.OriginalKind(), owner.OriginalCreated()
+	kind := owner.OriginalKind()
+	owner.Event, owner.Kind, owner.Created = owner.OriginalEvent(), kind, owner.OriginalCreated()
 	owner.MemberEvent, owner.MemberKind, owner.MemberCreated, owner.Members = "", "", time.Time{}, nil
+	for _, edit := range l.Changes {
+		if foldedInto(edit, owner) {
+			owner.Kind, owner.MemberKind = "coalesced", kind
+			break
+		}
+	}
+}
+
+// foldedInto reports an edit that hold folded into its message's creation c:
+// c's record carries the edit's text, and the edit's own record is committed
+// under c.
+func foldedInto(edit, c *ledger.ChangeState) bool {
+	return edit.MemberOf == c.ID && edit.Status == "committed" && edit.Reason == "coalesced" && edit.OriginalKind() == "message.updated" &&
+		edit.Message == c.Message && c.OriginalKind() == "message.created"
 }
 
 // unfoldLaterEdits gives an edit back its own record when the window folded it
 // into its message's held creation (hold), the creation was recorded before
-// the bound and the edit at or after it. The creation's record carries the
-// latest edit's text, so only the latest such edit leaves it; the earlier ones
-// were superseded by it. A creation whose delivery may have landed keeps them.
+// the bound and the edit at or after it. Only an edit that no later revision
+// has superseded leaves. A creation whose delivery may have landed keeps its
+// edits.
 func unfoldLaterEdits(l *ledger.Ledger, space string, bound time.Time) {
-	latest := map[string]*ledger.ChangeState{}
+	var later []*ledger.ChangeState
 	for _, edit := range l.Changes {
 		c := l.Changes[edit.MemberOf]
-		if edit.Space != space || edit.Status != "committed" || edit.Reason != "coalesced" || edit.OriginalKind() != "message.updated" ||
-			c == nil || c.Message != edit.Message || c.OriginalKind() != "message.created" ||
-			!beforeBound(c.OriginalCreated(), bound) || beforeBound(edit.Created, bound) || !rewritable(l.Delivery(c)) {
+		if edit.Space != space || c == nil || !foldedInto(edit, c) || !beforeBound(c.OriginalCreated(), bound) ||
+			beforeBound(edit.Created, bound) || superseded(l, edit) || !rewritable(l.Delivery(c)) {
 			continue
 		}
-		if last := latest[c.ID]; last == nil || earlier(last, edit) {
-			latest[c.ID] = edit
-		}
+		later = append(later, edit)
 	}
-	for _, edit := range latest {
+	for _, edit := range later {
 		edit.Status, edit.Reason, edit.MemberOf = "intent", "", ""
 	}
 }
