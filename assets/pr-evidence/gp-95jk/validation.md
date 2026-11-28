@@ -27,3 +27,9 @@ env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 
 ```
 
 Tests check the typed facts, compatibility keys, idempotent retry, zero store calls on rejection, latest-round verdicts, SHA conflicts and attribution across PRs.
+
+After the partial-append regression fix in `6eb636b6d0c3422b14ef916ef7cdb3f704c54324`, the complete provenance module passed. From `gascity/`, the following invocation reported **96 passed, 483 deselected**.
+
+```sh
+env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest -q tests -k test_worker_provenance
+```
