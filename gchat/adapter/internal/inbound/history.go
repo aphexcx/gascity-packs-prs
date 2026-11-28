@@ -184,10 +184,9 @@ func redactedHistoryEvent(l *ledger.Ledger, cfg *config.Config, old *ledger.Chan
 // An attempt recorded before a newly installed bound necessarily predates it;
 // its Created time is an upper bound on the act, not a replacement event time.
 // Existing cursors never call this migration, and committed deliveries survive.
-// A merged turn is judged by its Created, its first act's time. A turn with an
-// act on the other side of the bound is first split back into its acts, so
-// each act is judged by its own time. So is an edit folded into its message's
-// creation.
+// A merged turn is judged by its Created, its first act's time. When that time
+// is before the bound and an act of the turn shows that it came at or after
+// it, the turn is first split back into its acts (dividedAt, unmerge).
 func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log puller.Logger) []string {
 	bound := ledger.HistoryBound(l.Spaces[space], l.HistoryFloor)
 	if bound.IsZero() {
@@ -195,10 +194,9 @@ func RetireSpaceHistory(l *ledger.Ledger, cfg *config.Config, space string, log 
 	}
 	for _, owner := range l.Changes {
 		if owner.Space == space && dividedAt(l, owner, bound) {
-			unmerge(l, owner)
+			unmerge(l, owner, bound)
 		}
 	}
-	unfoldLaterEdits(l, space, bound)
 	var retired []string
 	// Select before mutating owners: committed members of an undelivered
 	// coalesced turn are still undelivered acts, independent of map order.
@@ -260,13 +258,24 @@ func rewritable(c *ledger.ChangeState) bool {
 	return c.Status == "intent" && (c.Attempts == 0 || c.Reason == reasonRetry)
 }
 
-// dividedAt reports a frozen, rewritable turn whose Created is before the
-// bound and one of whose acts was recorded at or after it. The Created is its
-// first act's, or after a refresh the time of an act that has left it. A turn
-// whose Created is at or after the bound stays whole, as a single act does: an
+// afterBound is the proof that an act came at or after the bound. It was
+// recorded then, and an act recorded before the bound necessarily predates
+// it. Chat also dates it then, when Chat gave it a time: an act is judged by
+// when it happened (gchat/README.md, "Catch-up and restart recovery"), and an
+// event that came late is recorded after its act.
+func afterBound(c *ledger.ChangeState, bound time.Time) bool {
+	return !beforeBound(c.OriginalCreated(), bound) && (c.ActAt.IsZero() || !c.ActAt.Before(bound))
+}
+
+// dividedAt reports a frozen turn whose Created is before the bound and one of
+// whose acts came at or after it. The Created is its first act's, or after a
+// refresh the time of an act that has left it. Only a turn that refreshMerged
+// could rewrite and that has no fragment in a terminal is split: any other may
+// already be in front of the agent, whole or in part, and stays whole. So does
+// a turn whose Created is at or after the bound, as a single act does: an
 // operator's replay records it anew.
 func dividedAt(l *ledger.Ledger, owner *ledger.ChangeState, bound time.Time) bool {
-	if len(owner.Members) == 0 || !rewritable(owner) || !beforeBound(owner.Created, bound) {
+	if len(owner.Members) == 0 || !rewritable(owner) || owner.Fragment || !beforeBound(owner.Created, bound) {
 		return false
 	}
 	later := false
@@ -275,28 +284,40 @@ func dividedAt(l *ledger.Ledger, owner *ledger.ChangeState, bound time.Time) boo
 		if m == nil || (m != owner && m.MemberOf != owner.ID) {
 			return false
 		}
-		later = later || !beforeBound(m.OriginalCreated(), bound)
+		later = later || afterBound(m, bound)
 	}
 	return later
 }
 
 // unmerge undoes the window flush's merge: each act is again a single intent
-// with its own text, kind and recorded time. The owner keeps the attempts gc
-// refused, and the old turn's text is gone in the same save. A creation that
-// carries its folded edits' text keeps hold's kind for it.
-func unmerge(l *ledger.Ledger, owner *ledger.ChangeState) {
+// with its own text and kind. An act that came at or after the bound takes
+// back its own recorded time. Every other act keeps the turn's, so the
+// retirement below takes it as it took the whole turn. The owner keeps the
+// attempts gc refused, and the old turn's text is gone in the same save. A
+// creation that carries a folded edit's text keeps hold's kind for it.
+func unmerge(l *ledger.Ledger, owner *ledger.ChangeState, bound time.Time) {
+	turn := owner.Created
+	acts := make([]*ledger.ChangeState, 0, len(owner.Members))
 	for _, id := range owner.Members {
-		if m := l.Changes[id]; m != owner {
+		acts = append(acts, l.Changes[id])
+	}
+	for _, m := range acts {
+		created, kind := turn, m.OriginalKind()
+		if afterBound(m, bound) {
+			created = m.OriginalCreated()
+		}
+		if m == owner {
+			m.Event = m.OriginalEvent()
+			m.MemberEvent, m.MemberCreated, m.Members = "", time.Time{}, nil
+		} else {
 			m.Status, m.Reason, m.MemberOf = "intent", "", ""
 		}
-	}
-	kind := owner.OriginalKind()
-	owner.Event, owner.Kind, owner.Created = owner.OriginalEvent(), kind, owner.OriginalCreated()
-	owner.MemberEvent, owner.MemberKind, owner.MemberCreated, owner.Members = "", "", time.Time{}, nil
-	for _, edit := range l.Changes {
-		if foldedInto(edit, owner) {
-			owner.Kind, owner.MemberKind = "coalesced", kind
-			break
+		m.Created, m.Kind, m.MemberKind = created, kind, ""
+		for _, edit := range l.Changes {
+			if foldedInto(edit, m) {
+				m.Kind, m.MemberKind = "coalesced", kind
+				break
+			}
 		}
 	}
 }
@@ -307,26 +328,6 @@ func unmerge(l *ledger.Ledger, owner *ledger.ChangeState) {
 func foldedInto(edit, c *ledger.ChangeState) bool {
 	return edit.MemberOf == c.ID && edit.Status == "committed" && edit.Reason == "coalesced" && edit.OriginalKind() == "message.updated" &&
 		edit.Message == c.Message && c.OriginalKind() == "message.created"
-}
-
-// unfoldLaterEdits gives an edit back its own record when the window folded it
-// into its message's held creation (hold), the creation was recorded before
-// the bound and the edit at or after it. Only an edit that no later revision
-// has superseded leaves. A creation whose delivery may have landed keeps its
-// edits.
-func unfoldLaterEdits(l *ledger.Ledger, space string, bound time.Time) {
-	var later []*ledger.ChangeState
-	for _, edit := range l.Changes {
-		c := l.Changes[edit.MemberOf]
-		if edit.Space != space || c == nil || !foldedInto(edit, c) || !beforeBound(c.OriginalCreated(), bound) ||
-			beforeBound(edit.Created, bound) || superseded(l, edit) || !rewritable(l.Delivery(c)) {
-			continue
-		}
-		later = append(later, edit)
-	}
-	for _, edit := range later {
-		edit.Status, edit.Reason, edit.MemberOf = "intent", "", ""
-	}
 }
 
 // RetainHistorySkip is also used while migrating a saved queue, before network
