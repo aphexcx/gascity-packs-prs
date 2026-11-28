@@ -476,7 +476,7 @@ func TestChatOwnerCrossedRemovalsRemoveOne(t *testing.T) {
 		if r["request"] != "remove" {
 			return `{"result":"unavailable"}`
 		}
-		time.Sleep(80 * time.Millisecond) // both yeses have passed their checks by now (inside the test book's 200 ms bound)
+		time.Sleep(80 * time.Millisecond) // both yeses have passed their checks by now (inside the test book's bound, fakedoor.Wait)
 		var left []string
 		for _, e := range f.s.opts.Owners.List().Owners {
 			if e.ID != r["owner"] {

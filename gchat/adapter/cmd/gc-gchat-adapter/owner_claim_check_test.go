@@ -51,7 +51,7 @@ func TestChatOwnerClaimCheck(t *testing.T) {
 			old := claimBook
 			t.Cleanup(func() { claimBook = old })
 			claimBook = func() *owners.Book {
-				return owners.ForTest(owners.TestOptions{Dir: dir, IsRoot: fakedoor.Root, Wait: owners.DoorWait / 10})
+				return owners.ForTest(owners.TestOptions{Dir: dir, IsRoot: fakedoor.Root, Wait: fakedoor.Wait})
 			}
 			before := listDir(t, dir)
 			var stdout, stderr bytes.Buffer

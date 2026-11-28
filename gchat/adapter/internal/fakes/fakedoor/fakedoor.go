@@ -19,6 +19,10 @@ import (
 	"gchat-adapter/internal/owners"
 )
 
+// Wait is the test books' bound on one call to the door: short enough that a
+// silent door costs a test one second, long enough for a loaded machine.
+const Wait = time.Second
+
 // Silent is an answer that never comes: the door reads the line and waits
 // until the caller gives up.
 const Silent = "\x00silent"
@@ -149,8 +153,8 @@ func Record(claim string) owners.Record {
 	return owners.Record{Since: "2026-01-02T03:04:05Z", By: "page-code", Claim: claim}
 }
 
-// Book is a Book on this door's directory with the test stand-ins and a
-// short wait, so no test waits for the real bound.
+// Book is a Book on this door's directory with the test stand-ins and the
+// test bound Wait.
 func (d *Door) Book(settings []string, log *slog.Logger) *owners.Book {
-	return owners.ForTest(owners.TestOptions{Settings: settings, Dir: d.Dir, IsRoot: Root, Log: log, Wait: 200 * time.Millisecond})
+	return owners.ForTest(owners.TestOptions{Settings: settings, Dir: d.Dir, IsRoot: Root, Log: log, Wait: Wait})
 }

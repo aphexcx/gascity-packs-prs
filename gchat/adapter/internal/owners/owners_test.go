@@ -26,7 +26,7 @@ const (
 )
 
 func book(dir string, isRoot func(fs.FileInfo) bool, settings []string, log *slog.Logger) *owners.Book {
-	return owners.ForTest(owners.TestOptions{Settings: settings, Dir: dir, IsRoot: isRoot, Log: log, Wait: 200 * time.Millisecond})
+	return owners.ForTest(owners.TestOptions{Settings: settings, Dir: dir, IsRoot: isRoot, Log: log, Wait: fakedoor.Wait})
 }
 
 func logLines(buf *bytes.Buffer, msg string) []map[string]any {
@@ -397,7 +397,7 @@ func TestChatOwnerDoorLines(t *testing.T) {
 		t.Fatal("here on unavailable")
 	}
 	// A socket in a directory that fails the trust rule is never called.
-	untrusted := owners.ForTest(owners.TestOptions{Dir: door.Dir, IsRoot: func(fs.FileInfo) bool { return false }, Wait: 200 * time.Millisecond})
+	untrusted := owners.ForTest(owners.TestOptions{Dir: door.Dir, IsRoot: func(fs.FileInfo) bool { return false }, Wait: fakedoor.Wait})
 	before := len(door.Requests())
 	if untrusted.Here(ctx) || len(door.Requests()) != before {
 		t.Fatal("called a door in an untrusted directory")

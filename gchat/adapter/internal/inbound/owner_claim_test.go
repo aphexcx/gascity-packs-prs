@@ -68,7 +68,7 @@ func setupClaim(t *testing.T, settings []string, absent bool) *claimFixture {
 	if absent {
 		dir = filepath.Join(fakedoor.Dir(t), "absent")
 	}
-	cf.book = owners.ForTest(owners.TestOptions{Settings: settings, Dir: dir, IsRoot: fakedoor.Root, Log: log, Wait: 200 * time.Millisecond})
+	cf.book = owners.ForTest(owners.TestOptions{Settings: settings, Dir: dir, IsRoot: fakedoor.Root, Log: log, Wait: fakedoor.Wait})
 	f.google.Configure(func(s *fakegoogle.Server) {
 		s.Spaces[dmSpace] = &api.Space{Name: dmSpace, SpaceType: "DIRECT_MESSAGE"}
 		s.People[claimSender] = claimAddr
